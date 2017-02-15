@@ -1,4 +1,0 @@
-#ifndef GETLINHASPORIDH
-#define GETLINHASPORIDH
-
-#endif

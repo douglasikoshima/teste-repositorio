@@ -1,4 +1,0 @@
-#ifndef CARREGATIPORTH
-#define CARREGATIPORTH
-
-#endif

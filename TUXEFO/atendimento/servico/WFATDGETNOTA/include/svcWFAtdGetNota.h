@@ -1,4 +1,0 @@
-#ifndef WFATDPSQNOTAS
-#define WFATDPSQNOTAS
-
-#endif

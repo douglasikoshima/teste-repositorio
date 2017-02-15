@@ -1,0 +1,201 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <CSms.h>
+
+CSms::CSms()
+{
+	memset( cIdSms, 0, sizeof( cIdSms ) );
+}
+
+CSms::~CSms()
+{
+}
+
+void CSms::Insert( 
+    char* pzcdsSms
+   ,char* pzcnrOrigem
+   ,char* pzcnrDestino
+   ,char* pzcidPessoaUsuario )
+{
+	struct sqlca sqlca; 
+	EXEC SQL BEGIN DECLARE SECTION;
+		char pzcdsSmsAux[1999+1];
+		char* pzcnrOrigemAux = pzcnrOrigem;
+		char* pzcnrDestinoAux = pzcnrDestino;
+		char pzcidPessoaUsuarioAux[21+1];
+		VARCHAR stidSms[21+1];
+		VARCHAR stidStatusSms[21+1];
+	EXEC SQL END DECLARE SECTION;
+
+	// Trunc da string de msg conforme o tamanho especificado na base de dados
+	memset(pzcdsSmsAux, 0, sizeof(pzcdsSmsAux));
+	strncpy( pzcdsSmsAux, pzcdsSms, (sizeof(pzcdsSmsAux)-1) );
+
+	// Validação do idPessoaUsuario, quando receber um valor inválido altera para 1
+	memset(pzcidPessoaUsuarioAux, 0, sizeof(pzcidPessoaUsuarioAux));
+	strncpy( pzcidPessoaUsuarioAux, pzcidPessoaUsuario, (sizeof(pzcidPessoaUsuarioAux)-1) );
+	if( atoi(pzcidPessoaUsuarioAux)==0 )
+		strcpy( pzcidPessoaUsuarioAux, "1" );
+
+	//Apaga a estrutura VARCHAR
+	memset( &stidSms, 0, sizeof( stidSms ) );
+	memset( &stidStatusSms, 0, sizeof( stidStatusSms ) );
+	//Apara a variavel private desta classe
+	memset( cIdSms, 0, sizeof( cIdSms ) );
+
+	sqlca.sqlcode=0;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	//Recupera a chave primaria
+	EXEC SQL
+	SELECT
+		LINHA.SMSSQ.NEXTVAL
+	INTO
+		:stidSms
+	FROM
+		DUAL;
+
+	EXEC SQL
+	SELECT 
+		IDSTATUSSMS 
+	INTO
+		:stidStatusSms
+	FROM 
+		APOIO.STATUSSMS 
+	WHERE 
+		SGSTATUSSMS = 'ENV';
+
+	if( stidSms.len <= 0 )
+		throw "Não foi encontrato o status de envio: APOIO.STATUSSMS.SGSTATUSSMS = 'ENV'";
+
+	tuxfw_getlogger()->debug( "CSms::Insert::IDSMS[%s]", (char*)stidSms.arr );
+	tuxfw_getlogger()->debug( "CSms::Insert::DSSMS[%s]", pzcdsSmsAux );
+	tuxfw_getlogger()->debug( "CSms::Insert::DTENVIO[SYSDATE]" );
+	tuxfw_getlogger()->debug( "CSms::Insert::DTENTREGA[NULL]" );
+	tuxfw_getlogger()->debug( "CSms::Insert::NRLINHAORIGEM[%s]", pzcnrOrigemAux );
+	tuxfw_getlogger()->debug( "CSms::Insert::NRLINHADESTINO[%s]", pzcnrDestinoAux );
+	tuxfw_getlogger()->debug( "CSms::Insert::IDSTATUSSMS[%s]", (char*)stidStatusSms.arr );
+	tuxfw_getlogger()->debug( "CSms::Insert::IDUSUARIOALTERACAO[%s]", pzcidPessoaUsuarioAux );
+
+	//Insere o SMS com status de enviado
+	EXEC SQL
+	INSERT INTO	LINHA.SMS
+	(
+		IDSMS,
+		DSSMS,
+		DTENVIO,
+		DTENTREGA,
+		NRLINHAORIGEM,
+		NRLINHADESTINO,
+		IDSTATUSSMS,
+		IDUSUARIOALTERACAO,
+		DTULTIMAALTERACAO
+	)
+	VALUES
+	(
+		:stidSms,
+		:pzcdsSmsAux,
+		 SYSDATE,
+		 NULL,
+		:pzcnrOrigemAux,
+		:pzcnrDestinoAux,
+		:stidStatusSms,
+		:pzcidPessoaUsuarioAux,
+		 SYSDATE
+	);
+
+	//copia a sequence para a classe interna
+	strcpy( cIdSms, (char*)stidSms.arr );
+	return;
+
+GotoInsert:
+	throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+
+void CSms::AtiualizaStatus( 
+		    char* pzidsSms
+		   ,char* pzcidStatus
+		   ,char* pzcdtEntrega
+		   ,char* pzcidPessoaUsuario )
+{
+	struct sqlca sqlca; 
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* pzidsSmsAux = pzidsSms;
+		char* pzcidStatusAux = pzcidStatus;
+		char* pzcdtEntregaAux = pzcdtEntrega;
+		char* pzcidPessoaUsuarioAux = pzcidPessoaUsuario;
+	EXEC SQL END DECLARE SECTION;
+
+	//Apara a variavel private desta classe
+	memset( cIdSms, 0, sizeof( cIdSms ) );
+
+	sqlca.sqlcode=0;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoAtiualizaStatus;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	//Insere o SMS com status de enviado
+	tuxfw_getlogger()->debug( "CSms::AtiualizaStatus::DTENTREGA[%s]", pzcdtEntregaAux );
+	tuxfw_getlogger()->debug( "CSms::AtiualizaStatus::IDSTATUSSMS[%s]", pzcidStatusAux );
+	tuxfw_getlogger()->debug( "CSms::AtiualizaStatus::IDSMS[%s]", pzidsSmsAux );
+
+	EXEC SQL
+	UPDATE LINHA.SMS
+	SET
+		DTENTREGA = TO_DATE( :pzcdtEntregaAux, 'DD/MM/YYYY HH24:MI:SS' ),
+		IDSTATUSSMS = :pzcidStatusAux,
+		IDUSUARIOALTERACAO = :pzcidPessoaUsuarioAux,
+		DTULTIMAALTERACAO = SYSDATE
+	WHERE
+		IDSMS = :pzidsSmsAux;
+
+	return;
+
+GotoAtiualizaStatus:
+	throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+
+char* CSms::RecuperaOrigem( void )
+{
+	struct sqlca sqlca; 
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stOrigem[255];
+	EXEC SQL END DECLARE SECTION;
+
+	//Apaga a estrutura VARCHAR
+	memset( &stOrigem, 0, sizeof( stOrigem ) );
+	//Apara a variavel private desta classe
+	memset( cOrigem, 0, sizeof( cOrigem ) );
+
+	sqlca.sqlcode=0;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoRecuperaOrigem;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	//Recupera o valor origem da base de dados
+	EXEC SQL
+	SELECT 
+		DSVALORPARAMETRO
+	INTO
+		:stOrigem
+	FROM 
+		APOIO.PARAMETRO
+	WHERE 
+		CDPARAMETRO = 'SMS_ORIGEM';
+
+	tuxfw_getlogger()->debug( "CSms::RecuperaOrigem::SMS_ORIGEM[%s]", (char*)stOrigem.arr );
+
+	if( stOrigem.len <= 0 )
+		throw "Valor de origem para o SMS está nulo na base (APOIO.PARAMETRO.CDPARAMETRO = 'SMS_ORIGEM')";
+	else
+		strcpy( cOrigem, (char*)stOrigem.arr );
+
+	return cOrigem;
+
+GotoRecuperaOrigem:
+	throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}

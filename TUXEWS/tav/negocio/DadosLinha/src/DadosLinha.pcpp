@@ -1,0 +1,468 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw/tuxfw.h>
+#include <DadosLinha/DadosLinha.hpp>
+#include <DadosLinha/stLinha.hpp>
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "DadosLinha/stLinha.hpp"
+EXEC SQL END DECLARE SECTION;
+
+
+CDadosLinha::CDadosLinha()
+{
+	memset(&this->m_estadoLinha,0,sizeof(this->m_estadoLinha));
+	memset(&this->m_tipoConta,0,sizeof(this->m_tipoConta));
+	memset(&this->m_segmento,0,sizeof(this->m_segmento));
+	memset(&this->m_carteira,0,sizeof(this->m_carteira));
+	memset(&this->m_prioridadeLojista,0,sizeof(this->m_prioridadeLojista));
+}
+CDadosLinha::~CDadosLinha()
+{
+
+}
+char* CDadosLinha::getEstadoLinha()
+{
+	return this->m_estadoLinha;
+}
+char* CDadosLinha::getTipoConta()
+{
+	return this->m_tipoConta;
+}
+char* CDadosLinha::getSegmento()
+{
+	return this->m_segmento;
+}
+char* CDadosLinha::getCarteira()
+{
+	return this->m_carteira;
+}
+char* CDadosLinha::getPrioriadadeLojista()
+{
+	return this->m_prioridadeLojista;
+}
+void CDadosLinha::setEstadoLinha(char*estadoLinha)
+{
+	if(estadoLinha!=NULL)
+		strcpy(this->m_estadoLinha,m_estadoLinha);
+}
+void CDadosLinha::setTipoConta(char*tipoConta)
+{
+	if(tipoConta!=NULL)
+		strcpy(this->m_tipoConta,tipoConta);
+}
+void CDadosLinha::setSegmento(char*segmento)
+{
+	if(segmento!=NULL)
+		strcpy(this->m_segmento,segmento);
+}
+void CDadosLinha::setCarteira(char*carteira)
+{
+	if(carteira!=NULL)
+		strcpy(this->m_carteira,carteira);
+}
+void CDadosLinha::setPrioridadeLojista(char*prioridadeLojista)
+{
+	if(prioridadeLojista!=NULL)
+		strcpy(this->m_prioridadeLojista,prioridadeLojista);
+}
+
+void CDadosLinha::RecuperarDados( struct stStatuslinha *stLinha, struct stVlStatuslinha *stVlLinha )
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct stStatuslinha o_stLinha;
+		struct stVlStatuslinha o_vlLinha;
+		int iInCorp = 0;
+		int iAtendimentoFO = 0;
+		struct stNome{
+			VARCHAR chrNomeUsuario[255+1];
+			VARCHAR chrNomeCliente[255+1];
+		}m_stNome;
+		struct istNome{
+			short chrNomeUsuario;
+			short chrNomeCliente;
+		}i_stNome;
+		
+		char chFixo[2];
+		short i_chFixo = -1;
+		
+	EXEC SQL END DECLARE SECTION;
+	
+	
+	
+	tuxfw_getlogger()->information("linha %s",stLinha->chrTelefone);
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(&o_stLinha, ERR_DATABASE);
+
+	memset( &chFixo, 0, sizeof( chFixo ) );
+	
+	memset( &o_stLinha, 0, sizeof( o_stLinha ) );
+	memcpy(&o_stLinha,&(*stLinha),sizeof(o_stLinha));
+
+	memset( &o_vlLinha, 0, sizeof( o_vlLinha ) );
+	memcpy(&o_vlLinha,&(*stVlLinha),sizeof(o_vlLinha));
+
+	memset(&m_stNome,0,sizeof(m_stNome));
+	memset(&i_stNome,0,sizeof(i_stNome));
+
+	EXEC SQL SELECT 
+		LT.IDLINHATELEFONICA,
+		EL.SGCLASSIFICACAO,
+		decode(TL.SGTIPOLINHA, 'PRÉ', '00', 'POS', '01','HIB','03','PRÉCHIP','04','POSCHIP','05',TL.SGTIPOLINHA),
+		LT.CDFIXOMOVEL
+	INTO	
+		:o_stLinha.dblIdlinhatelefonica:o_vlLinha.i_dblIdlinhatelefonica,
+		:o_stLinha.chrEstadolinha:o_vlLinha.i_chrEstadolinha,
+		:o_stLinha.chrTipolinha:o_vlLinha.i_chrTipolinha,
+		:chFixo:i_chFixo
+		//:o_stLinha.chFixo //:o_vlLinha.i_chFixo
+	FROM
+		LINHA.LINHABASE LB,
+		LINHA.LINHATELEFONICA LT,
+		APOIO.AREAREGISTRO AR,
+		APOIO.ESTADOLINHA EL,
+		APOIO.TIPOLINHA TL
+	WHERE
+		LB.IDAREAREGISTRO = AR.IDAREAREGISTRO AND
+		LB.IDLINHABASE = LT.IDLINHABASE AND
+		LB.IDESTADOLINHA = EL.IDESTADOLINHA AND
+		TL.IDTIPOLINHA = LT.IDTIPOLINHA AND
+		LB.NRLINHA = TO_NUMBER(:o_stLinha.ntLinha) AND
+		AR.CDAREAREGISTRO = TO_NUMBER(:o_stLinha.ntArea);
+		
+		if( i_chFixo != -1 )
+		{
+			memcpy(o_stLinha.chFixo,chFixo,sizeof(chFixo));
+		}
+		
+		o_vlLinha.i_chFixo = i_chFixo;
+
+	if (o_vlLinha.i_dblIdlinhatelefonica == -1) {
+		tuxfw_getlogger()->information("Linha não encontrada.");
+		memcpy(&(*stLinha),&o_stLinha,sizeof(*stLinha));
+		memcpy(&(*stVlLinha),&o_vlLinha,sizeof(*stVlLinha));
+		o_stLinha.ntStatus = ERR_NOT_FOUND_OR_DISABLED;
+		return;
+	}
+	/*Faz o decode do estado da linha*/
+	DecodeEstadoLinha(&o_stLinha);
+			
+	// recupera idpessoa do cliente
+	// tipo de carteira do cliente
+	EXEC SQL SELECT 
+		TRIM(PESSOA.NMPESSOA),
+		PESSOALINHA.IDPESSOALINHA,
+		PESSOA.IDPESSOA,
+		TIPOPESSOA.SGTIPOPESSOA,
+		decode(TIPOCARTEIRA.idtipocarteira, 0, -1, 13, -1, TIPOCARTEIRA.idtipocarteira) AS IDTIPOCARTEIRA,
+		NVL(TIPOCARTEIRA.INCORPORATIVO,0) AS INCORPORATIVO
+		INTO	:m_stNome.chrNomeCliente:i_stNome.chrNomeCliente,
+			:o_stLinha.dblIdpessoalinha:o_vlLinha.i_dblIdpessoalinha,
+			:o_stLinha.dblIdcliente:o_vlLinha.i_dblIdcliente,
+			:o_stLinha.chrTipopessoa:o_vlLinha.i_chrTipopessoa,
+			:o_stLinha.ntCarteira:o_vlLinha.i_ntCarteira,
+			:iInCorp			
+	FROM
+		LINHA.LINHATELEFONICA LINHATELEFONICA,
+		LINHA.LINHABASE LINHABASE,
+		APOIO.AREAREGISTRO AREAREGISTRO,
+		CUSTOMER.PESSOALINHA PESSOALINHA,
+		CUSTOMER.PESSOADEPARA PESSOADEPARA,
+		CUSTOMER.PESSOA PESSOA,
+		CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+		APOIO.TIPOPESSOA TIPOPESSOA,
+		APOIO.TIPOCARTEIRA TIPOCARTEIRA
+	WHERE
+		 LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+		 AND LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE
+		 AND LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA
+		 AND PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA
+		 AND PESSOALINHA.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+		 AND PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+		 AND PESSOA.IDTIPOPESSOA = TIPOPESSOA.IDTIPOPESSOA
+		 AND PESSOA.IDTIPOCARTEIRA = TIPOCARTEIRA.IDTIPOCARTEIRA
+		 AND TIPORELACIONAMENTO.SGTIPORELACIONAMENTO = 'C'
+		 AND LINHABASE.NRLINHA = TO_NUMBER(:o_stLinha.ntLinha)
+		 AND AREAREGISTRO.CDAREAREGISTRO = TO_NUMBER(:o_stLinha.ntArea);
+
+	if (o_vlLinha.i_dblIdpessoalinha == -1 || o_stLinha.dblIdpessoalinha == 0 || o_stLinha.dblIdcliente == 0) {
+		tuxfw_getlogger()->information("Linha sem cliente cadastrado, tipo linha = %s", o_stLinha.chrTipolinha);
+		if (strcmp("00",o_stLinha.chrTipolinha) == 0)
+			o_stLinha.ntStatus = RET_OK;
+		else {
+			tuxfw_getlogger()->information("Linha pós paga sem cliente!");
+			o_stLinha.ntStatus = ERR_NOT_FOUND_OR_DISABLED;
+		}
+                memcpy(&(*stLinha),&o_stLinha,sizeof(*stLinha));
+                memcpy(&(*stVlLinha),&o_vlLinha,sizeof(*stVlLinha));
+		return;
+	}
+
+	// verifica se será atendido pelo FO	
+	EXEC SQL 
+	SELECT COUNT(1) 
+	INTO :iAtendimentoFO 
+	FROM customer.pessoaatendimentofo 
+	WHERE idpessoa = :o_stLinha.dblIdcliente;
+
+	if(iAtendimentoFO == 1)
+	{
+		o_stLinha.ntStatus = ERR_NAO_ATENDIDO_FO;
+	}
+	else
+	{
+		// Altera o tipo da linha se o indicativo de corporativo for 1.
+		if (iInCorp == 1 || strcmp(o_stLinha.chrTipopessoa, "PJ") == 0)
+		{
+			if(!strcmp("04",o_stLinha.chrTipolinha) ||
+			!strcmp("05",o_stLinha.chrTipolinha))
+				sprintf(o_stLinha.chrTipolinha, "06");
+			else
+				sprintf(o_stLinha.chrTipolinha, "02");
+		}
+		
+		tuxfw_getlogger()->information("Dados Cliente");
+		tuxfw_getlogger()->information("Tipo Pessoa: %s", o_stLinha.chrTipopessoa);
+		// recupera idpessoa do usuario
+		EXEC SQL SELECT 
+			TRIM(PESSOA.NMPESSOA),
+			PESSOA.IDPESSOA,
+			PESSOALINHA.IDPESSOALINHA	
+		INTO	:m_stNome.chrNomeUsuario:i_stNome.chrNomeUsuario,
+			:o_stLinha.dblIdusuario:o_vlLinha.i_dblIdusuario,
+			:o_stLinha.dblIdpessoalinhausr:o_vlLinha.i_dblIdpessoalinhausr
+		FROM
+			LINHA.LINHATELEFONICA LINHATELEFONICA,
+			LINHA.LINHABASE LINHABASE,
+			APOIO.AREAREGISTRO AREAREGISTRO,
+			CUSTOMER.PESSOALINHA PESSOALINHA,
+			CUSTOMER.PESSOADEPARA PESSOADEPARA,
+			CUSTOMER.PESSOA PESSOA,
+			CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+			APOIO.TIPOPESSOA TIPOPESSOA
+		WHERE
+			 LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+			 AND LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE
+			 AND LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA
+			 AND PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA
+			 AND PESSOALINHA.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+			 AND PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+			 AND PESSOA.IDTIPOPESSOA = TIPOPESSOA.IDTIPOPESSOA
+			 AND TIPORELACIONAMENTO.SGTIPORELACIONAMENTO = 'U'
+			 AND LINHABASE.NRLINHA = TO_NUMBER(:o_stLinha.ntLinha)
+			 AND AREAREGISTRO.CDAREAREGISTRO = TO_NUMBER(:o_stLinha.ntArea);
+
+		tuxfw_getlogger()->information("Dados Usuario");
+
+		VerificaLinha( &o_stLinha, &o_vlLinha );
+	}
+	
+	// copiar o nome
+	strcpy(o_stLinha.chrNomeCliente,(char*)m_stNome.chrNomeCliente.arr);
+	strcpy(o_stLinha.chrNomeUsuario,(char*)m_stNome.chrNomeUsuario.arr);
+
+	memcpy(&(*stLinha),&o_stLinha,sizeof(*stLinha));
+	memcpy(&(*stVlLinha),&o_vlLinha,sizeof(*stVlLinha));
+}
+
+void CDadosLinha::VerificaLinha(  struct stStatuslinha *stLinha , struct stVlStatuslinha *stVlLinha )
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct stStatuslinha o_stLinha;
+		struct stVlStatuslinha o_vlLinha;
+	EXEC SQL END DECLARE SECTION;	
+
+	memset( &o_stLinha, 0, sizeof( o_stLinha ) );
+	memcpy(&o_stLinha,&(*stLinha),sizeof(o_stLinha));
+
+	memset( &o_vlLinha, 0, sizeof( o_vlLinha ) );
+	memcpy(&o_vlLinha,&(*stVlLinha),sizeof(o_vlLinha));
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(&o_stLinha, ERR_DATABASE);
+
+	// segmento do cliente
+	EXEC SQL SELECT 
+		   DECODE(SEGMENTACAO.IDSEGMENTACAO,11,-1,0,-1,SEGMENTACAO.IDSEGMENTACAO) AS IDSEGMENTACAO
+		   INTO :o_stLinha.ntSegmento:o_vlLinha.i_ntSegmento
+	FROM
+		CUSTOMER.PESSOADEPARA PESSOADEPARA,
+		CUSTOMER.PESSOASEGMENTACAO PESSOASEGMENTACAO,
+		CUSTOMER.PESSOASEGMENTACAOHISTORICO PESSOASEGMENTACAOHISTORICO,
+		APOIO.SEGMENTACAO SEGMENTACAO
+	WHERE
+		PESSOADEPARA.IDPESSOADEPARA = PESSOASEGMENTACAO.IDPESSOADEPARA
+		AND PESSOASEGMENTACAO.IDPESSOASEGMENTACAO = PESSOASEGMENTACAOHISTORICO.IDPESSOASEGMENTACAO
+		AND PESSOASEGMENTACAOHISTORICO.IDPESSOADEPARA = PESSOADEPARA.IDPESSOADEPARA
+		AND SEGMENTACAO.IDSEGMENTACAO = PESSOASEGMENTACAOHISTORICO.IDSEGMENTACAO
+		AND PESSOADEPARA.IDPESSOA = TO_NUMBER(:o_stLinha.dblIdcliente);
+
+	switch(o_stLinha.ntSegmento)
+	{
+	  case 1: o_stLinha.ntSegmento = 3; break;
+	  case 2: o_stLinha.ntSegmento = 2; break;
+	  case 3: o_stLinha.ntSegmento = 1; break;
+	  case 4: o_stLinha.ntSegmento = 6; break;
+	  case 5: o_stLinha.ntSegmento = 5; break;
+	  case 6: o_stLinha.ntSegmento = 4; break;
+	  case 7: o_stLinha.ntSegmento = 9; break;
+	  case 8: o_stLinha.ntSegmento = 8; break;
+	  case 9: o_stLinha.ntSegmento = 7; break;
+	  case 10: o_stLinha.ntSegmento = 10; break;
+	}
+        if (sqlca.sqlcode == 1403 || o_vlLinha.i_ntSegmento == -1) {
+                o_stLinha.ntSegmento = -1;
+                tuxfw_getlogger()->debug("Segmento não existe, setado para -1 (não classificado)");
+        }
+        tuxfw_getlogger()->debug("Segmento: %i", o_stLinha.ntSegmento);
+
+	// senha lojista
+	// na tabela apoio.tiposenha haverá um ID representando senha lojista
+	// ligado em customer.senha
+	strcpy( o_stLinha.chrSenhalojista, "" );
+	
+	tuxfw_getlogger()->information("Senha Lojista");
+
+	// prioridade do lojista
+	// default = 04 (nenhuma)
+	strcpy( o_stLinha.chrPrioridadelojista, "04" );
+
+	tuxfw_getlogger()->information("Prioridade Lojista");
+
+	// marcação de atendimento pessoal
+	strcpy( o_stLinha.chrAtendimentoPessoal, "N" );
+
+	tuxfw_getlogger()->information("Atendimento Pessoal");
+
+	memcpy(&(*stLinha),&o_stLinha,sizeof(*stLinha));
+	memcpy(&(*stVlLinha),&o_vlLinha,sizeof(*stVlLinha));
+
+
+	tuxfw_getlogger()->information("Fim Proceso");
+}
+
+void CDadosLinha::sql_error(struct stStatuslinha *stLinha, int Status)
+{
+        EXEC SQL WHENEVER SQLERROR CONTINUE;
+        stLinha->ntStatus = Status;
+	tuxfw_getlogger()->information("Error: %d", Status);
+}
+/**
+ * Decodifica o Estado da linha conforme tabela passada pela VIVO
+	- Atlys
+
+	H = Hotline (bloqueios)
+	D = Disable (suspenso ou desabilitado)
+	E = Ativo
+	S = NPD (bloqueio total)
+
+	- NGIN
+
+	PACT 		PRE_ATIVADO
+	ACT 		ATIVADO
+	BAR		BARRADO 
+	DES 		DESACTIVADO
+	EXP 		EXPIRADO
+ */
+void CDadosLinha::DecodeEstadoLinha(struct stStatuslinha *stLinha)
+{	
+	char estadoLinha[255+1];
+	char *pEstadoLinha = NULL;
+	memset(&estadoLinha,0,sizeof(estadoLinha));
+	strcpy(estadoLinha,stLinha->chrEstadolinha);
+	pEstadoLinha = strtok(estadoLinha," ");
+	memset(stLinha->chrEstadolinha,0,sizeof(stLinha->chrEstadolinha));
+	tuxfw_getlogger()->information("Estado da linha: %s", pEstadoLinha);
+
+	if(strcmp(pEstadoLinha,"H") == 0)
+	{		
+		strncpy(stLinha->chrEstadolinha,"02",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"D") == 0)
+	{		
+		strncpy(stLinha->chrEstadolinha,"01",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"A") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"00",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"S") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"03",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"P") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"04",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"A") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"00",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"B") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"05",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"D") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"06",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"B") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"07",2);
+	}
+	stLinha->chrEstadolinha[2]=0;
+}
+
+bool CDadosLinha::Premium( struct stStatuslinha *stLinha)
+{
+	tuxfw_getlogger()->debug(">>>CDadosLinha::Premium");
+
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct stStatuslinha o_stLinha;
+		int iCount = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(&o_stLinha, ERR_DATABASE);
+
+	memset( &o_stLinha, 0, sizeof( o_stLinha ) );
+	memcpy(&o_stLinha,&(*stLinha),sizeof(o_stLinha));
+	
+	tuxfw_getlogger()->debug("Verificanco se a linha (%d) %d é premium.", o_stLinha.ntArea, o_stLinha.ntLinha );
+	
+	EXEC SQL SELECT 
+		COUNT(1)
+	INTO
+		:iCount
+	FROM
+		VOL.LINHAPREMIUM LP
+	WHERE
+		LP.NRLINHA = TO_NUMBER(:o_stLinha.ntLinha) AND
+		LP.CDAREAREGISTRO = TO_NUMBER(:o_stLinha.ntArea);
+		
+	if (iCount > 0)
+	{
+		tuxfw_getlogger()->debug("A linha %s é premium.",stLinha->chrTelefone);
+		tuxfw_getlogger()->debug("<<<CDadosLinha::Premium");
+		return true;
+	}
+	else
+	{
+		tuxfw_getlogger()->debug("A linha %s não é premium.",stLinha->chrTelefone);
+		tuxfw_getlogger()->debug("<<<CDadosLinha::Premium");
+		return false;
+		
+	}
+}

@@ -1,0 +1,165 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw/tuxfw.h>
+#include <Defines/Defines.h>
+#include <Documento/Documento.hpp>
+
+EXEC SQL INCLUDE SQLCA;
+
+Documento::Documento()
+{
+
+}
+
+Documento::~Documento()
+{
+
+}
+
+int Documento::validaCPF(char*cpf)
+{
+	tuxfw_getlogger()->debug("Documento::validaCPF");
+
+	if(cpf == NULL)
+		return 0;
+
+	char numero[12];
+	int size = strlen(cpf);
+	int j = 0;
+	if(size > 11 || size <= 0)
+		return 0;
+	// colocar os zeros a esquerda do numero caso for menor que 11
+	if(size<11)
+	{
+		int k = 0;
+		for(int i=0;i<12;i++){
+			if(i >= (11-size))
+				numero[j++] = cpf[k++];
+			else
+				numero[j++] = '0';
+		}
+		numero[j] = 0;
+	}
+	else
+	{
+		strcpy(numero,cpf);
+	}
+
+	char cht[] = {numero[strlen(numero)-2],0};
+	char cht2[] = {numero[strlen(numero)-1],0};
+	int digito1 = atoi(cht);
+	int digito2 = atoi(cht2);
+
+	// 1º Dígito Verificador
+	// calculamos a soma da multiplicação dos 9 primeiros dígitos por 10, 9, 8, ... , 3, 2, respectivamente
+	int sizeNum = strlen(numero);
+	int soma1 = 0;
+	int indice = 10;
+	for(int i=0;i<sizeNum && i < 9;i++)
+	{
+		char ch[] = {numero[i],0};
+		int n = -1;
+		try
+		{
+			n = atoi(ch);
+		}
+		catch(...)
+		{
+			tuxfw_getlogger()->debug("erro -3 primeiro digito");
+			return -3;
+		}
+		soma1 += n*indice--;
+	}
+	int valor = (soma1/11) * 11;
+	int resultado = soma1 - valor;
+
+
+	// 2 digito verificador
+	int soma2 = 0;
+	int indice2 = 11;
+	for(int i=0;i<sizeNum && i < 9;i++)
+	{
+		char ch[] = {numero[i],0};
+		int n = -1;
+		try
+		{
+			n = atoi(ch);
+		}
+		catch(...)
+		{
+			tuxfw_getlogger()->debug("erro -3 segundo digito");
+			return -3;
+		}
+		soma2 += n*indice2--;
+	}
+
+	if(resultado == 0 || resultado == 1)
+		resultado = 0;
+	else
+		resultado = 11 - resultado;
+	
+	soma2 += resultado * 2;
+	int valor2 = (soma2/11) * 11;
+	int resultado2 = soma2 - valor2;
+
+	if(resultado2 == 0 || resultado2 == 1)
+		resultado2 = 0;
+	else
+		resultado2= 11 - resultado2;
+
+	tuxfw_getlogger()->debug("resultado=%d, resultado2=%d",resultado,resultado2);
+	
+	if(resultado == digito1 && resultado2 == digito2)
+		return 1;
+
+	return 0;
+}
+
+int Documento::getDocumento(char*documento,char*tipo,char*linha,char*ddd)
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cDocumento[256];
+		char *cTipo = tipo;
+		char *cLinha = linha;
+		char *cDdd = ddd;
+	EXEC SQL END DECLARE SECTION;
+	memset(&cDocumento,0,sizeof(cDocumento));
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+	EXEC SQL
+		SELECT
+			NVL(TRIM(DOCUMENTO.NRDOCUMENTO),' ')
+		INTO
+			:cDocumento
+		FROM
+			LINHA.LINHATELEFONICA LINHATELEFONICA,
+			LINHA.LINHABASE LINHABASE,
+			APOIO.AREAREGISTRO AREAREGISTRO,
+			CUSTOMER.PESSOALINHA PESSOALINHA,
+			CUSTOMER.PESSOADEPARA PESSOADEPARA,
+			CUSTOMER.PESSOADOCUMENTO PESSOADOCUMENTO,
+			CUSTOMER.DOCUMENTO DOCUMENTO,
+			APOIO.TIPODOCUMENTO TIPODOCUMENTO
+		WHERE
+			LINHA.LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE AND
+			LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+			LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA AND
+			PESSOALINHA.IDTIPORELACIONAMENTO = 2 AND
+			PESSOALINHA.IDPESSOADEPARA = PESSOADEPARA.IDPESSOADEPARA AND
+			PESSOADOCUMENTO.IDPESSOA = PESSOADEPARA.IDPESSOA AND
+			PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO AND
+			DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO AND
+			TIPODOCUMENTO.SGCLASSIFICACAO = :cTipo AND
+			LINHABASE.NRLINHA = :cLinha AND
+			AREAREGISTRO.CDAREAREGISTRO = :cDdd AND
+			ROWNUM = 1;
+	if(sqlca.sqlcode == 1403)
+		throw new TuxBasicSvcException("11W0005", "Documento não encontrado");
+	strcpy(documento,(char*)cDocumento.arr);
+	return 1;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

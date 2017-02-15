@@ -1,0 +1,504 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw/tuxfw.h>
+#include <Defines/Defines.h>
+#include <Util/Util.hpp>
+#include <AcessoRapido/AcessoRapido.hpp>
+
+EXEC SQL INCLUDE SQLCA;
+
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+CAcessoRapido::CAcessoRapido(){
+
+}
+
+
+CAcessoRapido::~CAcessoRapido() {
+}
+
+
+/*Get*/
+int CAcessoRapido::getIdItemMenu(void){
+	return this->m_iIdItemMenu;
+}
+
+int CAcessoRapido::getIdItemMenuPai(void){
+	return this->m_iIdItemMenuPai;
+}
+
+char * CAcessoRapido::getNmItem(void){
+	return this->m_cNmItem;
+}
+char * CAcessoRapido::getDsHint(void){
+	return this->m_cDsHint;
+}
+
+/*Set*/
+void CAcessoRapido::setIdItemMenu(int value){
+	this->m_iIdItemMenu = value;
+}
+
+void CAcessoRapido::setIdItemMenuPai(int value){
+	this->m_iIdItemMenuPai = value;
+}
+
+void CAcessoRapido::setNmItem(char * value){
+	strcpy(this->m_cNmItem, value);
+}
+void CAcessoRapido::setDsHint(char * value){
+	strcpy(this->m_cDsHint, value);
+}
+
+
+char *CAcessoRapido::itoa(int i,char *dest,int /*radix*/)
+{
+    sprintf(dest,"%d",i);
+    return dest;
+}
+
+void CAcessoRapido::consultarAcessoRapido(int idPessoa , int idTipoLinha, list <CAcessoRapido> & lstAcess, int iIdUF, int iIdGrupo){
+	this->consultarAcessoRapidoDB( idPessoa, idTipoLinha, lstAcess, iIdUF, iIdGrupo);
+
+
+}
+
+int CAcessoRapido::insertAcessoRapido(int idPessoa, int idItem){
+	return (this->insertAcessoRapidoDB(idPessoa, idItem));
+	
+}
+
+
+int CAcessoRapido::excluirAcessoRapido(int idPessoa, int idItem){
+
+	return (this->excluirAcessoRapidoDB(idPessoa, idItem));
+
+}
+
+int CAcessoRapido::excluirAcessoRapidoDB(int idPessoa, int idItem){
+	
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int  iIdPessoa;
+	int  iIdPessoaDePara;
+	int  iIdItem;
+	int  iitemExistente = 0;
+ 	EXEC SQL END DECLARE SECTION;
+
+	iIdPessoa = idPessoa;
+	iIdItem = idItem;
+	
+
+	//O select abaixo foi feito deste jeito devido ter usuarios duplicados
+	//na base de dados exemplo o usuario 10
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	
+	EXEC SQL 
+
+		SELECT 
+			idPessoaDePara 
+		INTO 
+			:iIdPessoaDePara 
+		FROM 
+			customer.pessoadepara
+		WHERE
+			idPessoa = :iIdPessoa AND
+			IDPESSOAORIGEM = :iIdPessoa;
+
+	
+	if(sqlca.sqlcode)
+		return -1;
+
+	EXEC SQL 
+	SELECT COUNT(1) INTO :iitemExistente FROM VOL.ACESSORAPIDO WHERE
+		IDPESSOADEPARA = :iIdPessoaDePara AND 
+		IDITEMMENU = :iIdItem;
+
+	tuxfw_getlogger()->debug("item = %d existe = %d",iIdItem,iitemExistente);
+
+
+	if(iitemExistente == 0)
+		return 1;
+
+	EXEC SQL 
+	
+		DELETE FROM
+			Vol.AcessoRapido
+		WHERE
+			idpessoadepara = :iIdPessoaDePara AND
+			iditemmenu = :iIdItem;
+
+	//EXEC SQL COMMIT;
+	
+	if(sqlca.sqlcode == NO_DATA_FOUND)
+		return 0;
+
+	return 1;
+
+sqlErrorConstrutor:
+	return -1;
+}
+
+int CAcessoRapido::insertAcessoRapidoDB( int idPessoa, int idItem){
+	tuxfw_getlogger()->debug("CAcessoRapido::insertAcessoRapidoDB");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int  iIdPessoa;
+	int  iIdPessoaDePara;
+	int  iIdItem;
+	int  iIdAcessoRapido;	
+	int  iitemExistente = 0;
+ 	EXEC SQL END DECLARE SECTION;
+
+	iIdPessoa = idPessoa;
+	iIdItem = idItem;
+	
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+	
+	
+	EXEC SQL 
+		SELECT 
+			idPessoaDePara 
+		INTO 
+			:iIdPessoaDePara 
+		FROM 
+			customer.pessoadepara
+		WHERE
+			idPessoa = :iIdPessoa AND
+			IDPESSOAORIGEM = :iIdPessoa;
+
+	EXEC SQL 
+	SELECT COUNT(1) INTO :iitemExistente FROM VOL.ACESSORAPIDO WHERE
+		IDPESSOADEPARA = :iIdPessoaDePara AND 
+		IDITEMMENU = :iIdItem;
+
+	tuxfw_getlogger()->debug("item = %d existe = %d",iIdItem,iitemExistente);
+
+
+	if(iitemExistente != 0)
+		return 1;
+				
+	if(sqlca.sqlcode)
+		return -1;
+
+	EXEC SQL SELECT Vol.AcessoRapidoSQ.NEXTVAL INTO :iIdAcessoRapido FROM DUAL;
+
+	EXEC SQL 
+		INSERT INTO 
+		Vol.AcessoRapido 
+		(
+			IDACESSORAPIDO, 
+			IDPESSOADEPARA,	
+			IDITEMMENU	
+		)
+		VALUES	
+		(
+			:iIdAcessoRapido,
+			:iIdPessoaDePara,
+			:iIdItem	
+		);
+
+	//EXEC SQL COMMIT;
+	
+	return 1;
+
+sqlErrorConstrutor:
+
+	if(sqlca.sqlcode < 0)
+	{
+		return 0;
+	}
+	else
+	{
+		return -1;
+	}
+}
+
+
+void CAcessoRapido::consultarAcessoRapidoDB( int idPessoa , int idTipoLinha, list <CAcessoRapido> & lstOMenu, int iIdUF, int iIdGrupo)
+{
+/*
+
+  Tem de fazer este join., 
+select * from 
+Vol.ACESSORAPIDO A1, customer.pessoadepara P1
+where a1.IDPESSOADEPARA = p1.IDPESSOADEPARA and idpessoa = 10
+	*/
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+	int  iIdPessoa;
+	int  iIdItemMenu;
+	int  iIdItemMenuPai;
+	int  iIdTipoLinha;
+	int	 iIdUFSQL;
+	char cNmItem[256];
+	char cDsHint[256];	
+	int iConfiguradorMenu = 0;
+	char chrPesquisa[1000]="";
+	int iIdGrupoSQL  = 0;
+	char chrVariavel[10]="";
+	EXEC SQL END DECLARE SECTION;
+
+
+	// valores das chaves da consulta SQL
+
+	memset(cNmItem,					' ', sizeof(cNmItem));
+
+    iIdPessoa = idPessoa;
+    iIdTipoLinha = idTipoLinha;
+	iIdUFSQL = iIdUF;
+	iIdGrupoSQL = iIdGrupo;
+
+	// garante que a lista esta vazia
+	lstOMenu.clear();
+	// marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+
+	EXEC SQL SELECT 
+		DECODE (DSVALORPARAMETRO, NULL, 0, TO_NUMBER(DSVALORPARAMETRO) )
+	INTO
+		:iConfiguradorMenu 
+	FROM
+		APOIO.PARAMETRO
+	WHERE 
+		CDPARAMETRO = 'ConfiguradorMenu';
+
+    
+	tuxfw_getlogger()->debug("iConfiguradorMenu = %d\r\n", iConfiguradorMenu);
+
+	EXEC SQL DECLARE LSTMENU CURSOR FOR
+	SELECT
+		c.IDITEMMENU , 
+		c.NMITEM,
+		NVL(c1.DSURL, ' ') AS DSHINT,
+		NVL(d.IDITEMMENUPAI,0) AS IDITEMMENUPAI
+	FROM
+		Vol.AcessoRapido a, 
+		customer.pessoadepara b, 
+		acesso.itemmenu c, 
+		vol.ItemMenuCanal c1,  
+		vol.MenuTipoLInha c2,
+		acesso.ItemMenuHierarquia d,
+		 vol.ItemMenuUF				 e
+	WHERE 
+		a.IDPESSOADEPARA = b.IDPESSOADEPARA AND
+		a.IDITEMMENU = c.IDITEMMENU AND 
+		c.IDITEMMENU = c1.IDITEMMENU  AND
+		c.idItemMenu = c2.idItemMenu AND
+		c.IDITEMMENU = d.IDITEMMENU AND
+ 	    c.idItemMenu = e.idItemMenu		AND
+		b.IDPESSOA = :iIdPessoa		AND
+		c2.idTipoLinha = :iIdTipoLinha AND
+		c1.idCanal = 15	AND		
+		b.idPessoa = b.idPessoaOrigem AND  	
+		e.IDUF		= :iIdUFSQL;	
+
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	EXEC SQL OPEN LSTMENU;
+
+	for( ;; ) {
+		// varre todos os registros para criar a lista com os Relacionamentos
+
+		EXEC SQL FETCH LSTMENU INTO
+			  :iIdItemMenu
+			, :cNmItem
+			, :cDsHint
+			, :iIdItemMenuPai;
+
+						
+			this->setIdItemMenu(iIdItemMenu);
+			this->setNmItem(CUtil::trim(cNmItem));
+			this->setDsHint(CUtil::trim(cDsHint));
+			this->setIdItemMenuPai(iIdItemMenuPai);
+
+			lstOMenu.push_back( *this );
+		}
+
+	EXEC SQL CLOSE LSTMENU;
+
+
+	if(lstOMenu.size() == 0)
+	{
+
+	/*	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+		
+		EXEC SQL
+		SELECT 
+			DECODE (DSVALORPARAMETRO, NULL, 0, TO_NUMBER(DSVALORPARAMETRO) )
+		INTO
+			:iConfiguradorMenu 
+		FROM
+			APOIO.PARAMETRO
+		WHERE
+			CDPARAMETRO = 'ConfiguradorMenu';*/
+
+		/*if(sqlca.sqlcode)
+			iConfiguradorMenu = 0;*/
+
+
+		EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+		if (iConfiguradorMenu == 1){
+
+			strcpy (chrPesquisa,
+			"SELECT  "
+				"PERMISSAOITEMMENU.IDITEMMENU,   "
+				"ITEMMENU.NMITEM, "
+				"NVL( ITEMMENUCANAL.DSURL, ' ') AS DSHINT,  "
+				"NVL(  ITEMMENUHIERARQUIA.IDITEMMENUPAI, 0) AS IDITEMMENUPAI  " 
+			"FROM  "
+				"ACESSO.ITEMMENU ITEMMENU, "					  
+				"ACESSO.PERMISSAOITEMMENU PERMISSAOITEMMENU,	"
+				"VOL.ITEMMENUCANAL ITEMMENUCANAL,				"
+				"ACESSO.ITEMMENUHIERARQUIA ITEMMENUHIERARQUIA	"	 
+			"WHERE  "
+				"ITEMMENU.IDITEMMENU = PERMISSAOITEMMENU.IDITEMMENU AND "
+				"ITEMMENU.IDITEMMENU =  ITEMMENUCANAL.IDITEMMENU	AND "
+				"PERMISSAOITEMMENU.IDITEMMENU =  ITEMMENUHIERARQUIA.IDITEMMENU AND  "
+				"PERMISSAOITEMMENU.IDCANAL = 15  AND "
+				"ITEMMENUCANAL.IDCANAL = 15 AND "
+				"PERMISSAOITEMMENU.INATIVO = 1 AND "
+				"PERMISSAOITEMMENU.INACESSORAPIDO = 1 AND "
+				"PERMISSAOITEMMENU.IDUF = ");
+				
+				itoa(iIdUFSQL, chrVariavel, 10);
+				strcat(chrPesquisa, chrVariavel);
+
+				strcat(chrPesquisa,				" AND "
+				"PERMISSAOITEMMENU.IDTIPOLINHA  = ");
+
+				itoa(iIdTipoLinha, chrVariavel, 10);
+				strcat(chrPesquisa, chrVariavel);
+
+				strcat(	chrPesquisa,			" AND "
+				"PERMISSAOITEMMENU.IDGRUPO = ");
+			
+				itoa(iIdGrupoSQL, chrVariavel, 10);
+				strcat(chrPesquisa, chrVariavel);
+				
+		}else {
+
+			strcpy (chrPesquisa,
+			"SELECT "
+				"c.IDITEMMENU ,  "
+				"c.NMITEM, "
+				"NVL(c1.DSURL, ' ') AS DSHINT, "
+				"NVL(d.IDITEMMENUPAI, 0) AS IDITEMMENUPAI "
+			"FROM "
+				"Vol.MenuTipoLinha a,  "
+				"acesso.itemmenu c,  "
+				"vol.ItemMenuCanal c1,   "
+				"acesso.ItemMenuHierarquia d, "
+				"vol.ItemMenuUF				 e "
+			 "WHERE  "
+				"a.IDITEMMENU      = c.IDITEMMENU     AND  "
+				"c.IDITEMMENU      = c1.IDITEMMENU    AND  "
+				"c.IDITEMMENU      = d.IDITEMMENU     AND  "
+		  		"c.idItemMenu	   = e.idItemMenu	  AND  "
+				"a.INACESSORAPIDO  = 1				  AND  "
+				"c1.idCanal        = 15				  AND  "  
+				"a.IDTIPOLINHA     =   ");
+
+				itoa(iIdTipoLinha, chrVariavel, 10);
+				strcat(chrPesquisa, chrVariavel);
+
+				itoa(iIdUFSQL, chrVariavel, 10);		
+
+				strcat(chrPesquisa,				" AND "
+				"e.IDUF			=  ");
+				strcat(chrPesquisa, chrVariavel);
+
+	
+		}
+		
+		tuxfw_getlogger()->debug("Pesquisa %s \r\n", chrPesquisa);
+
+
+		EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+	
+		EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+		EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+
+		EXEC SQL DECLARE  LSTMENUP  CURSOR FOR qPesquisa;
+
+		EXEC SQL OPEN  LSTMENUP;
+
+
+		EXEC SQL OPEN LSTMENUP;
+
+		for( ;; ) 
+		{
+
+			EXEC SQL FETCH LSTMENUP INTO
+				  :iIdItemMenu
+				, :cNmItem
+				, :cDsHint
+				, :iIdItemMenuPai;
+							
+				this->setIdItemMenu(iIdItemMenu);
+				this->setNmItem(CUtil::trim(cNmItem));
+				this->setDsHint(CUtil::trim(cDsHint));
+				this->setIdItemMenuPai(iIdItemMenuPai);
+
+				lstOMenu.push_back( *this );
+		}
+
+		EXEC SQL CLOSE LSTMENUP;
+	}
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+int CAcessoRapido::consultarIdUF(int iCdAreaRegistro)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int  iIdUFDB;
+	int  iCdAreaRegistroDB;
+
+	EXEC SQL END DECLARE SECTION;
+
+	iCdAreaRegistroDB = iCdAreaRegistro;
+	
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL WHENEVER NOT FOUND GOTO sqlErrorConstrutor;
+
+
+	EXEC SQL
+		SELECT 
+			   b.idUF
+		INTO
+			   :iIdUFDB	
+		FROM 
+			   apoio.AreaRegistro  	a,
+			   customer.UFOperadora	b
+		WHERE 
+			   a.idUFOperadora = b.idUFOperadora
+		AND	   a.cdAreaRegistro = :iCdAreaRegistroDB;
+
+	return iIdUFDB;
+
+sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+		return -1;
+
+}

@@ -1,0 +1,575 @@
+// Assunto.pcpp: implementation of the CAssunto class.
+//
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw/tuxfw.h>
+#include <Assunto/Assunto.hpp>
+#include <Defines/Defines.h>
+#include <Util/Util.hpp>
+
+EXEC SQL BEGIN DECLARE SECTION;
+
+struct S_PROFILE 
+{
+	int	  iIdAssunto;
+	char  cDsAssunto[256];
+	int   iIdSubAssunto;
+	char  cNmSubAssunto[256];
+	int   iSqApresentacaoSubAssunto;
+	int   iIdAtributo;
+	char  cDsAtributo[256];
+	int   iIdTipoApresentacaoPergunta;
+	int   iSqApresentacaoAtributo;
+	int   iIdValor;
+	char  cDsValor[256];
+	int   iSqApresentacaoValor;
+	int   iInSelecionado;
+};
+
+typedef struct S_PROFILE TP_ARVORE_PROFILE_SQL;
+
+EXEC SQL END DECLARE SECTION;
+
+CAssunto::CAssunto()
+{
+
+}
+
+CAssunto::~CAssunto()
+{
+
+}
+
+
+// metodos public
+void CAssunto::montaArvorePessoaCanal(int idPessoa, int idCanal, XMLGen* xml)
+{
+	this->montaArvorePessoaCanalDB(idPessoa, idCanal, xml);
+}
+
+// metodos private
+
+void CAssunto::consultaArvore(int idCanal, list<TP_ARVORE_PROFILE_SQL> &lstProfile)
+{
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+	int						iIdCanal;
+	int						iIdTipoApresMemo;
+	int						iIdTipoApresTxt;
+	TP_ARVORE_PROFILE_SQL	arvore;
+
+ 	EXEC SQL END DECLARE SECTION;
+
+	lstProfile.clear();
+
+	iIdCanal		 = idCanal;
+	iIdTipoApresMemo = ID_TP_APRES_PERGUNTA_MEMO;
+	iIdTipoApresTxt  = ID_TP_APRES_PERGUNTA_TXT;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL DECLARE LSTPROFILEASS CURSOR FOR
+
+		SELECT DISTINCT
+			ass.idassunto,
+			ass.dsassunto,
+			subAss.idsubassunto, 
+			subAss.nmsubassunto,
+			subAss.sqApresentacao,
+			atr.idatributo,
+			atr.dsatributo,
+			atr.idTipoApresentacaoPergunta,
+			atr.sqApresentacao
+		FROM 
+			customer.assunto			ass,
+			customer.subassunto		subAss,
+			customer.atributo 		atr,
+			customer.atributocanal	atributocanal,
+			apoio.canal 				canal
+		WHERE
+			subass.idassunto = ass.idassunto
+		AND
+			atr.idsubassunto = subass.idsubassunto
+		AND 
+			ass.indisponibilidade = 1
+		AND 
+			subass.indisponibilidade = 1
+		AND
+			atr.indisponibilidade = 1
+		AND
+			atr.idatributo = atributocanal.idatributo
+		AND
+			atributocanal.idcanal = canal.idcanal
+		AND 
+			atributocanal.idcanal = :iIdCanal
+		AND
+		   	( 
+				(atr.idatributo IN (SELECT idatributo FROM customer.valorPossivel where idatributo = atr.idatributo)) 
+					OR
+				(atr.idTipoApresentacaoPergunta = :iIdTipoApresMemo) 
+					OR
+				(atr.idTipoApresentacaoPergunta = :iIdTipoApresTxt) 
+			)    
+		ORDER BY 
+			ass.idAssunto, 
+			subAss.sqApresentacao,
+			atr.sqApresentacao;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	EXEC SQL OPEN LSTPROFILEASS;
+
+	for(;;)
+	{
+		// varre todos os registros para criar o XML
+		EXEC SQL 
+			
+			FETCH LSTPROFILEASS INTO
+				:arvore.iIdAssunto,
+				:arvore.cDsAssunto,
+				:arvore.iIdSubAssunto,
+				:arvore.cNmSubAssunto,
+				:arvore.iSqApresentacaoSubAssunto,
+				:arvore.iIdAtributo,
+				:arvore.cDsAtributo,
+				:arvore.iIdTipoApresentacaoPergunta,
+				:arvore.iSqApresentacaoAtributo;
+
+		lstProfile.push_back(arvore);		
+
+	}
+
+	EXEC SQL CLOSE LSTPROFILEASS;
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode); 
+
+}
+
+
+void CAssunto::consultaArvorePessoaCanalValPosDB(int idPessoa, 
+												 int idCanal,
+												 list<TP_ARVORE_PROFILE_SQL> &lstProfile)
+{ 
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int						iIdPessoa;
+	int						iIdCanal;
+	int						iIdTipoApresMemo;
+	int						iIdTipoApresTxt;
+	TP_ARVORE_PROFILE_SQL	arvore;
+ 	EXEC SQL END DECLARE SECTION;
+
+	iIdPessoa		 = idPessoa;
+	iIdCanal		 = idCanal;
+	iIdTipoApresMemo = ID_TP_APRES_PERGUNTA_MEMO;
+	iIdTipoApresTxt  = ID_TP_APRES_PERGUNTA_TXT;
+
+	lstProfile.clear();
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL DECLARE LSTPROFILEPOS CURSOR FOR
+
+		SELECT DISTINCT
+			ass.idassunto,
+			ass.dsassunto,
+			subAss.idsubassunto, 
+			subAss.nmsubassunto,
+			subAss.sqApresentacao,
+			atr.idatributo,
+			atr.dsatributo,
+			atr.idTipoApresentacaoPergunta,
+			atr.sqApresentacao,
+			NVL(vPos.idvalorpossivel, 0),
+			NVL(vPos.dsvalorpossivel, ' '),
+			NVL(vPos.sqApresentacao, 0) as sqApValPos,
+			NVL(vPesValPos.idPessoa, 0)
+		FROM 
+			customer.assunto					ass,
+			customer.subassunto				subAss,
+			customer.atributo 				atr,
+			customer.valorPossivel			vPos,
+			customer.atributocanal			atributocanal,
+			apoio.canal 						canal,
+			customer.PessoaValorPossivel		vPesValPos
+		WHERE
+			subass.idassunto = ass.idassunto
+		AND
+			atr.idsubassunto = subass.idsubassunto
+		AND
+			vPos.idAtributo = atr.idAtributo
+		AND 
+			ass.indisponibilidade = 1
+		AND 
+			subass.indisponibilidade = 1
+		AND 
+			atr.indisponibilidade = 1	 
+		AND 
+			vPos.indisponibilidade = 1
+		AND
+			atr.idatributo = atributocanal.idatributo
+		AND
+			atributocanal.idcanal = canal.idcanal
+		AND 
+			atributocanal.idcanal = :iIdCanal
+		AND
+			atr.idTipoApresentacaoPergunta <> :iIdTipoApresMemo --validando erro banco
+		AND
+			atr.idTipoApresentacaoPergunta <> :iIdTipoApresTxt  --validando erro banco
+		AND
+ 			vPesValPos.idValorPossivel(+) = vPos.idValorPossivel
+		AND
+			vPesValPos.idPessoa(+) = :iIdPessoa
+		ORDER BY	
+				ass.idAssunto, 
+				subAss.sqApresentacao,
+				atr.sqApresentacao, 
+				sqApValPos;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	EXEC SQL OPEN LSTPROFILEPOS;
+
+	for(;;)
+	{
+		// varre todos os registros para criar o XML
+		EXEC SQL 
+			
+			FETCH LSTPROFILEPOS INTO
+				:arvore.iIdAssunto,
+				:arvore.cDsAssunto,
+				:arvore.iIdSubAssunto,
+				:arvore.cNmSubAssunto,
+				:arvore.iSqApresentacaoSubAssunto,
+				:arvore.iIdAtributo,
+				:arvore.cDsAtributo,
+				:arvore.iIdTipoApresentacaoPergunta,
+				:arvore.iSqApresentacaoAtributo,
+				:arvore.iIdValor,
+				:arvore.cDsValor,
+				:arvore.iSqApresentacaoValor,
+				:arvore.iInSelecionado;
+
+		lstProfile.push_back(arvore);
+
+	}
+
+	EXEC SQL CLOSE LSTPROFILEPOS;
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode); 
+} 
+
+void CAssunto::consultaArvorePessoaCanalValLivreDB(int idPessoa, 
+												   int idCanal,
+												   list<TP_ARVORE_PROFILE_SQL> &lstProfile)
+{ 
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int						iIdPessoa;
+	int						iIdCanal;	
+	int						iIdTipoApresMemo;
+	int						iIdTipoApresTxt;
+	TP_ARVORE_PROFILE_SQL	arvore;
+ 	EXEC SQL END DECLARE SECTION;
+
+	iIdPessoa = idPessoa;
+	iIdCanal  = idCanal;
+	iIdTipoApresMemo = ID_TP_APRES_PERGUNTA_MEMO;
+	iIdTipoApresTxt = ID_TP_APRES_PERGUNTA_TXT;
+
+
+	lstProfile.clear();
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL DECLARE LSTPROFILELIVRE CURSOR FOR
+
+		SELECT DISTINCT
+			ass.idassunto,
+			ass.dsassunto,
+			subAss.idsubassunto, 
+			subAss.nmsubassunto,
+			subAss.sqApresentacao,
+			atr.idatributo,
+			atr.dsatributo,
+			atr.idTipoApresentacaoPergunta,
+			atr.sqApresentacao,
+			NVL(vLivre.idvalorlivre, 0),
+			NVL(vLivre.dsvalor, ' ')
+		FROM 
+			customer.assunto			ass,
+			customer.subassunto		subAss,
+			customer.atributo 		atr,			
+			customer.valorLivre		vLivre,
+			customer.atributocanal	atributocanal,
+			apoio.canal 				canal
+		WHERE
+			subass.idassunto = ass.idassunto
+		AND
+			atr.idsubassunto = subass.idsubassunto
+		AND
+			ass.indisponibilidade = 1
+		AND
+			subass.indisponibilidade = 1
+		AND
+			atr.indisponibilidade = 1
+		AND
+			(
+				atr.idTipoApresentacaoPergunta = :iIdTipoApresMemo
+					OR
+				atr.idTipoApresentacaoPergunta = :iIdTipoApresTxt
+			)
+		AND
+			atr.idatributo = atributocanal.idatributo
+		AND
+			atributocanal.idcanal = canal.idcanal
+		AND 
+			atributocanal.idcanal = :iIdCanal
+		AND
+ 			vLivre.idAtributo(+) = atr.idAtributo
+		AND
+			vLivre.idPessoa(+) = :iIdPessoa
+		ORDER BY	
+				ass.idAssunto, 
+				subAss.sqApresentacao, 
+				atr.sqApresentacao;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	EXEC SQL OPEN LSTPROFILELIVRE;
+
+	for(;;)
+	{
+		// varre todos os registros para criar o XML
+		EXEC SQL 
+			
+			FETCH LSTPROFILELIVRE INTO
+				:arvore.iIdAssunto,
+				:arvore.cDsAssunto,
+				:arvore.iIdSubAssunto,
+				:arvore.cNmSubAssunto,
+				:arvore.iSqApresentacaoSubAssunto,
+				:arvore.iIdAtributo,
+				:arvore.cDsAtributo,
+				:arvore.iIdTipoApresentacaoPergunta,
+				:arvore.iSqApresentacaoAtributo,
+				:arvore.iIdValor,
+				:arvore.cDsValor;
+
+		lstProfile.push_back(arvore);
+
+	}
+
+	EXEC SQL CLOSE LSTPROFILELIVRE;
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode); 
+
+} 
+
+void CAssunto::montaArvorePessoaCanalDB(int idPessoa, int idCanal, XMLGen* xml)
+{
+
+	int   iIdAssuntoAtual	    = -1;
+	int   iIdSubAssuntoAtual	= -1;
+	int   iIdAtributoAtual		= -1;
+
+	int   iIdAssuntoAnterior    = -1;
+	int   iIdSubAssuntoAnterior = -1;
+	int   iIdAtributoAnterior   = -1;
+
+	bool  bSubAssuntoFechado    = false;
+
+	list<TP_ARVORE_PROFILE_SQL>  lstProfileArvore;
+	list<TP_ARVORE_PROFILE_SQL>  lstProfileValPos;
+	list<TP_ARVORE_PROFILE_SQL>  lstProfileValLivre;
+	
+	TP_ARVORE_PROFILE_SQL        arvore;
+	TP_ARVORE_PROFILE_SQL        arvoreValPos;
+	TP_ARVORE_PROFILE_SQL        arvoreValLivre;
+
+	try
+	{
+
+		this->consultaArvore(idCanal, lstProfileArvore);
+
+		this->consultaArvorePessoaCanalValPosDB(idPessoa,
+												idCanal,
+												lstProfileValPos);
+
+		this->consultaArvorePessoaCanalValLivreDB(idPessoa,
+												  idCanal,
+												  lstProfileValLivre);
+
+	}
+	catch(...) {}
+
+	while(lstProfileArvore.size() > 0)
+	{ 
+		// inicializando
+		arvore   = lstProfileArvore.front();
+		
+		// validando assunto
+		if(iIdAssuntoAnterior != arvore.iIdAssunto)
+		{
+			// fechando tag de assunto
+			if(iIdAssuntoAnterior != -1)
+			{
+
+				// fechando tag de subassunto
+
+				xml->closeTag();
+				bSubAssuntoFechado = true;
+
+				///////////////////////////////////////////////////////////////
+
+				// fechando o proprio assunto
+				xml->closeTag();
+			}
+
+			// criando tag de assunto
+			xml->createTag(XML_OUT_ASSUNTO);
+			xml->addItem(XML_OUT_ID_ASSUNTO, arvore.iIdAssunto);
+			xml->addItem(XML_OUT_DS_ASSUNTO, CUtil::trim(arvore.cDsAssunto));
+
+			// offset
+			iIdAssuntoAnterior = arvore.iIdAssunto;
+
+		}
+
+		// validando subassunto
+		if(iIdSubAssuntoAnterior != arvore.iIdSubAssunto)
+		{
+			// fechando tag de subassunto
+			if((iIdSubAssuntoAnterior != -1) && (bSubAssuntoFechado == false))
+			{
+				xml->closeTag();
+			}
+
+			// criando tag de subassunto
+			xml->createTag(XML_OUT_SUB_ASSUNTO);
+			xml->addItem(XML_OUT_ID_SUB_ASSUNTO, arvore.iIdSubAssunto);
+			xml->addItem(XML_OUT_DS_SUB_ASSUNTO, CUtil::trim(arvore.cNmSubAssunto));
+			xml->addItem(XML_OUT_SQ_APRES_SUB_ASSUNTO, arvore.iSqApresentacaoSubAssunto);
+
+			// offset
+			iIdSubAssuntoAnterior = arvore.iIdSubAssunto;
+
+			bSubAssuntoFechado = false;
+		}
+
+		// criando tag de atributo
+		xml->createTag(XML_OUT_ATRIBUTO);
+		xml->addItem(XML_OUT_ID_ATRIBUTO, arvore.iIdAtributo);
+		xml->addItem(XML_OUT_DS_ATRIBUTO, CUtil::trim(arvore.cDsAtributo));
+		xml->addItem(XML_OUT_ID_TP_APRES_ATRIBUTO, arvore.iIdTipoApresentacaoPergunta);
+		xml->addItem(XML_OUT_SQ_APRES_ATRIBUTO, arvore.iSqApresentacaoAtributo);
+
+		if( arvore.iIdTipoApresentacaoPergunta == ID_TP_APRES_PERGUNTA_MEMO ||
+		    arvore.iIdTipoApresentacaoPergunta == ID_TP_APRES_PERGUNTA_TXT )
+		{
+			while(lstProfileValLivre.size() > 0)
+			{
+				arvoreValLivre = lstProfileValLivre.front();
+
+				if(arvoreValLivre.iIdAssunto == arvore.iIdAssunto &&
+				   arvoreValLivre.iIdSubAssunto == arvore.iIdSubAssunto &&
+				   arvoreValLivre.iIdAtributo == arvore.iIdAtributo)
+				{
+					// criando tag de valor possivel
+					xml->createTag(XML_OUT_VALOR_LIVRE);
+					if(arvoreValLivre.iIdValor)
+						xml->addItem(XML_OUT_ID_VALOR_LIVRE, arvoreValLivre.iIdValor);
+					xml->addItem(XML_OUT_DS_VALOR_LIVRE, CUtil::trim(arvoreValLivre.cDsValor));
+					xml->closeTag();
+					
+					lstProfileValLivre.pop_front();
+				}
+				else
+				{
+					break;
+				}
+			}
+
+		}
+		else
+		{ 
+			while(lstProfileValPos.size() > 0)
+			{
+				arvoreValPos = lstProfileValPos.front();
+
+				if(arvoreValPos.iIdAssunto == arvore.iIdAssunto &&
+				   arvoreValPos.iIdSubAssunto == arvore.iIdSubAssunto &&
+				   arvoreValPos.iIdAtributo == arvore.iIdAtributo)
+				{
+					// criando tag de valor possivel
+					xml->createTag(XML_OUT_VALOR_POSSIVEL);
+					xml->addItem(XML_OUT_ID_VALOR_POSSIVEL, arvoreValPos.iIdValor);
+					xml->addItem(XML_OUT_DS_VALOR_POSSIVEL, CUtil::trim(arvoreValPos.cDsValor));
+					
+					if(arvoreValPos.iInSelecionado)
+						xml->addItem(XML_OUT_IN_SEL_VALOR_POSSIVEL, 1);
+					else
+						xml->addItem(XML_OUT_IN_SEL_VALOR_POSSIVEL, 0);
+
+					xml->addItem(XML_OUT_STATUS_VALOR_POSSIVEL, "");
+					
+					xml->closeTag();
+					
+					lstProfileValPos.pop_front();
+				}
+				else
+				{
+					break;
+				}
+
+		} 
+
+		}
+		
+		// criando tag de atributo
+		xml->createTag(XML_OUT_ID_VAL_SEL_ATRIBUTO);
+		xml->closeTag();
+		
+		// fechando tag de atributo
+		xml->closeTag();
+
+		lstProfileArvore.pop_front();
+	}
+	
+	if(iIdAssuntoAnterior != -1)
+	{
+		// se criou xml vamos fechar o fim
+
+		// fechando subassunto
+		xml->closeTag();
+
+		// fechando assunto
+		xml->closeTag();
+
+	}
+
+	return;
+
+}
+
