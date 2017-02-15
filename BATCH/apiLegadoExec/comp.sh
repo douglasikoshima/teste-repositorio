@@ -1,1 +1,0 @@
-xlC -I$TUXDIR/include -Iinclude -o apiLegadoExec -qstaticinline -L${TUXDIR}/lib -q64 -D_LARGE_FILES -D__XCOFF32__ -D__XCOFF64__ src/Util.cpp src/TuxCallerDef.cpp src/TuxCaller.cpp src/TuxReporter.cpp -brtl $TUXDIR/lib/wstpinit.o -lwsc -lbuft -lwsc  -lgpnet  -lfml -lfml32 -lengine  -lpthread

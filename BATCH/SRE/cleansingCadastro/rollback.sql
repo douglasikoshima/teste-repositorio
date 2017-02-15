@@ -1,8 +1,0 @@
-spool rollback.dat
-SELECT  
-    REGISTRO||'|'||TABELA||'|'||CODIGO||'|'||DATA_HORA||'|'||MOTIVO
-FROM
-ADM_PROJECT.LOG_ROLLBACK P
-WHERE
-P.MOTIVO IS NOT NULL;
-spool off
