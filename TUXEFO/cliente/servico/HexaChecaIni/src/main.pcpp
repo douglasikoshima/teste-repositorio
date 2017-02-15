@@ -1,0 +1,171 @@
+
+ /* Serviço de batimento de HEXA entre HLR, Billing e FO 
+ * Versão inicial, 28/05/2004
+ */
+
+//* Review:
+//*
+//* Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+
+#include "../include/HexaChecaIni.h"
+
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/ConsultaHexa.h"
+#include "../../negocio/clienteCmm/include/MDFive.h"
+
+//Foi alterado o arquivo de AtlysHexa para ConsultaHexa
+//apenas por causa da segmentação do TuxProxy em TUXATLYSBE e TUXNGINBE
+//ATUALIZAR O PROJETO VISUAL C++ (CASO SEJA USADO)
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/HLRHexa.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/MonitoramentoHexa.h";
+
+DECLARE_TUXEDO_SERVICE(HexaChecaIni);
+
+
+
+void implHexaChecaIni::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+    CMonitoramentoHexa oMonitHex;
+
+    char* pcIdLinha=0;
+    int iIdLinha;
+    char* pcHexaFO = NULL;
+    char  pcHLRHexa[255];
+    char  pcAtlysHexa[255];
+    char szSgSerialMD5[32 + 1]; // recebe o resultado em MD5
+
+    try{
+
+#ifndef WIN32 // Não é possível consultar HEXA em desenvolvimento. Mar/2006 - Cassio
+
+        ULOG_START( "implHexaChecaIni::Execute()" );
+        ULOG("MD5");
+        
+        // Navega o XML e recupera as informacoes obrigatorias
+        pcIdLinha = walkTree(dnode, XML_IN_ID_LINHA, 0);
+        if (pcIdLinha == NULL) {
+            ERROR(NRO_ID_LINHA_NE);
+            TAG_INEXISTENTE(XML_IN_ID_LINHA);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if (!*pcIdLinha) {
+            ERROR(NRO_ID_LINHA_VV);
+            TAG_VALOR_VAZIO(XML_IN_ID_LINHA);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ((iIdLinha = atoi(pcIdLinha)) <= 0) {
+            ERROR(NRO_ID_LINHA_VI);
+            TAG_VALOR_INVALIDO(XML_IN_ID_LINHA);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        XMLString::release(&pcIdLinha);
+        pcIdLinha = 0;
+
+        //Zerando as variaveis que irão receber os valores Hexa
+        memset( pcHLRHexa, 0, sizeof( pcHLRHexa ) );
+        memset( pcAtlysHexa, 0, sizeof( pcAtlysHexa ) );
+
+        memset(szSgSerialMD5, 0x00, sizeof(szSgSerialMD5));
+        // Checa se é para fazer batimento com o Hexa digitado.
+        pcHexaFO = walkTree(dnode, XML_IN_HEXA_FO, 0);
+        if (pcHexaFO) {
+            upper(pcHexaFO);
+            ULOG("Hexa recebido do FO: %s", pcHexaFO);
+
+            CMDFive clMDFive;
+            ULOG("MD5->pcHexaFO[%s]", pcHexaFO);
+            strcpy(szSgSerialMD5, clMDFive.getMD5(pcHexaFO));
+            ULOG("MD5->szSgSerialMD5[%s]", szSgSerialMD5);
+        }
+
+        // Registra a consulta ao Hexa no banco de dados
+        oMonitHex.setIdUsuario(atoi(getUser()));
+        oMonitHex.setCdHexa(szSgSerialMD5);
+        oMonitHex.setIdLinha(iIdLinha);
+        oMonitHex.setUsuarioAlteracao(getUser());
+        oMonitHex.registraConsulta();
+
+        // Cria Início do XML.
+        xml_g->createTag(XML_OUT_ROOT);
+        xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+        xml_g->createTag(XML_OUT_RECV);
+
+        CHLRHexa poHLRHexa(iIdLinha);
+        CConsultaHexa poConsultaHexa(iIdLinha, getUser());
+
+        // Checa HLR/Billing
+        if( poHLRHexa.getHexa() != NULL )
+        {
+    		strcpy( pcHLRHexa  , poHLRHexa.getHexa() );
+    		ULOG("poHLRHexa.getHexa():[%s]", poHLRHexa.getHexa() );
+    	}
+    	else
+    		ULOG("poHLRHexa.getHexa():[]:NULL" );
+
+        if( poConsultaHexa.getHexa() != NULL )
+        {
+	    	strcpy( pcAtlysHexa, poConsultaHexa.getHexa() );
+	    	ULOG("poConsultaHexa.getHexa():[%s]", poConsultaHexa.getHexa() );
+	    }
+	    else
+    		ULOG("poConsultaHexa.getHexa():[]:NULL" );
+
+        upper(pcHLRHexa);
+        upper(pcAtlysHexa);
+
+        if( !strcmp( pcHLRHexa, pcAtlysHexa ) )
+            xml_g->addItem(XML_OUT_BILLING_HLR, XML_OUT_TRUE);
+        else
+            xml_g->addItem(XML_OUT_BILLING_HLR, XML_OUT_FALSE);
+
+        // Checa HLR/FO
+        if( pcHexaFO != NULL )
+            if( !strcmp( pcHLRHexa, pcHexaFO ) )
+                xml_g->addItem(XML_OUT_HLR_FO, XML_OUT_TRUE);
+            else
+                xml_g->addItem(XML_OUT_HLR_FO, XML_OUT_FALSE);
+
+        // Checa Billing/FO
+        if( pcHexaFO != NULL )
+            if( !strcmp( pcAtlysHexa, pcHexaFO ) )
+                xml_g->addItem(XML_OUT_BILLING_FO, XML_OUT_TRUE);
+            else
+                xml_g->addItem(XML_OUT_BILLING_FO, XML_OUT_FALSE);
+
+        xml_g->closeTag();
+        xml_g->closeTag();
+
+        //Liberando memoria
+        if( pcHexaFO ) XMLString::release(&pcHexaFO);
+
+        ULOG_END( "implHexaChecaIni::Execute()" );
+
+#endif // Mar/2006 - Cassio
+
+    }
+	catch(TuxException* tE) {
+		// Erro na recuperação do Hexa do sistema de Atlys 
+		xml_g->addItem("erro", tE->getMessage());
+		xml_g->closeTag();
+		xml_g->closeTag();
+    	setStatusCode("24I0000", "Execução OK");
+
+        if( pcIdLinha) XMLString::release(&pcIdLinha);
+        if( pcHexaFO) XMLString::release(&pcHexaFO);
+
+        return; 
+	}
+    catch(...) {
+        if( pcIdLinha) XMLString::release(&pcIdLinha);
+        if( pcHexaFO) XMLString::release(&pcHexaFO);
+
+        throw;
+    }
+
+    // Execução OK.
+    setStatusCode("24I0000", "Execução OK");
+}

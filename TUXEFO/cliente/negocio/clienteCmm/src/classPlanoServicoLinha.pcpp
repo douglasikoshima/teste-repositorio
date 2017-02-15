@@ -1,0 +1,432 @@
+//* Review:
+//*
+//* Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../include/Exception.h"
+
+#undef MSG_NONE
+#define MSG_NONE
+#include "../include/Messages.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../include/classPlanoServicoLinha.h";
+
+//
+// Construtor e Destrutor
+CPlanoServicoLinha::CPlanoServicoLinha()
+{
+    memset(&tTabela  , 0x00, sizeof(tTabela));
+}
+
+CPlanoServicoLinha::~CPlanoServicoLinha()
+{
+}
+
+//
+// Metodos getter
+char* CPlanoServicoLinha::getIdServicoLinha()
+{
+    return ((char *)tTabela.sIdServicoLinha.arr);
+}
+char* CPlanoServicoLinha::getInPlano()
+{
+    return ((char *)tTabela.sInPlano.arr);
+}
+char* CPlanoServicoLinha::getIdPacote()
+{
+    return ((char *)tTabela.sIdPacote.arr);
+}
+char* CPlanoServicoLinha::getNmServico()
+{
+    return ((char *)tTabela.sNmServico.arr);
+}
+char* CPlanoServicoLinha::getDataFinal()
+{
+    return ((char *)tTabela.sDataFinal.arr);
+}
+
+
+//
+// Metodos setter
+void CPlanoServicoLinha::setIdServicoLinha(char* pDado)
+{
+    if(pDado == NULL)
+        tTabela.iIdServicoLinha_ora= -1;
+    else {
+        STRCPY_TO_ORA(tTabela.sIdServicoLinha, pDado);
+        tTabela.iIdServicoLinha_ora = 0;
+    }
+}
+void CPlanoServicoLinha::setInPlano(char* pDado)
+{
+    if(pDado == NULL)
+        tTabela.iInPlano_ora= -1;
+    else {
+        STRCPY_TO_ORA(tTabela.sInPlano, pDado);
+        tTabela.iInPlano_ora= 0;
+    }
+}
+void CPlanoServicoLinha::setIdPacote(char* pDado)
+{
+    if(pDado == NULL)
+            tTabela.iIdPacote_ora= -1;
+    else {
+        STRCPY_TO_ORA(tTabela.sIdPacote, pDado);
+        tTabela.iIdPacote_ora= 0;
+    }
+}
+void CPlanoServicoLinha::setNmServico(char* pDado)
+{
+    if(pDado == NULL)
+        tTabela.iNmServico_ora= -1;
+    else {
+        STRCPY_TO_ORA(tTabela.sNmServico, pDado);
+        tTabela.iNmServico_ora= 0;
+    }
+}
+void CPlanoServicoLinha::setDataFinal(char* pDado)
+{
+    if(pDado == NULL)
+        tTabela.iDataFinal_ora= -1;
+    else {
+        STRCPY_TO_ORA(tTabela.sDataFinal, pDado);
+        tTabela.iDataFinal_ora= 0;
+    }
+}
+
+
+//Metodos de acesso ao Banco de Dados
+
+//-----------------------------------------------------------------------------------------
+//* Especiticacion:
+//*     Nome: RecuperarTodosServico
+//*     Parametro:
+//*     Retorno: OK = 
+//*              sqlca.sqlcode = codigo de erro do proprio Oracle
+//*
+//-----------------------------------------------------------------------------------------
+//* Purpose: Lista todos os Servicos ativos.
+//*
+//-----------------------------------------------------------------------------------------
+//* Process: inPlano = 0 and inContrato = 0 ==> Servico
+//*          Utilizando como base as tabelas PlanoServicoLinhaB01 e PacoteB01
+//-----------------------------------------------------------------------------------------
+CPlanoServicoLinha* CPlanoServicoLinha::RecuperarTodosServico(int* iNroObjetos, char* pIdLinha)
+{
+struct sqlca sqlca;
+CPlanoServicoLinha* oLocal = NULL;
+int iNroObjLocal = 1;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    TTABPLANOSERVICOLINHA tSt;
+	VARCHAR sIdLinha[LEN_NUMBER + LEN_EOS];
+EXEC SQL END DECLARE SECTION;
+
+    memset(&tSt, 0x00, sizeof(tSt));
+
+	STRCPY_TO_ORA(sIdLinha, pIdLinha);
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara o Driving Cursor
+	EXEC SQL DECLARE cDriving CURSOR FOR
+	SELECT
+		PLANOSERVICOLINHA.IDSERVICOLINHA,
+		PLANOSERVICOLINHA.INPLANO,
+		0 IDPACOTE,
+		PLANOSERVICO.NMSERVICO,
+		TO_CHAR(PLANOSERVICOLINHA.DTVIGENCIAFINAL, 'DD/MM/YYYY'),
+		PLANOSERVICO.DTEXPIRACAO
+	FROM 
+		LINHA.PLANOSERVICOLINHA PLANOSERVICOLINHA,
+		LINHA.PLANOSERVICO PLANOSERVICO
+	WHERE 
+		PLANOSERVICO.IDSERVICO = PLANOSERVICOLINHA.IDSERVICO
+	AND 
+		PLANOSERVICOLINHA.INPLANO = 0
+	AND 
+		( PLANOSERVICOLINHA.INCONTRATO = 0 OR PLANOSERVICOLINHA.INCONTRATO IS NULL )
+	AND 
+		( DTVIGENCIAFINAL >= SYSDATE OR DTVIGENCIAFINAL IS NULL )
+	AND 
+		( PLANOSERVICO.DTEXPIRACAO IS NULL )
+	AND 
+		IDLINHATELEFONICA = :sIdLinha;
+
+	EXEC SQL OPEN cDriving;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;; iNroObjLocal++) 
+    {
+		
+		EXEC SQL FETCH cDriving 
+                  INTO :tSt.sIdServicoLinha:tSt.iIdServicoLinha_ora,
+					   :tSt.sInPlano:tSt.iInPlano_ora,
+					   :tSt.sIdPacote:tSt.iIdPacote_ora,
+					   :tSt.sNmServico:tSt.iNmServico_ora,
+					   :tSt.sDataFinal:tSt.iDataFinal_ora;
+
+		// Aloca memória para o objeto atual.
+		if ((oLocal = (CPlanoServicoLinha*) realloc((void *)oLocal, (sizeof(CPlanoServicoLinha) * iNroObjLocal))) != NULL)
+        {
+            int index = iNroObjLocal-1;
+			oLocal[index].setIdServicoLinha((char*)tSt.sIdServicoLinha.arr);
+			oLocal[index].setInPlano((char*)tSt.sInPlano.arr);
+			oLocal[index].setIdPacote((char*)tSt.sIdPacote.arr);
+			oLocal[index].setNmServico((char*)tSt.sNmServico.arr);
+			oLocal[index].setDataFinal((char*)tSt.sDataFinal.arr);
+		} 
+        else 
+        {
+			if (oLocal) 
+                free(oLocal);
+
+	        EXEC SQL CLOSE cDriving;
+			ERROR(NRO_MEMORIA);
+			throw TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+		}
+	}
+
+	EXEC SQL CLOSE cDriving;
+
+	*iNroObjetos = iNroObjLocal - 1;
+	return oLocal;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+//-----------------------------------------------------------------------------------------
+//* Especiticacion:
+//*     Nome: RecuperarTodosPlServico
+//*     Parametro:
+//*     Retorno: OK = 
+//*              sqlca.sqlcode = codigo de erro do proprio Oracle
+//*
+//-----------------------------------------------------------------------------------------
+//* Purpose: Lista todos os Plano de Servico ativos.
+//*
+//-----------------------------------------------------------------------------------------
+//* Process: inPlano = 1 ==> Plano Servico
+//*          Utilizando como base as tabela PlanoServicoLinhaB01
+//-----------------------------------------------------------------------------------------
+CPlanoServicoLinha* CPlanoServicoLinha::RecuperarTodosPlServico(int* iNroObjetos, char* pIdLinha)
+{
+struct sqlca sqlca;
+CPlanoServicoLinha* oLocal = NULL;
+int iNroObjLocal = 1;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    TTABPLANOSERVICOLINHA tSt;
+	VARCHAR sIdLinha[LEN_NUMBER + LEN_EOS];
+EXEC SQL END DECLARE SECTION;
+
+    memset(&tSt, 0x00, sizeof(tSt));
+
+	STRCPY_TO_ORA(sIdLinha, pIdLinha);
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara o Driving Cursor
+	EXEC SQL DECLARE cDriving1 CURSOR FOR
+	SELECT
+	    PLANOSERVICO.NMSERVICO,
+	    TO_CHAR(PLANOSERVICOLINHA.DTVIGENCIAFINAL, 'DD/MM/YYYY')
+	FROM
+	    LINHA.LINHATELEFONICA LINHATELEFONICA,
+	    LINHA.PLANOSERVICOLINHA PLANOSERVICOLINHA,
+	    LINHA.PLANOSERVICO PLANOSERVICO
+	WHERE LINHATELEFONICA.IDLINHATELEFONICA = PLANOSERVICOLINHA.IDLINHATELEFONICA
+	AND   PLANOSERVICOLINHA.IDSERVICO = PLANOSERVICO.IDSERVICO
+	AND   PLANOSERVICOLINHA.DTEXPIRACAO IS NULL
+	AND ( PLANOSERVICOLINHA.DTVIGENCIAFINAL >= SYSDATE OR PLANOSERVICOLINHA.DTVIGENCIAFINAL IS NULL )
+	AND   PLANOSERVICOLINHA.INPLANO = 1
+	AND   LINHATELEFONICA.IDLINHATELEFONICA = :sIdLinha;
+
+	EXEC SQL OPEN cDriving1;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;; iNroObjLocal++) 
+    {
+		
+		EXEC SQL FETCH cDriving1
+                  INTO :tSt.sNmServico:tSt.iIdServicoLinha_ora,
+					   :tSt.sDataFinal:tSt.iDataFinal_ora;
+
+		// Aloca memória para o objeto atual.
+		if ((oLocal = (CPlanoServicoLinha*) realloc((void *)oLocal, (sizeof(CPlanoServicoLinha) * iNroObjLocal))) != NULL)
+        {
+			oLocal[iNroObjLocal-1].setNmServico((char*)tSt.sNmServico.arr);
+			oLocal[iNroObjLocal-1].setDataFinal((char*)tSt.sDataFinal.arr);
+		} 
+        else 
+        {
+			if (oLocal) 
+                free(oLocal);
+
+	        EXEC SQL CLOSE cDriving1;
+			ERROR(NRO_MEMORIA);
+			throw TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+		}
+	}
+
+	EXEC SQL CLOSE cDriving1;
+
+	*iNroObjetos = iNroObjLocal - 1;
+	return oLocal;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+//-----------------------------------------------------------------------------------------
+//* Especiticacion:
+//*     Nome: RecuperarTodosContrato
+//*     Parametro:
+//*     Retorno: OK = 
+//*              sqlca.sqlcode = codigo de erro do proprio Oracle
+//*
+//-----------------------------------------------------------------------------------------
+//* Purpose: Lista todos os Contratos ativos.
+//*
+//-----------------------------------------------------------------------------------------
+//* Process: inContrato = 1 ==> Contrato
+//*          Utilizando como base as tabela PlanoServicoLinhaB01
+//-----------------------------------------------------------------------------------------
+CPlanoServicoLinha* CPlanoServicoLinha::RecuperarTodosContrato(int* iNroObjetos, char* pIdLinha)
+{
+struct sqlca sqlca;
+CPlanoServicoLinha* oLocal = NULL;
+int iNroObjLocal = 1;
+
+EXEC SQL BEGIN DECLARE SECTION;
+    TTABPLANOSERVICOLINHA tSt;
+	VARCHAR sIdLinha[LEN_NUMBER + LEN_EOS];
+EXEC SQL END DECLARE SECTION;
+
+    memset(&tSt, 0x00, sizeof(tSt));
+
+	STRCPY_TO_ORA(sIdLinha, pIdLinha);
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara o Driving Cursor
+	EXEC SQL DECLARE cDriving2 CURSOR FOR
+	SELECT
+	    PLANOSERVICO.NMSERVICO,
+	    TO_CHAR(PLANOSERVICOLINHA.DTVIGENCIAFINAL, 'DD/MM/YYYY')
+	FROM
+	    LINHA.PLANOSERVICOLINHA PLANOSERVICOLINHA,
+	    LINHA.PLANOSERVICO PLANOSERVICO
+	WHERE PLANOSERVICOLINHA.IDSERVICO = PLANOSERVICO.IDSERVICO
+	AND   PLANOSERVICOLINHA.DTEXPIRACAO IS NULL
+	AND ( PLANOSERVICOLINHA.DTVIGENCIAFINAL >= SYSDATE OR PLANOSERVICOLINHA.DTVIGENCIAFINAL IS NULL )
+	AND   PLANOSERVICOLINHA.INPLANO = 1
+	AND   PLANOSERVICOLINHA.IDLINHATELEFONICA = :sIdLinha;
+
+	EXEC SQL OPEN cDriving2;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;; iNroObjLocal++) 
+    {
+		EXEC SQL FETCH cDriving2
+                  INTO :tSt.sNmServico:tSt.iIdServicoLinha_ora,
+					   :tSt.sDataFinal:tSt.iDataFinal_ora;
+
+		// Aloca memória para o objeto atual.
+		if ((oLocal = (CPlanoServicoLinha*) realloc((void *)oLocal, (sizeof(CPlanoServicoLinha) * iNroObjLocal))) != NULL)
+        {
+			oLocal[iNroObjLocal-1].setNmServico((char*)tSt.sNmServico.arr);
+			oLocal[iNroObjLocal-1].setDataFinal((char*)tSt.sDataFinal.arr);
+		} 
+        else 
+        {
+			if (oLocal) 
+                free(oLocal);
+
+	        EXEC SQL CLOSE cDriving2;
+			ERROR(NRO_MEMORIA);
+			throw TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+		}
+	}
+
+	EXEC SQL CLOSE cDriving2;
+
+	*iNroObjetos = iNroObjLocal - 1;
+	return oLocal;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+
+//-----------------------------------------------------------------------------------------
+//* Especiticacion:
+//*     Nome: RecuperarTodosPlServico
+//*     Parametro:
+//*     Retorno: OK = 
+//*              sqlca.sqlcode = codigo de erro do proprio Oracle
+//*
+//-----------------------------------------------------------------------------------------
+//* Purpose: Lista somente um Plano de Servico ativo.
+//*
+//-----------------------------------------------------------------------------------------
+//* Process: inPlano = 1 ==> Plano Servico
+//*          Utilizando como base as tabela PlanoServicoLinhaB01
+//-----------------------------------------------------------------------------------------
+int CPlanoServicoLinha::buscarPlanoServico(char* pIdLinha)
+{
+struct sqlca sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+	VARCHAR sIdLinha[LEN_NUMBER + LEN_EOS];
+EXEC SQL END DECLARE SECTION;
+
+	STRCPY_TO_ORA(sIdLinha, pIdLinha);
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	// Declara o Driving Cursor
+	EXEC SQL
+	SELECT
+	    PLANOSERVICO.NMSERVICO
+	INTO 
+		:tTabela.sNmServico:tTabela.iIdServicoLinha_ora
+	FROM
+	    LINHA.LINHATELEFONICA LINHATELEFONICA,
+	    LINHA.PLANOSERVICOLINHA PLANOSERVICOLINHA,
+	    LINHA.PLANOSERVICO PLANOSERVICO
+	WHERE PLANOSERVICOLINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA
+	AND   PLANOSERVICOLINHA.IDSERVICO = PLANOSERVICO.IDSERVICO
+	AND   PLANOSERVICOLINHA.DTEXPIRACAO IS NULL
+	AND ( PLANOSERVICOLINHA.DTVIGENCIAFINAL >= SYSDATE OR PLANOSERVICOLINHA.DTVIGENCIAFINAL IS NULL )
+	AND   PLANOSERVICOLINHA.INPLANO = 1
+	AND   LINHATELEFONICA.IDLINHATELEFONICA = :sIdLinha
+	AND ROWNUM < 2;
+
+	return OK;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

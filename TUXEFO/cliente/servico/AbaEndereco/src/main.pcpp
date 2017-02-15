@@ -1,0 +1,766 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+
+#include <iostream>
+#include <string>
+using namespace std;
+
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+
+#include "../include/AbaEndereco.h"
+#include "../../negocio/clienteCmm/include/FilaSetClientInfoPRE.h"
+
+// Prototipo
+int sendXML( char *pXmlSaida, char *pRetMsg, long * iErrorNumber );
+int RecadastroCPF( char * idPessoaPrm, char * nrCPFPrm );
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE ../../../negocio/clienteCmm/include/classPessoaEndereco.h;
+
+DECLARE_TUXEDO_SERVICE( AbaEndereco );
+
+void implAbaEndereco::Execute( DOMNode * pDnode, XMLGen * pXmlG )
+{
+    ULOG_START( "implAbaEndereco::Execute()" );
+
+    XMLGen *pclXmlGenSetInterception=NULL;
+    XMLGen *pclXmlGenSetClient=NULL;
+
+    TuxMessage *inputMessageHabLinha=NULL;
+    TuxRemoteService *remoteServiceHabLinha=NULL;
+
+    /* Usadas no acesso ao NGIN */
+    char *pStatusCode=NULL;
+    char *pStatusText=NULL;
+    int iRetSistemaLegado=0;
+    int iTamSaidaSetClient=0;
+
+    char *pTree;
+    char szAcao[10 + 1];
+    char szAux[512 + 1];
+    char szAuxNGIN[4000 + 1];
+    char szAuxNGINTmp[4000 + 1];
+    char szIdContaEndereco[38 + 1];
+    char szIdLinhaTelefonica[38 + 1];
+    char szIdPessoa[38 + 1];
+    char szIdPessoaEnderecoPrincipal[38 + 1];
+    char szInEnderecoPrincipal[1 + 1];
+    char szMessage[LEN_RETURN_MESSAGE + LEN_EOS];
+    char szNrLinha[21 + 1];
+    char nrCPF_Recadastro[32];
+    char szRetMsg[256];
+    char szXml[256];
+    char bfAux[32];
+    long iRetSendXML = 0;
+
+    int iFlagIE=0;
+    int iTipoPessoa=0;
+
+    CFilaSetClientInfo *pclFilaSetClientInfo=NULL;
+    CPessoaEndereco oPessEnd;
+    TDadosDocumento *ptDadosDocumento=NULL;
+    TDadosNGIN tDadosNGIN;
+
+    memset(szIdPessoa, 0x00, sizeof(szIdPessoa));
+    memset(szIdPessoaEnderecoPrincipal, 0x00, sizeof(szIdPessoaEnderecoPrincipal));
+    memset(szInEnderecoPrincipal, 0x00, sizeof(szInEnderecoPrincipal));
+    memset(szIdContaEndereco, 0x00, sizeof(szIdContaEndereco));
+    memset(szIdLinhaTelefonica, 0x00, sizeof(szIdLinhaTelefonica));
+    memset( nrCPF_Recadastro, 0x0, sizeof(nrCPF_Recadastro) );
+
+
+    // referente a acao
+    GETTREE(szAcao, pDnode, "acao", 0, OBRIGATORIO, "acao"); ULOG("szAcao[%s]", szAcao);
+    upper(szAcao);
+
+
+    try {
+        ULOG("local1");
+        if( !strcmp(szAcao, "INCLUIR") || !strcmp(szAcao, "ALTERAR") )
+        {
+            // referente a nrLinha
+            GETTREE(szNrLinha, pDnode, "nrLinha", 0, OBRIGATORIO, "nrLinha");
+
+            // referente a idTipoEndereco
+            GETTREE(szAux, pDnode, "idTipoEndereco", 0, OBRIGATORIO, "idTipoEndereco");
+            oPessEnd.setIdTipoEndereco(szAux);
+
+            // referente a idPais
+            GETTREE(szAux, pDnode, "idPais", 0, OBRIGATORIO, "idPais");
+            oPessEnd.setIdPais(szAux);
+
+            // referente a idUF
+            GETTREE(szAux, pDnode, "idUF", 0, OBRIGATORIO, "idUF");
+            oPessEnd.setIdUF(szAux);
+
+            // referente a nmTipoLogradouro
+            GETTREE(szAux, pDnode, "nmTipoLogradouro", 0, NOBRIGATORIO, "");
+            oPessEnd.setNmTipoLogradouro(szAux);
+
+            // referente a cdLogradouro
+            GETTREE(szAux, pDnode, "codLogradouro", 0, NOBRIGATORIO, "");
+            oPessEnd.setCodLogradouro(szAux);
+
+            // referente a inCnl
+            GETTREE(szAux, pDnode, "inCnl", 0, NOBRIGATORIO, "");
+            oPessEnd.setInCnl(szAux);
+
+            // referente a nmTipoLogradouro
+            GETTREE(szAux, pDnode, "inCodigoIBGE", 0, NOBRIGATORIO, "");
+            oPessEnd.setInCodigoIBGE(szAux);
+
+            // referente a nmTituloLogradouro
+            GETTREE(szAux, pDnode, "nmTituloLogradouro", 0, NOBRIGATORIO, "");
+            oPessEnd.setNmTituloLogradouro(szAux);
+
+            // referente a nmLogradouro
+            GETTREE(szAux, pDnode, "nmLogradouro", 0, NOBRIGATORIO, "");
+            oPessEnd.setNmLogradouro(szAux);
+
+            // referente a nrEndereco
+            GETTREE(szAux, pDnode, "nrEndereco", 0, NOBRIGATORIO, "");
+            oPessEnd.setNrEndereco(szAux);
+
+            // referente a dsEnderecoComplemento
+            GETTREE(szAux, pDnode, "dsEnderecoComplemento", 0, NOBRIGATORIO, "");
+            oPessEnd.setDsEnderecoComplemento(szAux);
+
+            // referente a nmBairro
+            GETTREE(szAux, pDnode, "nmBairro", 0, NOBRIGATORIO, "");
+            oPessEnd.setNmBairro(szAux);
+
+            // referente a nrCEP
+            GETTREE(szAux, pDnode, "nrCEP", 0, NOBRIGATORIO, "");
+            oPessEnd.setNrCep(szAux);
+
+            // referente a nmMunicipio
+            GETTREE(szAux, pDnode, "nmMunicipio", 0, NOBRIGATORIO, "");
+            oPessEnd.setNmMunicipio(szAux);
+
+            // Guarda o usuario que esta executando esse servico
+            oPessEnd.setUsuarioAlteracao(getUser());
+
+            /* Ajusta o CPF de RECADASTRAMENTO */
+            GETTREE(szAux, pDnode, "CPFRECADASTRO", 0, NOBRIGATORIO, "");
+            if ( szAux[0] != 0x0 )
+            {
+                sprintf( nrCPF_Recadastro, "%s", szAux );
+            }
+
+            // referente a inEnderecoPrincipal (endereco principal do cliente)
+            GETTREE(szInEnderecoPrincipal, pDnode, "inEnderecoPrincipal", 0, NOBRIGATORIO, "");
+            if(strlen(szInEnderecoPrincipal) > 0) {
+                GETTREE(szIdPessoa, pDnode, "idPessoa", 0, OBRIGATORIO, "idPessoa");
+            }
+
+            if(!strcmp(szAcao, "INCLUIR"))
+            {
+                GETTREE(szAux, pDnode, "idPessoa", 0, OBRIGATORIO, "idPessoa");
+                oPessEnd.setIdPessoa(szAux);
+
+                if(oPessEnd.Incluir() != OK)
+                    throw new TuxBasicSvcException("00E0000", "Nao foi possivel inserir nenhum registro");
+
+                strcpy(szIdPessoaEnderecoPrincipal, oPessEnd.getIdEndereco());
+            }
+            else // ALTERAR
+            {
+                // referente a idEndereco
+                GETTREE(szAux, pDnode, "idEndereco", 0, OBRIGATORIO, "idEndereco");
+                strcpy(szIdPessoaEnderecoPrincipal, szAux);
+                oPessEnd.setIdEndereco(szAux);
+
+
+                if(oPessEnd.existePessoaEnderecoIdSistemaOrigem1() == true)
+                    throw new TuxBasicSvcException("00E0000", "Nao é possivel alterar IdSistemaOrigem = 1 (Atlys)");
+
+                if(oPessEnd.existePessoaEnderecoIdSistemaOrigem4ou7() == true)
+                    throw new TuxBasicSvcException("00E0000", "Esta Informação esta sincronizada com o Billing. Alteração NÃO permitida!");
+
+                if(oPessEnd.Alterar() == NOK)
+                    throw new TuxBasicSvcException("00E0000", "Nao foi possivel alterar nenhum registro");
+
+                if(oPessEnd.existePessoaEnderecoIdSistemaOrigem7() == true)
+                {
+                    if(oPessEnd.existeCEnderecoePessoaIdSO7() == true)
+                    {
+                        /* Busca o tipo de pessoa fisica(1)/juridica(2) */
+                        if(oPessEnd.buscaTipoPessoa(&iTipoPessoa) == false)
+                            throw new TuxBasicSvcException("00E0000", "registro nao encontrado em buscaTipoPessoa");
+
+
+                        if(iTipoPessoa == 1) /* Pessoa Fisica */
+                        {
+                            if(oPessEnd.buscaDadosNGINPessoaFisica(&tDadosNGIN) == false)
+                                throw new TuxBasicSvcException("00E0000", "registro nao encontrado em buscaDadosNGINPessoaFisica");
+
+                            sprintf(szAuxNGIN,
+                                "<msg>"
+                                "<ProxyOperacao>setCliente</ProxyOperacao>"
+                                "<usuario>FO</usuario>"
+                                "<ProxyLinha>%s</ProxyLinha>"
+
+                                "<logradouro>%s</logradouro>"
+                                "<cdLogradouro>%s</cdLogradouro>"
+                                "<inCnl>%s</inCnl>"
+                                "<cdIbge>%s</cdIbge>"
+                                "<endereco>%s</endereco>"
+                                "<complemento>%s</complemento>"
+                                "<bairro>%s</bairro>"
+                                "<CEP>%s</CEP>"
+                                "<cidade>%s</cidade>"
+                                "<estado>%s</estado>"
+                                "<pais>%s</pais>"
+                                "<numero>%s</numero>"
+                                "<tipoCliente>%s</tipoCliente>"
+                                "<nome>%s</nome>"
+                                "<confidencial>%s</confidencial>"
+                                "<dataNascimento>%s</dataNascimento>"
+                                "<estadoCivil>%s</estadoCivil>"
+                                "<codSexo>%s</codSexo>",
+                                szNrLinha,
+                                tDadosNGIN.szLogradouro,
+                                
+                                oPessEnd.getCodLogradouro(),
+                                oPessEnd.getInCnl(),
+                                oPessEnd.getInCodigoIBGE(),
+                                tDadosNGIN.szEndereco,
+                                tDadosNGIN.szComplemento,
+                                tDadosNGIN.szBairro,
+                                tDadosNGIN.szCEP,
+                                tDadosNGIN.szCidade,
+                                tDadosNGIN.szEstado,
+                                tDadosNGIN.szPais,
+                                tDadosNGIN.szNumero,
+                                tDadosNGIN.szTipoCliente,
+                                tDadosNGIN.szNome,
+                                tDadosNGIN.szConfidencial,
+                                tDadosNGIN.szDataNascimento,
+                                tDadosNGIN.szEstadoCivil,
+                                tDadosNGIN.szCodSexo);
+
+                        }
+                        else if(iTipoPessoa == 2) /* Pessoa Juridica */
+                        {
+                            if(oPessEnd.buscaDadosNGINPessoaJuridica(&tDadosNGIN) == false)
+                                throw new TuxBasicSvcException("00E0000", "registro nao encontrado em buscaDadosNGINPessoaJuridica");
+
+                            sprintf(szAuxNGIN,
+                                "<msg>"
+                                "<ProxyOperacao>setCliente</ProxyOperacao>"
+                                "<usuario>FO</usuario>"
+                                "<ProxyLinha>%s</ProxyLinha>"
+
+                                "<logradouro>%s</logradouro>"
+                                "<cdLogradouro>%s</cdLogradouro>"
+                                "<inCnl>%s</inCnl>"
+                                "<cdIbge>%s</cdIbge>"
+                                "<endereco>%s</endereco>"
+                                "<complemento>%s</complemento>"
+                                "<bairro>%s</bairro>"
+                                "<CEP>%s</CEP>"
+                                "<cidade>%s</cidade>"
+                                "<estado>%s</estado>"
+                                "<pais>%s</pais>"
+                                "<numero>%s</numero>"
+                                "<tipoCliente>%s</tipoCliente>"
+                                "<nome>%s</nome>",
+                                szNrLinha,
+                                oPessEnd.getCodLogradouro(),
+                                oPessEnd.getInCnl(),
+                                oPessEnd.getInCodigoIBGE(),
+                                tDadosNGIN.cdIbge,
+                                tDadosNGIN.szEndereco,
+                                tDadosNGIN.szComplemento,
+                                tDadosNGIN.szBairro,
+                                tDadosNGIN.szCEP,
+                                tDadosNGIN.szCidade,
+                                tDadosNGIN.szEstado,
+                                tDadosNGIN.szPais,
+                                tDadosNGIN.szNumero,
+                                tDadosNGIN.szTipoCliente,
+                                tDadosNGIN.szNome);
+                        }
+                        else
+                            throw new TuxBasicSvcException("00E0000", "idTipoPessoa invalido");
+
+
+                        ULOG("1.szAuxNGIN[%s]", szAuxNGIN);
+
+                        if ( strlen(nrCPF_Recadastro) > 0 )  /* RECADASTRAMENTO de CPF */
+                        {
+                            RecadastroCPF( (char *)&tDadosNGIN.szIdPessoa, nrCPF_Recadastro );
+                            sprintf(szAuxNGINTmp,
+                                "<CPF>%s</CPF>"
+                                "<tipoCPF>D</tipoCPF>",
+                                nrCPF_Recadastro);
+
+                            strcat( szAuxNGIN, szAuxNGINTmp );
+                            ULOG( "*** RECADASTRO CPF *** szAuxNGIN [%s]", szAuxNGIN );
+                        }
+                        else   /* Quando nao for RECADASTRAMENTO de CPF */
+                        {
+                        while((ptDadosDocumento = oPessEnd.BuscaDocumentoPorIdPessoa((char *)&tDadosNGIN.szIdPessoa)) != NULL)
+                        {
+                            ULOG("ptDadosDocumento->szSgTipoDocumento[%s]", ptDadosDocumento->szSgTipoDocumento);
+                            ULOG("ptDadosDocumento->szNrDocumento[%s]", ptDadosDocumento->szNrDocumento);
+                            ULOG("ptDadosDocumento->szSgOrgaoExpedidor[%s]", ptDadosDocumento->szSgOrgaoExpedidor);
+
+                            if(iTipoPessoa == 1) /* Pessoa Fisica */
+                            {
+                                if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "CPF") ||
+                                   !strcmp(ptDadosDocumento->szSgTipoDocumento, "FCPF") ||
+                                   !strcmp(ptDadosDocumento->szSgTipoDocumento, "KLCPF"))
+                                {
+                                    sprintf(szAuxNGINTmp,
+                                        "<CPF>%s</CPF>"
+                                        "<tipoCPF>D</tipoCPF>",
+                                        ptDadosDocumento->szNrDocumento);
+
+                                }
+                                else if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "RG"))
+                                {
+                                    sprintf(szAuxNGINTmp,
+                                        "<RG>%s</RG>"
+                                        "<tipoRG>D</tipoRG>",
+                                        ptDadosDocumento->szNrDocumento);
+                                }
+                                else if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "PAS"))
+                                {
+                                    sprintf(szAuxNGINTmp,
+                                        "<passaporte>%s</passaporte>"
+                                        "<tipoPassaporte>D</tipoPassaporte>",
+                                        ptDadosDocumento->szNrDocumento);
+                                }
+                                else
+                                {
+                                    ULOG("local PessoaFisica");
+                                    memset(szAuxNGINTmp, 0x00, sizeof(szAuxNGINTmp));
+                                }
+                            }
+                            else if(iTipoPessoa == 2) /* Pessoa Juridica */
+                            {
+                                if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "CNPJ") ||
+                                   !strcmp(ptDadosDocumento->szSgTipoDocumento, "OCNPJ") ||
+                                   !strcmp(ptDadosDocumento->szSgTipoDocumento, "UCNPJ"))
+                                {
+                                    sprintf(szAuxNGINTmp,
+                                        "<CNPJ>%s</CNPJ>",
+                                        ptDadosDocumento->szNrDocumento);
+
+                                }
+                                else if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "CNAE"))
+                                {
+                                    sprintf(szAuxNGINTmp,
+                                        "<CNAE>%s</CNAE>",
+                                        ptDadosDocumento->szNrDocumento);
+                                }
+                                else if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "IE"))
+                                {
+                                    sprintf(szAuxNGINTmp,
+                                        "<IE>%s</IE>",
+                                        ptDadosDocumento->szNrDocumento);
+
+                                    iFlagIE=1;
+                                }
+                                else
+                                {
+                                    ULOG("local PessoaJuridica");
+                                    memset(szAuxNGINTmp, 0x00, sizeof(szAuxNGINTmp));
+                                }
+                            }
+
+                            strcat(szAuxNGIN, szAuxNGINTmp);
+                            ULOG("2.szAuxNGIN[%s]", szAuxNGIN);
+                        }// while
+                        }
+
+                        if(iFlagIE == 0 && iTipoPessoa == 2)
+                            strcat(szAuxNGIN, "<IE>ISENTO</IE>");
+
+
+                        iFlagIE=0;
+                        strcat(szAuxNGIN, "</msg>");
+                        ULOG("3.szAuxNGIN[%s]", szAuxNGIN);
+
+
+                        if(oPessEnd.buscaIdLinhaTelefonicaPorNrLinha(szNrLinha, szIdLinhaTelefonica) == false)
+                            throw new TuxBasicSvcException("00E0000", "registro nao encontrado em buscaIdLinhaTelefonicaPorNrLinha");
+
+                        /* envia para a fila do NGIN */
+                        pclFilaSetClientInfo = new CFilaSetClientInfo;
+
+                        pclFilaSetClientInfo->setIdLinhaTelefonica(szIdLinhaTelefonica);
+                        pclFilaSetClientInfo->setXml(szAuxNGIN);
+                        
+
+                        if ( strlen(nrCPF_Recadastro) > 0 )  /* RECADASTRAMENTO de CPF */
+                        {
+                            if(pclFilaSetClientInfo->existeFilaSetClientInfo() == true)
+                                pclFilaSetClientInfo->atualizaXmlFilaSetClientInfo();
+                            else
+                                pclFilaSetClientInfo->insereFilaSetClientInfo_4();   // Apenas ajusta a coluna INTERCEPTADO para 1
+                            
+                                /* reformata o XML para envio */
+                                memset( szXml, 0x00, sizeof(szXml) );
+                                string sXML =
+                                "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>"
+                                "<msg><msgHdr><user>1</user><service>DTUXINTERBE</service></msgHdr><msgBody>"
+                                "<ProxyLinha>" + (string)szNrLinha + "</ProxyLinha>"
+                                "<ProxyOperacao>setInterceptacao</ProxyOperacao>"
+                                "<usuario>FO</usuario>"
+                                "<operacao>0</operacao>"
+                                "<xmlns>cliente.fo.vivo.com.br/vo</xmlns>"
+                                "</msgBody></msg>" ;
+                                
+                                ULOG( "szXml [%s]" , (char*)sXML.c_str() );
+
+                                memset(szRetMsg, 0x00, sizeof(szRetMsg));
+                                sendXML( (char*)sXML.c_str(), szRetMsg, &iRetSendXML );   // DESLIGA INTERCEPTACAO
+
+                                ULOG("Final <setInterception>");
+                                ULOG("RSR SETINTERCEPTION OK");
+
+                                
+                        }
+                        else
+                        {
+                        if(pclFilaSetClientInfo->existeFilaSetClientInfo() == true)
+                            pclFilaSetClientInfo->atualizaXmlFilaSetClientInfo();
+                        else
+                            pclFilaSetClientInfo->insereFilaSetClientInfo();
+                        }
+
+                        delete pclFilaSetClientInfo;
+                    }
+                }
+            }
+
+            ULOG(">>>>ENDERECO PRINCIPAL");
+            ULOG("szIdPessoa[%s]", szIdPessoa);
+            ULOG("szIdPessoaEnderecoPrincipal[%s]", szIdPessoaEnderecoPrincipal);
+            ULOG("szInEnderecoPrincipal[%s]", szInEnderecoPrincipal);
+            ULOG("szNrLinha[%s]", szNrLinha);
+
+            if(!strcmp(szInEnderecoPrincipal, "1"))
+            {
+                /* Alteracao do endereco principal do cliente */
+                if(oPessEnd.buscaIdContaEndereco(szIdPessoa, szNrLinha, szIdContaEndereco) == false) {
+
+                    // Não é pra fazer nada mesmo. OS 1093 - PréPago
+                    if ( 0 == szIdLinhaTelefonica[0] )
+                    {
+                        //if(oPessEnd.buscaIdLinhaTelefonicaPorNrLinha(szNrLinha, szIdLinhaTelefonica) == false)
+                        //    throw new TuxBasicSvcException("00E0000", "registro nao encontrado em buscaIdLinhaTelefonicaPorNrLinha para insert de contaEndereco");
+                    }
+
+                    //oPessEnd.associarContaEndereco(szIdPessoaEnderecoPrincipal,szIdPessoa,szIdLinhaTelefonica,getUser(),);
+                }
+                else
+                {
+                   oPessEnd.atualizaContaEndereco(szIdContaEndereco, szIdPessoaEnderecoPrincipal, getUser());
+                }
+            }
+            ULOG("<<<<ENDERECO PRINCIPAL");
+        }
+        else if(!strcmp(szAcao, "EXCLUIR"))
+        {
+            ULOG("local3");
+            oPessEnd.setUsuarioAlteracao(getUser());
+
+            GETTREE(szAux, pDnode, "idEndereco", 0, OBRIGATORIO, "idEndereco");
+            oPessEnd.setIdEndereco(szAux);
+
+            ULOG("local4");
+            if(oPessEnd.existePessoaEnderecoContaEndereco() == false)
+            {
+                if(oPessEnd.Excluir() == NOK)
+                    throw new TuxBasicSvcException("00E0000", "Nao foi possivel deletar nenhum registro");
+            }
+            else
+                throw new TuxBasicSvcException("00E0000", "Esta Informação esta sincronizada com o Billing. Exclusão NÃO permitida!");
+        }
+        else if(!strcmp(szAcao, "LISTAR"))
+        {
+            GETTREE(szAux, pDnode, "id", 0, OBRIGATORIO, "id"); ULOG("szAux[%s]", szAux);
+            oPessEnd.setIdPessoa(szAux);
+
+            oPessEnd.RecuperarTodos(szAux, pXmlG);
+        }
+    }
+    catch(...)
+    {
+        ULOG("exception");
+        throw;
+    }
+
+    ULOG_END( "implAbaEndereco::Execute()" );
+    setStatusCode("13I0000", "Sucesso");
+}
+
+
+
+/************************************************************************************************************/
+int sendXML( char *pXmlSaida, char *pRetMsg, long * iErrorNumber ) 
+{
+    ULOG_START( "sendXML()" );
+    
+    char *sendbuf, *rcvbuf;
+    long sendlen, rcvlen;
+
+    sendlen = strlen( pXmlSaida );
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        ULOGE("Error allocating send buffer\n");
+        return -1;
+    }
+
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        ULOGE("Error allocating receive buffer\n");
+        tpfree( sendbuf );
+        return -1;
+    }
+
+    strcpy( sendbuf, pXmlSaida );
+
+    try
+    {
+        if( tpcall("TUXINTERBE", (char *)sendbuf, sendlen, (char **)&rcvbuf, &rcvlen, (long)0 ) == -1 ) 
+        {
+            ULOG( "@@@ ERRO tpcall" );
+            ULOG( ">>> ERRO: TUXINTERBE --> TPERRNO [%d]",tperrno  );
+            
+            ULOGE( "rcvbuf [%s]\n", rcvbuf);
+
+            //*iErrorNumber = tperrno;
+            //strcpy( pRetMsg, rcvbuf );
+
+            *iErrorNumber=0;
+            strcpy( pRetMsg, "Success" );
+            tpfree( sendbuf );
+            tpfree( rcvbuf );
+
+            ULOG_END( "sendXML()" );
+            //return 1;
+            return 0;
+        }
+    }
+    catch ( ... )
+    {
+        ULOG( "/// ERRO excessao tpcall" );
+        ULOG( ">>> ERRO: TUXINTERBE --> TPERRNO [%d]",tperrno  );
+        ULOGE( "rcvbuf [%s]\n", rcvbuf);
+
+        //*iErrorNumber = tperrno;
+        //strcpy( pRetMsg, rcvbuf );
+
+        *iErrorNumber=0;
+        strcpy( pRetMsg, "Success" );
+
+        tpfree( sendbuf );
+        tpfree( rcvbuf );
+
+        ULOG_END( "sendXML()" );
+        //return 1;
+        return 0;
+    }
+
+    *iErrorNumber=0;
+    strcpy( pRetMsg, rcvbuf );
+
+    tpfree( sendbuf );
+    tpfree( rcvbuf );
+
+    ULOG_END( "sendXML()" );
+    return 0;
+}
+
+
+
+/*************************************************************************************************/
+int RecadastroCPF( char * idPessoaPrm, char * nrCPFPrm )
+{
+    ULOG_START("RecadastroCPF()");    
+    
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char idPessoa[ 256 ];
+        char nrCPF[ 256 ];
+        long idDocumento;
+        short i_idDocumento = -1;
+        
+        int ctPessoa;
+        
+    EXEC SQL END DECLARE SECTION;
+    
+    strcpy( idPessoa, idPessoaPrm );
+    strcpy( nrCPF, nrCPFPrm );
+
+    EXEC SQL WHENEVER SQLERROR GOTO erro;
+    
+    ULOG( ">>> idPessoa [%s]", idPessoa );
+    ULOG( ">>> nrCPF [%s]", nrCPF );
+    
+    EXEC SQL
+    SELECT IDDOCUMENTO INTO :idDocumento:i_idDocumento FROM CUSTOMER.DOCUMENTO WHERE NRDOCUMENTO = :nrCPF AND IDTIPODOCUMENTO IN (1,3,25,27,28 ) AND ROWNUM < 2;
+    
+    if ( i_idDocumento != -1 )   // Atualiza com o Documento vindo da URA
+    {
+       ULOG( "&&& Encontrou idDocumento [%ld]", idDocumento );
+       
+       EXEC SQL
+       UPDATE CUSTOMER.PESSOADOCUMENTO 
+        SET IDDOCUMENTO = :idDocumento 
+        WHERE IDPESSOA = :idPessoa 
+        AND IDDOCUMENTO IN
+       (
+           SELECT
+                 DOCUMENTO.IDDOCUMENTO
+           FROM
+               CUSTOMER.PESSOADOCUMENTO  PESSOADOCUMENTO,
+               CUSTOMER.DOCUMENTO  DOCUMENTO,
+               APOIO.TIPODOCUMENTO  TIPODOCUMENTO
+           WHERE
+               DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO AND
+               PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO AND
+               TIPODOCUMENTO.IDTIPODOCUMENTO IN (1,3,25,27,28) AND
+               PESSOADOCUMENTO.IDPESSOA = :idPessoa
+               AND ROWNUM < 2
+       ) ;
+    }
+    else
+    {
+       ULOG( "Nao encontrou documento [%s]", nrCPF );
+       
+       EXEC SQL
+       UPDATE CUSTOMER.DOCUMENTO
+       SET NRDOCUMENTO = :nrCPF
+       WHERE IDDOCUMENTO
+       IN
+       (
+           SELECT
+                 DOCUMENTO.IDDOCUMENTO
+           FROM
+               CUSTOMER.PESSOADOCUMENTO  PESSOADOCUMENTO,
+               CUSTOMER.DOCUMENTO  DOCUMENTO,
+               APOIO.TIPODOCUMENTO  TIPODOCUMENTO
+           WHERE
+               DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO AND
+               PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO AND
+               TIPODOCUMENTO.IDTIPODOCUMENTO IN (1,3,25,27,28) AND
+               PESSOADOCUMENTO.IDPESSOA = :idPessoa
+       );
+       
+       if ( sqlca.sqlerrd[2] == 0 )  // Nao existe CPF associado a esta pessoa
+       {
+            EXEC SQL
+            SELECT CUSTOMER.DOCUMENTOSQ.NEXTVAL INTO :idDocumento FROM DUAL ;
+            
+            EXEC SQL
+            INSERT INTO CUSTOMER.DOCUMENTO
+            (
+              IDDOCUMENTO ,
+              NRDOCUMENTO ,
+              IDPAIS ,
+              IDUF ,
+              IDTIPODOCUMENTO ,
+              IDUSUARIOALTERACAO ,
+              DTULTIMAALTERACAO 
+            )
+            VALUES
+            (
+                :idDocumento ,
+                :nrCPF ,
+                0 ,    // idPais NC
+                0 ,    // idUF NC
+                1 ,    // Tipo documento CPF
+                1 ,    // Usuario adminfo
+                SYSDATE
+            );
+            
+            EXEC SQL
+            SELECT COUNT(1) 
+               INTO :ctPessoa 
+            FROM 
+               CUSTOMER.PESSOADOCUMENTO 
+            WHERE 
+               IDPESSOA = :idPessoa
+            AND IDDOCUMENTO IN
+            (
+               SELECT
+                     DOCUMENTO.IDDOCUMENTO
+               FROM
+                   CUSTOMER.PESSOADOCUMENTO  PESSOADOCUMENTO,
+                   CUSTOMER.DOCUMENTO  DOCUMENTO,
+                   APOIO.TIPODOCUMENTO  TIPODOCUMENTO
+               WHERE
+                   DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO AND
+                   PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO AND
+                   TIPODOCUMENTO.IDTIPODOCUMENTO IN (1,3,25,27,28) AND
+                   PESSOADOCUMENTO.IDPESSOA = :idPessoa
+                   AND ROWNUM < 2
+            ) ;
+            
+            if ( ctPessoa > 0 )
+            {
+                EXEC SQL
+                UPDATE CUSTOMER.PESSOADOCUMENTO 
+                SET IDDOCUMENTO = :idDocumento 
+                WHERE IDPESSOA = :idPessoa 
+                AND IDDOCUMENTO IN
+                (
+                   SELECT
+                         DOCUMENTO.IDDOCUMENTO
+                   FROM
+                       CUSTOMER.PESSOADOCUMENTO  PESSOADOCUMENTO,
+                       CUSTOMER.DOCUMENTO  DOCUMENTO,
+                       APOIO.TIPODOCUMENTO  TIPODOCUMENTO
+                   WHERE
+                       DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO AND
+                       PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO AND
+                       TIPODOCUMENTO.IDTIPODOCUMENTO IN (1,3,25,27,28) AND
+                       PESSOADOCUMENTO.IDPESSOA = :idPessoa
+                       AND ROWNUM < 2
+                ) ;
+
+            }
+            else
+            {
+                EXEC SQL
+                INSERT INTO CUSTOMER.PESSOADOCUMENTO
+                (
+                    IDPESSOADOCUMENTO ,
+                    IDPESSOA ,
+                    IDDOCUMENTO ,
+                    IDSISTEMAORIGEM ,
+                    IDUSUARIOALTERACAO ,
+                    DTULTIMAALTERACAO 
+                )
+                values
+                (
+                    CUSTOMER.PESSOADOCUMENTOSQ.NEXTVAL ,
+                    :idPessoa ,
+                    :idDocumento ,
+                    7 ,
+                    1 ,
+                    SYSDATE
+                );
+            }
+            
+       }
+    }
+
+    ULOG_END("RecadastroCPF() - OK");
+    return OK;
+
+    erro:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("RecadastroCPF() - ERROR"); 
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

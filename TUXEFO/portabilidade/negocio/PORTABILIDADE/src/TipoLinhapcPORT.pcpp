@@ -1,0 +1,72 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+
+#include "tuxfw.h"
+#include "TipoLinhapcPORT.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "PPGlobalPORT.h"
+EXEC SQL END DECLARE SECTION;
+
+/****************************************************************************************/
+bool CTipoLinhapc::proCBuscaTipoLinha(TTipoLinha *ptTipoLinha)
+{
+    ULOG_START("CTipoLinhapc::proCBuscaTipoLinha");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdTipoLinha[LEN_IDTIPOLINHA];
+        VARCHAR oszSgTipoLinha[LEN_SGTIPOLINHA];
+        VARCHAR oszDsTipoLinha[LEN_DSTIPOLINHA];
+
+        short iIdTipoLinha = 0;
+        short iSgTipoLinha = 0;
+        short iDsTipoLinha = 0;
+    EXEC SQL END DECLARE SECTION;
+
+	struct sqlca sqlca;
+
+	STRCPY_TO_ORA(oszSgTipoLinha, ptTipoLinha->szSgTipoLinha);
+
+	EXEC SQL WHENEVER SQLERROR	goto erro;
+	EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+	EXEC SQL
+        SELECT
+            atp.idtipolinha,
+            atp.sgtipolinha,
+            atp.dstipolinha
+        INTO
+            :oszIdTipoLinha:iIdTipoLinha,
+            :oszSgTipoLinha:iSgTipoLinha,
+            :oszDsTipoLinha:iDsTipoLinha
+        FROM
+            apoio.tipolinha atp
+        WHERE
+            atp.sgtipolinha = :oszSgTipoLinha;
+
+
+
+    if(iIdTipoLinha != -1) {
+        STRCPY_FROM_ORA(ptTipoLinha->szIdTipoLinha, oszIdTipoLinha);
+    }
+    if(iSgTipoLinha != -1) {
+        STRCPY_FROM_ORA(ptTipoLinha->szSgTipoLinha, oszSgTipoLinha);
+    }
+    if(iDsTipoLinha != -1) {
+        STRCPY_FROM_ORA(ptTipoLinha->szDsTipoLinha, oszDsTipoLinha);
+    }
+
+    ULOGI("Finalizando proCBuscaTipoLinha <OK>");
+    ULOG_END("CTipoLinhapc::proCBuscaTipoLinha");
+    return true;
+
+    naoexiste:
+        ULOGI("Finalizando proCBuscaTipoLinha <NOT FOUND>");
+        ULOG_END("CTipoLinhapc::proCBuscaTipoLinha");
+        return false;
+
+    erro:
+        ULOGE("Finalizando proCBuscaTipoLinha <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

@@ -1,0 +1,88 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <tuxfw.h>
+
+
+class TuxHelperImpl:public TuxHelper
+{
+public:
+	DOMNode * walkDOMImpl( DOMNode*a , char*b , int*c , int d )
+	{
+		return walkDOM( a , b , c , d );
+	}
+};
+
+
+int InsereTipoRelacionamento( const char * idParam, DOMNode *dnode )
+{
+    ULOG_START("InsereTipoRelacionamento()");
+	DOMNode *pNoCodigo;
+	struct sqlca sqlca;
+	TuxHelper tuxHelper;
+	TuxHelperImpl tuxhelperIMPL;
+
+   char * pCodGrupoTmp;
+   
+   EXEC SQL BEGIN DECLARE SECTION;
+      int idGrupoParam;
+      int idTipoRelacionamento;
+   EXEC SQL END DECLARE SECTION;
+   
+   sqlca.sqlcode=0;
+    
+   idGrupoParam = atoi( idParam );
+   EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+    
+   /*
+	 * Pega todos os codigos
+	 */
+	int SubnoAtual = 0;
+	int Subno = 0;
+	for ( ;; )  
+	{
+	   Subno = 0;
+		pNoCodigo = tuxhelperIMPL.walkDOMImpl( dnode,"TipoPessoaVO",&Subno,SubnoAtual++ );
+		if ( pNoCodigo == NULL )
+		{
+		   ULOG_END("InsereTipoRelacionamento() -> pNoCodigo == NULL return 1");
+		   return 1;
+		}
+
+      pCodGrupoTmp = tuxHelper.walkTree( pNoCodigo,"idtipopessoa",0 );
+		if ( pCodGrupoTmp == NULL )
+		   break;
+      idTipoRelacionamento = atoi( pCodGrupoTmp );
+      XMLString::release(&pCodGrupoTmp);
+
+		EXEC SQL INSERT INTO ContatoAdm.TipoRelacionamentoGrupo 
+			 ( 
+			   idTipoRelacionamentoGrupo , 
+			   idGrupo , 
+			   idTipoRelacionamento 
+			 )
+		VALUES
+			 ( 
+			   Contatoadm.TipoRelacionamentoGrupoSQ.nextval , 
+			   :idGrupoParam , 
+			   :idTipoRelacionamento
+			 );
+			   
+		if( sqlca.sqlcode )
+		{
+		   ULOG_END("InsereTipoRelacionamento() -> sqlca.sqlcode > 0 return 0");
+			return 0;
+		}
+    }
+    ULOG_END("InsereTipoRelacionamento() -> return 1");
+    return 1;
+
+UndefinedError:
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+    
+}

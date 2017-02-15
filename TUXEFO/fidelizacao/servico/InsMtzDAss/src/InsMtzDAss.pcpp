@@ -1,0 +1,99 @@
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+int InsereMtzDescontoAssoc( int usuario, DOMNode * dnode, XMLGen * xml )
+{
+    int i = 0;
+    char  parm[256];
+    DOMNode * dnListas      = NULL;
+    TuxHelper txh;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR idPessoaUsuarioInclusao[40];
+        VARCHAR idGrupo[40];
+        VARCHAR idDesconto[40];
+    EXEC SQL END DECLARE SECTION;
+    
+    memset(&idPessoaUsuarioInclusao,0x0,sizeof(idPessoaUsuarioInclusao));
+    memset(&idDesconto,0x0,sizeof(idDesconto));
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    try
+    {
+        sprintf( parm,"%d",usuario );
+        strToOra( idPessoaUsuarioInclusao, parm );
+
+        //  Obtendo dados do xml
+        parm[0] = 0x0;
+        get_tag(parm,dnode,"idGrupoRetencao",0,0);
+        if ( parm[0] != NULL )
+            strToOra( idGrupo, parm );
+
+        EXEC SQL
+        UPDATE RETENCAO.MATRIZDESCONTOGRUPO
+        SET INATIVO = 0 ,
+            IDUSUARIOALTERACAO = :idPessoaUsuarioInclusao ,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE IDGRUPO = :idGrupo;
+
+        dnListas = txh.walkDOM( dnode, "xml-fragment", 0 );
+        if ( dnListas != NULL ) 
+        {
+            for ( i=0;;i++ )
+            {
+                if ( dnListas == NULL ) 
+                    break;
+
+                parm[0] = 0x0;
+                get_tag( parm, dnListas, "id", i, -1 );
+                if ( atoi(parm) == 0 )
+                {
+                    break;
+                }
+                   
+                if ( parm[0] != NULL )
+                    strToOra( idDesconto, parm );
+
+                EXEC SQL
+                UPDATE RETENCAO.MATRIZDESCONTOGRUPO
+                SET INATIVO = 1 ,
+                    IDUSUARIOALTERACAO = :idPessoaUsuarioInclusao ,
+                    DTULTIMAALTERACAO = SYSDATE
+                WHERE IDGRUPO = :idGrupo
+                AND IDDESCONTO = :idDesconto;
+                if ( sqlca.sqlerrd[2] == 0 )
+                {
+                    EXEC SQL
+                    INSERT INTO RETENCAO.MATRIZDESCONTOGRUPO
+                    (
+                        IDDESCONTO ,
+                        IDGRUPO ,
+                        INATIVO ,
+                        IDUSUARIOALTERACAO ,
+                        DTULTIMAALTERACAO 
+                    )
+                    VALUES
+                    (
+                        :idDesconto ,
+                        :idGrupo ,
+                        1 ,
+                        :idPessoaUsuarioInclusao ,
+                        SYSDATE
+                    );
+                }
+                
+            }
+        }
+
+    // insert OK 
+    
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+  return 1;
+}
+
+

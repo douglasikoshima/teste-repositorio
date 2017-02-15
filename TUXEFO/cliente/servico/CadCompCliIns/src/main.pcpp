@@ -1,0 +1,261 @@
+/*
+ * Serviço de cadastro de dados comportamentais de cliente - Insere dados comportamentais.
+ * Versão inicial, 6/7/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../include/CadCompCliIns.h"
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classCstAtributo.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/PessoaValorPossivel.h";
+
+DECLARE_TUXEDO_SERVICE(CadCompCliIns);
+
+void implCadCompCliIns::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+	DOMNode* nodeAux = NULL;
+	int iNrAtt = 0;
+	int iNrVlPoss;
+	
+	char* pcIdPessoa;
+	int iIdPessoa;
+	char* pcIdAtributo;
+	int iIdAtributo;
+	char* pcIdTpApresentacao;
+	int iIdTpApresentacao;
+	char* pcIdValorLivre;
+	int iIdValorLivre;
+	char* pcDsValorLivre;
+	char* pcIdValorPossivel;
+	int iIdValorPossivel;
+
+	CValorLivre oVLivre;
+	CPessoaValorPossivel oVPossivel;
+
+    ULOG_START("implCadCompCliIns::Execute()");
+
+    try{
+	    // Busca o ID Pessoa
+	    pcIdPessoa = walkTree(dnode, XML_IN_ID_PESSOA, 0);
+        ULOG("<idPessoa> pcIdPessoa[%s]", pcIdPessoa ? pcIdPessoa : "...NULL...");
+
+	    if (pcIdPessoa == NULL) {
+		    ERROR(NRO_ID_PESSOA_NE);
+		    TAG_INEXISTENTE(XML_IN_ID_PESSOA);
+		    throw new TuxBasicSvcException(sNrMsg, sMsg);
+	    }
+	    if (!*pcIdPessoa) {
+		    ERROR(NRO_ID_PESSOA_VV);
+		    TAG_VALOR_VAZIO(XML_IN_ID_PESSOA);
+
+            XMLString::release(&pcIdPessoa);
+
+		    throw new TuxBasicSvcException(sNrMsg, sMsg);
+	    }
+	    if ((iIdPessoa = atoi(pcIdPessoa)) <= 0) {
+		    ERROR(NRO_ID_PESSOA_VI);
+		    TAG_VALOR_INVALIDO(XML_IN_ID_PESSOA);
+
+            XMLString::release(&pcIdPessoa);
+
+		    throw new TuxBasicSvcException(sNrMsg, sMsg);
+	    }
+        ULOG("iIdPessoa(%d)", iIdPessoa);
+
+        if (pcIdPessoa) XMLString::release(&pcIdPessoa);
+
+
+
+	    // Faz um loop para cada atributo.
+	    while ((nodeAux = walkDOM(dnode, XML_IN_ATRIBUTO, iNrAtt++)) != NULL) {
+		    // Recupera Id Atributo
+		    pcIdAtributo = walkTree(nodeAux, XML_IN_ID_ATRIBUTO, 0);
+            ULOG("<idAtributo> pcIdAtributo[%s]", pcIdAtributo ? pcIdAtributo : "...NULL...");
+
+		    if (pcIdAtributo == NULL) {
+			    ERROR(NRO_ID_ATRIBUTO_NR_NE);
+			    TAG_INEXISTENTE(XML_IN_ID_ATRIBUTO);
+			    throw new TuxBasicSvcException(sNrMsg, sMsg);
+		    }
+		    if (!*pcIdAtributo) {
+			    ERROR(NRO_ID_ATRIBUTO_NR_VV);
+			    TAG_VALOR_VAZIO(XML_IN_ID_ATRIBUTO);
+
+                if (pcIdAtributo) XMLString::release(&pcIdAtributo);
+
+			    throw new TuxBasicSvcException(sNrMsg, sMsg);
+		    }
+		    if ((iIdAtributo = atoi(pcIdAtributo)) <= 0) {
+			    ERROR(NRO_ID_ATRIBUTO_NR_VI);
+			    TAG_VALOR_INVALIDO(XML_IN_ID_ATRIBUTO);
+
+                if (pcIdAtributo) XMLString::release(&pcIdAtributo);
+
+			    throw new TuxBasicSvcException(sNrMsg, sMsg);
+		    }
+            ULOG("iIdAtributo(%d)", iIdAtributo);
+
+            if (pcIdAtributo) XMLString::release(&pcIdAtributo);
+
+		    // Recupera Id Tipo Apresentacao
+		    pcIdTpApresentacao = walkTree(nodeAux, XML_IN_ID_TP_APRES, 0);
+            ULOG("<idTipoApresentacao> pcIdTpApresentacao[%s]", pcIdTpApresentacao ? pcIdTpApresentacao : "...NULL...");
+
+		    if (pcIdTpApresentacao == NULL) {
+			    ERROR(NRO_ID_TPAPRESENTACAO_NR_NE);
+			    TAG_INEXISTENTE(XML_IN_ID_TP_APRES);
+			    throw new TuxBasicSvcException(sNrMsg, sMsg);
+		    }
+		    if (!*pcIdTpApresentacao) {
+			    ERROR(NRO_ID_TPAPRESENTACAO_NR_VV);
+			    TAG_VALOR_VAZIO(XML_IN_ID_TP_APRES);
+
+                if (pcIdTpApresentacao) XMLString::release(&pcIdTpApresentacao);
+
+			    throw new TuxBasicSvcException(sNrMsg, sMsg);
+		    }
+		    if ((iIdTpApresentacao = atoi(pcIdTpApresentacao)) <= 0) {
+			    ERROR(NRO_ID_TPAPRESENTACAO_NR_VI);
+			    TAG_VALOR_INVALIDO(XML_IN_ID_TP_APRES);
+
+                if (pcIdTpApresentacao) XMLString::release(&pcIdTpApresentacao);
+
+			    throw new TuxBasicSvcException(sNrMsg, sMsg);
+		    }
+            ULOG("iIdTpApresentacao(%d)", iIdTpApresentacao);
+
+            if (pcIdTpApresentacao) XMLString::release(&pcIdTpApresentacao);
+
+		    // Verifica qual o ID de tipo de apresentação, pra saber se
+		    // procura por valor livre ou valor possível.
+		    switch(iIdTpApresentacao) {
+			    case 1: case 2: case 4: case 6:
+				    // Valor possível - pega o primeiro, limpa todos e depois faz um loop.
+				    iNrVlPoss = 0;
+
+                    ULOG("Local A1");
+                    ULOG("iIdAtributo(%d)", iIdAtributo);
+                    ULOG("iIdPessoa(%d)", iIdPessoa);
+				    CPessoaValorPossivel::limpaPorAtributoEPessoa(iIdAtributo, iIdPessoa);
+                    ULOG("Local A2");
+
+				    while ((pcIdValorPossivel = walkTree(nodeAux, XML_IN_ID_VALOR_SEL, iNrVlPoss++)) != NULL) 
+                    {
+                        ULOG("<idValorSelecionado> pcIdValorPossivel[%s]", pcIdValorPossivel ? pcIdValorPossivel : "...NULL...");
+					    if (*pcIdValorPossivel) 
+                        {
+					        if ((iIdValorPossivel = atoi(pcIdValorPossivel)) <= 0) 
+                            {
+						        ERROR(NRO_ID_VALORPOSS_VI);
+						        TAG_VALOR_INVALIDO(XML_IN_ID_VALOR_SEL);
+                                if (pcIdValorPossivel) XMLString::release(&pcIdValorPossivel);
+						        throw new TuxBasicSvcException(sNrMsg, sMsg);
+					        }
+                            ULOG("iIdValorPossivel(%d)", iIdValorPossivel);
+
+                            ULOG("iIdPessoa(%d)", iIdPessoa);
+                            ULOG("iIdValorPossivel(%d)", iIdValorPossivel);
+                            ULOG("getUser()[%s]", getUser());
+					        oVPossivel.setIdPessoa(iIdPessoa);
+					        oVPossivel.setIdValorPossivel(iIdValorPossivel);
+					        oVPossivel.setUsuarioAlteracao(getUser());
+
+                            ULOG("Local B1");
+					        oVPossivel.inclui();
+                            ULOG("Local B2");
+                            
+                            if (pcIdValorPossivel) XMLString::release(&pcIdValorPossivel);
+
+                        }
+				    }
+
+				    break;
+
+			    case 3: case 5:
+					iIdValorLivre = 0;
+				    // Valor livre
+				    pcIdValorLivre = walkTree(nodeAux, XML_IN_ID_VALOR_LIVRE, 0);
+                    ULOG("<idValorLivre> pcIdValorLivre[%s]", pcIdValorLivre ? pcIdValorLivre : "...NULL...");
+
+				    if (!pcIdValorLivre || !*pcIdValorLivre) {
+                        ULOG("Local B3");
+                        if (pcIdValorLivre) XMLString::release(&pcIdValorLivre);
+					    pcIdValorLivre = NULL;
+                    }
+
+				    if (pcIdValorLivre != NULL && (iIdValorLivre = atoi(pcIdValorLivre)) <= 0) {
+					    ERROR(NRO_ID_VALORLIVR_VI);
+					    TAG_VALOR_INVALIDO(XML_IN_ID_VALOR_LIVRE);
+                        if (pcIdValorLivre) XMLString::release(&pcIdValorLivre);
+					    throw new TuxBasicSvcException(sNrMsg, sMsg);
+				    }
+
+				    pcDsValorLivre = walkTree(nodeAux, XML_IN_DS_VALOR_LIVRE, 0);
+                    ULOG("<dsValorLivre> pcDsValorLivre[%s]", pcDsValorLivre ? pcDsValorLivre : "...NULL...");
+
+				    if (pcDsValorLivre && !*pcDsValorLivre) {
+				        oVLivre.setDsValor(" ");
+                        ULOG("Local C1");
+				    }
+                    else{
+                         ULOG("Local C2");
+                         if (!*pcDsValorLivre) {
+                              ERROR(NRO_DS_VALORLIVR_VV);
+                              TAG_VALOR_VAZIO(XML_IN_DS_VALOR_LIVRE);
+                              if (pcIdValorLivre) XMLString::release(&pcIdValorLivre);
+                              throw new TuxBasicSvcException(sNrMsg, sMsg);
+                         }
+                        oVLivre.setDsValor(pcDsValorLivre);
+                    }
+                    ULOG("Local C3");
+
+                    if (pcIdValorLivre) XMLString::release(&pcIdValorLivre);
+
+                    ULOG("iIdPessoa(%d)", iIdPessoa);
+                    ULOG("iIdAtributo(%d)", iIdAtributo);
+                    ULOG("getUser()[%s]", getUser());
+                    ULOG("iIdValorLivre(%d)", iIdValorLivre);
+
+				    oVLivre.setIdPessoa(iIdPessoa);
+				    oVLivre.setIdAtributo(iIdAtributo);
+				    oVLivre.setUsuarioAlteracao(getUser());
+				    if( iIdValorLivre > 0 ) {
+                        ULOG("Local D1");
+					    // Atualiza um valor livre existente.
+					    oVLivre.setIdValorLivre(iIdValorLivre);
+					    oVLivre.altera();
+                        ULOG("Local D2");
+				    } else {
+                        ULOG("Local E1");
+					    // Insere novo valor livre.
+					    oVLivre.inclui();
+                        ULOG("Local E2");
+				    }
+				    break;
+			    default:
+				    // Valor inválido.
+				    ERROR(NRO_ID_TPAPRESENTACAO_NR_VI);
+				    TAG_VALOR_INVALIDO(XML_IN_ID_TP_APRES);
+				    throw new TuxBasicSvcException(sNrMsg, sMsg);
+		    }
+	    }
+
+    }catch(...){
+        throw;
+    }
+
+    ULOG_END("implCadCompCliIns::Execute()");
+
+	// Execução OK.
+	INFORMATION(NRO_OK);
+	setStatusCode(sNrMsg, MSG_OK);
+}

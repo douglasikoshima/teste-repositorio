@@ -1,0 +1,277 @@
+// UF.pcpp: implementation for the 
+// CUF class.
+//////////////////////////////////////////////////////////////////////
+
+/*
+ * Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+ */
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw.h>
+#include "../include/Global.h"
+EXEC SQL INCLUDE "../include/UF.h";
+
+//
+// Construtor e Destrutor
+CUF::CUF() {
+
+	memset(sIdUsuarioAlteracao,0,256);
+}
+
+CUF::CUF(int iIdEstado) {
+    
+    ULOG_START("CUF::CUF()"); 
+	struct sqlca sqlca;
+
+	iIdUF = iIdEstado;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL SELECT
+	 SgUF,
+	 NmUF
+	INTO
+	 cSgUF,
+	 cNmUF
+	FROM
+	 apoio.UF
+	WHERE
+	 IdUF = :iIdUF;
+
+	// ID não existe. Seta o ID para -1.
+	if (sqlca.sqlcode == NO_DATA_FOUND)
+		iIdUF = -1;
+    ULOG_END("CUF::CUF()"); 
+	return;
+
+	sqlErrorConstrutor:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);		
+	    ULOG_END("CUF::CUF()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+CUF::~CUF() {
+}
+
+// Usuário de alteração
+void CUF::setUsuarioAlteracao(char* value) {
+	if (value != NULL) {
+		strncpy(sIdUsuarioAlteracao,value, 255);
+		sIdUsuarioAlteracao[255]='\0';
+	}
+}
+
+//
+// Metodos getter
+int CUF::getIdUF(){
+	return iIdUF;
+}
+
+char* CUF::getSgUF(){
+	return cSgUF;
+}
+
+char* CUF::getNmUF(){
+	return cNmUF;
+}
+
+//
+// Metodos setter
+void CUF::setIdUF(int value){
+	iIdUF = value;
+}
+
+void CUF::setSgUF(char* value){
+    strncpy(cSgUF, value?value:"", 255);
+	cSgUF[255]='\0';
+}
+
+void CUF::setNmUF(char* value){
+	strncpy(cNmUF, value?value:"", 255);
+	cNmUF[255]='\0';
+}
+
+//
+// Métodos de acesso a banco de dados
+void CUF::inclui(){
+    
+    ULOG_START("CUF::inclui()"); 
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iNovoId;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorInc;
+
+	// Busca o novo ID da sequence.
+	EXEC SQL
+		SELECT apoio.UFSQ.NEXTVAL
+		INTO :iNovoId
+		FROM DUAL;
+	if (sqlca.sqlcode)
+	{
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);	
+	    ULOG_END("CUF::inclui()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+	}
+
+	// Insere no banco de dados
+	EXEC SQL
+	INSERT INTO apoio.UF
+	(IdUF,
+	 SgUF,
+	 NmUF,
+	 IdUsuarioAlteracao,
+	 DtUltimaAlteracao)
+	VALUES
+	(:iNovoId,
+	 :cSgUF,
+	 :cNmUF,
+	 :sIdUsuarioAlteracao,
+	 SYSDATE);
+
+	// Inserção OK, coloca o ID no objeto
+	iIdUF = iNovoId;
+	
+    ULOG_END("CUF::inclui()"); 
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorInc:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);	
+	    ULOG_END("CUF::inclui()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CUF::exclui(){
+    
+    ULOG_START("CUF::exclui()"); 
+	struct sqlca sqlca;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorExc;
+
+	// Remove do banco de dados
+	EXEC SQL
+	DELETE apoio.UF
+	WHERE IdUF = :iIdUF;
+
+	// Remoção OK, seta ID do objeto para -1
+	iIdUF = -1;
+	
+	ULOG_END("CUF::exclui()"); 
+
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorExc:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);	
+	    ULOG_END("CUF::exclui()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CUF::altera(){
+    
+    ULOG_START("CUF::altera()"); 
+	struct sqlca sqlca;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorAlt;
+
+	// Altera no banco de dados para os dados atuais
+	EXEC SQL
+	UPDATE apoio.UF
+	SET
+	 SgUF = :cSgUF,
+	 NmUF = :cNmUF,
+	 IdUsuarioAlteracao = :sIdUsuarioAlteracao,
+	 DtUltimaAlteracao = SYSDATE
+	WHERE
+	 IdUF = :iIdUF;
+    ULOG_END("CUF::altera()"); 
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorAlt:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);	
+	    ULOG_END("CUF::altera()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+CUF* CUF::lista(int* iNroObjetos){
+    
+    ULOG_START("CUF::lista()"); 
+	struct sqlca sqlca;
+	CUF* listaUF = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdUF;
+	char cSgUF[256];
+	char cNmUF[256];
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	// Correção da lista de UF exibida no cadastro de clientes prospect.
+	// Referente a incidencia 3197 WR
+	EXEC SQL DECLARE ufs CURSOR FOR	
+	SELECT 
+			COD_UF,
+			SGL_UF,
+			NOM_UF
+	FROM 
+			ENDERECO.UNIDADE_FEDERACAO
+	ORDER BY
+	  		SGL_UF;
+
+	EXEC SQL OPEN ufs;
+
+	// Corre os dados e monta a lista de objetos
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) {
+		
+		EXEC SQL FETCH ufs INTO
+		 :iIdUF,
+		 :cSgUF,
+		 :cNmUF;
+
+		// Aloca memória para o objeto atual.
+		if ((listaUF = (CUF*) realloc((void *)listaUF, (sizeof(CUF) * iNroObjLocal))) != NULL) {
+			
+			// Coloca os dados do objeto atual.
+			listaUF[iNroObjLocal-1].setIdUF(iIdUF);
+			listaUF[iNroObjLocal-1].setSgUF(cSgUF);
+			listaUF[iNroObjLocal-1].setNmUF(cNmUF);
+
+		} else {
+			if (listaUF)
+				free(listaUF);
+			ULOG_END("CUF::lista()"); 
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	
+	ULOG_END("CUF::lista()"); 
+	return listaUF;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);	
+	    ULOG_END("CUF::lista()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CUF::getIdFakeUF(){
+	return 1;
+}

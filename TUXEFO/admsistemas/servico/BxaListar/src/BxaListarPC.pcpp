@@ -1,0 +1,489 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+#include "../../../commons/queryMacro.h"
+
+void sql_error_WFArvoreBaixa(sqlca*sqlca);
+
+
+bool proCObtemWFBaixaMensagemComunicacao(int sIdBaixa, int sIdTipoComunicacao, XMLGen* saida);
+bool proCObtemWFBaixaMensagem(int sIdBaixa,int sIdTipoComunicacao,XMLGen* saida);
+
+int  proCObtemWFHierarquiaBaixa(XMLGen* saida)
+{
+    ULOG_START("proCObtemWFHierarquiaBaixa()");
+    struct sqlca sqlca;
+
+    int idBaixaRaiz = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int     idBaixa;
+		int     idNomeBaixa;
+		VARCHAR	nmBaixa[256];
+
+		short i_idBaixa = -1;
+		short i_idNomeBaixa = -1;
+		short i_nmBaixa = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFArvoreBaixa(&sqlca);
+
+    EXEC SQL
+		SELECT
+			B.IDBAIXA,
+			B.IDNOMEBAIXA,
+			NB.NMBAIXA
+		INTO
+			:idBaixa:i_idBaixa,
+			:idNomeBaixa:i_idNomeBaixa,
+			:nmBaixa:i_nmBaixa
+		FROM
+			CONTATOADM.BAIXA B,
+			CONTATOADM.NOMEBAIXA NB
+		WHERE
+			B.IDNOMEBAIXA = NB.IDNOMEBAIXA
+			AND B.IDBAIXA NOT IN (
+				SELECT
+					HIERARQUIA.IDBAIXA
+		                FROM
+					CONTATOADM.BAIXAHIERARQUIA HIERARQUIA
+			        WHERE HIERARQUIA.IDBAIXA > 0 )
+	           	 AND ROWNUM <= 1;
+
+	if (i_idBaixa != -1)
+	{
+		idBaixaRaiz = idBaixa;
+
+		CONVIND (nmBaixa, i_nmBaixa);
+
+		saida->addItem( "idBaixa",idBaixa );
+		saida->addItem( "idNomeBaixa",idNomeBaixa );
+		saida->addItem( "nmBaixa",(char*)nmBaixa.arr );
+		saida->addItem( "idBaixaPai",idBaixa );
+
+	}
+
+    ULOG_END("proCObtemWFHierarquiaBaixa()");
+
+    return idBaixaRaiz;
+}
+
+bool proCObtemWFBaixaLista(int sIdBaixa, int idTipoComunicacao, XMLGen* saida)
+{
+    ULOG_START("proCObtemWFBaixaLista()");
+
+    struct sqlca sqlca;
+    int numRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int     idBaixaPai = sIdBaixa;
+		int     idBaixa;
+		int     idBaixaHierarquia;
+		int     idNomeBaixa;
+		VARCHAR	nmBaixa[256];
+		int     inFolha;
+
+		short i_idBaixa;
+		short i_idBaixaHierarquia;
+		short i_idNomeBaixa;
+		short i_nmBaixa;
+		short i_inFolha;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFArvoreBaixa(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG("sIdBaixa = %d",sIdBaixa);
+    ULOG("idTipoComunicacao = %d",idTipoComunicacao);
+
+	EXEC SQL DECLARE consultaBaixaLista CURSOR FOR
+        SELECT
+            IDBAIXA,
+            IDBAIXAHIERARQUIA,
+            IDNOMEBAIXA,
+            NMBAIXA,
+            INFOLHA
+        FROM
+            CONTATOADM.BAIXAHIERARQUIAV01
+        WHERE
+            INDISPONIBILIDADE = 1
+        AND
+            IDBAIXAHIERARQUIA = :idBaixaPai
+        START WITH IDBAIXAHIERARQUIA = :idBaixaPai
+        CONNECT BY IDBAIXAHIERARQUIA = PRIOR IDBAIXA
+        ORDER BY
+            INFOLHA DESC;
+
+	EXEC SQL OPEN consultaBaixaLista;
+
+	while (true)
+	{
+        i_nmBaixa = -1;
+
+		EXEC SQL FETCH consultaBaixaLista INTO
+									:idBaixa: i_idBaixa,
+									:idBaixaHierarquia:i_idBaixaHierarquia,
+									:idNomeBaixa:i_idNomeBaixa,
+									:nmBaixa:i_nmBaixa,
+									:inFolha:i_inFolha;
+
+		CONVIND(nmBaixa, i_nmBaixa);
+
+		saida->createTag("AdmFolhaBaixaVO");
+		saida->addProp("xmlns", "admsistemas.fo.vivo.com.br/vo" );
+			saida->addItem( "idBaixa",idBaixa );
+			saida->addItem( "idNomeBaixa",idNomeBaixa );
+			saida->addItem( "idBaixaPai",idBaixaHierarquia );
+			saida->addItem( "nmBaixa",(char*)nmBaixa.arr );
+
+            // Se for folha ...
+			if (inFolha > 0)
+			{
+				if (idTipoComunicacao >= 0)
+                {
+					proCObtemWFBaixaMensagemComunicacao(idBaixa, idTipoComunicacao, saida);
+                }
+				else
+                {
+					proCObtemWFBaixaMensagem(idBaixa,idTipoComunicacao,saida);
+                }
+			}
+
+		saida->closeTag();
+
+		numRegistros++;
+	}
+
+    ULOG("numRegistros = %d",numRegistros);
+
+    EXEC SQL CLOSE consultaBaixaLista;
+
+    ULOG_END("proCObtemWFBaixaLista()");
+
+    return numRegistros == 0 ? false : true;
+}
+
+
+bool proCObtemWFBaixaContato(int sIdBaixa, int sIdContato, int idTipoComunicacao, XMLGen* saida)
+{
+    ULOG_START("proCObtemWFBaixaContato()");
+
+    int numRegistros = 0;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int     idBaixaPai = sIdBaixa;
+		int     idContato = sIdContato;
+		int     idBaixa;
+		int     idBaixaHierarquia;
+		int     idNomeBaixa;
+		VARCHAR	nmBaixa[256];
+		int     inFolha;
+
+		short i_idBaixa;
+		short i_idBaixaHierarquia;
+		short i_idNomeBaixa;
+		short i_nmBaixa;
+		short i_inFolha;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFArvoreBaixa(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG("sIdBaixa = %d",sIdBaixa);
+    ULOG("sIdContato = %d",sIdContato);
+    ULOG("idTipoComunicacao = %d",idTipoComunicacao);
+
+	EXEC SQL DECLARE consultaBaixaContato CURSOR FOR
+
+	SELECT DISTINCT
+		IDBAIXA,
+		IDBAIXAHIERARQUIA,
+		IDNOMEBAIXA,
+		NMBAIXA,
+		INFOLHA
+	FROM
+		CONTATOADM.BAIXAHIERARQUIAV01
+	WHERE
+		IDBAIXAHIERARQUIA = :idBaixaPai
+	START WITH
+		IDBAIXA IN (SELECT IDBAIXA FROM CONTATOADM.CONTATOFOLHABAIXA WHERE IDCONTATO = :idContato AND INDISPONIBILIDADE = 1)
+	CONNECT BY
+		PRIOR IDBAIXAHIERARQUIA = IDBAIXA
+	ORDER BY
+		INFOLHA DESC;
+
+	EXEC SQL OPEN consultaBaixaContato;
+
+	while (true)
+	{
+        i_nmBaixa = -1;
+
+		EXEC SQL FETCH consultaBaixaContato INTO
+									:idBaixa: i_idBaixa,
+									:idBaixaHierarquia:i_idBaixaHierarquia,
+									:idNomeBaixa:i_idNomeBaixa,
+									:nmBaixa:i_nmBaixa,
+									:inFolha:i_inFolha;
+
+		CONVIND(nmBaixa, i_nmBaixa);
+
+		saida->createTag("AdmFolhaBaixaVO");
+		saida->addProp("xmlns", "admsistemas.fo.vivo.com.br/vo" );
+			saida->addItem( "idBaixa",idBaixa );
+			saida->addItem( "idNomeBaixa",idNomeBaixa );
+			saida->addItem( "idBaixaPai",idBaixaHierarquia );
+			saida->addItem( "nmBaixa",(char*)nmBaixa.arr );
+			if (inFolha > 0)
+			{
+				if (idTipoComunicacao >= 0)
+                {
+					proCObtemWFBaixaMensagemComunicacao(idBaixa, idTipoComunicacao, saida);
+                }
+				else
+                {
+					proCObtemWFBaixaMensagem(idBaixa,idTipoComunicacao,saida);
+                }
+			}
+		saida->closeTag();
+
+		numRegistros++;
+	}
+
+    EXEC SQL CLOSE consultaBaixaContato;
+
+    ULOG("numRegistros = %d",numRegistros);
+
+    ULOG_END("proCObtemWFBaixaContato()");
+
+    return numRegistros == 0 ? false : true;
+}
+
+bool proCObtemWFBaixaMensagemComunicacao(int sIdBaixa, int sIdTipoComunicacao, XMLGen* saida)
+{
+    ULOG_START("proCObtemWFBaixaMensagemComunicacao()");
+
+    int numRegistros = 0;
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int     idBaixa = sIdTipoComunicacao ? sIdBaixa : 0;
+		int     idFormaRetorno = sIdTipoComunicacao;
+		int     idBaixaMensagem;
+		VARCHAR dsFormaRetorno[256];
+		int     idMensagemBaixa;
+		VARCHAR	dsMensagemBaixa[256];
+
+		short i_idBaixaMensagem;
+		short i_dsFormaRetorno;
+		short i_idMensagemBaixa;
+		short i_dsMensagemBaixa;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFArvoreBaixa(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    // Remoção de views bzeroum - Cassio - Março/2007
+    // EXEC SQL
+    //  DECLARE
+    //      ReadFormaRetornoSel CURSOR FOR
+    //     SELECT IDBAIXAMENSAGEM
+    //           ,DSFORMARETORNO
+    //           ,IDMENSAGEMBAIXA
+    //           ,DSMENSAGEMBAIXA
+    //     FROM
+    //         CONTATOADM.BAIXAMENSAGEMbzeroum
+    //     WHERE
+    //         IDBAIXA = :idBaixa
+    //     AND
+    //         IDFORMARETORNO = :idFormaRetorno;
+
+    ULOG("sIdBaixa = %d",sIdBaixa);
+    ULOG("sIdTipoComunicacao = %d",sIdTipoComunicacao);
+
+    EXEC SQL DECLARE ReadFormaRetornoSel CURSOR FOR
+        SELECT
+            BAIXAMENSAGEM.IDBAIXAMENSAGEM,
+            FORMARETORNO.DSFORMARETORNO,
+            BAIXAMENSAGEM.IDMENSAGEMBAIXA,
+            DECODE(MENSAGEMBAIXA.DSMENSAGEMBAIXA,'Fechamento Imediato','',MENSAGEMBAIXA.DSMENSAGEMBAIXA) AS DSMENSAGEMBAIXA
+        FROM
+            CONTATOADM.TIPORETORNOCONTATO TIPORETORNOCONTATO,
+            CONTATOADM.FORMARETORNO FORMARETORNO,
+            CONTATOADM.MENSAGEMBAIXA MENSAGEMBAIXA,
+            CONTATOADM.BAIXAMENSAGEM BAIXAMENSAGEM
+        WHERE
+            FORMARETORNO.IDTIPORETORNOCONTATO = TIPORETORNOCONTATO.IDTIPORETORNOCONTATO
+        AND BAIXAMENSAGEM.IDFORMARETORNO = FORMARETORNO.IDFORMARETORNO
+        AND BAIXAMENSAGEM.IDMENSAGEMBAIXA = MENSAGEMBAIXA.IDMENSAGEMBAIXA
+        AND FORMARETORNO.IDFORMARETORNO = :idFormaRetorno
+        AND BAIXAMENSAGEM.IDBAIXA = :idBaixa;
+
+	EXEC SQL OPEN ReadFormaRetornoSel;
+
+	while (true)
+	{
+        i_dsFormaRetorno = i_dsMensagemBaixa = -1;
+
+		EXEC SQL FETCH ReadFormaRetornoSel INTO
+									:idBaixaMensagem:i_idBaixaMensagem,
+									:dsFormaRetorno:i_dsFormaRetorno,
+									:idMensagemBaixa:i_idMensagemBaixa,
+									:dsMensagemBaixa:i_dsMensagemBaixa;
+
+		CONVIND(dsFormaRetorno, i_dsFormaRetorno);
+		CONVIND(dsMensagemBaixa, i_dsMensagemBaixa);
+
+		saida->createTag("AdmMensagemBaixaVO");
+			saida->addItem( "idBaixaMensagem",idBaixaMensagem );
+			saida->addItem( "idMensagemBaixa",idMensagemBaixa );
+			saida->createTag("AdmMensagemAvisoVO");
+				saida->addItem( "dsMensagemAviso",(char*)dsMensagemBaixa.arr );
+			saida->closeTag();
+			saida->createTag("AdmComunicacaoBaixaVO");
+				saida->addItem( "idTipoComunicacao",idFormaRetorno );
+				saida->addItem( "dsTipoComunicacao",(char*)dsFormaRetorno.arr );
+			saida->closeTag();
+		saida->closeTag();
+
+		numRegistros++;
+	}
+
+	EXEC SQL CLOSE ReadFormaRetornoSel;
+
+    ULOG("numRegistros = %d",numRegistros);
+
+	if (numRegistros == 0)
+    {
+		proCObtemWFBaixaMensagem(sIdBaixa,sIdTipoComunicacao,saida);
+    }
+
+	ULOG_END("proCObtemWFBaixaMensagemComunicacao()");
+
+	return true;
+}
+
+bool proCObtemWFBaixaMensagem(int sIdBaixa,int sIdTipoComunicacao,XMLGen* saida)
+{
+    ULOG_START("proCObtemWFBaixaMensagem()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int     idBaixa = sIdBaixa;
+		int     idFormaRetorno;
+		int     idBaixaMensagem;
+		VARCHAR dsFormaRetorno[256];
+		int     idMensagemBaixa;
+		VARCHAR	dsMensagemBaixa[256];
+
+		short i_idFormaRetorno;
+		short i_idBaixaMensagem;
+		short i_dsFormaRetorno;
+		short i_idMensagemBaixa;
+		short i_dsMensagemBaixa;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFArvoreBaixa(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    // Remoção de views bzeroum - Cassio - Março/2007
+    // EXEC SQL
+    //  DECLARE
+    //      ReadFormaRetorno CURSOR FOR
+    //     SELECT IDBAIXAMENSAGEM
+    //           ,IDFORMARETORNO
+    //           ,DSFORMARETORNO
+    //           ,IDMENSAGEMBAIXA
+    //           ,DSMENSAGEMBAIXA
+    //     FROM
+    //         CONTATOADM.BAIXAMENSAGEMbzeroum
+    //     WHERE
+    //         IDBAIXA = :idBaixa
+    //     AND
+    //         ROWNUM <= 1;
+
+    ULOG("sIdBaixa = %d",sIdBaixa);
+
+    EXEC SQL DECLARE ReadFormaRetorno CURSOR FOR
+        SELECT
+            BAIXAMENSAGEM.IDBAIXAMENSAGEM,
+            FORMARETORNO.IDFORMARETORNO,
+            FORMARETORNO.DSFORMARETORNO,
+            BAIXAMENSAGEM.IDMENSAGEMBAIXA,
+            MENSAGEMBAIXA.DSMENSAGEMBAIXA
+        FROM
+            CONTATOADM.TIPORETORNOCONTATO TIPORETORNOCONTATO,
+            CONTATOADM.FORMARETORNO FORMARETORNO,
+            CONTATOADM.MENSAGEMBAIXA MENSAGEMBAIXA,
+            CONTATOADM.BAIXAMENSAGEM BAIXAMENSAGEM
+        WHERE
+            FORMARETORNO.IDTIPORETORNOCONTATO = TIPORETORNOCONTATO.IDTIPORETORNOCONTATO
+        AND BAIXAMENSAGEM.IDFORMARETORNO = FORMARETORNO.IDFORMARETORNO
+        AND BAIXAMENSAGEM.IDMENSAGEMBAIXA = MENSAGEMBAIXA.IDMENSAGEMBAIXA
+        AND BAIXAMENSAGEM.IDBAIXA = :idBaixa
+        AND ROWNUM < 2;
+
+	EXEC SQL OPEN ReadFormaRetorno;
+
+	while (true)
+	{
+        i_dsFormaRetorno = i_dsMensagemBaixa = -1;
+
+		EXEC SQL FETCH ReadFormaRetorno INTO
+									:idBaixaMensagem: i_idBaixaMensagem,
+									:idFormaRetorno:i_idFormaRetorno,
+									:dsFormaRetorno:i_dsFormaRetorno,
+									:idMensagemBaixa:i_idMensagemBaixa,
+									:dsMensagemBaixa:i_dsMensagemBaixa;
+
+		CONVIND(dsFormaRetorno, i_dsFormaRetorno);
+		CONVIND(dsMensagemBaixa, i_dsMensagemBaixa);
+
+		saida->createTag("AdmMensagemBaixaVO");
+			saida->addItem( "idBaixaMensagem",idBaixaMensagem );
+			saida->addItem( "idMensagemBaixa",idMensagemBaixa );
+			saida->createTag("AdmMensagemAvisoVO");
+            // Não é para exibir mensagem de aviso para processos 'Sem Retorno'
+            // Incidências 3981 Sanity e 4386 de HV. Abr/2007 - Cassio
+            if ( sIdTipoComunicacao > 0 )
+            {
+				saida->addItem( "dsMensagemAviso",(char*)dsMensagemBaixa.arr );
+            }
+            else
+            {
+				saida->addItem( "dsMensagemAviso","" );
+            }
+			saida->closeTag();
+			saida->createTag("AdmComunicacaoBaixaVO");
+				saida->addItem( "idTipoComunicacao",idFormaRetorno );
+				saida->addItem( "dsTipoComunicacao",(char*)dsFormaRetorno.arr );
+			saida->closeTag();
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE ReadFormaRetorno;
+
+	ULOG_END("proCObtemWFBaixaMensagem()");
+
+	return true;
+}
+
+void sql_error_WFArvoreBaixa(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

@@ -1,0 +1,750 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CBxaListar.h"
+
+CBaixa::CBaixa()
+{
+}
+
+CBaixa::~CBaixa()
+{
+}
+
+int CBaixa::ListChildrenSemContat( void )
+{
+   //Variavel de controle para a quantidade de registros retornada
+   int    iCont = 0;
+
+   struct sqlca sqlca;
+
+   EXEC SQL BEGIN DECLARE SECTION;
+      char * cidBaixa;
+      struct
+      {
+         VARCHAR stidBaixa[21+1];
+         VARCHAR stidBaixaPai[21+1];
+         VARCHAR stidNomeBaixa[21+1];
+         VARCHAR stnmBaixa[255+1];
+         int     iLevel;
+         VARCHAR stdsPath[1024+1];
+      } stBaixaRegistro;
+      struct
+      {
+         short iidBaixa;
+         short iidBaixaPai;
+         short iidNomeBaixa;
+         short inmBaixa;
+         short iLevel;
+         short idsPath;
+      } stBaixaIndicator;
+   EXEC SQL END DECLARE SECTION;
+
+   //Processamento Principal
+   try
+   {
+        //Zera a estrutura da classe
+        ZeraBaixa();
+        memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+        EXEC SQL WHENEVER SQLERROR GOTO ErrorChildren;
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+        EXEC SQL
+            SELECT
+                BAIXA.IDBAIXA,
+                0 AS IDBAIXAPAI,
+                BAIXA.IDNOMEBAIXA,
+                NMBAIXA.NMBAIXA,
+                0 AS ILEVEL,
+                '' AS PATH
+            INTO
+                :stBaixaRegistro:stBaixaIndicator
+            FROM
+                CONTATOADM.BAIXA BAIXA,
+                CONTATOADM.NOMEBAIXA NMBAIXA
+            WHERE
+                BAIXA.IDNOMEBAIXA=NMBAIXA.IDNOMEBAIXA
+            AND
+                BAIXA.IDBAIXA 
+            IN (
+                SELECT
+                    HIERARQUIA.IDBAIXA
+                FROM
+                    CONTATOADM.BAIXAHIERARQUIA HIERARQUIA
+                WHERE
+                    HIERARQUIA.IDBAIXA > 0
+               )
+            AND
+                ROWNUM < 2;
+
+        if(sqlca.sqlcode)
+        {
+            SetErro( "Nao existe uma raiz para arvore de baixa" );
+            return 0; //Erro
+        }
+
+        Add( (char*)stBaixaRegistro.stidBaixa.arr
+            ,(char*)stBaixaRegistro.stidBaixaPai.arr
+            ,(char*)stBaixaRegistro.stidNomeBaixa.arr
+            ,(char*)stBaixaRegistro.stnmBaixa.arr
+            ,""
+            ,stBaixaRegistro.iLevel );
+
+        iCont++;
+
+        cidBaixa = Registro(0)->cidBaixa;
+
+        EXEC SQL 
+            DECLARE CursorListChildrenSemCont CURSOR FOR 
+            SELECT
+                 HIERARQUIA.IDBAIXA
+                ,HIERARQUIA.IDBAIXAHIERARQUIA
+                ,HIERARQUIA.IDNOMEBAIXA
+                ,HIERARQUIA.NMBAIXA NMBAIXA
+                ,LEVEL
+                ,SYS_CONNECT_BY_PATH(REPLACE(HIERARQUIA.NMBAIXA, '/', '\' ), '/') "PATH"
+            FROM 
+                CONTATOADM.BAIXAHIERARQUIAV01 HIERARQUIA
+            WHERE 
+                LEVEL = 1
+            AND
+                IDBAIXAHIERARQUIA = :cidBaixa
+            START WITH HIERARQUIA.IDBAIXAHIERARQUIA = :cidBaixa
+            CONNECT BY HIERARQUIA.IDBAIXAHIERARQUIA = PRIOR HIERARQUIA.IDBAIXA;
+
+        EXEC SQL WHENEVER NOT FOUND DO break;
+        EXEC SQL OPEN CursorListChildrenSemCont;
+
+        if(sqlca.sqlcode)
+        {
+            return 0; //Erro
+        }
+        else
+        {
+            for(;;)
+            {
+                //Zera a estrutura de retorno
+                memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+                EXEC SQL
+                    FETCH CursorListChildrenSemCont INTO :stBaixaRegistro:stBaixaIndicator;
+
+                //Adiciona a classe
+                if ( stBaixaIndicator.inmBaixa >= 0 )
+                {
+                    Add( (char*)stBaixaRegistro.stidBaixa.arr
+                        ,(char*)stBaixaRegistro.stidBaixaPai.arr
+                        ,(char*)stBaixaRegistro.stidNomeBaixa.arr
+                        ,(char*)stBaixaRegistro.stnmBaixa.arr
+                        ,(char*)stBaixaRegistro.stdsPath.arr
+                        ,stBaixaRegistro.iLevel );
+
+                    //conta quantos existem
+                    iCont++;
+                }
+            }
+
+            EXEC SQL CLOSE CursorListChildrenSemCont;
+        }
+
+        //Retorna a quantidade de registros
+        return iCont;
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+ErrorChildren:
+   throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CBaixa::ListBxaComContatos( char * cidContatoParam )
+{
+   //Variavel de controle para a quantidade de registros retornada
+   int    iCont = 0;
+
+   struct sqlca sqlca;
+
+   EXEC SQL BEGIN DECLARE SECTION;
+      char * cidContato = cidContatoParam;
+      int    cidBaixa;
+      struct
+      {
+         VARCHAR stidBaixa[21+1];
+         VARCHAR stidBaixaPai[21+1];
+         VARCHAR stidNomeBaixa[21+1];
+         VARCHAR stnmBaixa[255+1];
+         int     iLevel;
+         VARCHAR stdsPath[1024+1];
+      } stBaixaRegistro;
+      struct
+      {
+         short iidBaixa;
+         short iidBaixaPai;
+         short iidNomeBaixa;
+         short inmBaixa;
+         short iLevel;
+         short idsPath;
+      } stBaixaIndicator;
+   EXEC SQL END DECLARE SECTION;
+
+   //Processamento Principal
+   try
+   {
+      //Zera a estrutura da classe
+      ZeraBaixa();
+      memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+      EXEC SQL WHENEVER SQLERROR GOTO ErrorContatos;
+      EXEC SQL WHENEVER NOT FOUND CONTINUE;
+      EXEC SQL 
+         SELECT 
+            IDBAIXA
+         INTO 
+            :cidBaixa
+         FROM 
+            CONTATOADM.BAIXA
+			WHERE 
+            IDBAIXA 
+         NOT IN ( SELECT 
+                     HIERARQUIA.IDBAIXA
+			         FROM 
+                     CONTATOADM.BAIXAHIERARQUIA HIERARQUIA 
+			         WHERE 
+                     HIERARQUIA.IDBAIXA > 0 
+                 )
+	      AND 
+           ROWNUM <= 1;
+
+
+      EXEC SQL WHENEVER NOT FOUND DO break;
+      EXEC SQL 
+         DECLARE ReadBxaContatos CURSOR FOR 
+	      SELECT DISTINCT 
+		      IDBAIXA, 
+		      IDBAIXAHIERARQUIA,
+		      IDNOMEBAIXA,
+		      NMBAIXA
+            ,LEVEL
+            ,SYS_CONNECT_BY_PATH(REPLACE(NMBAIXA, '/', '\' ), '/') "PATH"
+	      FROM 
+		      CONTATOADM.BAIXAHIERARQUIAV01
+	      WHERE 
+		      IDBAIXAHIERARQUIA = :cidBaixa 
+	      START WITH 
+		      IDBAIXA IN (SELECT IDBAIXA FROM CONTATOADM.CONTATOFOLHABAIXA WHERE IDCONTATO = :cidContato) 
+	      CONNECT BY 
+		      PRIOR IDBAIXAHIERARQUIA = IDBAIXA 
+	      ORDER BY 
+		      IDBAIXA;
+
+
+      EXEC SQL OPEN ReadBxaContatos;
+
+      if(sqlca.sqlcode)
+         return 0;//Erro
+      else
+      {
+
+         for(;;)
+         {
+            //Zera a estrutura de restorno
+            memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+            EXEC SQL FETCH ReadBxaContatos INTO :stBaixaRegistro:stBaixaIndicator;
+
+            //Adiciona a classe
+            if ( stBaixaIndicator.inmBaixa >= 0 )
+            {
+               Add( (char*)stBaixaRegistro.stidBaixa.arr
+                   ,(char*)stBaixaRegistro.stidBaixaPai.arr
+                   ,(char*)stBaixaRegistro.stidNomeBaixa.arr
+                   ,(char*)stBaixaRegistro.stnmBaixa.arr
+                     ,(char*)stBaixaRegistro.stdsPath.arr
+                   ,stBaixaRegistro.iLevel );
+               //conta quantos existem
+               iCont++;
+            }
+         }
+
+         EXEC SQL CLOSE ReadBxaContatos;
+      }
+      //Retorna a quantidade de registros
+      return iCont;
+   }
+   catch(...)
+   {
+      throw;
+   }
+
+ErrorContatos:
+   throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+int CBaixa::ListBxa( char * idBaixaParam, char * cidContatoParam )
+{
+   //Variavel de controle para a quantidade de registros retornada
+   int    iCont = 0;
+
+   struct sqlca sqlca;
+
+   EXEC SQL BEGIN DECLARE SECTION;
+      char * cidContato = cidContatoParam;
+      int    cidBaixa = atoi(idBaixaParam);
+      struct
+      {
+         VARCHAR stidBaixa[21+1];
+         VARCHAR stidBaixaPai[21+1];
+         VARCHAR stidNomeBaixa[21+1];
+         VARCHAR stnmBaixa[255+1];
+         int     iLevel;
+         VARCHAR stdsPath[1024+1];
+      } stBaixaRegistro;
+      struct
+      {
+         short iidBaixa;
+         short iidBaixaPai;
+         short iidNomeBaixa;
+         short inmBaixa;
+         short iLevel;
+         short idsPath;
+      } stBaixaIndicator;
+   EXEC SQL END DECLARE SECTION;
+
+   //Processamento Principal
+   try
+   {
+      //Zera a estrutura da classe
+      ZeraBaixa();
+      memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+      EXEC SQL WHENEVER SQLERROR GOTO ErrorBxa;
+      EXEC SQL WHENEVER NOT FOUND DO break;
+      EXEC SQL 
+         DECLARE ReadBxa CURSOR FOR 
+	      SELECT DISTINCT 
+		      IDBAIXA, 
+		      IDBAIXAHIERARQUIA,
+		      IDNOMEBAIXA,
+		      NMBAIXA
+            ,LEVEL
+            ,SYS_CONNECT_BY_PATH(REPLACE(NMBAIXA, '/', '\' ), '/') "PATH"
+	      FROM 
+		      CONTATOADM.BAIXAHIERARQUIAV01
+	      WHERE 
+		      IDBAIXAHIERARQUIA = :cidBaixa 
+	      START WITH 
+		      IDBAIXA IN (SELECT IDBAIXA FROM CONTATOADM.CONTATOFOLHABAIXA WHERE IDCONTATO = :cidContato) 
+	      CONNECT BY 
+		      PRIOR IDBAIXAHIERARQUIA = IDBAIXA 
+	      ORDER BY 
+		      IDBAIXA;
+
+
+      EXEC SQL OPEN ReadBxa;
+
+      if(sqlca.sqlcode)
+         return 0;//Erro
+      else
+      {
+
+         for(;;)
+         {
+            //Zera a estrutura de restorno
+            memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+            EXEC SQL FETCH ReadBxa INTO :stBaixaRegistro:stBaixaIndicator;
+
+            //Adiciona a classe
+            if ( stBaixaIndicator.inmBaixa >= 0 )
+            {
+               Add( (char*)stBaixaRegistro.stidBaixa.arr
+                   ,(char*)stBaixaRegistro.stidBaixaPai.arr
+                   ,(char*)stBaixaRegistro.stidNomeBaixa.arr
+                   ,(char*)stBaixaRegistro.stnmBaixa.arr
+                     ,(char*)stBaixaRegistro.stdsPath.arr
+                   ,stBaixaRegistro.iLevel );
+               //conta quantos existem
+               iCont++;
+            }
+         }
+
+         EXEC SQL CLOSE ReadBxa;
+      }
+      //Retorna a quantidade de registros
+      return iCont;
+   }
+   catch(...)
+   {
+      throw;
+   }
+
+ErrorBxa:
+   throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+
+int CBaixa::ListChildrenIdBaixa( char *idBaixaWrk )
+{
+   //Variavel de controle para a quantidade de registros retornada
+   int    iCont = 0;
+
+   struct sqlca sqlca;
+
+   EXEC SQL BEGIN DECLARE SECTION;
+      char * cidBaixa = idBaixaWrk;
+      struct
+      {
+         VARCHAR stidBaixa[21+1];
+         VARCHAR stidBaixaPai[21+1];
+         VARCHAR stidNomeBaixa[21+1];
+         VARCHAR stnmBaixa[255+1];
+         int     iLevel;
+         VARCHAR stdsPath[1024+1];
+      } stBaixaRegistro;
+      struct
+      {
+         short iidBaixa;
+         short iidBaixaPai;
+         short iidNomeBaixa;
+         short inmBaixa;
+         short iLevel;
+         short idsPath;
+      } stBaixaIndicator;
+   EXEC SQL END DECLARE SECTION;
+
+   //Processamento Principal
+   try
+   {
+      //Zera a estrutura da classe
+      ZeraBaixa();
+      memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+      EXEC SQL WHENEVER SQLERROR GOTO Error;
+      EXEC SQL WHENEVER NOT FOUND DO break;
+      EXEC SQL 
+         DECLARE ReadChildrenSemCont CURSOR FOR 
+             SELECT HIERARQUIA.IDBAIXA
+               ,HIERARQUIA.IDBAIXAHIERARQUIA
+               ,HIERARQUIA.IDNOMEBAIXA
+               ,HIERARQUIA.NMBAIXA NMBAIXA
+               ,LEVEL
+               ,SYS_CONNECT_BY_PATH(REPLACE(HIERARQUIA.NMBAIXA, '/', '\' ), '/') "PATH"
+             FROM 
+               CONTATOADM.BAIXAHIERARQUIAV01 HIERARQUIA
+			   WHERE 
+               LEVEL = 1
+            AND
+			      IDBAIXAHIERARQUIA = :cidBaixa
+         START WITH HIERARQUIA.IDBAIXAHIERARQUIA = :cidBaixa
+         CONNECT BY HIERARQUIA.IDBAIXAHIERARQUIA = PRIOR HIERARQUIA.IDBAIXA;
+
+      EXEC SQL OPEN ReadChildrenSemCont;
+
+      if(sqlca.sqlcode)
+         return 0;//Erro
+
+      for(;;)
+      {
+         //Zera a estrutura de restorno
+         memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+         EXEC SQL FETCH ReadChildrenSemCont INTO :stBaixaRegistro:stBaixaIndicator;
+         //Adiciona a classe
+         if ( stBaixaIndicator.inmBaixa >= 0 )
+         {
+            Add( (char*)stBaixaRegistro.stidBaixa.arr
+                ,(char*)stBaixaRegistro.stidBaixaPai.arr
+                ,(char*)stBaixaRegistro.stidNomeBaixa.arr
+                ,(char*)stBaixaRegistro.stnmBaixa.arr
+                  ,(char*)stBaixaRegistro.stdsPath.arr
+                ,stBaixaRegistro.iLevel );
+            //conta quantos existem
+            iCont++;
+         }
+      }
+
+      EXEC SQL CLOSE ReadChildrenSemCont;
+
+      //Retorna a quantidade de registros
+      return iCont;
+   }
+   catch(...)
+   {
+      throw;
+   }
+
+Error:
+   throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+int CBaixa::ListOnlyParent( char * cidContatoParam )
+{
+   //Variavel de controle para a quantidade de registros retornada
+   int    iCont = 0;
+
+   struct sqlca sqlca;
+
+   EXEC SQL BEGIN DECLARE SECTION;
+      char * cidBaixa;
+      char * cidContato = cidContatoParam;
+      struct
+      {
+         VARCHAR stidBaixa[21+1];
+         VARCHAR stidBaixaPai[21+1];
+         VARCHAR stidNomeBaixa[21+1];
+         VARCHAR stnmBaixa[255+1];
+         int     iLevel;
+         VARCHAR stdsPath[1024+1];
+      } stBaixaRegistro;
+      struct
+      {
+         short iidBaixa;
+         short iidBaixaPai;
+         short iidNomeBaixa;
+         short inmBaixa;
+         short iLevel;
+         short idsPath;
+      } stBaixaIndicator;
+   EXEC SQL END DECLARE SECTION;
+
+   //Processamento Principal
+   try
+   {
+      //Zera a estrutura da classe
+      ZeraBaixa();
+      memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+      EXEC SQL WHENEVER SQLERROR GOTO GotoListOnlyParent;
+
+      sqlca.sqlcode=0;
+
+      EXEC SQL WHENEVER NOT FOUND CONTINUE;
+      //Retorna a raiz da arvore de baixa
+      EXEC SQL 
+        SELECT   BAIXA.IDBAIXA,
+                  0 IDBAIXAPAI,
+                  BAIXA.IDNOMEBAIXA,
+                  NMBAIXA.NMBAIXA,
+                  0 ILEVEL,
+                  '' PATH
+         INTO :stBaixaRegistro:stBaixaIndicator
+         FROM 
+            CONTATOADM.BAIXA BAIXA,
+			CONTATOADM.NOMEBAIXA NMBAIXA
+         WHERE
+		 	  BAIXA.IDNOMEBAIXA=NMBAIXA.IDNOMEBAIXA 
+		 AND
+            BAIXA.IDBAIXA 
+         NOT IN 
+            ( 
+               SELECT 
+                  HIERARQUIA.IDBAIXA
+               FROM 
+                  CONTATOADM.BAIXAHIERARQUIA HIERARQUIA
+               WHERE 
+                  HIERARQUIA.IDBAIXA > 0 
+            )
+          AND 
+            ROWNUM <= 1;
+
+      if(sqlca.sqlcode)
+      {
+         SetErro( "Nao existe uma raiz para arvore de baixa" );
+         return 0;//Erro
+      }
+      else
+         Add( (char*)stBaixaRegistro.stidBaixa.arr
+             ,(char*)stBaixaRegistro.stidBaixaPai.arr
+             ,(char*)stBaixaRegistro.stidNomeBaixa.arr
+             ,(char*)stBaixaRegistro.stnmBaixa.arr
+             ,""
+             ,stBaixaRegistro.iLevel );
+             
+      cidBaixa = Registro(0)->cidBaixa;
+      
+         EXEC SQL 
+            DECLARE CursorListOnlyParent CURSOR FOR 
+            	SELECT DISTINCT 
+            		IDBAIXA, 
+            		IDBAIXAHIERARQUIA,
+            		IDNOMEBAIXA,
+            		NMBAIXA,
+                  0 ILEVEL,
+                  '' PATH
+            	FROM 
+            		CONTATOADM.BAIXAHIERARQUIAV01
+            	WHERE 
+            		IDBAIXAHIERARQUIA = :cidBaixa 
+            	START WITH 
+            		IDBAIXA IN (SELECT IDBAIXA FROM CONTATOADM.CONTATOFOLHABAIXA WHERE IDCONTATO = :cidContato) 
+            	CONNECT BY 
+            		PRIOR IDBAIXAHIERARQUIA = IDBAIXA 
+            	ORDER BY 
+            		IDBAIXA;
+
+
+
+      EXEC SQL OPEN CursorListOnlyParent;
+
+      if(sqlca.sqlcode)
+         return 0;//Erro
+      else
+      {
+
+         EXEC SQL WHENEVER NOT FOUND DO break;
+         for(;;)
+         {
+            //Zera a estrutura de restorno
+            memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+            EXEC SQL FETCH CursorListOnlyParent INTO :stBaixaRegistro:stBaixaIndicator;
+            //Adiciona a classe
+            Add( (char*)stBaixaRegistro.stidBaixa.arr
+                ,(char*)stBaixaRegistro.stidBaixaPai.arr
+                ,(char*)stBaixaRegistro.stidNomeBaixa.arr
+                ,(char*)stBaixaRegistro.stnmBaixa.arr
+                ,(char*)stBaixaRegistro.stdsPath.arr
+                ,stBaixaRegistro.iLevel );
+            //conta quantos existem
+            iCont++;
+         }
+
+         EXEC SQL CLOSE CursorListOnlyParent;
+      }
+      //Retorna a quantidade de registros
+      return iCont;
+   }
+   catch(...)
+   {
+      throw;
+   }
+
+GotoListOnlyParent:
+   throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+int CBaixa::ListChildren( char * cidBaixaParam, char * cidContatoParam )
+{
+   //Variavel de controle para a quantidade de registros retornada
+   int    iCont = 0;
+
+   struct sqlca sqlca;
+
+   EXEC SQL BEGIN DECLARE SECTION;
+      char * cidBaixa = cidBaixaParam;
+      char * cidContato = cidContatoParam;
+      struct
+      {
+         VARCHAR stidBaixa[21+1];
+         VARCHAR stidBaixaPai[21+1];
+         VARCHAR stidNomeBaixa[21+1];
+         VARCHAR stnmBaixa[255+1];
+         int     iLevel;
+         VARCHAR stdsPath[1024+1];
+      } stBaixaRegistro;
+      struct
+      {
+         short iidBaixa;
+         short iidBaixaPai;
+         short iidNomeBaixa;
+         short inmBaixa;
+         short iLevel;
+         short idsPath;
+      } stBaixaIndicator;
+   EXEC SQL END DECLARE SECTION;
+
+   //Processamento Principal
+   try
+   {
+      //Zera a estrutura da classe
+      ZeraBaixa();
+      memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+      EXEC SQL WHENEVER NOT FOUND CONTINUE;
+      EXEC SQL WHENEVER SQLERROR GOTO GotoListChildren;
+
+      sqlca.sqlcode=0;
+
+      
+      EXEC SQL 
+         DECLARE CursorListChildren CURSOR FOR 
+         	SELECT DISTINCT 
+         		IDBAIXA, 
+         		IDBAIXAHIERARQUIA,
+         		IDNOMEBAIXA,
+         		NMBAIXA,
+               LEVEL,
+               SYS_CONNECT_BY_PATH(REPLACE(NMBAIXA, '/', '\' ), '/') "PATH"
+         	FROM 
+         		CONTATOADM.BAIXAHIERARQUIAV01
+         	WHERE 
+         		IDBAIXAHIERARQUIA = :cidBaixa 
+         	START WITH 
+         		IDBAIXA IN (SELECT IDBAIXA FROM CONTATOADM.CONTATOFOLHABAIXA WHERE IDCONTATO = :cidContato) 
+         	CONNECT BY 
+         		PRIOR IDBAIXAHIERARQUIA = IDBAIXA 
+         	ORDER BY 
+         		IDBAIXA;
+
+
+      EXEC SQL OPEN CursorListChildren;
+
+      if(sqlca.sqlcode)
+         return 0;//Erro
+      else
+      {
+
+         EXEC SQL WHENEVER NOT FOUND DO break;
+         for(;;)
+         {
+            //Zera a estrutura de restorno
+            memset( &stBaixaRegistro, 0, sizeof(stBaixaRegistro) );
+
+            EXEC SQL FETCH CursorListChildren INTO :stBaixaRegistro:stBaixaIndicator;
+            //Adiciona a classe
+            Add( (char*)stBaixaRegistro.stidBaixa.arr
+                ,(char*)stBaixaRegistro.stidBaixaPai.arr
+                ,(char*)stBaixaRegistro.stidNomeBaixa.arr
+                ,(char*)stBaixaRegistro.stnmBaixa.arr
+                  ,(char*)stBaixaRegistro.stdsPath.arr
+                ,stBaixaRegistro.iLevel );
+            //conta quantos existem
+            iCont++;
+         }
+
+         EXEC SQL CLOSE CursorListChildren;
+      }
+      //Retorna a quantidade de registros
+      return iCont;
+   }
+   catch(...)
+   {
+      throw;
+   }
+
+GotoListChildren:
+   throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+
+

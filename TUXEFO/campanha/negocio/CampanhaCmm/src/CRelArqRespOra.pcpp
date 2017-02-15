@@ -1,0 +1,371 @@
+//////////////////////////////////////////////////////////////////////
+// CRelArqResp.cpp: CRelArqResp class.
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <SRelatorioCampanha.h>
+#include <CRelatorioCampanha.h>
+#include <SRelArqResp.h>
+#include <CRelArqResp.h>
+#include <TString.h>
+// Monta o relatório
+
+void CRelArqResp::montaRelatorio(struct SRelatorioCampanha* sRelatorioCampanha, XMLGen* xml_g) 
+{
+	struct sqlca sqlca;
+	char s[256]				= {NULL}; 
+	char ddd[256]			= {NULL}; 
+	char classelinha[256]	= {NULL}; 
+	char tipolinha[256]		= {NULL};  
+
+	int  iQtdReg	= 0 ;
+	int  iSeq		= 0 ;
+	int  i			= 0 ; 
+	long total		= 0 ;
+	long ret		= 0 ; 
+
+	struct RelArqRespLista    pstRel;  
+	struct RelPerguntaLista  *pstPer = NULL;  
+
+	pstPer=(RelPerguntaLista*)malloc((sizeof(RelPerguntaLista)));
+
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+		varchar idcanalCampanha			[255+1];
+		varchar idsubcampanhahistorico	[255+1];
+		varchar datain					[255+1];
+		varchar datafim					[255+1];
+		varchar dtatendimento			[255+1];
+		varchar nrtelefone				[255+1];
+		varchar dstipostatuscampanha	[255+1];
+		varchar nmloginusuario			[255+1];
+		varchar dstiposubmotivocampanha [255+1];
+		varchar dstipomotivocampanha	[255+1];
+		varchar dscampanha              [255+1];
+		varchar nmcanal                 [255+1];
+		varchar nmsubcampanha			[255+1];
+		varchar idatendimentocmp		[255+1];
+		varchar idpergunta				[255+1];
+		varchar oszdssegmentacao		[255+1];
+		varchar oszddd					[255+1];
+		varchar oszdstipolinha			[255+1];
+		varchar dspergunta			   [2000+1];
+		short   iidstipolinha       = -1; 
+		short   iiddssegmentacao	= -1; 
+		short   iidatendimentocmp	= -1;
+		short   idspergunta			= -1;
+		short   iidpergunta			= -1;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND do break;
+
+	STRCPY_TO_ORA (idcanalCampanha,			sRelatorioCampanha->pcidCanalCampanha		); 
+	STRCPY_TO_ORA (idsubcampanhahistorico,	sRelatorioCampanha->pcidSubCampanha			); 
+	STRCPY_TO_ORA (datain,					sRelatorioCampanha->pcdtInicio				); 
+	STRCPY_TO_ORA (datafim,					sRelatorioCampanha->pcdtFim					); 
+
+	EXEC SQL DECLARE crPergunta CURSOR FOR
+	SELECT   cam.idpergunta, 
+			 pergunta.dsscriptpergunta
+		FROM campanha.canalcampanha can,
+			 campanha.campanhaquestionario cam,
+			 questionario.pergunta pergunta
+	   WHERE (    (can.idcanalcampanha = cam.idcanalcampanha)
+			  AND (pergunta.idpergunta = cam.idpergunta)
+			  AND (can.idcanalcampanha = :idcanalCampanha)
+			  AND (cam.INATIVO = 1 ) 
+			 )
+	ORDER BY cam.idpergunta ASC;
+
+
+	EXEC SQL DECLARE crRELARQ CURSOR FOR
+		SELECT   distinct ate.idatendimentocampanha idatendimentocmp,
+				 ate.dtatendimento dataatend, 
+				 lis.nrtelefone,
+				 sub.idsubcampanhahistorico, 
+				 tipostatuscampanha.dstipostatuscampanha,
+				 usuario.nmloginusuario, 
+				 tpsubmot.dstiposubmotivocampanha,
+				 tip.dstipomotivocampanha, 
+				 campanha.dscampanha,
+				 canal.nmcanal,
+				 sub.nmsubcampanha
+			FROM campanha.atendimentocampanha  ate,
+				 campanha.listaconteudo		  lis,
+				 campanha.subcampanhahistorico sub,
+				 campanha.canalcampanha		  can,
+				 campanha.motivocampanha		  mot,
+				 acesso.usuario				  usuario,
+				 apoio.tipomotivocampanha	  tip,
+				 apoio.tiposubmotivocampanha   tpsubmot,
+				 apoio.tipostatuscampanha	  tipostatuscampanha,
+				 apoio.campanha				  campanha,
+				 campanha.subcampanhafixa	  scampfix,
+				 campanha.canalufoperadora	  canaluf,
+				 apoio.canal					  canal
+		   WHERE (    
+		              (lis.idlistaconteudo					   = ate.idlistaconteudo		 )
+				  AND (sub.idsubcampanhahistorico			   = can.idsubcampanhahistorico  )
+				  AND (can.idcanalcampanha					   = ate.idcanalcampanha		 )
+				  AND (sub.idsubcampanhahistorico		       = mot.idsubcampanhahistorico  )
+				  AND (mot.idmotivocampanha				       = ate.idmotivocampanha		 )
+				  AND (usuario.idpessoausuario				   = ate.idpessoausuario		 )
+				  AND (tip.idtipomotivocampanha				   = mot.idtipomotivocampanha	 )
+				  AND (tpsubmot.idtiposubmotivocampanha		   = mot.idtiposubmotivocampanha )
+				  AND (tipostatuscampanha.idtipostatuscampanha = mot.idtipostatuscampanha    )
+				  AND (campanha.idcampanha					   = scampfix.idcampanha		 )
+				  AND (scampfix.idsubcampanhafixa			   = sub.idsubcampanhafixa		 )
+				  AND (canaluf.idcanalufoperadora			   = can.idcanalufoperadora		 )
+				  AND (canal.idcanal                           = canaluf.idcanal		     )
+				  AND (ate.idcanalcampanha					   = :idcanalCampanha			 )
+				  AND (ate.dtatendimento >= TO_DATE( :datain  || ' 00:00:00','DD/MM/YYYY HH24:MI:SS'))
+				  AND (ate.dtatendimento <= TO_DATE( :datafim || ' 23:59:59','DD/MM/YYYY HH24:MI:SS'))
+				  AND (mot.idsubcampanhahistorico = :idsubcampanhahistorico)
+				 )
+			ORDER BY ate.dtatendimento ASC;
+
+	EXEC SQL OPEN crPergunta;
+
+	xml_g->createTag("RelArquivoRespostasVO");
+	xml_g->addProp("xmlns","campanha.fo.vivo.com.br/vo");
+
+	for(;;)
+	{
+		EXEC SQL FETCH crPergunta INTO :idpergunta:iidpergunta, :dspergunta:idspergunta; 
+		
+		if(idspergunta>=0 && iidpergunta>=0)
+		{
+			iQtdReg++;
+			
+			if ( iQtdReg > 1 ) 
+				pstPer=(RelPerguntaLista*)realloc((void*)pstPer, (sizeof(RelPerguntaLista)*iQtdReg));
+
+			memset(&pstPer[iQtdReg-1],0,sizeof(RelPerguntaLista));
+
+			STRCPY_FROM_ORA(pstPer[iQtdReg-1].dspergunta, dspergunta );
+			STRCPY_FROM_ORA(pstPer[iQtdReg-1].idpergunta, idpergunta );
+
+			xml_g->addItem( "dsScriptPergunta",	pstPer[iQtdReg-1].dspergunta ); 
+		}
+	}
+
+	EXEC SQL CLOSE crPergunta;
+
+	EXEC SQL OPEN crRELARQ;
+
+	int x = 0; 
+
+	for(;;)
+	{
+		    iidatendimentocmp = -1;
+
+			EXEC SQL FETCH crRELARQ INTO
+				:idatendimentocmp:iidatendimentocmp,
+				:dtatendimento          ,
+				:nrtelefone	            ,			
+				:idsubcampanhahistorico	,
+				:dstipostatuscampanha	,
+				:nmloginusuario			,
+				:dstiposubmotivocampanha,
+				:dstipomotivocampanha	,
+				:dscampanha             ,
+				:nmcanal                ,
+				:nmsubcampanha;
+			
+			i = 0;
+
+			if ( iidatendimentocmp < 0 ) 
+				break; 
+
+			memset(&pstRel,0,sizeof(RelArqRespLista));
+
+			STRCPY_FROM_ORA(pstRel.dtatendimento			,  dtatendimento		  );	
+			STRCPY_FROM_ORA(pstRel.nrtelefone				,  nrtelefone		      );	
+			STRCPY_FROM_ORA(pstRel.idsubcampanhahistorico   ,  idsubcampanhahistorico );	
+			STRCPY_FROM_ORA(pstRel.dstipostatuscampanha		,  dstipostatuscampanha	  );	
+			STRCPY_FROM_ORA(pstRel.nmloginusuario			,  nmloginusuario	      );	
+			STRCPY_FROM_ORA(pstRel.dstiposubmotivocampanha  ,  dstiposubmotivocampanha);	
+			STRCPY_FROM_ORA(pstRel.dstipomotivocampanha		,  dstipomotivocampanha	  );	
+			STRCPY_FROM_ORA(pstRel.dscampanha				,  dscampanha		      );	
+			STRCPY_FROM_ORA(pstRel.nmcanal					,  nmcanal				  );	
+			STRCPY_FROM_ORA(pstRel.idatendimentocmp			,  idatendimentocmp		  );	
+			STRCPY_FROM_ORA(pstRel.nmsubcampanha			,  nmsubcampanha		  );	
+
+			memset( &classelinha, 0, sizeof(classelinha)); 
+			memset( &tipolinha, 0, sizeof(tipolinha)); 
+
+			if ( strlen ( pstRel.nrtelefone ) < 10 ) 
+                 strcpy ( ddd, "00" ); 
+			else
+			{
+				strncpy ( ddd,				  pstRel.nrtelefone, 2 ); 
+				strcpy  ( pstRel.nrtelefone, &pstRel.nrtelefone[2] ); 
+
+				STRCPY_TO_ORA( oszddd,     ddd				 );
+				STRCPY_TO_ORA( nrtelefone, pstRel.nrtelefone );
+
+				iiddssegmentacao = -1; 
+				iidstipolinha = -1; 
+
+				EXEC SQL WHENEVER NOT FOUND goto continuaPrg;
+
+				EXEC SQL 
+					SELECT distinct seg.dssegmentacao, tip.dstipolinha
+						INTO :oszdssegmentacao:iiddssegmentacao,
+							 :oszdstipolinha:iidstipolinha
+					  FROM linha.linhabase lin,
+						   linha.linhasegmentacao linhaseg,
+						   linha.linhatelefonica tele,
+						   apoio.arearegistro ARE,
+						   apoio.segmentacao seg,
+						   apoio.tipolinha tip
+					 WHERE (    (lin.idlinhabase = tele.idlinhabase)
+							AND (tele.idlinhatelefonica = linhaseg.idlinhatelefonica)
+							AND (ARE.idarearegistro = lin.idarearegistro)
+							AND (seg.idsegmentacao = linhaseg.idsegmentacao)
+							AND (tip.idtipolinha = tele.idtipolinha)
+							AND (lin.nrlinha = :nrtelefone)
+							AND (ARE.cdarearegistro = :oszddd)
+						   );
+
+				if (iiddssegmentacao >=0 && iidstipolinha >=0 )
+				{
+
+					STRCPY_FROM_ORA( classelinha , oszdssegmentacao ); 
+					STRCPY_FROM_ORA( tipolinha   , oszdstipolinha );
+				}
+
+			}
+
+continuaPrg:
+			xml_g->createTag("linha"); 
+
+			xml_g->addItem( "dtAtendimento",			pstRel.dtatendimento ); 
+			xml_g->addItem( "codigoArea",				ddd ); 
+			xml_g->addItem( "nrTelefone",				pstRel.nrtelefone ); 
+			xml_g->addItem( "sgCampanha",				pstRel.dscampanha ); 
+			xml_g->addItem( "nmSubCampanha",			pstRel.nmsubcampanha ); 
+			xml_g->addItem( "nmCanal",					pstRel.nmcanal); 
+			xml_g->addItem( "dsTipoStatusCampanha",		pstRel.dstipostatuscampanha); 
+			xml_g->addItem( "dsTipoMotivoCampanha",		pstRel.dstipomotivocampanha); 
+			xml_g->addItem( "dsTipoSubMotivoCampanha",	pstRel.dstiposubmotivocampanha); 
+			xml_g->addItem( "segmentecao",				classelinha); 
+			xml_g->addItem( "tipoLinha",				tipolinha); 
+
+			char atendimento[256];
+			STRCPY_FROM_ORA( atendimento, idatendimentocmp ); 
+
+			xml_g->createTag("perguntasRespostas"); 
+			for(i=0;i<iQtdReg;i++)
+			{
+				getRespostas( pstPer[i].idpergunta, atendimento, xml_g );
+			}
+			xml_g->closeTag();
+			xml_g->closeTag();
+	}
+
+
+		EXEC SQL CLOSE crRELARQ;
+ 		xml_g->closeTag();	
+
+
+return; 
+}
+	
+
+
+void CRelArqResp::getRespostas( char *pidpergunta, char *patendimento, XMLGen* xml_g )
+{
+	struct sqlca sqlca;
+	struct RelRespostaLista   pstPR;
+	int i = 0; 
+	char str[4096]={NULL};
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		varchar idpergunta			[255];
+		varchar atendimento			[255];
+		varchar dsresposta			[2000];
+		short idsresposta = -1;
+	EXEC SQL END DECLARE SECTION;
+	EXEC SQL WHENEVER NOT FOUND do break;
+
+	STRCPY_TO_ORA (idpergunta,	pidpergunta ); 
+	STRCPY_TO_ORA (atendimento,	patendimento); 
+
+	memset(&pstPR,0,sizeof(RelRespostaLista));
+
+	EXEC SQL DECLARE crPerRes CURSOR FOR
+	SELECT 
+		  trim(resposta.dsresposta)
+		FROM 
+		   campanha.andamentopergunta andamentopergunta,
+		   questionario.pergunta pergunta,
+		   questionario.resposta resposta,
+		   campanha.andamentoresposta andamentoresposta
+		WHERE (    
+				(pergunta.idpergunta = andamentopergunta.idpergunta)
+			AND (pergunta.idpergunta = resposta.idpergunta)
+			AND (pergunta.idpergunta = :idpergunta)
+			AND (andamentopergunta.idandamentopergunta = andamentoresposta.idandamentopergunta )
+			AND (resposta.idresposta = andamentoresposta.idresposta)
+			AND andamentopergunta.idatendimentocampanha = :atendimento
+		   )
+		UNION
+		SELECT Trim(axd.dstextolivre)
+		  FROM campanha.andamentorespostatextolivre	axd,
+			   campanha.andamentopergunta			ap,
+			   campanha.atendimentocampanha			ate
+		 WHERE (    (ap.idandamentopergunta		= axd.idandamentopergunta)
+				AND (ate.idatendimentocampanha	= ap.idatendimentocampanha)
+				AND (ap.idpergunta				= :idpergunta)
+				AND (ate.idatendimentocampanha	= :atendimento)
+			   );
+
+
+	EXEC SQL OPEN crPerRes;
+
+	for(;;) 
+	{
+		memset(&pstPR,0,sizeof(RelRespostaLista));
+
+		idsresposta = -1; 
+
+		EXEC SQL FETCH crPerRes INTO	 :dsresposta:idsresposta;
+
+		if ( idsresposta >= 0 )
+		{
+			STRCPY_FROM_ORA(pstPR.dsresposta,     dsresposta );		
+
+			if ( i ) 
+				strcat( str, "/" ); 
+			strcat( str, pstPR.dsresposta ); 
+
+			i++; 
+		}
+
+		if ( idsresposta == -1 ) 
+			break; 
+
+		
+	}
+
+    EXEC SQL CLOSE crPerRes;
+
+	xml_g->addItem( "dsScriptResposta",   str );
+/*
+	if ( !i ) 
+	    xml_g->addItem( "dsScriptResposta",   pstPR.dsresposta);*/
+
+
+
+}
+
+void CRelArqResp::sql_error()
+{
+	return; 
+}

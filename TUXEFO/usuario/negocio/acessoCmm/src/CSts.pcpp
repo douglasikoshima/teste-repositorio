@@ -1,0 +1,189 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "CSts.h"
+
+CSts::CSts()
+{
+}
+
+CSts::~CSts()
+{
+}
+
+int CSts::ListId( char* cid )
+{
+	ULOG_START("CSts::ListId()");	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidOra = cid;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stSigla[255+1];
+			VARCHAR stDescricao[255+1];
+			VARCHAR stIndisponibilidade[21+1];
+		} stStatusUsuarioRegistro;
+		struct
+		{
+			short iId;
+			short iSigla;
+			short iDescricao;
+			short iIndisponibilidade;
+		} stStatusUsuarioIndicator;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraStatusUsuario();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorStatusUsuarioId CURSOR FOR
+			SELECT IDSTATUSUSUARIO, 
+			       UPPER(SGSTATUSUSUARIO),
+			       DSSTATUSUSUARIO, 
+			       INDISPONIBILIDADE 
+			  FROM APOIO.STATUSUSUARIO
+			 WHERE IDSTATUSUSUARIO = :cidOra;
+	
+		EXEC SQL OPEN CursorStatusUsuarioId;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CSts::ListId()");	
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stStatusUsuarioRegistro, 0, sizeof(stStatusUsuarioRegistro) );
+				EXEC SQL FETCH CursorStatusUsuarioId INTO :stStatusUsuarioRegistro:stStatusUsuarioIndicator;
+	
+				Add( (char*)stStatusUsuarioRegistro.stId.arr
+				    ,(char*)stStatusUsuarioRegistro.stSigla.arr
+				    ,(char*)stStatusUsuarioRegistro.stDescricao.arr
+				    ,(char*)stStatusUsuarioRegistro.stIndisponibilidade.arr );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorStatusUsuarioId;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CSts::ListId()");	
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CSts::ListAll( void )
+{
+    ULOG_START("CSts::ListAll()");	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stSigla[255+1];
+			VARCHAR stDescricao[255+1];
+			VARCHAR stIndisponibilidade[21+1];
+		} stStatusUsuarioRegistro;
+		struct
+		{
+			short iId;
+			short iSigla;
+			short iDescricao;
+			short iIndisponibilidade;
+		} stStatusUsuarioIndicator;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraStatusUsuario();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL 
+			DECLARE CursorStatusUsuarioAll CURSOR FOR
+			SELECT 
+				IDSTATUSUSUARIO, 
+				UPPER(SGSTATUSUSUARIO), 
+			    DSSTATUSUSUARIO, 
+			    INDISPONIBILIDADE 
+			FROM 
+				APOIO.STATUSUSUARIO
+			ORDER BY
+				UPPER(DSSTATUSUSUARIO);
+	
+		EXEC SQL OPEN CursorStatusUsuarioAll;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CSts::ListAll()");	
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stStatusUsuarioRegistro, 0, sizeof(stStatusUsuarioRegistro) );
+				EXEC SQL FETCH CursorStatusUsuarioAll INTO :stStatusUsuarioRegistro:stStatusUsuarioIndicator;
+	
+				Add( (char*)stStatusUsuarioRegistro.stId.arr
+				    ,(char*)stStatusUsuarioRegistro.stSigla.arr
+				    ,(char*)stStatusUsuarioRegistro.stDescricao.arr
+				    ,(char*)stStatusUsuarioRegistro.stIndisponibilidade.arr );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorStatusUsuarioAll;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CSts::ListAll()");	
+	return iCont;
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CSts::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	ULOG_START("CSts::GetXml()");	
+	if( Quantidade() > 0 )
+	{
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			xml->createTag(cNomeTag);
+			xml->addProp(	"xmlns", "usuario.fo.vivo.com.br/vo" );
+			if( Registro( x ) != NULL )
+			{
+				xml->addItem("idStatusUsuario"  , Registro(x)->cidStatusUsuario   );
+				xml->addItem("sgStatusUsuario"  , Registro(x)->csgStatusUsuario   );
+				xml->addItem("dsStatusUsuario"  , Registro(x)->cdsStatusUsuario   );
+				xml->addItem("indisponibilidade", Registro(x)->cIndisponibilidade );
+			}
+			xml->closeTag();
+		}
+	}
+	ULOG_END("CSts::GetXml()");	
+}

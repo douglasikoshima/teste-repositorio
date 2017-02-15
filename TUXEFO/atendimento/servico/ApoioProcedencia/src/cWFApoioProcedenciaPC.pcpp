@@ -1,0 +1,239 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include<stdio.h>
+
+#include"../../../commons/queryMacro.h"
+
+#include <tuxfw.h>
+#include "../include/cWFApoioProcedencia.h"
+#include "../include/stWFApoioProcedencia.h"
+
+void sql_error_WFApoioProcedencia(sqlca*sqlca);
+
+    // Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+        #include "../include/stWFApoioProcedencia.h"
+    EXEC SQL END DECLARE SECTION;
+
+bool proCIncluirWFApoioProcedencia(st_ApoioProcedencia* dados, st_vlApoioProcedencia* status, XMLGen* saida)
+{
+
+    ULOG_START( "proCIncluirWFApoioProcedencia()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_ApoioProcedencia   oDados;
+        struct st_vlApoioProcedencia oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFApoioProcedencia(&sqlca);
+
+    EXEC SQL SELECT Apoio.ProcedenciaSQ.NEXTVAL INTO :oDados.idProcedencia FROM DUAL;
+
+    ULOG( "idProcedencia [%d]",oDados.idProcedencia );
+    ULOG( "sgProcedencia [%s]",oDados.sgProcedencia );
+    ULOG( "dsProcedencia [%s]",oDados.dsProcedencia );
+    ULOG( "vlPeso        [%d]",oDados.vlPeso );
+
+    EXEC SQL 
+        INSERT INTO
+            Apoio.Procedencia
+            (
+             idProcedencia,
+             sgProcedencia,
+             dsProcedencia,
+             vlPeso,
+             idUsuarioAlteracao,
+             dtUltimaAlteracao
+            )
+            VALUES
+            (
+                :oDados.idProcedencia,
+                :oDados.sgProcedencia,
+                :oDados.dsProcedencia,
+                :oDados.vlPeso,
+                :oDados.idUsuarioAlteracao,
+                TO_DATE(DECODE(:oStatus.dtUltimaAlteracao, -1, NULL, :oDados.dtUltimaAlteracao),'DD/MM/YYYY HH24:MI:SS')
+            );
+
+    saida->createTag("WFApoioProcedenciaVO");
+        saida->addItem("idProcedencia", oDados.idProcedencia);
+    saida->closeTag();
+
+    ULOG_END( "proCIncluirWFApoioProcedencia()" );
+
+    return true;
+}
+
+bool proCAlterarWFApoioProcedencia(st_ApoioProcedencia* dados, st_vlApoioProcedencia* status, XMLGen* saida)
+{
+
+    ULOG_START( "proCAlterarWFApoioProcedencia()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_ApoioProcedencia   oDados;
+        struct st_vlApoioProcedencia oStatus;
+
+        char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFApoioProcedencia(&sqlca);
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    sprintf(query,"%s", "UPDATE Apoio.Procedencia SET ");
+
+    bool separa = false;
+
+    if (status->idProcedencia != -1)
+        montaUpdate("idProcedencia", oDados.idProcedencia, TIPO_INT);
+
+    sprintf(query, "%s WHERE idProcedencia = %i", query, dados->idProcedencia);
+
+    ULOG( "QUERY [%s]",query );
+
+    EXEC SQL EXECUTE IMMEDIATE :query;
+
+    ULOG_END( "proCAlterarWFApoioProcedencia()" );
+
+    return true;
+}
+
+bool proCExcluirWFApoioProcedencia(st_ApoioProcedencia* dados, st_vlApoioProcedencia* status, XMLGen* saida)
+{
+
+    ULOG_START( "proCExcluirWFApoioProcedencia()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idProcedencia = dados->idProcedencia;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFApoioProcedencia(&sqlca);
+
+    ULOG( "idProcedencia [%d]",idProcedencia );
+
+    EXEC SQL 
+        DELETE
+            Apoio.Procedencia
+        WHERE
+            idProcedencia = :idProcedencia;
+
+    ULOG_END( "proCExcluirWFApoioProcedencia()" );
+
+    return true;
+}
+
+bool proCConsultaWFApoioProcedencia(st_ApoioProcedencia* dados, st_vlApoioProcedencia* status, char* order, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFApoioProcedencia()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+      int  idProcedencia;
+      VARCHAR sgProcedencia[256];
+      VARCHAR dsProcedencia[256];
+      int  vlPeso;
+      int  idUsuarioAlteracao;
+      VARCHAR dtUltimaAlteracao[256];
+      
+      short i_dsProcedencia;
+      short i_sgProcedencia;
+      short i_dtUltimaAlteracao;
+
+      char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    sprintf(query,"SELECT idProcedencia, sgProcedencia, dsProcedencia, vlPeso, idUsuarioAlteracao, dtUltimaAlteracao FROM Apoio.Procedencia ");
+
+    bool separa = false;
+
+    if (status->idProcedencia != -1) 
+        montaWhere("idProcedencia", dados->idProcedencia, TIPO_INT);
+
+    if (status->sgProcedencia != -1) 
+        montaWhere("sgProcedencia", dados->sgProcedencia, TIPO_CHAR);
+
+    if (status->dsProcedencia != -1) 
+        montaWhere("dsProcedencia", dados->dsProcedencia, TIPO_CHAR);
+
+    if (status->vlPeso != -1) 
+        montaWhere("vlPeso", dados->vlPeso, TIPO_INT);
+
+    if (status->idUsuarioAlteracao != -1) 
+        montaWhere("idUsuarioAlteracao", dados->idUsuarioAlteracao, TIPO_INT);
+
+    if (status->dtUltimaAlteracao != -1) 
+        montaWhere("dtUltimaAlteracao", dados->dtUltimaAlteracao, TIPO_DATAHORA);
+
+    if (strlen(order) > 0) 
+        sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFApoioProcedencia(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG( "QUERY",query );
+
+    EXEC SQL PREPARE consultaApoioProcedencia FROM :query;
+    EXEC SQL DECLARE consulta CURSOR FOR consultaApoioProcedencia;
+
+    EXEC SQL OPEN consulta;
+
+    
+    saida->createTag("WFApoioProcedenciaVO");
+    
+    while (true)
+    {
+        EXEC SQL FETCH consulta INTO :idProcedencia, 
+                                     :sgProcedencia:i_sgProcedencia, 
+                                     :dsProcedencia:i_dsProcedencia, 
+                                     :vlPeso, 
+                                     :idUsuarioAlteracao, 
+                                     :dtUltimaAlteracao:i_dtUltimaAlteracao;
+
+        CONVIND(sgProcedencia, i_sgProcedencia);
+        CONVIND(dsProcedencia, i_dsProcedencia);
+        CONVIND(dtUltimaAlteracao, i_dtUltimaAlteracao);
+
+        saida->createTag("ProcedenciaVO");
+            saida->addItem("idProcedencia", idProcedencia);
+            saida->addItem("sgProcedencia", (char *)sgProcedencia.arr);
+            saida->addItem("dsProcedencia", (char *)dsProcedencia.arr);
+            saida->addItem("vlPeso", vlPeso);
+            saida->addItem("idUsuarioAlteracao", idUsuarioAlteracao);
+            saida->addItem("dtUltimaAlteracao", (char *)dtUltimaAlteracao.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE consulta;
+    saida->closeTag();
+
+    ULOG_END( "proCConsultaWFApoioProcedencia()" );
+
+    return true;
+
+}
+
+void sql_error_WFApoioProcedencia(sqlca*sqlca)
+{
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

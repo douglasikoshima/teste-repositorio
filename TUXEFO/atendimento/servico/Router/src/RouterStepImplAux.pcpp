@@ -1,0 +1,141 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include"../include/RouterClass.h"
+
+/*++
+Module Name:
+    RouterStepImplAux.pcpp
+
+Abstract:
+	Implements steps in tasks
+	Extended PRO*C part
+
+Author:
+    Ivan Mentone 2004-06-29
+
+Environment:
+    Router Core
+
+Revision History:
+	2004-07-05 - Ivan Mentone - Extends to support query by ID
+
+--*/ 
+
+// TR 16
+#define ORACA
+#include<sqlcpr.h>
+#include<sqlca.h>
+#include<sqlda.h>
+#include<oci.h>
+
+EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+EXEC SQL WHENEVER NOT FOUND GOTO NotFound;
+
+int RouterStepImpl::QueryScriptIDByName(char*pnm)
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		char*psnm;
+		int sID;
+		short Ind;
+	EXEC SQL END DECLARE SECTION;
+
+	sqlca sqlca;
+
+	psnm=pnm;
+	EXEC SQL SELECT idrouterscript INTO :sID:Ind
+		FROM workflow.routerscript WHERE nmscript=:psnm;
+	if(Ind==-1)
+		goto UndefinedError;
+
+	return sID;
+NotFound:
+	return -1;
+UndefinedError:
+	return -2;
+}
+int RouterStepImpl::QueryScriptFlowByID(int ID)
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		int scrpID;
+		int sID;
+		short Ind;
+	EXEC SQL END DECLARE SECTION;
+
+	sqlca sqlca;
+
+	sID=ID;
+	EXEC SQL SELECT idrouterscript INTO :scrpID:Ind
+		FROM workflow.fluxofuncao WHERE IDFLUXOFUNCAO=:sID;
+	if(Ind==-1)
+		goto UndefinedError;
+
+	return scrpID;
+
+NotFound:
+UndefinedError:
+	return -1;
+}
+char*RouterStepImpl::QueryExternCode(char*pnm,int ID)
+{
+	char*pret=0L;
+	EXEC SQL BEGIN DECLARE SECTION;
+		OCIClobLocator*scpLine;
+		VARCHAR scrpNM[256];
+		int sz;
+		short ind;
+		VARCHAR*_read=0L;
+		int sID;
+	EXEC SQL END DECLARE SECTION;
+
+	sqlca sqlca;
+
+	EXEC SQL ALLOCATE :scpLine;
+
+	if(pnm)
+	{
+		scrpNM.len=strlen(pnm);
+		strcpy((char*)scrpNM.arr,pnm);
+		EXEC SQL 
+				SELECT vlScriptSource 
+				INTO :scpLine:ind
+				FROM workflow.RouterScript 
+				WHERE nmScript=:scrpNM AND inActive='1';
+	}
+	else
+	{
+		sID=ID;
+		EXEC SQL SELECT vlScriptSource 
+				 INTO :scpLine:ind
+				 FROM workflow.RouterScript1 
+				 WHERE idrouterscript=:sID 
+				 AND inActive='1';
+	}
+
+	if(ind==-1)
+		goto UndefinedError;
+
+	EXEC SQL LOB DESCRIBE :scpLine GET LENGTH INTO :sz;
+	_read=(varchar*)malloc(sz+3);
+	_read->len=sz;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL LOB READ :sz FROM :scpLine INTO :_read WITH LENGTH :sz;
+
+	_read->arr[_read->len]=0;
+	pret=(char*)malloc(_read->len+1);
+	strcpy(pret,(const char*)_read->arr);
+
+	free(_read);
+	EXEC SQL FREE :scpLine;
+
+	return pret;
+NotFound:
+UndefinedError:
+	if(_read)
+		free(_read);
+	EXEC SQL FREE :scpLine;
+	if(pret)
+		free(pret);
+	return 0L;
+}

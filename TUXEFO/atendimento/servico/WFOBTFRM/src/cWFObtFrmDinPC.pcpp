@@ -1,0 +1,247 @@
+/**
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  
+ * @version $Revision: 1.1.2.1.20.1 $
+ * @CVS     $Author: a5114878 $ - $Date: 2014/05/09 20:08:49 $
+ **/
+
+#include "../include/cWFObtFrmDinPC.h"
+
+
+
+int cWFObtFrmDinPC::ProcObtemContato( long idAtendimentoPrm, int *idContatoPrm, int *idFasePrm )
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = idAtendimentoPrm;
+        int idContato = 0;
+        int idFase = 0;
+        short iidContato = -1;
+        short iidFase = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFObtemFormularioDin(&sqlca);
+
+    EXEC SQL
+        SELECT 
+            idContato,
+	    idFase
+        INTO
+            :idContato:iidContato,
+	    :idFase:iidFase
+        FROM 
+            atendimento.Atendimento
+        WHERE idAtendimento = :idAtendimento;
+    
+    *idContatoPrm = idContato;
+    *idFasePrm = idFase;
+
+    return 1;
+}
+
+int cWFObtFrmDinPC::ProcObtemTipoContato( int sIdContato, int *idTipoProcessoContato )
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idContato = sIdContato;
+        int idTipoProcesso = 0;
+        short iidTipoProcesso = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFObtemFormularioDin(&sqlca);
+
+    EXEC SQL
+        SELECT 
+            idTipoProcesso
+        INTO
+            :idTipoProcesso:iidTipoProcesso
+        FROM 
+            ContatoAdm.ContatoFolha 
+        WHERE idContato = :idContato;
+
+    if (iidTipoProcesso != -1)
+	*idTipoProcessoContato = idTipoProcesso;
+
+    return 1;
+}
+
+
+int cWFObtFrmDinPC::ProcFormaRetorno( long idAtendimentoPrm, int *idFormaRetorno, char *dsTipoComunicacao )
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = idAtendimentoPrm;
+        
+        int idFormaRetornoOut;
+        VARCHAR dsTipoComunicacaoOut[256];
+
+        short i_idFormaRetornoOut = -1;
+        short i_dsTipoComunicacaoOut = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFObtemFormularioDin(&sqlca);
+
+    EXEC SQL
+        SELECT 
+            idFormaRetorno,  
+            dsTipoComunicacao 
+        INTO
+            :idFormaRetornoOut:i_idFormaRetornoOut,
+            :dsTipoComunicacaoOut:i_dsTipoComunicacaoOut 
+        FROM (
+                SELECT 
+                    tc.idFormaRetorno, 
+                    tc.dsTipoComunicacao
+                FROM 
+                    atendimento.AtendimentoContatoComunic ac, 
+                    Apoio.TipoComunicacao tc
+                WHERE 
+                    tc.idTipoComunicacao = ac.idTipoComunicacao 
+                AND 
+                    ac.idAtendimento = :idAtendimento 
+                ORDER BY 
+                    nrOrdemUtilizacao
+              ) 
+        WHERE rownum < 2;
+    
+    if (i_idFormaRetornoOut != -1)
+    {
+	    CONVIND( dsTipoComunicacaoOut,i_dsTipoComunicacaoOut );
+
+	    *idFormaRetorno = idFormaRetornoOut;
+	    strcpy( dsTipoComunicacao,(char *)dsTipoComunicacaoOut.arr );
+    }
+    else
+    {
+	    *idFormaRetorno = 0;
+	    strcpy( dsTipoComunicacao,"Sem Retorno" );
+    }
+
+    return 1;
+}
+
+int cWFObtFrmDinPC::ProcObtemDescricaoRetorno( long idAtendimentoPrm, int *idTipoLinha, char *nrTelefoneContato )
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = idAtendimentoPrm;
+        
+        int     idTipoLinhaOut;
+        VARCHAR nrTelefoneContatoOut[11];
+
+        short i_nrTelefoneContatoOut=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND GO TO DadosNotFound;
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFObtemFormularioDin(&sqlca);
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL
+    //     SELECT 
+    //         ac.nrTelefoneContato nrTelefoneContato, 
+    //         lt.idTipoLinha idTipoLinha
+    //     INTO
+    //         :nrTelefoneContatoOut:i_nrTelefoneContatoOut,
+    //         :idTipoLinhaOut
+    //     FROM 
+    //         atendimento.AtendimentoContato ac, 
+    //         atendimento.AtendimentoLinha al,
+    //         customer.PessoaLinhaHistorico plh, 
+    //         linha.LinhaTelefonica lt
+    //     WHERE 
+    //         ac.idAtendimento = al.idAtendimento
+    //     AND 
+    //         al.idPessoaLinhaHistorico = plh.idPessoaLinhaHistorico
+    //     AND 
+    //         plh.idLinhaTelefonica = lt.idLinhaTelefonica
+    //     AND 
+    //         ac.idAtendimento = :idAtendimento;
+
+    EXEC SQL
+        SELECT 
+            ATENDIMENTOCONTATO.NRTELEFONECONTATO, 
+            LINHATELEFONICA.IDTIPOLINHA
+        INTO
+            :nrTelefoneContatoOut:i_nrTelefoneContatoOut,
+            :idTipoLinhaOut
+        FROM
+            ATENDIMENTO.ATENDIMENTOCONTATO ATENDIMENTOCONTATO,
+            ATENDIMENTO.ATENDIMENTO ATENDIMENTO,
+            LINHA.LINHATELEFONICA LINHATELEFONICA
+        WHERE
+            ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+        AND
+            ATENDIMENTO.IDATENDIMENTO = ATENDIMENTOCONTATO.IDATENDIMENTO
+        AND
+            ATENDIMENTO.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA;
+
+
+    if ( i_nrTelefoneContatoOut >= 0 )
+    {
+        CONVIND( nrTelefoneContatoOut,i_nrTelefoneContatoOut );
+
+        *idTipoLinha = idTipoLinhaOut;
+        strcpy( nrTelefoneContato,(char *)nrTelefoneContatoOut.arr );
+    }
+
+    return 1;
+
+DadosNotFound:
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    ULOG("*** idAtendimento[%ld]", idAtendimento );
+    
+    ULOG("Passou 1...");
+    EXEC SQL
+    SELECT 
+        ATENDIMENTOCONTATO.NRTELEFONECONTATO ,
+        3 AS IDTIPOLINHA
+    INTO
+        :nrTelefoneContatoOut:i_nrTelefoneContatoOut,
+        :idTipoLinhaOut
+    FROM
+        ATENDIMENTO.ATENDIMENTOCONTATO ATENDIMENTOCONTATO,
+        ATENDIMENTO.ATENDIMENTO ATENDIMENTO
+    WHERE
+        ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+    AND
+        ATENDIMENTO.IDATENDIMENTO = ATENDIMENTOCONTATO.IDATENDIMENTO;
+        
+    if ( i_nrTelefoneContatoOut >= 0 )
+    {
+        ULOG("Passou 2...");
+        CONVIND( nrTelefoneContatoOut,i_nrTelefoneContatoOut );
+
+        *idTipoLinha = idTipoLinhaOut;
+        strcpy( nrTelefoneContato,(char *)nrTelefoneContatoOut.arr );
+    }
+    else
+    {
+        ULOG("Passou 3...");
+        strcpy( nrTelefoneContato, " " );
+        *idTipoLinha = 3;
+    }
+
+    return 1;
+}
+
+
+
+void cWFObtFrmDinPC::sql_error_WFObtemFormularioDin( sqlca * sqlca )
+{
+	ULOG("Ocorreu um erro na Obtencao de Campo Dinamico.");
+	ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc);
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

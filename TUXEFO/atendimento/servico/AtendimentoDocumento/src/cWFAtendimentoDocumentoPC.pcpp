@@ -1,0 +1,232 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+
+
+#include "../include/cWFAtendimentoDocumento.h"
+#include "../include/stWFAtendimentoDocumento.h"
+
+void sql_error_WFAtendimentoDocumento(sqlca*sqlca);
+
+	// Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+		#include "../include/stWFAtendimentoDocumento.h"
+    EXEC SQL END DECLARE SECTION;
+
+bool proCIncluirWFAtendimentoDocumento(st_AtendimentoDocumento* dados, st_vlAtendimentoDocumento* status, XMLGen* saida)
+{
+    ULOG_START("proCIncluirWFAtendimentoDocumento");
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		struct st_AtendimentoDocumento   *oDados = dados;
+		struct st_vlAtendimentoDocumento *oStatus = status;
+	EXEC SQL END DECLARE SECTION;
+
+    ULOG("idAtendimento=%d",oDados->idAtendimento);
+    ULOG("idDocumentoTecnico=%d",oDados->idDocumentoTecnico);
+
+	EXEC SQL 
+		SELECT 
+			IDATENDIMENTODOCUMENTO
+		INTO
+            :oDados->idAtendimentoDocumento:oStatus->idAtendimentoDocumento
+		FROM 
+			ATENDIMENTO.ATENDIMENTODOCUMENTO
+		WHERE 
+			IDATENDIMENTO = :oDados->idAtendimento
+		AND IDDOCUMENTOTECNICO = :oDados->idDocumentoTecnico;
+
+	if ( 1403 == sqlca.sqlcode )
+	{
+        ULOG("VAI INSERIR EM ATENDIMENTO.ATENDIMENTODOCUMENTO ...");
+
+		EXEC SQL
+            SELECT 
+                ATENDIMENTO.ATENDIMENTODOCUMENTOSQ.NEXTVAL 
+            INTO 
+                :oDados->idAtendimentoDocumento
+            FROM
+                DUAL;
+
+        ULOG("idAtendimentoDocumento=%d",oDados->idAtendimentoDocumento);
+
+		EXEC SQL 
+			INSERT INTO
+				ATENDIMENTO.ATENDIMENTODOCUMENTO
+				(
+					IDATENDIMENTODOCUMENTO,
+					IDATENDIMENTO,
+					IDDOCUMENTOTECNICO,
+					IDUSUARIOALTERACAO,
+					DTULTIMAALTERACAO
+				)
+				VALUES
+				(
+					:oDados->idAtendimentoDocumento,
+					:oDados->idAtendimento,
+					:oDados->idDocumentoTecnico,
+					:oDados->idUsuarioAlteracao,
+			        SYSDATE
+				);
+	}
+    else
+    {
+        ULOG("DOC.TECNICO JA EXISTE ATENDIMENTO.ATENDIMENTODOCUMENTO ...");
+    }
+
+    if ( saida )
+    {
+		saida->createTag("Registro");
+			saida->addItem("idAtendimentoDocumento", oDados->idAtendimentoDocumento);
+		saida->closeTag();
+    }
+
+    ULOG_END("proCIncluirWFAtendimentoDocumento");
+
+	return true;
+}
+
+bool proCAlterarWFAtendimentoDocumento(st_AtendimentoDocumento* dados, st_vlAtendimentoDocumento* status, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AtendimentoDocumento   oDados;
+		struct st_vlAtendimentoDocumento oStatus;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoDocumento(&sqlca);
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+	sprintf(query,"%s", "UPDATE atendimento.AtendimentoDocumento SET ");
+
+	bool separa = false;
+
+	if (status->idAtendimentoDocumento != -1) 
+		montaUpdate("idAtendimentoDocumento", oDados.idAtendimentoDocumento, 1);
+
+	if (status->idAtendimento != -1) 
+		montaUpdate("idAtendimento", oDados.idAtendimento, 1);
+
+	if (status->idDocumentoTecnico != -1) 
+		montaUpdate("idDocumentoTecnico", oDados.idDocumentoTecnico, 1);
+
+	if (status->idUsuarioAlteracao != -1) 
+		montaUpdate("idUsuarioAlteracao", oDados.idUsuarioAlteracao, 1);
+
+	if (status->dtUltimaAlteracao != -1) 
+		montaUpdate("dtUltimaAlteracao", oDados.dtUltimaAlteracao, TIPO_DATAHORA);
+
+	sprintf(query, "%s WHERE idAtendimentoDocumento = %ld", query, dados->idAtendimentoDocumento);
+
+	EXEC SQL EXECUTE IMMEDIATE :query;
+
+	return true;
+}
+
+bool proCExcluirWFAtendimentoDocumento(st_AtendimentoDocumento* dados, st_vlAtendimentoDocumento* status, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAtendimentoDocumento = dados->idAtendimentoDocumento;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoDocumento(&sqlca);
+
+	EXEC SQL 
+		DELETE
+			atendimento.AtendimentoDocumento
+		WHERE
+			idAtendimentoDocumento = :idAtendimentoDocumento;
+
+	return true;
+}
+
+bool proCConsultaWFAtendimentoDocumento(st_AtendimentoDocumento* dados, st_vlAtendimentoDocumento* status, char* order, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAtendimentoDocumento;
+		long idAtendimento;
+		int idDocumentoTecnico;
+		int idUsuarioAlteracao;
+		VARCHAR dtUltimaAlteracao[256];
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	sprintf(query,"SELECT idAtendimentoDocumento, idAtendimento, idDocumentoTecnico, idUsuario, TO_CHAR( dtUltimaAlteracao, 'DD/MM/YYYY' ) FROM atendimento.AtendimentoDocumento ");
+
+	bool separa = false;
+
+	if (status->idAtendimentoDocumento != -1) 
+		montaWhere("idAtendimentoDocumento", dados->idAtendimentoDocumento, 1);
+
+	if (status->idAtendimento != -1) 
+		montaWhere("idAtendimento", dados->idAtendimento, 1);
+
+	if (status->idDocumentoTecnico != -1)
+		montaWhere("idDocumentoTecnico", dados->idDocumentoTecnico, 1);
+
+	if (status->idUsuarioAlteracao != -1) 
+		montaWhere("idUsuarioAlteracao", dados->idUsuarioAlteracao, 1);
+
+	if (status->dtUltimaAlteracao != -1) 
+		montaWhere("dtUltimaAlteracao", dados->dtUltimaAlteracao, TIPO_DATAHORA);
+
+	if (strlen(order) > 0) 
+		sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoDocumento(&sqlca);
+
+	EXEC SQL PREPARE consultaAtendimentoDocumento FROM :query;
+	EXEC SQL DECLARE consulta CURSOR FOR consultaAtendimentoDocumento;
+
+	EXEC SQL OPEN consulta;
+
+	while (true)
+	{
+		EXEC SQL FETCH consulta INTO :idAtendimentoDocumento, :idAtendimento, :idDocumentoTecnico, :idUsuarioAlteracao, :dtUltimaAlteracao;
+
+		saida->createTag("WFAtendimentoDocumentoVO");
+			saida->addItem("idAtendimentoDocumento", idAtendimentoDocumento);
+			saida->addItem("idAtendimento", idAtendimento);
+			saida->addItem("idDocumentoTecnico", idDocumentoTecnico);
+			saida->addItem("idUsuarioAlteracao", idUsuarioAlteracao);
+			saida->addItem("dtUltimaAlteracao", (char *)dtUltimaAlteracao.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE consulta;
+
+	return true;
+
+}
+
+void sql_error_WFAtendimentoDocumento(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

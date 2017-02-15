@@ -1,0 +1,12 @@
+//////////////////////////////////////////////////////////////////////
+// CRelatorioEfetividade.h: interface for the CRelatorioEfetividade class.
+//////////////////////////////////////////////////////////////////////
+
+#ifndef SRelatorioEfetividadeHH
+#define SRelatorioEfetividadeHH
+
+struct SRelatorioEfetividade {
+	char pcPorcentagem[21+1];
+};
+
+#endif

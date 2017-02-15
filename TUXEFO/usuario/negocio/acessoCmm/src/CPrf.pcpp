@@ -1,0 +1,1243 @@
+ /*****************************************************************************
+ *
+ * Modulo:    CPrf
+ * Arquivo:   CPrf.cpp
+ * Proposito: Funcao de Negocios 
+ * Historico:
+ * Data        Autor                 Descricao
+ * ----------  --------------------  -----------------------------------------
+ * 18/05/2004  C_RECOliveira         Criacao
+ * 18/05/2004  C_EDMartins           Criacao
+ *
+ ****************************************************************************/
+/**************************************************************************
+ * Notas:
+ *
+ **************************************************************************/
+
+/*****************************************************************************
+ * Definicao Global
+ ****************************************************************************/
+#define CPrfCPP
+
+/*****************************************************************************
+ * Header
+ ****************************************************************************/
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+#include "CPrf.h"
+#include "CSafePointer.h"
+
+char* CPrf::RTrim(char *pszString)
+{
+    ULOG_START("CPrf::RTrim()");
+    int iLen;
+
+    iLen=strlen(pszString);
+
+    for(;;)
+    {
+        if(pszString[iLen-1] != ' ')
+            break;
+
+        iLen--;
+
+        if(iLen == 0)
+            break;
+    }
+    pszString[iLen] = 0x00;
+	
+	ULOG_END("CPrf::RTrim()");
+	return pszString;
+}
+
+/**************************************************************************
+ * Classe:
+ **************************************************************************/ 
+int CPrf::PrfListaId(DOMNode*dnode, XMLGen*xml_g)
+{
+	ULOG_START("CPrf::PrfListaId()");
+	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		int aux;
+
+		struct Tstruct {
+			int idRole; 
+			char cnmRole[256];
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidRole, snmRole;
+		} tstructindicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+
+	char *pc;
+
+	memset( &tstruct, 0, sizeof(Tstruct));
+	memset( &tstructindicator, 0, sizeof(Tstructindicator));
+
+	//Se o ID nao for numerico entao retornar com codigo de erro
+	if ( ( pc = oSafePointer.getTag(dnode,"idPerfil",0) ) == NULL ) {
+		ULOG_END("CPrf::PrfListaId()");
+		return 2;
+	}
+
+	//Se o ID estiver vazio entao retornar com codigo de erro
+	if ( strlen( pc ) == 0 ) {
+		ULOG_END("CPrf::PrfListaId()");
+		return 3;
+	}
+
+	//Le a descricao de Role
+	tstruct.idRole = atoi( pc );
+
+	sqlca.sqlcode=0;
+
+	aux = tstruct.idRole;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	EXEC SQL DECLARE tcursor1 CURSOR FOR
+	SELECT idRole, nmRole 
+	FROM acesso.Role
+	WHERE idRole = :aux;
+
+	EXEC SQL OPEN tcursor1;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+
+	if(sqlca.sqlcode)
+	{
+		ULOG_END("CPrf::PrfListaId()");
+		return 4;
+	}
+	else
+	{
+		xml_g->createTag("PerfisUsuarioVO");
+		xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			for(;;) {
+			EXEC SQL FETCH tcursor1 INTO :tstruct INDICATOR :tstructindicator;
+			xml_g->createTag("PerfilUsuarioVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			xml_g->addItem("idPerfil",tstruct.idRole);
+			xml_g->addItem("dsPerfil",RTrim(tstruct.cnmRole));
+			xml_g->closeTag();
+		}
+		xml_g->closeTag();
+		EXEC SQL CLOSE tcursor1;
+		ULOG_END("CPrf::PrfListaId()");
+		return 0;
+	}
+
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPrf::PrfGptRelacao(DOMNode*dnode, XMLGen*xml_g)
+{
+	ULOG_START("CPrf::PrfGptRelacao()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char *cidRole;
+		struct Tstruct {
+			int idGrupamento;
+			char cnmGrupamento[256];
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidGrupamento, snmGrupamento;
+		} tstructindicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+
+	memset( &tstruct, 0, sizeof(Tstruct));
+	memset( &tstructindicator, 0, sizeof(Tstructindicator));
+
+	cidRole = oSafePointer.getTag(dnode,"idPerfil",0);
+
+	//Se o ID estiver vazio entao retornar com codigo de erro
+	if ( strlen( cidRole ) <= 0 ) {
+		ULOG_END("CPrf::PrfGptRelacao()");
+		return 3;
+	}
+
+	sqlca.sqlcode=0;
+
+	EXEC SQL DECLARE tvcursorrelacionados1 CURSOR FOR
+		SELECT ROLEGRUPAMENTO.IDGRUPAMENTO,
+		       GRUPAMENTO.NMGRUPAMENTO
+		FROM   acesso.rolegrupamento,
+		       acesso.role,
+		       acesso.grupamento
+		WHERE ROLE.IDROLE = ROLEGRUPAMENTO.IDROLE
+		      AND GRUPAMENTO.IDGRUPAMENTO = ROLEGRUPAMENTO.IDGRUPAMENTO
+		      AND ROLEGRUPAMENTO.idRole = :cidRole
+		ORDER BY 
+		      GRUPAMENTO.nmGrupamento;
+
+	EXEC SQL DECLARE tvcursorexistentes1 CURSOR FOR
+		SELECT acesso.GRUPAMENTO.idGrupamento, acesso.GRUPAMENTO.nmGrupamento
+		FROM acesso.GRUPAMENTO
+		WHERE acesso.GRUPAMENTO.idGrupamento	
+		NOT IN (
+		      	    SELECT ROLEGRUPAMENTO.IDGRUPAMENTO       
+		            FROM   acesso.rolegrupamento,
+		                   acesso.role,
+		                   acesso.grupamento
+		            WHERE ROLE.IDROLE = ROLEGRUPAMENTO.IDROLE
+		                  AND GRUPAMENTO.IDGRUPAMENTO = ROLEGRUPAMENTO.IDGRUPAMENTO
+		                  AND ROLEGRUPAMENTO.idRole = :cidRole
+		       )
+		ORDER BY acesso.GRUPAMENTO.nmGrupamento;
+		
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+
+	if(sqlca.sqlcode)
+	{
+		ULOG_END("CPrf::PrfGptRelacao()");
+		return 4;
+	}
+	else
+	{
+		xml_g->createTag("GrupamentosUsuarioVO");
+		xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+		xml_g->addItem("idSistema","");
+		xml_g->addItem("dsSistema","");
+		EXEC SQL OPEN tvcursorexistentes1;
+		for(;;) {
+			EXEC SQL FETCH tvcursorexistentes1 INTO :tstruct INDICATOR :tstructindicator;
+			xml_g->createTag("GrupamentosExistentesUsuarioVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			xml_g->addItem("idGrupamento",tstruct.idGrupamento);
+			xml_g->addItem("dsGrupamento",RTrim(tstruct.cnmGrupamento));
+			xml_g->closeTag();
+		}
+		EXEC SQL CLOSE tvcursorexistentes1;
+		EXEC SQL OPEN tvcursorrelacionados1;
+		for(;;) {
+			EXEC SQL FETCH tvcursorrelacionados1 INTO :tstruct INDICATOR :tstructindicator;
+			xml_g->createTag("GrupamentosRelacionadosUsuarioVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			xml_g->addItem("idGrupamento",tstruct.idGrupamento);
+			xml_g->addItem("dsGrupamento",RTrim(tstruct.cnmGrupamento));
+			xml_g->closeTag();
+		}
+		EXEC SQL CLOSE tvcursorrelacionados1;
+		xml_g->closeTag();
+	}
+	ULOG_END("CPrf::PrfGptRelacao()");
+	return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPrf::PrfLista(DOMNode*dnode, XMLGen*xml_g)
+{
+	ULOG_START("CPrf::PrfLista()");
+	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION; 
+
+		struct Tstruct {
+			int idRole; 
+			char cnmRole[256];
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidRole, snmRole;
+		} tstructindicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+
+	memset( &tstruct, 0, sizeof(Tstruct));
+	memset( &tstructindicator, 0, sizeof(Tstructindicator));
+
+	sqlca.sqlcode=0;
+	
+	EXEC SQL 
+		DECLARE 
+			tsqlcursor3 CURSOR FOR
+		SELECT 
+			IDROLE, NMROLE 
+		FROM 
+			ACESSO.ROLE
+		ORDER BY 
+			UPPER(NMROLE);
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	EXEC SQL OPEN tsqlcursor3;
+	
+	if(sqlca.sqlcode)
+	{
+		ULOG_END("CPrf::PrfLista()");
+		return 4;
+	}
+	else
+	{
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		xml_g->createTag("PerfisUsuarioVO");
+		xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+		for(;;) {
+			EXEC SQL FETCH tsqlcursor3 INTO :tstruct INDICATOR :tstructindicator;
+			xml_g->createTag("PerfilUsuarioVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			xml_g->addItem("idPerfil",tstruct.idRole);
+			xml_g->addItem("dsPerfil",RTrim(tstruct.cnmRole));
+			xml_g->closeTag();
+		}
+		xml_g->closeTag();
+		EXEC SQL CLOSE tsqlcursor3;
+		ULOG_END("CPrf::PrfLista()");
+		return 0;
+	}
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPrf::PrfUniRelaciona(DOMNode*dnode, XMLGen*xml_g,
+				          char* cLogUser)
+{
+	ULOG_START("CPrf::PrfUniRelaciona()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		int   indice=0;
+		char* cLogUserOra = cLogUser;
+		char* cidUnidade;
+		char* cidRole;
+		char* cidPagina;
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+
+	//Pega o idRole que sera utilizado na ralacao
+	cidRole = oSafePointer.getTag( dnode, "idPerfil", 0  );
+	if( strlennull( cidRole ) <= 0 )
+	{
+		ULOG_END("CPrf::PrfUniRelaciona()");
+		return 1;
+	}
+
+	//Pega o idRole que sera utilizado na ralacao
+	cidPagina = oSafePointer.getTag( dnode, "idPagina", 0  ); 
+	if( strlennull( cidPagina ) <= 0 )
+	{
+		ULOG_END("CPrf::PrfUniRelaciona()");
+		return 2;
+	}
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	sqlca.sqlcode=0;
+
+	//Apaga somente a relacao de unidade da pagina especifica
+	EXEC SQL 
+		DELETE FROM 
+			ACESSO.ROLEUNIDADE 
+		WHERE 
+			IDROLE = :cidRole
+		AND
+			IDUNIDADE IN
+			(
+				SELECT 
+					IDUNIDADE
+				FROM
+					ACESSO.PAGINAUNIDADE
+				WHERE
+					IDPAGINA = :cidPagina
+			);
+
+	sqlca.sqlcode=0;
+
+	//Pega todos os idUnidade que existem no XML e insere
+	for(indice=0;;indice++) 
+	{
+		//Se tstruct.idUnidade for igual a zero, entao acabou os ids
+		cidUnidade = oSafePointer.getTag( dnode, "idUnidade", indice  );
+		if( strlennull( cidUnidade ) <= 0 )
+			break;
+
+		//Insere item a item
+		EXEC SQL 
+			INSERT INTO ACESSO.ROLEUNIDADE 
+				( IDROLEUNIDADE
+				, IDROLE
+				, IDUNIDADE
+				, IDUSUARIOALTERACAO
+				, DTULTIMAALTERACAO 
+				)
+			VALUES
+				( ACESSO.ROLEUNIDADESQ.NEXTVAL
+				, :cidRole
+				, :cidUnidade
+				, :cLogUserOra
+				, SYSDATE 
+				);
+	}//for( indice=1;;indice++) 
+	ULOG_END("CPrf::PrfUniRelaciona()");
+	return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	ULOG_END("CPrf::PrfUniRelaciona()");
+	if( sqlca.sqlcode == -2292 )
+		return 3;//Se dependencia ou constraint ferida
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPrf::PrfRemover(DOMNode*dnode, XMLGen*xml_g,
+				     char* cLogUser)
+{
+	ULOG_START("CPrf::PrfRemover()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		long idRole;
+		int  iGrupo = 0;
+		int  iUsuario = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	//Declara variaveis auxiliares
+	char *pc;
+		
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+
+	//Se o ID nao for numerico entao retornar com codigo de erro
+	pc = oSafePointer.getTag(dnode,"idPerfil",0);
+	if ( pc == NULL )
+	{
+		ULOG_END("CPrf::PrfRemover()");
+		return 3;
+	}
+
+	//Le o ID
+	if ( ( idRole = atol( pc ) ) == 0 )
+	{
+		ULOG_END("CPrf::PrfRemover()");
+		return 2;
+	}
+
+	sqlca.sqlcode=0;
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+	//Verifica se o perfil tem associacao com usuario
+	EXEC SQL
+	SELECT 
+		COUNT(1) 
+	INTO
+		:iUsuario
+	FROM 
+		ACESSO.USUARIOROLE 
+	WHERE 
+		IDROLE = :idRole;
+
+	//Verifica se o perfil tem associacao com grupo
+	EXEC SQL
+	SELECT 
+		COUNT(1) 
+	INTO
+		:iGrupo
+	FROM 
+		ACESSO.GRUPOROLE 
+	WHERE 
+		IDROLE = :idRole;
+
+	if( iGrupo || iUsuario )
+	{
+		ULOG_END("CPrf::PrfRemover()");
+		return 5;//Este registro não pode ser apagado, há relacionamentos com usuário e/ou grupo
+	}
+		
+	//Nao havendo associacao com grupo e ou usuario as demais sao apagadas.
+	
+	//Apaga associacao com grupamento
+    EXEC SQL
+	DELETE FROM 
+		ACESSO.ROLEGRUPAMENTO 
+	WHERE 
+		IDROLE = :idRole;
+		
+    //Apaga associacao com unidade
+    EXEC SQL
+	DELETE FROM 
+		ACESSO.ROLEUNIDADE 
+	WHERE 
+		IDROLE = :idRole;	
+	
+	//Apoga o perfil
+	EXEC SQL
+	DELETE FROM 
+		ACESSO.ROLE 
+	WHERE 
+		IDROLE = :idRole;
+
+	ULOG_END("CPrf::PrfRemover()");
+	return 0;
+
+// Tratamento de Exception
+ErrorF:
+	ULOG_END("CPrf::PrfRemover()");
+	if( sqlca.sqlcode == -2292 )
+		return 5;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPrf::PrfInserir(DOMNode*dnode,XMLGen*xml_g,
+				     char* cLogUser)
+{
+	ULOG_START("CPrf::PrfInserir()");
+	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cLogUserOra = cLogUser;
+		struct Tstruct 
+		{
+			int idRole;
+			char cnmRole[256];
+		} tstruct;
+		int iAcumulador;
+		VARCHAR stidRole[21+1];
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+
+	//Declara variaveis auxiliares
+	char *pc;
+
+	//Se nao encontrar a proxima TAG entao acabaram os registros para alterar
+	memset( &tstruct, 0, sizeof(Tstruct) );
+	memset( &stidRole, 0, sizeof(stidRole) );
+
+	//Se a DESCRICAO nao existir entao retornar com codigo de erro
+	pc = oSafePointer.getTag( dnode, "dsPerfil", 0 );
+	if ( pc == NULL )
+	{
+		ULOG_END("CPrf::PrfInserir()");
+		return 2;
+	}
+
+	if ( ( strlen( pc ) == 0 ) )
+	{
+		ULOG_END("CPrf::PrfInserir()");
+		return 3;
+	}
+	strcpy( tstruct.cnmRole, pc ); 
+
+	sqlca.sqlcode=0;
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	//Conta os casos de ja existentes de descricao 
+	EXEC SQL
+	SELECT COUNT(idRole) 
+	INTO :iAcumulador
+	FROM acesso.Role
+	WHERE UPPER(nmRole) = UPPER(:tstruct.cnmRole);
+
+	//Se nao houver o caso desta descricao entao pode Inserir
+	if (iAcumulador==0) 
+	{
+		EXEC SQL
+		SELECT
+			ACESSO.ROLESQ.NEXTVAL
+		INTO
+			:stidRole
+		FROM
+			DUAL;
+
+		//Insere o ID novo
+		EXEC SQL 
+			INSERT INTO ACESSO.ROLE 
+			( 
+				IDROLE
+			   ,NMROLE
+			   ,IDUSUARIOALTERACAO
+			   ,DTULTIMAALTERACAO 
+			)
+		VALUES
+			( 
+				:stidRole
+			  , TRIM(SUBSTR(:tstruct.cnmRole,1,255))
+			  , :cLogUserOra
+			  , SYSDATE 
+			);
+	}
+	else
+	{
+		ULOG_END("CPrf::PrfInserir()");
+		return 5;
+	}
+
+	if(sqlca.sqlcode)
+	{
+		ULOG_END("CPrf::PrfInserir()");
+		return 4; 
+	}
+
+	xml_g->createTag("PerfisUsuarioVO");
+	xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+
+	xml_g->createTag("PerfilUsuarioVO");
+	xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+	xml_g->addItem("idPerfil",(char*)stidRole.arr);
+	xml_g->addItem("dsPerfil",RTrim(tstruct.cnmRole));
+	xml_g->closeTag();//PerfilUsuarioVO
+
+	xml_g->closeTag();//PerfisUsuarioVO
+ 
+	ULOG_END("CPrf::PrfInserir()");
+	return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPrf::PrfEditar(DOMNode*dnode,XMLGen*xml_g,
+				    char* cLogUser)
+{
+	ULOG_START("CPrf::PrfEditar()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cLogUserOra = cLogUser;
+
+		struct Tstruct { 
+			int idRole;
+			char cnmRole[256];
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidRole, snmRole;
+		} tstructindicator;
+
+		int iAcumulador;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+
+	memset( &tstruct, 0, sizeof(Tstruct));
+	memset( &tstructindicator, 0, sizeof(Tstructindicator));
+
+	//Declara variaveis auxiliares
+	char *pcid;
+	char *pcnm;
+	
+	memset( &tstruct, 0, sizeof(Tstruct) );
+
+	//Se o ID ou DESCRICAO nao existir entao retornar com codigo de erro
+	pcid = oSafePointer.getTag(dnode,"idPerfil",0);
+	pcnm = oSafePointer.getTag(dnode,"dsPerfil",0);
+
+	//Se o ID ou DESCRICAO estiver vazio entao retornar com codigo de erro
+	if ( strlennull( pcid ) == 0 )
+	{
+		ULOG_END("CPrf::PrfEditar()");
+		return 1;//idGrupamento esta nulo
+	}
+	if ( strlennull( pcnm ) == 0 )
+	{
+		ULOG_END("CPrf::PrfEditar()");
+		return 2;//dsGrupamento esta nulo
+	}
+
+	//Prepara informacoes para alteracao
+	if ( ( tstruct.idRole = atoi( pcid ) ) <= 0 )
+	{
+		ULOG_END("CPrf::PrfEditar()");
+		return 3;
+	}
+
+	strcpy(tstruct.cnmRole, pcnm);
+
+	sqlca.sqlcode=0;
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	//Conta os casos de ja existentes de descricao
+	EXEC SQL
+		SELECT
+			COUNT(idRole) 
+		INTO
+			:iAcumulador
+		FROM
+			acesso.Role
+		WHERE
+			UPPER(nmRole) = UPPER(:tstruct.cnmRole)
+		AND
+			IDROLE <> :tstruct.idRole;
+
+	//Se nao houver o caso desta descricao entao pode Inserir
+	if (iAcumulador==0) {
+
+		//Altera a descricao do Role
+		EXEC SQL 
+			UPDATE
+				acesso.Role 
+			SET 
+				nmRole = :tstruct.cnmRole,
+				IDUSUARIOALTERACAO = :cLogUserOra, 
+				DTULTIMAALTERACAO  = SYSDATE
+			WHERE 
+				idRole = :tstruct.idRole;
+	}
+	else
+	{
+		ULOG_END("CPrf::PrfEditar()");
+		return 5;//Nome ja existe na base
+	}
+
+	//Se houver erro na operacao de Update desfazer tudo e retornar com erro
+	if(sqlca.sqlcode) { 
+		//EXEC SQL ROLLBACK WORK; 
+		ULOG_END("CPrf::PrfEditar()");
+		return 4; 
+	} 
+	ULOG_END("CPrf::PrfEditar()");
+	return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPrf::PrfListaPar(DOMNode*dnode, XMLGen*xml_g)
+{
+	ULOG_START("CPrf::PrfListaPar()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION; 
+
+		struct Tstruct {
+			int idRole; 
+			char cnmRole[256];
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidRole, snmRole;
+		} tstructindicator;
+
+		char vcLike[256];
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+
+	memset( &tstruct, 0, sizeof(Tstruct));
+	memset( &tstructindicator, 0, sizeof(Tstructindicator));
+
+	char *pc = oSafePointer.getTag(dnode,"dsPerfil",0);
+	if ( pc == NULL ) {
+		strcpy( tstruct.cnmRole, "" );
+	} else {
+		strcpy( tstruct.cnmRole, pc);
+	}
+	
+	sqlca.sqlcode=0;
+	
+	if ( strlen(tstruct.cnmRole)==0 ) {
+
+		EXEC SQL 
+			DECLARE 
+				tsqlcursor42 CURSOR FOR
+			SELECT 
+				IDROLE, 
+				NMROLE 
+			FROM 
+				ACESSO.ROLE
+			ORDER BY 
+				UPPER(NMROLE);
+
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		EXEC SQL OPEN tsqlcursor42;
+		
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPrf::PrfListaPar()");
+			return 4;
+		}
+		else
+		{
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			xml_g->createTag("PerfisUsuarioVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			for(;;) {
+				EXEC SQL FETCH tsqlcursor42 INTO :tstruct INDICATOR :tstructindicator;
+				xml_g->createTag("PerfilUsuarioVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idPerfil",tstruct.idRole);
+				xml_g->addItem("dsPerfil",RTrim(tstruct.cnmRole));
+				xml_g->closeTag();
+			}
+			xml_g->closeTag();
+			EXEC SQL CLOSE tsqlcursor42;
+			ULOG_END("CPrf::PrfListaPar()");
+			return 0;
+		}
+
+	} else {
+		sprintf( vcLike, "%s%%", tstruct.cnmRole ); 
+	
+		EXEC SQL 
+			DECLARE 
+				tsqlcursor51 CURSOR FOR
+			SELECT 
+				IDROLE, 
+				NMROLE 
+			FROM 
+				ACESSO.ROLE
+			WHERE 
+				UPPER(NMROLE) LIKE UPPER(:vcLike)
+			ORDER BY 
+				UPPER(NMROLE);
+
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		EXEC SQL OPEN tsqlcursor51;
+		
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPrf::PrfListaPar()");
+			return 4;
+		}
+		else
+		{
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			xml_g->createTag("PerfisUsuarioVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			for(;;) {
+				EXEC SQL FETCH tsqlcursor51 INTO :tstruct INDICATOR :tstructindicator;
+				xml_g->createTag("PerfilUsuarioVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idPerfil",tstruct.idRole);
+				xml_g->addItem("dsPerfil",RTrim(tstruct.cnmRole));
+				xml_g->closeTag();
+			}
+			xml_g->closeTag();
+			EXEC SQL CLOSE tsqlcursor51;
+			ULOG_END("CPrf::PrfListaPar()");
+			return 0;
+		}
+	}
+
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPrf::PrfGptRelaciona(DOMNode*dnode, XMLGen*xml_g,
+				          char* cLogUser)
+{
+	ULOG_START("CPrf::PrfGptRelaciona()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cLogUserOra = cLogUser;
+
+		struct Tstruct {
+			int idRoleGrupamento;
+			int idRole;
+			int idGrupamento;
+		} tstruct;
+
+		struct Tstruct2 {
+			int idGrupamento;
+			char cnmGrupamento[256];
+		} tstruct2;
+
+		struct Tstructindicator {
+			short sidRoleGrupamento, sidRole, sidGrupamento;
+		} tstructindicator;
+
+		struct Tstructindicator2 {
+			short sidGrupamento, snmGrupamento;
+		} tstructindicator2;
+
+		int iAcumulador;
+
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		/************************************************************************
+		 * Processamento Principal
+		 ************************************************************************/
+
+		memset( &tstruct, 0, sizeof(Tstruct) );
+		memset( &tstruct2, 0, sizeof(Tstruct2) );
+		memset( &tstructindicator, 0, sizeof(Tstructindicator) );
+		memset( &tstructindicator2, 0, sizeof(Tstructindicator2) );
+
+		//Pega o idRole que sera utilizado na ralacao
+		if ( ( tstruct.idRole = atoi( oSafePointer.getTag( dnode, "idPerfil", 0  ) ) )  <= 0 ) 
+		{
+			ULOG_END("CPrf::PrfGptRelaciona()");
+			return 3;//idPerfil esta nulo
+		}
+
+		sqlca.sqlcode=0;
+
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+		EXEC SQL 
+		SELECT COUNT(idRole)
+		INTO :iAcumulador
+		FROM acesso.RoleGrupamento
+		WHERE idRole = :tstruct.idRole;
+
+		//Antes de inserir as novas relacoes, deve-se apagar todas, se existirem
+		if (iAcumulador>0) {
+			EXEC SQL 
+			DELETE FROM acesso.RoleGrupamento 
+			WHERE idRole = :tstruct.idRole;
+		}
+
+		//Verifica se o comando DELETE obteve sucesso
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPrf::PrfGptRelaciona()");
+			return 2;//Falha ao tentar limpar os grupamentos relacionados
+		}
+		else
+		{
+			char* pc;
+
+			//Pega todos os idGrupamento que existem no XML e insere
+			for(int indice=0;;indice++) 
+			{
+
+				//Se tstruct.idGrupamento for igual a zero, entao acabou os ids
+				pc = oSafePointer.getTag( dnode, "idGrupamento", indice  );
+				if ( strlen( pc ) == 0 )
+					break;
+
+				tstruct.idGrupamento = atoi( pc );
+
+				sqlca.sqlcode=0;
+
+				EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+				EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+				//Pega um id unico e sequencia para a insercao
+				EXEC SQL
+				SELECT acesso.RoleGrupamentosq.nextval
+				INTO :tstruct.idRoleGrupamento
+				FROM dual;
+
+				//Insere item a item
+				EXEC SQL INSERT INTO ACESSO.ROLEGRUPAMENTO 
+					( 
+						  IDROLEGRUPAMENTO
+						, IDROLE
+						, IDGRUPAMENTO
+						, IDUSUARIOALTERACAO
+						, DTULTIMAALTERACAO 
+					)
+				VALUES
+					( 
+					 	  :tstruct.idRoleGrupamento
+					 	, :tstruct.idRole
+					 	, :tstruct.idGrupamento
+					 	, :cLogUserOra
+					 	, SYSDATE );
+
+				//Se der algum erro, desfaz tudo
+				if(sqlca.sqlcode)
+				{
+					ULOG_END("CPrf::PrfGptRelaciona()");
+					return 1; //Falha so tentar inserir grumapamento relacionado
+				}
+			}//for( indice=1;;indice++) 
+		}//if(sqlca.sqlcode)
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPrf::PrfGptRelaciona()");
+	return 0;//Sucesso
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPrf::PrfUniRelacao(DOMNode*dnode, XMLGen*xml_g)
+{
+	ULOG_START("CPrf::PrfUniRelacao()");
+	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidPagina;
+		char* cidPerfil;
+		struct
+		{
+			char cidUnidade[21+1];
+			char cnmUnidade[256];
+			char ccdUnidade[256];
+			char cinDetalhe[21+1];
+		} stUnidade;
+
+		struct 
+		{
+			short sidUnidade, 
+				  snmUnidade,
+				  scdUnidade,
+				  sindetalhe;
+		} stUnidadeInd;
+
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+
+		/************************************************************************
+		 * Processamento Principal
+		 ************************************************************************/
+
+		memset( &stUnidadeInd, 0, sizeof(stUnidadeInd));
+		
+		cidPagina = oSafePointer.getTag(dnode,"idPagina",0);
+		cidPerfil = oSafePointer.getTag(dnode,"idPerfil",0);
+		//Se o ID estiver vazio entao retornar com codigo de erro
+		if ( strlen( cidPerfil ) == 0 )
+		{
+			ULOG_END("CPrf::PrfUniRelacao()");
+			return 2;
+		}
+		if ( strlen( cidPagina ) == 0 )
+		{
+			ULOG_END("CPrf::PrfUniRelacao()");
+			return 3;
+		}
+
+		sqlca.sqlcode=0;
+
+		EXEC SQL DECLARE tvcursorrelacionados CURSOR FOR
+			SELECT PAGINAUNIDADE.IDUNIDADE, 
+			       PAGINAUNIDADE.NMUNIDADE,
+			       PAGINAUNIDADE.CDUNIDADE,
+			       PAGINAUNIDADE.INDETALHE
+			  FROM ACESSO.PAGINAUNIDADEV01 PAGINAUNIDADE
+			 WHERE PAGINAUNIDADE.IDPAGINA = :cidPagina AND 
+				   PAGINAUNIDADE.IDROLE = :cidPerfil
+		  ORDER BY PAGINAUNIDADE.NMUNIDADE;
+
+		EXEC SQL DECLARE tvcursorexistentes CURSOR FOR
+		  SELECT PAGINAUNIDADE.IDUNIDADE,
+		         UNIDADE.NMUNIDADE,
+		         UNIDADE.CDUNIDADE,
+		         UNIDADE.INDETALHE
+		  FROM  ACESSO.PAGINAUNIDADE,
+		        ACESSO.UNIDADE,
+		        ACESSO.PAGINA,
+		        ACESSO.SUBSISTEMA,
+		        ACESSO.SISTEMA
+		  WHERE UNIDADE.IDUNIDADE = PAGINAUNIDADE.IDUNIDADE
+		        AND PAGINA.IDPAGINA = PAGINAUNIDADE.IDPAGINA
+		        AND SUBSISTEMA.IDSUBSISTEMA = PAGINA.IDSUBSISTEMA
+		        AND SISTEMA.IDSISTEMA = SUBSISTEMA.IDSISTEMA
+		        AND PAGINA.IDPAGINA = :cidPagina 
+		        AND PAGINAUNIDADE.IDUNIDADE NOT IN
+						         	   (
+			                              SELECT PAGINAUNIDADE.IDUNIDADE
+			           					  FROM ACESSO.PAGINAUNIDADEV01 PAGINAUNIDADE
+			           				      WHERE PAGINAUNIDADE.IDPAGINA = :cidPagina 
+								        	AND PAGINAUNIDADE.IDROLE = :cidPerfil
+	                                    )
+          ORDER BY UNIDADE.NMUNIDADE;
+
+
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPrf::PrfUniRelacao()");
+			return 1;
+		}
+		else
+		{
+			xml_g->createTag("PerfilUnidadeUsuarioVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+			xml_g->addItem("idPerfil",cidPerfil);
+			xml_g->addItem("idPagina",cidPagina);
+
+			EXEC SQL OPEN tvcursorexistentes;
+			xml_g->createTag("UnidadesExistentes");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+			for(;;) {
+				memset( &stUnidade, 0, sizeof(stUnidade));
+				EXEC SQL FETCH tvcursorexistentes INTO :stUnidade:stUnidadeInd;
+				xml_g->createTag("UnidadeSimplVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idUnidade",RTrim(stUnidade.cidUnidade));
+				xml_g->addItem("cdUnidade",RTrim(stUnidade.ccdUnidade));
+				xml_g->addItem("nmUnidade",RTrim(stUnidade.cnmUnidade));
+				xml_g->addItem("inDetalhe",RTrim(stUnidade.cinDetalhe));
+				xml_g->closeTag();
+			}
+			xml_g->closeTag();//UnidadesExistentes
+			EXEC SQL CLOSE tvcursorexistentes;
+
+			EXEC SQL OPEN tvcursorrelacionados;
+			xml_g->createTag("UnidadesRelacionadas");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+			for(;;) {
+				memset( &stUnidade, 0, sizeof(stUnidade));
+				EXEC SQL FETCH tvcursorrelacionados INTO :stUnidade:stUnidadeInd;
+				xml_g->createTag("UnidadeSimplVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idUnidade",RTrim(stUnidade.cidUnidade));
+				xml_g->addItem("cdUnidade",RTrim(stUnidade.ccdUnidade));
+				xml_g->addItem("nmUnidade",RTrim(stUnidade.cnmUnidade));
+				xml_g->addItem("inDetalhe",RTrim(stUnidade.cinDetalhe));
+				xml_g->closeTag();
+			}
+			xml_g->closeTag();//UnidadesRelacionadas
+			EXEC SQL CLOSE tvcursorrelacionados;
+
+			xml_g->closeTag();//PerfilUnidadeUsuarioVO
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+	ULOG_END("CPrf::PrfUniRelacao()");
+	
+	if(sqlca.sqlcode)
+		return 1;
+	else
+		return 0;
+
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}

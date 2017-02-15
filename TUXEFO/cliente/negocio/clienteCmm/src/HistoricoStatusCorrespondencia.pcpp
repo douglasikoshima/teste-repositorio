@@ -1,0 +1,170 @@
+// HistoricoStatusCorrespondencia.pcpp: implementation for the 
+// CHistoricoStatusCorrespondencia class.
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw.h>
+EXEC SQL INCLUDE "../include/HistoricoStatusCorrespondencia.h";
+
+#include "../include/Funcoes.h"
+
+//
+// Construtor e Destrutor
+CHistoricoStatusCorrespondencia::CHistoricoStatusCorrespondencia() {
+}
+
+CHistoricoStatusCorrespondencia::~CHistoricoStatusCorrespondencia() {
+}
+
+//
+// Metodos getter
+char* CHistoricoStatusCorrespondencia::getDsStatus(){
+	return cDsStatus;
+}
+
+char* CHistoricoStatusCorrespondencia::getDtStatus(){
+	return cDtStatus;
+}
+
+int CHistoricoStatusCorrespondencia::getIdStatus(){
+	return iIdStatus;
+}
+
+//
+// Metodos setter
+void CHistoricoStatusCorrespondencia::setDsStatus(char* value){
+	strncpy(cDsStatus, value, 255);
+	cDsStatus[255]='\0';
+}
+
+void CHistoricoStatusCorrespondencia::setDtStatus(char* value){
+	strncpy(cDtStatus, value, 10);
+	cDtStatus[10]='\0';
+}
+
+void CHistoricoStatusCorrespondencia::setIdStatus(int value){
+	iIdStatus = value;
+}
+
+CHistoricoStatusCorrespondencia* CHistoricoStatusCorrespondencia::listaPorCorrespondencia(int iIdCorrespondencia, int* iNroObjetos) {
+
+    ULOG_START("CHistoricoStatusCorrespondencia::listaPorCorrespondencia()");
+	struct sqlca sqlca;
+	CHistoricoStatusCorrespondencia* listaHistCorr = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdCorr;
+	int iIdStatus;
+	char cDsStatus[256];
+	char cDtStatus[11];
+	EXEC SQL END DECLARE SECTION;
+
+	iIdCorr = iIdCorrespondencia;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE histPorCorr CURSOR FOR
+	SELECT
+	 idStatus,
+	 dsStatus,
+	 TO_CHAR(dtStatus,'DD/MM/YYYY')
+	FROM
+	 correspondencia.CorrHistStatAtuV01
+	WHERE
+	 IdCorrespondenciaDevolvida = :iIdCorr
+	ORDER BY 3;
+	EXEC SQL OPEN histPorCorr;
+
+	// Corre os dados e monta a lista de objetos
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) {
+		
+		EXEC SQL FETCH histPorCorr INTO
+			:iIdStatus,
+			:cDsStatus,
+			:cDtStatus;
+
+		// Aloca memória para o objeto atual.
+		if ((listaHistCorr = (CHistoricoStatusCorrespondencia*) realloc((void *)listaHistCorr, (sizeof(CHistoricoStatusCorrespondencia) * iNroObjLocal))) != NULL) {
+			
+			// Coloca os dados do objeto atual.
+			listaHistCorr[iNroObjLocal-1].setIdStatus(iIdStatus);
+			listaHistCorr[iNroObjLocal-1].setDsStatus(cDsStatus);
+			listaHistCorr[iNroObjLocal-1].setDtStatus(cDtStatus);
+
+		} else {
+			if (listaHistCorr)
+				free(listaHistCorr);
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG_END("CHistoricoStatusCorrespondencia::listaPorCorrespondencia()");
+	return listaHistCorr;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CHistoricoStatusCorrespondencia::listaPorCorrespondencia()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+char* CHistoricoStatusCorrespondencia::getStatusAtual(int iIdCorrespondencia) {
+    
+    ULOG_START("CHistoricoStatusCorrespondencia::getStatusAtual()");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdCorr;
+	char cDsStatus[256];
+    short sDsStatus;
+	EXEC SQL END DECLARE SECTION;
+
+    char *pDsStatus;
+
+    memset(cDsStatus, 0x00, sizeof(cDsStatus));
+	iIdCorr = iIdCorrespondencia;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	// Declara e abre o cursor
+	EXEC SQL 
+	SELECT
+     idstatus
+    INTO
+     :cDsStatus:sDsStatus
+	FROM
+	 correspondencia.CorrHistStatAtuV01
+	WHERE
+	 IdCorrespondenciaDevolvida = :iIdCorr
+    AND dtstatus = ( select max(dtstatus) 
+                          from correspondencia.CorrHistStatAtuV01 
+                         where CorrHistStatAtuV01.idcorrespondenciadevolvida = :iIdCorr  );
+
+    if (strlen(cDsStatus) > 0){
+        pDsStatus = (char*)malloc(sizeof(cDsStatus));
+        rtrim(cDsStatus);
+        strcpy(pDsStatus, cDsStatus);
+    }
+    else
+        pDsStatus = NULL;
+        
+    ULOG_END("CHistoricoStatusCorrespondencia::getStatusAtual()");
+	return pDsStatus;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CHistoricoStatusCorrespondencia::getStatusAtual()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+}

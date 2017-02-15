@@ -1,0 +1,352 @@
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <tuxfw.h>
+#include <sqlca.h>
+#include <ctype.h>
+ 
+EXEC SQL INCLUDE SQLCA;
+
+char * rtrim(char *pStr)
+{
+	int rInd;
+
+	if (pStr == NULL)
+			return NULL;
+
+   rInd = strlen(pStr) - 1;
+   while ( isspace(pStr[rInd]) && rInd >= 0){
+      rInd--;
+   }
+
+   pStr[rInd + 1] = '\0';
+   
+   return pStr;
+}
+
+char * ltrim(char *pStr)
+{
+	int lInd = 0;
+
+	if (pStr == NULL)
+			return NULL;
+
+    //rInd = strlen(pStr) - 1;
+
+    while (isspace(pStr[lInd])){
+        lInd++;
+	}
+
+	pStr = pStr + lInd;
+     
+   return pStr;
+}
+
+char * trim(char *pStr){
+	return ltrim(rtrim(pStr));		
+}
+
+
+
+void getMensagens( char * accountNumberPrm, 
+                                  XMLGen * xml_g )
+{
+    ULOG_START( "getMensagens()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char accountNumber[128];
+       
+       char idMensagem[43];
+	   char dsMensagem[200];
+       
+       long ct;
+	   
+       short i_idMensagem = -1;	   	   
+       short i_dsMensagem = -1;
+       
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( accountNumber , accountNumberPrm );
+
+    ULOG( "accountNumber  [%s]", accountNumber );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+   
+    EXEC SQL DECLARE csrMensagem CURSOR FOR
+    select 
+       idmensagem , 
+       dsmensagem
+    from
+    (
+        select msg.idmensagem, msg.dsmensagem 	  
+          from contatoadm.mensagem msg, contatoadm.msguf msguf, 
+               customer.pessoaendereco pessoaend, 
+               customer.contaendereco contaend, 
+               customer.conta conta, customer.msglog 
+         where conta.idconta = contaend.idconta 
+           and pessoaend.idpessoaendereco = contaend.idpessoaendereco 
+           and msguf.iduf = pessoaend.iduf 
+           and conta.cdconta = :accountNumber
+           and msg.idmensagem = msglog.idmensagem 
+           and msg.cdconta = conta.cdconta 
+           and msglog.dtlido is null 
+           and msg.dtcancelamento is null 
+           and ( trunc(sysdate) >= to_date(msg.dtinicio, 'dd/mm/yy') )
+           and ( trunc(sysdate) <=to_date(msg.dtfim, 'dd/mm/yy') )
+        union (select msg.idmensagem, msg.dsmensagem 			 
+                 from contatoadm.mensagem msg, customer.msglog 
+                      msglog, customer.conta 
+                where msg.cdconta = msglog.cdconta 
+                  and msg.cdconta = :accountNumber
+                  and msg.cdconta = conta.cdconta 
+                  and msg.idmensagem = msglog.idmensagem 
+                  and msglog.dtlido is null 
+                  and msg.dtcancelamento is null 
+                  and ( trunc(sysdate) >= to_date(msg.dtinicio, 'dd/mm/yy') )
+                  and ( trunc(sysdate) <=to_date(msg.dtfim, 'dd/mm/yy') )
+            ) 
+        union (select msg.idmensagem, msg.dsmensagem 			 
+                 from customer.conta conta, 
+                      customer.pessoaconta pessoaconta, 
+                      customer.pessoadepara pessoadepara, 
+                      customer.pessoasegmentacao pessoasegmentacao, 
+                      customer.pessoasegmentacaohistorico pessoaseghist, 
+                      contatoadm.msgsegmentacao msgseg, 
+                      contatoadm.mensagem msg, customer.msglog msglog 
+                where conta.idconta = pessoaconta.idconta 
+                  and pessoaconta.idpessoadepara = 
+                         pessoadepara.idpessoadepara 
+                  and pessoadepara.idpessoadepara = 
+                         pessoasegmentacao.idpessoadepara(+) 
+                  and pessoasegmentacao.idpessoadepara = 
+                         pessoaseghist.idpessoadepara (+) 
+                  and (msgseg.idsegmentacao = pessoaseghist.idsegmentacao 
+                         or msgseg.idsegmentacao = 13) 
+                  and msg.idmensagem = msgseg.idmensagem 
+                  and conta.cdconta = :accountNumber
+                  and msg.cdconta = conta.cdconta 
+                  and msg.idmensagem = msglog.idmensagem 
+                  and msglog.dtlido is null 
+                  and msg.dtcancelamento is null 
+                  and ( trunc(sysdate) >= to_date(msg.dtinicio, 'dd/mm/yy') )
+                  and ( trunc(sysdate) <=to_date(msg.dtfim, 'dd/mm/yy') )
+            ) 
+        union (
+        select msg.idmensagem, msg.dsmensagem 	  
+          from contatoadm.mensagem msg, customer.msglog msglog 
+         where msg.idmensagem = msglog.idmensagem 
+           and msglog.dtlido is null 
+           and msg.dtcancelamento is null 
+           and idconsultor in (select pcns.idpessoa 
+                                 from customer.conta c, 
+                                      customer.pessoa p, 
+                                      customer.pessoaconsultor pcns, 
+                                      customer.pessoadepara pdp, 
+                                      customer.pessoaconta pc 
+                                where p.idpessoa = pdp.idpessoa 
+                                  and pc.idconta = c.idconta 
+                                  and pcns.idpessoa(+) = pdp.idpessoa 
+                                  and pc.idpessoadepara = pdp.idpessoadepara 
+                                  and c.cdconta = :accountNumber 
+                                ) 
+            )
+    );        
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	xml_g->createTag( "MensagensVO" );
+        EXEC SQL OPEN csrMensagem;
+        for( ;; ) 
+        {
+            memset( idMensagem, 0x0, sizeof(idMensagem) );
+            memset( dsMensagem, 0x0, sizeof(dsMensagem) );
+            
+            EXEC SQL FETCH csrMensagem INTO 
+                :idMensagem:i_idMensagem, 
+                :dsMensagem:i_dsMensagem;
+        
+            xml_g->createTag( "MensagemVO" );
+                xml_g->addItem( "idMensagem",  trim(idMensagem) );
+                xml_g->addItem( "dsMensagem",  trim(dsMensagem) );
+            xml_g->closeTag();
+        
+        }
+        EXEC SQL CLOSE csrMensagem;
+	xml_g->closeTag();
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG_END( "getMensagens()" );
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}
+
+
+
+void getMensagensSize( char * accountNumberPrm, 
+                                  XMLGen * xml_g )
+{
+    ULOG_START( "getMensagensSize()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char accountNumber[128];
+       
+       char idMensagem[43];
+	   char dsMensagem[200];
+       
+       long ct;
+	   
+       short i_idMensagem = -1;	   	   
+       short i_dsMensagem = -1;
+       
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( accountNumber , accountNumberPrm );
+
+    ULOG( "accountNumber  [%s]", accountNumber );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+   
+    EXEC SQL
+    select
+       sum(m.qt)
+    into
+       :ct
+    from
+    (
+          select 
+           count(msg.idmensagem) qt
+            from contatoadm.mensagem msg, contatoadm.msguf msguf, 
+                   customer.pessoaendereco pessoaend, 
+                   customer.contaendereco contaend, 
+                   customer.conta conta, customer.msglog 
+           where conta.idconta = contaend.idconta 
+             and pessoaend.idpessoaendereco = contaend.idpessoaendereco 
+             and msguf.iduf = pessoaend.iduf 
+             and conta.cdconta = :accountNumber
+             and msg.idmensagem = msglog.idmensagem 
+             and msg.cdconta = conta.cdconta 
+   			 and msg.IDMENSAGEM=msguf.IDMENSAGEM
+             and msglog.dtlido is null 
+             and msg.dtcancelamento is null 
+             and ( trunc(sysdate) >= to_date(msg.dtinicio, 'dd/mm/yy') )
+             and ( trunc(sysdate) <= to_date(msg.dtfim, 'dd/mm/yy') )
+          union select count(msg.idmensagem)
+                       from contatoadm.mensagem msg, customer.msglog 
+                              msglog, customer.conta 
+                      where msg.cdconta = msglog.cdconta 
+                        and msg.cdconta = :accountNumber
+                        and msg.cdconta = conta.cdconta 
+                        and msg.idmensagem = msglog.idmensagem 
+                        and msglog.dtlido is null 
+                        and msg.dtcancelamento is null 
+                        and ( trunc(sysdate) >= to_date(msg.dtinicio, 'dd/mm/yy') )
+                        and ( trunc(sysdate) <= to_date(msg.dtfim, 'dd/mm/yy') )
+          union select count(msg.idmensagem)qt
+                       from customer.conta conta, 
+                              customer.pessoaconta pessoaconta, 
+                              customer.pessoadepara pessoadepara, 
+                              customer.pessoasegmentacao pessoasegmentacao, 
+                              customer.pessoasegmentacaohistorico pessoaseghist, 
+                              contatoadm.msgsegmentacao msgseg, 
+                              contatoadm.mensagem msg, customer.msglog msglog 
+                      where conta.idconta = pessoaconta.idconta 
+                        and pessoaconta.idpessoadepara = 
+                                  pessoadepara.idpessoadepara 
+                        and pessoadepara.idpessoadepara = 
+                                  pessoasegmentacao.idpessoadepara(+) 
+                        and pessoasegmentacao.idpessoadepara = 
+                                  pessoaseghist.idpessoadepara (+) 
+                        and (msgseg.idsegmentacao = pessoaseghist.idsegmentacao 
+                                  or msgseg.idsegmentacao = 13) 
+                        and msg.idmensagem = msgseg.idmensagem 
+                        and conta.cdconta = :accountNumber
+                        and msg.cdconta = conta.cdconta 
+                        and msg.idmensagem = msglog.idmensagem 
+                        and msglog.dtlido is null 
+                        and msg.dtcancelamento is null 
+                        and ( trunc(sysdate) >= to_date(msg.dtinicio, 'dd/mm/yy') )
+                        and ( trunc(sysdate) <= to_date(msg.dtfim, 'dd/mm/yy') )
+    union 
+          select count(msg.idmensagem)qt
+            from contatoadm.mensagem msg, customer.msglog msglog 
+           where msg.idmensagem = msglog.idmensagem 
+             and msglog.dtlido is null 
+             and msg.dtcancelamento is null 
+             and idconsultor in (select pcns.idpessoa 
+                                              from customer.conta c, 
+                                                     customer.pessoa p, 
+                                                     customer.pessoaconsultor pcns, 
+                                                     customer.pessoadepara pdp, 
+                                                     customer.pessoaconta pc 
+                                             where p.idpessoa = pdp.idpessoa 
+                                               and pc.idconta = c.idconta 
+                                               and pcns.idpessoa(+) = pdp.idpessoa 
+                                               and pc.idpessoadepara = pdp.idpessoadepara 
+                                               and c.cdconta = :accountNumber 
+                                             ) 
+    ) m;
+    
+    ULOG( "Size [%ld]", ct );
+    
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+	xml_g->createTag( "MensagemVO" );
+        xml_g->addItem( "Size",  ct );
+	xml_g->closeTag();
+
+    ULOG_END( "getMensagensSize()" );
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}
+
+
+
+void markAsRead( char * cdContaPrm, char * idMensagemPrm )
+{
+    ULOG_START( "markAsRead()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char idMensagem[43];
+       char cdConta[100];
+       
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( idMensagem, idMensagemPrm );
+    strcpy( cdConta   , cdContaPrm );
+
+    ULOG( "idPessoaGestor [%s]", idMensagem );
+    ULOG( "cdConta        [%s]", cdConta );
+    
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+    EXEC SQL
+		update customer.msglog
+		   set dtlido = sysdate
+		where cdconta = :cdConta
+		  and idmensagem = :idMensagem;
+    
+    ULOG_END( "markAsRead()" );
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}

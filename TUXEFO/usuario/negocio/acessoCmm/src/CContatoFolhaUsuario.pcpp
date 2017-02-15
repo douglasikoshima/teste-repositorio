@@ -1,0 +1,954 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include "CContatoFolhaUsuario.h"
+
+CContatoFolhaUsuario::CContatoFolhaUsuario()
+{
+}
+
+CContatoFolhaUsuario::~CContatoFolhaUsuario()
+{
+}
+
+
+//************************************************************************************************
+int CContatoFolhaUsuario::DeleteInsertUsuarioGrupoSkill(TVector stVector[], char* delUsuarios, int insertUsuarios)
+{
+    ULOG_START("CContatoFolhaUsuario::DeleteInsertUsuarioGrupoSkill()");
+
+    struct sqlca sqlca;
+    long i, iCont;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        // Para o array que utilizaremos no trabalho em bloco(host array) com usuários
+        // definimos um máximo de 25000
+        VARCHAR cidUsuarioGrupoSkillTmp[21+1];
+        VARCHAR cidUsuarioGrupoSkillAux[25000][21+1];
+        VARCHAR cidGrupoSkillAux[25000][21+1];
+        VARCHAR cidPessoaUsuarioAux[25000][21+1];
+        VARCHAR cidUserAux[25000][21+1];
+
+        short i_cidUsuarioGrupoSkillAux[25000];
+        short i_cidGrupoSkillAux[25000];
+        short i_cidPessoaUsuarioAux[25000];
+        short i_cidUserAux[25000];
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("delUsuarios=%c", delUsuarios[0]);
+    ULOG("insertUsuarios=%d", insertUsuarios);
+
+    //ULOG("sizeof(cidUsuarioGrupoSkillAux)=%d", sizeof(cidUsuarioGrupoSkillAux));
+    memset(&cidUsuarioGrupoSkillAux, 0, sizeof(cidUsuarioGrupoSkillAux));
+
+    //ULOG("sizeof(cidGrupoSkillAux)=%d", sizeof(cidGrupoSkillAux));
+    memset(&cidGrupoSkillAux, 0, sizeof(cidGrupoSkillAux));
+
+    //ULOG("sizeof(cidPessoaUsuarioAux)=%d", sizeof(cidPessoaUsuarioAux));
+    memset(&cidPessoaUsuarioAux, 0, sizeof(cidPessoaUsuarioAux));
+
+    //ULOG("sizeof(cidUserAux)=%d", sizeof(cidUserAux));
+    memset(&cidUserAux, 0, sizeof(cidUserAux));
+
+
+    //ULOG("sizeof(i_cidUsuarioGrupoSkillAux)=%d", sizeof(i_cidUsuarioGrupoSkillAux));
+    memset(&i_cidUsuarioGrupoSkillAux, -1, sizeof(i_cidUsuarioGrupoSkillAux));
+
+    //ULOG("sizeof(i_cidGrupoSkillAux)=%d", sizeof(i_cidGrupoSkillAux));
+    memset(&i_cidGrupoSkillAux, -1, sizeof(i_cidGrupoSkillAux));
+
+    //ULOG("sizeof(i_cidPessoaUsuarioAux)=%d", sizeof(i_cidPessoaUsuarioAux));
+    memset(&i_cidPessoaUsuarioAux, -1, sizeof(i_cidPessoaUsuarioAux));
+
+    //ULOG("sizeof(i_cidUserAux)=%d", sizeof(i_cidUserAux));
+    memset(&i_cidUserAux, -1, sizeof(i_cidUserAux));
+
+    //se insertUsuarios = 0, então pega o primeiro elemento, que contem o IDGRUPOSKILL
+    if ( insertUsuarios == 0 )
+    {
+        strcpy( (char*)cidGrupoSkillAux[0].arr, stVector[0].pzcidSkillUsuario ); 
+        cidGrupoSkillAux[0].len = strlen( (char*)cidGrupoSkillAux[0].arr );
+        i_cidGrupoSkillAux[0] = 1;
+
+        ULOG("cidGrupoSkillAux[0]=%s", cidGrupoSkillAux[0].arr);
+    }
+
+    EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+
+    if ( insertUsuarios == 1)
+    {
+        for(i=0; i<25000 && stVector[i].pzcusuariosSelecionados[0]; i++) 
+        {
+            memset( &cidUsuarioGrupoSkillTmp, 0, sizeof(cidUsuarioGrupoSkillTmp) );
+
+            EXEC SQL
+                SELECT ACESSO.USUARIOGRUPOSKILLSQ.NEXTVAL
+            INTO :cidUsuarioGrupoSkillTmp
+               FROM DUAL;
+
+            ULOG("Vetor(%d)(%d)--- idSkillUsuario= %s", sizeof(stVector), sizeof(TVector), stVector[i].pzcidSkillUsuario);
+            ULOG("Vetor(%d)(%d)--- usuariosSelecionados= %s", sizeof(stVector), sizeof(TVector), stVector[i].pzcusuariosSelecionados);
+            ULOG("Vetor(%d)(%d)--- idUser= %s", sizeof(stVector), sizeof(TVector), stVector[i].pzcidUser);
+
+            ULOG("cidUsuarioGrupoSkillTmp=[%.*s]", cidUsuarioGrupoSkillTmp.len, cidUsuarioGrupoSkillTmp.arr);
+
+            // IdUsuarioGrupoSkill
+            sprintf((char *)cidUsuarioGrupoSkillAux[i].arr, "%.*s", cidUsuarioGrupoSkillTmp.len, cidUsuarioGrupoSkillTmp.arr);
+            cidUsuarioGrupoSkillAux[i].len = cidUsuarioGrupoSkillTmp.len;
+            i_cidUsuarioGrupoSkillAux[i] = 1;
+            ULOG("cidUsuarioGrupoSkillAux[%d]=[%.*s]", i, cidUsuarioGrupoSkillAux[i].len, cidUsuarioGrupoSkillAux[i].arr);
+
+            // IdGrupoSkill
+            strcpy((char *)cidGrupoSkillAux[i].arr, stVector[i].pzcidSkillUsuario);
+            cidGrupoSkillAux[i].len = strlen((char *)cidGrupoSkillAux[i].arr);
+            i_cidGrupoSkillAux[i] = 1;
+            ULOG("cidGrupoSkillAux[%d]=[%.*s]", i, cidGrupoSkillAux[i].len, cidGrupoSkillAux[i].arr);
+
+            // IdPessoaUsuario
+            strcpy((char *)cidPessoaUsuarioAux[i].arr, stVector[i].pzcusuariosSelecionados);
+            cidPessoaUsuarioAux[i].len = strlen((char *)cidPessoaUsuarioAux[i].arr);
+            i_cidPessoaUsuarioAux[i] = 1;
+            ULOG("cidPessoaUsuarioAux[%d]=[%.*s]", i, cidPessoaUsuarioAux[i].len, cidPessoaUsuarioAux[i].arr);
+
+            // IdUsuarioAlteracao
+            strcpy((char *)cidUserAux[i].arr, stVector[i].pzcidUser);
+            cidUserAux[i].len = strlen((char *)cidUserAux[i].arr);
+            i_cidUserAux[i] = 1;
+            ULOG("cidUserAux[%d]=[%.*s]", i, cidUserAux[i].len, cidUserAux[i].arr);
+        }
+    } // if (insertUsuarios == 1)
+
+    EXEC SQL WHENEVER SQLERROR CONTINUE;
+
+    if( delUsuarios[0] == '1' )
+    {
+        ULOG("Vai deletar em ACESSO.USUARIOGRUPOSKILL...");
+
+        EXEC SQL
+            DELETE 
+                ACESSO.USUARIOGRUPOSKILL
+            WHERE 
+                IDGRUPOSKILL = :cidGrupoSkillAux:i_cidGrupoSkillAux;
+
+        ULOG("sqlca.sqlcode(%d)", sqlca.sqlcode);
+    }
+
+    if ( insertUsuarios == 1 )
+    {
+        ULOG("Vai inserir em ACESSO.USUARIOGRUPOSKILL...");
+
+        EXEC SQL
+            INSERT INTO ACESSO.USUARIOGRUPOSKILL
+            ( 
+                 IDUSUARIOGRUPOSKILL
+                ,IDGRUPOSKILL
+                ,IDPESSOAUSUARIO
+                ,IDUSUARIOALTERACAO
+                ,DTULTIMAALTERACAO
+            )
+            VALUES 
+            ( 
+                 :cidUsuarioGrupoSkillAux:i_cidUsuarioGrupoSkillAux
+                ,:cidGrupoSkillAux:i_cidGrupoSkillAux
+                ,:cidPessoaUsuarioAux:i_cidPessoaUsuarioAux
+                ,:cidUserAux:i_cidUserAux
+                ,SYSDATE 
+            );
+    }
+
+    ULOG("sqlca.sqlcode(%d)", sqlca.sqlcode);
+
+    if ( sqlca.sqlcode < 0 )
+    {
+        if( sqlca.sqlcode != -1400 ) // Ignorando a mensagem de erro ao inserir nulo
+        {
+            goto GotoInsert;
+        }
+    }
+
+    ULOG_END("CContatoFolhaUsuario::DeleteInsertUsuarioGrupoSkill()");
+
+    return 1;
+
+GotoInsert:
+      ULOG("ERROR -> sqlca.sqlcode(%d)", sqlca.sqlcode);
+      throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+int CContatoFolhaUsuario::DeleteInsertContatoGrupoSkill(TVector2 stVector[], char* delContatos, int insertContatos)
+{
+        ULOG_START("CContatoFolhaUsuario::DeleteInsertContatoGrupoSkill()");
+        
+        struct sqlca sqlca;
+        long i, iCont;
+    
+        EXEC SQL BEGIN DECLARE SECTION;
+            // Para o array que utilizaremos no trabalho em bloco(host array) com usuários
+            // definimos um máximo de 25000
+            VARCHAR cidContatoGrupoSkillTmp[21+1];
+            VARCHAR cidContatoGrupoSkillAux[25000][21+1];
+            VARCHAR cidGrupoSkillAux[25000][21+1];
+            VARCHAR cidContatoAux[25000][21+1];
+            VARCHAR cidUserAux[25000][21+1];
+            
+            short i_cidContatoGrupoSkillAux[25000];
+            short i_cidGrupoSkillAux[25000];
+            short i_cidContatoAux[25000];
+            short i_cidUserAux[25000];
+        EXEC SQL END DECLARE SECTION;
+  
+    memset(&cidContatoGrupoSkillAux, 0x00, sizeof(cidContatoGrupoSkillAux));
+    memset(&cidGrupoSkillAux, 0x00, sizeof(cidGrupoSkillAux));
+    memset(&cidContatoAux, 0x00, sizeof(cidContatoAux));
+    memset(&cidUserAux, 0x00, sizeof(cidUserAux));
+
+    memset(&i_cidContatoGrupoSkillAux, -1, sizeof(i_cidContatoGrupoSkillAux));
+    memset(&i_cidGrupoSkillAux, -1, sizeof(i_cidGrupoSkillAux));
+    memset(&i_cidContatoAux, -1, sizeof(i_cidContatoAux));
+    memset(&i_cidUserAux, -1, sizeof(i_cidUserAux));
+
+    memset(&sqlca, 0x00, sizeof(sqlca));
+           
+    //se insertUsuarios = 0, então pega o primeiro elemento, que contem o IDGRUPOSKILL
+    if( insertContatos == 0 )
+    {
+        strcpy( (char*)cidGrupoSkillAux[0].arr, stVector[0].pzcidSkillContato ); 
+        cidGrupoSkillAux[0].len = strlen( (char*)cidGrupoSkillAux[0].arr );
+        i_cidGrupoSkillAux[0] = 1;
+    }
+
+    EXEC SQL WHENEVER SQLERROR goto GotoInsert;
+    
+    if( insertContatos == 1 )
+    {
+        for(i=0; i<25000 && stVector[i].pzccontatosSelecionados[0] != 0x00; i++) 
+        {
+            EXEC SQL SELECT ACESSO.CONTATOGRUPOSKILLSQ.NEXTVAL
+                 INTO :cidContatoGrupoSkillTmp
+                 FROM DUAL;  
+    
+            ULOG("Vetor(%d)(%d)--- idSkillContato= %s", sizeof(stVector), sizeof(TVector2), stVector[i].pzcidSkillContato);
+            ULOG("Vetor(%d)(%d)--- contatosSelecionados= %s", sizeof(stVector), sizeof(TVector2), stVector[i].pzccontatosSelecionados);
+            ULOG("Vetor(%d)(%d)--- idUser= %s", sizeof(stVector), sizeof(TVector2), stVector[i].pzcidUser);
+            
+            ULOG("cidContatoGrupoSkillTmp [%.*s]", cidContatoGrupoSkillTmp.len, cidContatoGrupoSkillTmp.arr);
+            
+            
+            // IdContatoGrupoSkill
+            sprintf((char *)cidContatoGrupoSkillAux[i].arr, "%.*s", cidContatoGrupoSkillTmp.len, cidContatoGrupoSkillTmp.arr);
+            cidContatoGrupoSkillAux[i].len=cidContatoGrupoSkillTmp.len;
+            i_cidContatoGrupoSkillAux[i]=0;
+            ULOG("cidContatoGrupoSkillAux [%.*s]", cidContatoGrupoSkillAux[i].len, cidContatoGrupoSkillAux[i].arr);
+         
+    
+                  // IdGrupoSkill
+            sprintf((char *)cidGrupoSkillAux[i].arr, "%s", stVector[i].pzcidSkillContato);
+            cidGrupoSkillAux[i].len=strlen((char *)cidGrupoSkillAux[i].arr);
+            i_cidGrupoSkillAux[i]=0; 
+            ULOG("cidGrupoSkillAux[%d] [%.*s]", i, cidGrupoSkillAux[i].len, cidGrupoSkillAux[i].arr);
+             
+    
+                  // IdContato
+            sprintf((char *)cidContatoAux[i].arr, "%s", stVector[i].pzccontatosSelecionados);
+            cidContatoAux[i].len=strlen((char *)cidContatoAux[i].arr);
+            i_cidContatoAux[i]=0; 
+            ULOG("cidContatoAux[%d] [%.*s]", i, cidContatoAux[i].len, cidContatoAux[i].arr);
+             
+    
+                  // IdUsuarioAlteracao
+            sprintf((char *)cidUserAux[i].arr, "%s", stVector[i].pzcidUser);
+            cidUserAux[i].len=strlen((char *)cidUserAux[i].arr);
+            i_cidUserAux[i]=0; 
+            ULOG("cidUserAux[%d] [%.*s]", i, cidUserAux[i].len, cidUserAux[i].arr);
+    
+        }
+      }//if( insertContatos == 1 )
+    
+    EXEC SQL WHENEVER SQLERROR CONTINUE;
+
+    //deleta todos os contatos existentes somente na primeira vez.
+    if( delContatos[0] == '1' )
+    {
+        EXEC SQL
+        DELETE FROM ACESSO.CONTATOGRUPOSKILL 
+        WHERE
+                    IDGRUPOSKILL = :cidGrupoSkillAux;
+        }
+        ULOG("cidUserAux[%d] [%.*s]", i, cidUserAux[i].len, cidUserAux[i].arr);
+        if( insertContatos == 1 )
+        {
+            EXEC SQL
+                INSERT INTO ACESSO.CONTATOGRUPOSKILL
+                ( 
+                     IDCONTATOGRUPOSKILL
+                    ,IDGRUPOSKILL
+                    ,IDCONTATO
+                    ,IDUSUARIOALTERACAO
+                    ,DTULTIMAALTERACAO
+                )
+                VALUES 
+                ( 
+                     :cidContatoGrupoSkillAux:i_cidContatoGrupoSkillAux
+                    ,:cidGrupoSkillAux:i_cidGrupoSkillAux
+                    ,:cidContatoAux:i_cidContatoAux
+                    ,:cidUserAux:i_cidUserAux
+                    ,SYSDATE 
+                );
+    }
+    ULOG("sqlca.sqlcode(%d)", sqlca.sqlcode);
+    
+    
+        if ( sqlca.sqlcode < 0 ) {
+        if( sqlca.sqlcode != -1400 )   //  Ignorando a mensagem de erro ao inserir nulo
+            goto GotoInsert;
+    }
+    
+    ULOG_END("CContatoFolhaUsuario::DeleteInsertContatoGrupoSkill()");
+    return 1;
+
+GotoInsert:
+      ULOG("ERROR -> sqlca.sqlcode(%d)", sqlca.sqlcode);
+      throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+/*<<<**********************************************************************************************************/
+
+
+/*int CContatoFolhaUsuario::Insert(TVector stVector[])
+{
+    struct sqlca sqlca;
+    long i, iCont;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        // Para o array que utilizaremos no trabalho em bloco(host array) com usuários
+        // definimos um máximo de 25000
+        VARCHAR cidContatoFolhaUsuarioTmp[21+1];
+        VARCHAR cidContatoFolhaUsuarioAux[25000][21+1];
+        VARCHAR cidPessoaUsuarioAux[25000][21+1];
+        VARCHAR cidContatoAux[25000][21+1];
+        VARCHAR cidGrupoSkillAux[25000][21+1];
+        VARCHAR cidUserAux[25000][21+1];
+
+        short i_cidContatoFolhaUsuarioAux[25000];
+        short i_cidPessoaUsuarioAux[25000];
+        short i_cidContatoAux[25000];
+        short i_cidGrupoSkillAux[25000];
+        short i_cidUserAux[25000];
+    EXEC SQL END DECLARE SECTION;
+
+    tuxfw_getlogger()->debug("inicio CContatoFolhaUsuario::Insert");
+
+    EXEC SQL WHENEVER SQLERROR CONTINUE;
+
+    memset(&sqlca, 0x00, sizeof(sqlca));
+
+    tuxfw_getlogger()->debug(">>>Setando valores para indicator");
+    for(i=0; i<25000; i++) {
+        i_cidContatoFolhaUsuarioAux[i]=-1;
+        i_cidPessoaUsuarioAux[i]=-1;
+        i_cidContatoAux[i]=-1;
+        i_cidGrupoSkillAux[i]=-1;
+        i_cidUserAux[i]=-1;
+    }
+    tuxfw_getlogger()->debug("<<<Setando valores para indicator");
+
+    for(i=0; i<25000 && stVector[i].pzcusuariosSelecionados[0] != 0x00; i++) {
+
+        EXEC SQL SELECT ACESSO.CONTATOFOLHAUSUARIOSQ.NEXTVAL
+            INTO :cidContatoFolhaUsuarioTmp
+            FROM DUAL;
+        tuxfw_getlogger()->debug("cidContatoFolhaUsuarioTmp[%.*s]", cidContatoFolhaUsuarioTmp.len, cidContatoFolhaUsuarioTmp.arr);
+
+        sprintf((char *)cidContatoFolhaUsuarioAux[i].arr, "%.*s", cidContatoFolhaUsuarioTmp.len, cidContatoFolhaUsuarioTmp.arr);
+        cidContatoFolhaUsuarioAux[i].len=cidContatoFolhaUsuarioTmp.len;
+        i_cidContatoFolhaUsuarioAux[i]=0;
+        tuxfw_getlogger()->debug("cidContatoFolhaUsuarioAux[%ld].arr(idContatoFolhaUsuario)[%.*s]", i, cidContatoFolhaUsuarioAux[i].len, cidContatoFolhaUsuarioAux[i].arr);
+        tuxfw_getlogger()->debug("i_cidContatoFolhaUsuarioAux[%ld](%d)", i, i_cidContatoFolhaUsuarioAux[i]);
+
+
+        sprintf((char *)cidPessoaUsuarioAux[i].arr, "%s", stVector[i].pzcusuariosSelecionados);
+        cidPessoaUsuarioAux[i].len=strlen((char *)cidPessoaUsuarioAux[i].arr);
+        i_cidPessoaUsuarioAux[i]=0;
+        tuxfw_getlogger()->debug("cidPessoaUsuarioAux[%ld].arr(idPessoaUsuario)[%.*s]", i, cidPessoaUsuarioAux[i].len, cidPessoaUsuarioAux[i].arr);
+        tuxfw_getlogger()->debug("i_cidPessoaUsuarioAux[%ld](%d)", i, i_cidPessoaUsuarioAux[i]);
+
+
+        sprintf((char *)cidContatoAux[i].arr, "%s", stVector[i].pzccontatosSelecionados);
+        cidContatoAux[i].len=strlen((char *)cidContatoAux[i].arr);
+        i_cidContatoAux[i]=0;
+        tuxfw_getlogger()->debug("cidContatoAux[%ld].arr(idContato)[%.*s]", i, cidContatoAux[i].len, cidContatoAux[i].arr);
+        tuxfw_getlogger()->debug("i_cidContatoAux[%ld](%d)", i, i_cidContatoAux[i]);
+
+
+        sprintf((char *)cidGrupoSkillAux[i].arr, "%s", stVector[i].pzcidSkillUsuario);
+        cidGrupoSkillAux[i].len=strlen((char *)cidGrupoSkillAux[i].arr);
+        i_cidGrupoSkillAux[i]=0;
+        tuxfw_getlogger()->debug("cidGrupoSkillAux[%ld].arr(idGrupoSkill)[%.*s]", i, cidGrupoSkillAux[i].len, cidGrupoSkillAux[i].arr);
+        tuxfw_getlogger()->debug("i_cidGrupoSkillAux[%ld](%d)", i, i_cidGrupoSkillAux[i]);
+
+
+        sprintf((char *)cidUserAux[i].arr, "%s", stVector[i].pzcidUser);
+        cidUserAux[i].len=strlen((char *)cidUserAux[i].arr);
+        i_cidUserAux[i]=0;
+        tuxfw_getlogger()->debug("cidUserAux[%ld].arr(idUsuarioAlteracao)[%.*s]", i, cidUserAux[i].len, cidUserAux[i].arr);
+        tuxfw_getlogger()->debug("i_cidUserAux[%ld](%d)\n", i, i_cidUserAux[i]);
+
+
+    }
+    tuxfw_getlogger()->debug("saindo do for para variaveis proc i(%ld)", i);
+    tuxfw_getlogger()->debug("Inicio da insercao vetorizada");
+
+    EXEC SQL 
+        INSERT INTO ACESSO.CONTATOFOLHAUSUARIO
+        ( 
+             IDCONTATOFOLHAUSUARIO
+            ,IDPESSOAUSUARIO
+            ,IDCONTATO
+            ,IDGRUPOSKILL
+            ,IDUSUARIOALTERACAO
+            ,DTULTIMAALTERACAO
+        )
+        VALUES 
+        ( 
+             :cidContatoFolhaUsuarioAux:i_cidContatoFolhaUsuarioAux
+            ,:cidPessoaUsuarioAux:i_cidPessoaUsuarioAux
+            ,:cidContatoAux:i_cidContatoAux
+            ,:cidGrupoSkillAux:i_cidGrupoSkillAux
+            ,:cidUserAux:i_cidUserAux
+            ,SYSDATE 
+        );
+
+
+    tuxfw_getlogger()->debug("sqlca.sqlcode(%d)", sqlca.sqlcode);
+
+    if ( sqlca.sqlcode < 0 ) {
+        if( sqlca.sqlcode != -1400 )   //  Ignorando a mensagem de erro ao inserir nulo
+            goto GotoInsert;
+    }
+
+
+    tuxfw_getlogger()->debug("inicio de carga Add");
+    tuxfw_getlogger()->debug("b.i(%ld)", i);
+
+    for(iCont=0; iCont<i; iCont++) {
+
+        tuxfw_getlogger()->debug("cidContatoFolhaUsuarioAux[%ld].arr[%s]", iCont, (char *)cidContatoFolhaUsuarioAux[iCont].arr);
+        tuxfw_getlogger()->debug("cidPessoaUsuarioAux[%ld].arr[%s]", iCont, (char *)cidPessoaUsuarioAux[iCont].arr);
+        tuxfw_getlogger()->debug("cidContatoAux[%ld].arr[%s]", iCont, (char *)cidContatoAux[iCont].arr);
+        tuxfw_getlogger()->debug("cidGrupoSkillAux[%ld].arr[%s]\n", iCont, (char *)cidGrupoSkillAux[iCont].arr);
+
+
+        //Salva o registro na estrutura interna
+        Add( (char*)cidContatoFolhaUsuarioAux[iCont].arr
+            ,(char*)cidPessoaUsuarioAux[iCont].arr
+            ,(char*)cidContatoAux[iCont].arr
+            ,(char*)cidGrupoSkillAux[iCont].arr);
+    }
+
+    tuxfw_getlogger()->debug("c.i(%ld)iCont(%ld)", i, iCont);
+
+    tuxfw_getlogger()->debug("Fim CContatoFolhaUsuario::Insert");
+
+    return 1;
+
+GotoInsert:
+    tuxfw_getlogger()->debug("ERROR -> sqlca.sqlcode(%d)", sqlca.sqlcode);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}*/
+
+
+int CContatoFolhaUsuario::ListId(
+                     char* cidContatoFolhaUsuario
+     )
+{
+    
+    ULOG_START("CContatoFolhaUsuario::ListId()");
+        
+    //Variavel de status do oracle para PROC
+    struct sqlca sqlca;
+    //Declaracao das variaveis para o PROC
+    EXEC SQL BEGIN DECLARE SECTION;
+        char* cidContatoFolhaUsuarioAux = cidContatoFolhaUsuario;
+        struct
+        {
+            VARCHAR stidContatoFolhaUsuario[21+1];
+            VARCHAR stidPessoaUsuario[21+1];
+            VARCHAR stidContato[21+1];
+            VARCHAR stidGrupoContato[21+1];
+        } stRegistro;
+        struct
+        {
+            short iidContatoFolhaUsuario;
+            short iidPessoaUsuario;
+            short iidContato;
+            short iidGrupoContato;
+        } stIndicator;
+    EXEC SQL END DECLARE SECTION;
+
+    //Zera a estrutura da classe
+    ZeraContatoFolhaUsuario();
+    memset( &sqlca, 0, sizeof( sqlca ) );
+    memset( &stRegistro, 0, sizeof(stRegistro) );
+
+    //Ativa as acoes decorrentes de erros ORACLE
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+
+    //Declara um cursor para listar os IDs
+    EXEC SQL 
+    SELECT
+         IDCONTATOFOLHAUSUARIO
+        ,IDPESSOAUSUARIO
+        ,IDCONTATO
+        ,IDGRUPOSKILL
+    INTO 
+        :stRegistro:stIndicator
+    FROM 
+        ACESSO.CONTATOFOLHAUSUARIO
+    WHERE 
+        IDCONTATOFOLHAUSUARIO = :cidContatoFolhaUsuarioAux;
+
+    Add(
+         (char*)stRegistro.stidContatoFolhaUsuario.arr
+        ,(char*)stRegistro.stidPessoaUsuario.arr
+        ,(char*)stRegistro.stidContato.arr
+        ,(char*)stRegistro.stidGrupoContato.arr
+    );
+
+    
+    ULOG_END("CContatoFolhaUsuario::ListId()");
+    return Quantidade();
+
+GotoListId:
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoFolhaUsuario::ListAll( void )
+{
+    ULOG_START("CContatoFolhaUsuario::ListAll()");
+    
+    //Variavel de status do oracle para PROC
+    struct sqlca sqlca;
+    //Declaracao das variaveis para o PROC
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct
+        {
+            VARCHAR stidContatoFolhaUsuario[21+1];
+            VARCHAR stidPessoaUsuario[21+1];
+            VARCHAR stidContato[21+1];
+            VARCHAR stidGrupoContato[21+1];
+        } stRegistro;
+        struct
+        {
+            short iidContatoFolhaUsuario;
+            short iidPessoaUsuario;
+            short iidContato;
+            short iidGrupoContato;
+        } stIndicator;
+    EXEC SQL END DECLARE SECTION;
+
+    //Zera a estrutura da classe
+    ZeraContatoFolhaUsuario();
+    memset( &sqlca, 0, sizeof( sqlca ) );
+    memset( &stRegistro, 0, sizeof(stRegistro) );
+
+    //Ativa as acoes decorrentes de erros ORACLE
+    EXEC SQL WHENEVER NOT FOUND DO break;
+    EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+
+    //Declara um cursor para listar todos os registros
+    EXEC SQL 
+    DECLARE 
+        CursorListAll CURSOR FOR
+    SELECT
+         IDCONTATOFOLHAUSUARIO
+        ,IDPESSOAUSUARIO
+        ,IDCONTATO
+        ,IDGRUPOSKILL
+    FROM 
+        ACESSO.CONTATOFOLHAUSUARIO
+    WHERE
+        IDCONTATOFOLHAUSUARIO > 0;
+
+   //Abre o cursor
+   EXEC SQL OPEN CursorListAll;
+
+    //Caso inexista registros sair do loop
+    EXEC SQL WHENEVER NOT FOUND DO break;
+    for(;;)
+    {
+        //Zera a estrutura de restorno
+        memset( &stRegistro, 0, sizeof(stRegistro) );
+        //Pega um registro no CURSOR
+        EXEC SQL FETCH CursorListAll INTO :stRegistro:stIndicator;
+        //Adiciona a classe
+        Add(
+             (char*)stRegistro.stidContatoFolhaUsuario.arr
+            ,(char*)stRegistro.stidPessoaUsuario.arr
+            ,(char*)stRegistro.stidContato.arr
+            ,(char*)stRegistro.stidGrupoContato.arr
+        );
+    }
+    //Fecha o cursor
+    EXEC SQL CLOSE CursorListAll;
+
+    ULOG_END("CContatoFolhaUsuario::ListAll()");
+    return Quantidade();
+
+GotoListAll:
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CContatoFolhaUsuario::GetXml( char* cNomeTag, XMLGen*xml )
+{
+    ULOG_START("CContatoFolhaUsuario::GetXml()");
+    
+    //Soh monta o XML padrao se existir algum registro para isto
+    if( Quantidade() > 0 )
+    {
+        //Corre todos os registros do iterator
+        for( int x = 0; x < Quantidade(); x++ )
+        {
+            //Caso nao tenha recebido uma tag padrao, deixa sem
+            xml->createTag(cNomeTag);
+            //Para garantir que existe um registro
+            if( Registro( x ) != NULL )
+            { 
+                //Adiciona as tags necessarias
+                xml->addItem("idContatoFolhaUsuario", Registro(x)->cidContatoFolhaUsuario);
+                xml->addItem("idPessoaUsuario", Registro(x)->cidPessoaUsuario);
+                xml->addItem("idContato", Registro(x)->cidContato);
+                xml->addItem("idGrupoSkill", Registro(x)->cidGrupoSkill);
+            }
+            //So fecha um tag se abriu anteriormente
+            xml->closeTag();
+        }
+    }
+    
+    ULOG_END("CContatoFolhaUsuario::GetXml( )");
+    
+}
+
+int CContatoFolhaUsuario::Update(
+                     char* cidContatoFolhaUsuario
+                    ,char* cidPessoaUsuario
+                    ,char* cidContato
+                    ,char* cidGrupoSkill
+                    ,char* cidUser
+     ) 
+{
+    ULOG_START("CContatoFolhaUsuario::Update()");
+    
+    //Variavel de status do oracle para PROC
+    struct sqlca sqlca;
+    //Declaracao das variaveis para o PROC
+    EXEC SQL BEGIN DECLARE SECTION;
+        char* cidUserAux = cidUser;
+        char* cidContatoFolhaUsuarioAux = cidContatoFolhaUsuario;
+        char* cidPessoaUsuarioAux = cidPessoaUsuario;
+        char* cidContatoAux = cidContato;
+        char* cidGrupoSkillAux = cidGrupoSkill;
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &sqlca, 0, sizeof( sqlca ) );
+
+    //Ativa as acoes decorrentes de erros ORACLE
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+
+    //Atualiza um registro
+    EXEC SQL 
+    UPDATE 
+        ACESSO.CONTATOFOLHAUSUARIO
+    SET 
+         IDPESSOAUSUARIO = :cidPessoaUsuarioAux
+        ,IDCONTATO = :cidContatoAux
+        ,IDGRUPOSKILL = cidGrupoSkillAux
+        ,IDUSUARIOALTERACAO = :cidUserAux
+        ,DTULTIMAALTERACAO = SYSDATE
+    WHERE
+        IDCONTATOFOLHAUSUARIO = :cidContatoFolhaUsuarioAux;
+
+    //Salva o registro na estrutura interna
+    Add(
+         cidContatoFolhaUsuario
+        ,cidPessoaUsuario
+        ,cidContato
+        ,cidGrupoSkill
+    );
+
+    ULOG_END("CContatoFolhaUsuario::Update()");
+    return 1;
+
+GotoUpdate:
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoFolhaUsuario::Delete( 
+                     char* cidContatoFolhaUsuario
+                  ) 
+{
+    ULOG_START("CContatoFolhaUsuario::Delete()");
+    
+    //Variavel de status do oracle para PROC
+    struct sqlca sqlca;
+    //Declaracao das variaveis para o PROC
+    EXEC SQL BEGIN DECLARE SECTION;
+        char* cidContatoFolhaUsuarioAux = cidContatoFolhaUsuario;
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &sqlca, 0, sizeof( sqlca ) );
+
+    //Ativa as acoes decorrentes de erros ORACLE
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+
+    //Apaga a relacao entre contato e usuario
+    EXEC SQL 
+    DELETE FROM 
+        ACESSO.CONTATOFOLHAUSUARIO
+    WHERE 
+        IDCONTATOFOLHAUSUARIO = :cidContatoFolhaUsuarioAux;
+
+    ULOG_END("CContatoFolhaUsuario::Delete()");
+    return 1;
+
+GotoDelete:
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoFolhaUsuario::DeleteDependencia( 
+                                              char* cidGrupoSkill
+                                             ,char* cidUsuario
+                                           ) 
+{
+    ULOG_START("CContatoFolhaUsuario::DeleteDependencia()");
+    
+    //Variavel de status do oracle para PROC
+    struct sqlca sqlca;
+    //Declaracao das variaveis para o PROC
+    EXEC SQL BEGIN DECLARE SECTION;
+        char* cidGrupoSkillAux = cidGrupoSkill;
+        char* cidUsuarioAux = cidUsuario;
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &sqlca, 0, sizeof( sqlca ) );
+
+    //Ativa as acoes decorrentes de erros ORACLE
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR GOTO GotoDeleteDependencia;
+    
+    //APAGA TODOS OS CONTATOS DE UM CERTO USUARIO
+    EXEC SQL 
+    DELETE FROM 
+        ACESSO.CONTATOFOLHAUSUARIO
+    WHERE 
+        IDPESSOAUSUARIO = :cidUsuarioAux
+    AND
+        IDGRUPOSKILL IN ( SELECT IDGRUPOSKILL FROM ACESSO.GRUPOSKILL WHERE IDGRUPO = ( SELECT IDGRUPO FROM ACESSO.GRUPOSKILL WHERE IDGRUPOSKILL = :cidGrupoSkillAux ) );
+
+    ULOG_END("CContatoFolhaUsuario::DeleteDependencia()");
+    return 1;
+
+GotoDeleteDependencia:
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+int CContatoFolhaUsuario::Pesquisa( DOMNode* dnXmlIn, XMLGen* XmlSaida, char* pzcidGrupo, char* pzcidGrupoSkill, int iPagina, int &iQtdeRegistros )
+{
+    ULOG_START("CContatoFolhaUsuario::Pesquisa( )");
+    
+    CSafePointer oSafePointer;
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        char cPesquisa[10000];
+        int  iRet = 1;
+        int  iCont;
+        char* pzcidPessoaUsuario;
+        char* pzcidContato;
+        struct
+        {
+            VARCHAR stidPessoaUsuario[21+1];
+            VARCHAR stnmLogin[255+1];
+            VARCHAR stnmPath[2000+1];
+            VARCHAR stdsGrupoPerfil[255+1];
+            VARCHAR stnmLoginEfetuou[255+1];
+            VARCHAR stDataHora[21+1];
+        } stRegistro;
+        struct
+        {
+            short sidPessoaUsuario;
+            short snmLogin;
+            short snmPath;
+            short sdsidGrupoPerfil;
+            short snmLoginEfetuou;
+            short sDataHora;
+        } stIndicator;
+        int iRegistroInicio = 0; 
+        int iRegistroFim = 0;
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &sqlca, 0, sizeof( sqlca ) );
+
+    // Calcula o inicio e fim de paginacao
+    iRegistroFim = iPagina * iQtdeRegistros;
+    if(iRegistroFim > 0)
+        iRegistroInicio = iRegistroFim - iQtdeRegistros;
+
+    //Ativa as acoes decorrentes de erros ORACLE
+    EXEC SQL WHENEVER NOT FOUND DO break;
+    EXEC SQL WHENEVER SQLERROR GOTO GotoPesquisa;
+    
+    strcpy( cPesquisa,
+        "SELECT "
+            "IDCONTATOFOLHAUSUARIO, "
+            "NMLOGINUSUARIO, "
+            "NMPATH, "
+            "DSGRUPOSKILL, "
+            "NMLOGINUSUARIO2, "
+            "DATAHORA "
+        "FROM "
+        "( "
+        "SELECT "
+            "IDCONTATOFOLHAUSUARIO, "
+            "( SELECT NMLOGINUSUARIO FROM ACESSO.USUARIO WHERE IDPESSOAUSUARIO = CONTATOFOLHAUSUARIO.IDPESSOAUSUARIO ) NMLOGINUSUARIO, "
+            "( SELECT NMPATH FROM CONTATOADM.CONTATO WHERE IDCONTATO = CONTATOFOLHAUSUARIO.IDCONTATO ) NMPATH, "
+            "( SELECT DSGRUPOSKILL FROM ACESSO.GRUPOSKILL WHERE IDGRUPOSKILL = CONTATOFOLHAUSUARIO.IDGRUPOSKILL ) DSGRUPOSKILL, "
+            "( SELECT NMLOGINUSUARIO FROM ACESSO.USUARIO WHERE IDPESSOAUSUARIO = CONTATOFOLHAUSUARIO.IDUSUARIOALTERACAO ) NMLOGINUSUARIO2, "
+            "TO_CHAR( CONTATOFOLHAUSUARIO.DTULTIMAALTERACAO, 'DD/MM/YYYY HH:MM:SS' ) DATAHORA, "
+            "ROWNUM NUMLINHA "
+        "FROM "
+            "ACESSO.CONTATOFOLHAUSUARIO CONTATOFOLHAUSUARIO "
+        "WHERE " 
+    );
+
+    for( iCont = 0;;iCont++ )
+    {
+        pzcidContato = oSafePointer.getTag( dnXmlIn, "contatosSelecionados", iCont );
+        if( strlennull( pzcidContato ) <= 0 )
+        {
+            if( iCont > 0 )
+                strcat( cPesquisa, ") " );
+            break;
+        }
+        if( iCont == 0 )
+        {
+            strcat( cPesquisa, "IDCONTATO IN (" );
+            strcat( cPesquisa, pzcidContato );
+        }
+        else
+        {
+            strcat( cPesquisa, "," );
+            strcat( cPesquisa, pzcidContato );
+        }
+    }
+    if( iCont > 0 )
+        strcat( cPesquisa, "AND " );
+    for( iCont = 0;;iCont++ )
+    {
+        pzcidPessoaUsuario = oSafePointer.getTag( dnXmlIn, "usuariosSelecionados", iCont );
+        if( strlennull( pzcidPessoaUsuario ) <= 0 )
+        {
+            if( iCont > 0 )
+                strcat( cPesquisa, ") " );
+            break;
+        }
+        if( iCont == 0 )
+        {
+            strcat( cPesquisa, "IDPESSOAUSUARIO IN (" );
+            strcat( cPesquisa, pzcidPessoaUsuario );
+        }
+        else
+        {
+            strcat( cPesquisa, "," );
+            strcat( cPesquisa, pzcidPessoaUsuario );
+        }
+    }
+    if( iCont > 0 )
+        strcat( cPesquisa, "AND " );
+
+    if( strlennull( pzcidGrupoSkill ) > 0 )
+    {
+        strcat( cPesquisa,
+            " CONTATOFOLHAUSUARIO.IDGRUPOSKILL = "
+        );
+        strcat( cPesquisa, pzcidGrupoSkill );
+    }
+    else if( strlennull( pzcidGrupo ) > 0 )
+    {
+        strcat( cPesquisa,
+            " IDPESSOAUSUARIO IN  "
+            " (  "
+                "SELECT  "
+                    "IDPESSOAUSUARIO "
+                "FROM "
+                    "ACESSO.USUARIOGRUPO USUARIOGRUPO "
+                "WHERE "
+                    "USUARIOGRUPO.IDGRUPO = "
+        );
+        strcat( cPesquisa, pzcidGrupo );
+        strcat( cPesquisa,
+            ") "
+        );
+        strcat( cPesquisa,
+            "AND "
+                " IDGRUPOSKILL IN ( SELECT IDGRUPOSKILL FROM ACESSO.GRUPOSKILL WHERE IDGRUPO = " );
+        strcat( cPesquisa, pzcidGrupo );
+        strcat( cPesquisa,
+            " )" );
+
+    }
+    char cTmp[256]; memset( cTmp, 0, sizeof(cTmp) ); // utlizado para conversões int/string
+    strcat( cPesquisa,
+        ") "
+        "WHERE "
+              "NUMLINHA > " );
+    sprintf(cTmp, "%d", iRegistroInicio); strcat( cPesquisa, cTmp );
+    strcat( cPesquisa,
+              "AND NUMLINHA <= " );
+    sprintf(cTmp, "%d", iRegistroFim); strcat( cPesquisa, cTmp );
+
+
+    ULOG( "CContatoFolhaUsuario::Pesquisa[%s]", cPesquisa ); 
+
+
+    EXEC SQL PREPARE qPesquisa FROM :cPesquisa;
+    EXEC SQL DECLARE CursorPesquisa CURSOR FOR qPesquisa;
+
+    EXEC SQL OPEN CursorPesquisa;
+    
+    // Zera a quantidade de registros para retornar o numero de linhas selecionadas
+    iQtdeRegistros = 0;
+
+    for(;;)
+    {
+        memset( &stRegistro, 0, sizeof( stRegistro ) );
+        EXEC SQL
+        FETCH
+            CursorPesquisa
+        INTO
+            :stRegistro:stIndicator;
+
+        XmlSaida->createTag( "UsuarioSkillAssociadoVO" );
+            XmlSaida->addItem( "idSkillUsuario", (char*)stRegistro.stidPessoaUsuario.arr );
+            XmlSaida->addItem( "nmUsuario", (char*)stRegistro.stnmLogin.arr );
+            XmlSaida->addItem( "dsPath", (char*)stRegistro.stnmPath.arr );
+            XmlSaida->addItem( "nmPerfil", (char*)stRegistro.stdsGrupoPerfil.arr );
+            XmlSaida->addItem( "loginEfetuado", (char*)stRegistro.stnmLoginEfetuou.arr );
+            XmlSaida->addItem( "dataHora", (char*)stRegistro.stDataHora.arr );
+        XmlSaida->closeTag();//AdmGrupoVO
+
+        iQtdeRegistros++;
+    }
+
+    EXEC SQL CLOSE CursorPesquisa;
+
+    ULOG_END("CContatoFolhaUsuario::Pesquisa( )");
+    return iRet;
+
+GotoPesquisa:
+    throw TuxBasicOraException(sqlca.sqlcode);
+}

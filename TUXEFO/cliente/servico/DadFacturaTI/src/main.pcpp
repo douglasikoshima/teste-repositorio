@@ -1,0 +1,129 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Fonte   : main.cpp
+//* Servico : CarregaTI
+//* Servidor: LupaLinha
+//*
+//* Ficheiro: TUXEFO/cliente/TelaInicial/DadClienteTI/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson Martins
+//*
+//* Fecha primeira version:11/11/2004
+//*
+//* Version actual: 01.00
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Servico para montar o XML de retorno do frame de fatura/endereco usuario da Tela Inicial.
+//*
+//* Review:
+//*
+//* Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+//*
+//*//-------------------------------------------------------------------------------
+//---------------------------------------------------------------------
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../../negocio/clienteCmm/include/Exception.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Exception.h"
+
+#include "../include/DadFacturaTI.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classPessoaEndereco.h";
+
+DECLARE_TUXEDO_SERVICE(DADFACTURATI);
+
+void implDADFACTURATI::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+char* pParam1=0;
+
+CPessoaEndereco oPE;
+
+    ULOG_START( "implDADFACTURATI::Execute()" );
+    
+    try{
+        pParam1 = walkTree(pDnode, "nrLinha", 0);
+        if(!pParam1)        {
+            ERROR(NRO_NR_LINHA_NE);
+            TAG_INEXISTENTE("nrLinha");
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if (!*pParam1){
+            ERROR(NRO_NR_LINHA_VV);
+            TAG_VALOR_VAZIO("nrLinha");
+            XMLString::release(&pParam1);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if (!IsNumeric(pParam1) ){
+            ERROR(NRO_NR_LINHA_VI);
+            TAG_VALOR_INVALIDO("nrLinha");
+            XMLString::release(&pParam1);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        oPE.buscarPorNrLinha(pParam1);
+        
+        XMLString::release(&pParam1);
+
+        pXmlG->createTag("EnderecoBaseVO");
+        pXmlG->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+            pXmlG->addItem("idEndereco", oPE.getIdEndereco());
+            pXmlG->addItem("dsEndereco", oPE.getNmLogradouro());
+            pXmlG->addItem("nrEndereco", oPE.getNrEndereco());
+            pXmlG->addItem("dsComplemento", oPE.getDsEnderecoComplemento());
+            pXmlG->addItem("dsBairro", oPE.getNmBairro());
+            pXmlG->addItem("dsCidade", oPE.getNmMunicipio());
+            pXmlG->addItem("nrCEP", oPE.getNrCep());
+
+
+            pXmlG->createTag("UFVO");
+                pXmlG->addItem("idUF", oPE.getIdUF());
+                pXmlG->addItem("sgUF", oPE.getSgUF());
+                pXmlG->addItem("nmUF", oPE.getNmUF());
+            pXmlG->closeTag();
+
+            pXmlG->createTag("PaisVO");
+                pXmlG->addItem("idPais", oPE.getIdPais());
+                pXmlG->addItem("sgPais", oPE.getSgPais());
+                pXmlG->addItem("dsPais", oPE.getNmPais());
+                pXmlG->addItem("dsNacionalidade", oPE.getDsNacionalidade());
+            pXmlG->closeTag();
+
+        pXmlG->closeTag();  // fecha a tag principal
+    }
+    catch(...){
+        if ( pParam1 ) XMLString::release(&pParam1);
+        throw;  //repassando o erro para nucleo
+    }
+
+	// Execução OK.
+	INFORMATION(NRO_OK);
+
+    ULOG_END( "implDADFACTURATI::Execute()" );
+	setStatusCode(sNrMsg, MSG_OK);
+}
+
+
+

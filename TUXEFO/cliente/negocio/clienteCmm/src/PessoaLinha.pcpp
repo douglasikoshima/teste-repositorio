@@ -1,0 +1,119 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../include/PessoaLinha.h"
+#include <tuxfw.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+PessoaLinha::PessoaLinha()
+{
+}
+
+PessoaLinha::~PessoaLinha()
+{
+}
+
+
+/*******************************************************************************************************/
+void PessoaLinha::buscaLinhasPorIdPessoa(char *pszIdPessoa, XMLGen *xml_g)
+{
+    ULOG_START("PessoaLinha::buscaLinhasPorIdPessoa()");
+    
+    unsigned int iCont;
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[LEN_IDPESSOA + LEN_EOS];
+        struct {
+            VARCHAR oszNrMin[LEN_NRMIN + LEN_EOS];
+            VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA + LEN_EOS];
+            VARCHAR oszIdTipoLinha[LEN_IDTIPOLINHA + LEN_EOS];
+        } stBuscaLinhaPorIdPessoa;
+        struct {
+            short oiNrMin;
+            short oiIdLinhaTelefonica;
+            short oiIdTipoLinha;
+        } stBuscaLinhaPorIdPessoaIndicator;
+    EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+        ULOG("pszIdPessoa[%s]", pszIdPessoa);
+
+        STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa);
+
+        EXEC SQL WHENEVER SQLERROR GOTO GotoError;
+        EXEC SQL WHENEVER NOT FOUND DO break;
+    
+        EXEC SQL 
+            DECLARE 
+                CursorBuscaLinhaPorIdPessoa CURSOR FOR
+                    SELECT    linhabase.nrmin, linhatelefonica.idlinhatelefonica, linhatelefonica.idtipolinha
+                    FROM      customer.pessoa pessoa,
+                              customer.pessoalinha pessoalinha,
+                              customer.pessoadepara pessoadepara,
+                              linha.linhatelefonica linhatelefonica,
+                              linha.linhabase linhabase,
+                              customer.tiporelacionamento tiporelacionamento
+                    WHERE     pessoa.idpessoa = pessoadepara.idpessoa
+                    AND       tiporelacionamento.sgtiporelacionamento = 'C'
+                    AND       pessoalinha.idtiporelacionamento = tiporelacionamento.idtiporelacionamento
+                    AND       pessoadepara.idpessoadepara = pessoalinha.idpessoadepara
+                    AND       pessoalinha.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+                    AND       linhatelefonica.idlinhabase = linhabase.idlinhabase
+                    AND       pessoa.idpessoa = TO_NUMBER(:oszIdPessoa);
+
+
+        EXEC SQL OPEN CursorBuscaLinhaPorIdPessoa;
+        ULOG("OpenCursor.sqlca.sqlcode(%d)", sqlca.sqlcode);
+    
+        xml_g->createTag("LinhasPorIdVO");
+        xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+    
+        for(iCont=0;;iCont++) {
+            ULOG("iCont(%u)", iCont);
+
+            memset(&stBuscaLinhaPorIdPessoa, 0x00, sizeof(stBuscaLinhaPorIdPessoa));
+    
+            EXEC SQL FETCH CursorBuscaLinhaPorIdPessoa INTO :stBuscaLinhaPorIdPessoa:stBuscaLinhaPorIdPessoaIndicator;
+            ULOG("Fetch.sqlca.sqlcode(%d)", sqlca.sqlcode);
+
+            ULOG("(char *)&stBuscaLinhaPorIdPessoa.oszNrMin.arr[%s] stBuscaLinhaPorIdPessoaIndicator.oiNrMin(%d)", (char *)&stBuscaLinhaPorIdPessoa.oszNrMin.arr, stBuscaLinhaPorIdPessoaIndicator.oiNrMin);
+            ULOG("(char *)&stBuscaLinhaPorIdPessoa.oszIdLinhaTelefonica.arr[%s] stBuscaLinhaPorIdPessoaIndicator.oiIdLinhaTelefonica(%d)", (char *)&stBuscaLinhaPorIdPessoa.oszIdLinhaTelefonica.arr, stBuscaLinhaPorIdPessoaIndicator.oiIdLinhaTelefonica);
+            ULOG("(char *)&stBuscaLinhaPorIdPessoa.oszIdTipoLinha.arr[%s] stBuscaLinhaPorIdPessoaIndicator.oiIdTipoLinha(%d)", (char *)&stBuscaLinhaPorIdPessoa.oszIdTipoLinha.arr, stBuscaLinhaPorIdPessoaIndicator.oiIdTipoLinha);
+    
+
+            xml_g->createTag("Linhas");
+                xml_g->addItem("idLinha", (char *)&stBuscaLinhaPorIdPessoa.oszIdLinhaTelefonica.arr);
+                xml_g->addItem("nrLinha", (char *)&stBuscaLinhaPorIdPessoa.oszNrMin.arr);
+                xml_g->addItem("idTipoLinha", (char *)&stBuscaLinhaPorIdPessoa.oszIdTipoLinha.arr);
+            xml_g->closeTag();
+        }
+
+
+        xml_g->closeTag();
+            
+    
+        EXEC SQL CLOSE CursorBuscaLinhaPorIdPessoa;
+        ULOG("CloseCursor.sqlca.sqlcode(%d)", sqlca.sqlcode);
+        ULOG_END("PessoaLinha::buscaLinhasPorIdPessoa()");
+
+        return;
+    
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+GotoError:
+    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    ULOG_END("PessoaLinha::buscaLinhasPorIdPessoa()");
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+

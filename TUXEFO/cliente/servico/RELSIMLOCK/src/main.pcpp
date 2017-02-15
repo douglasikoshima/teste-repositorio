@@ -1,0 +1,107 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../negocio/clienteCmm/include/Exception.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/LogSIMLock.h"
+
+#include "../include/RELSIMLOCK.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+DECLARE_TUXEDO_SERVICE(RELSIMLOCK);
+
+void implRELSIMLOCK::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    LogSIMLock *pclLogSIMLock;
+    char szAux[25 + LEN_EOS];
+
+    int iTotalRegPag, iTotalReg, iPag;
+    int iRegIni, iRegFim;
+    int iTotalRegBase;
+
+    ULOG_START("implRELSIMLOCK::Execute");
+
+    TDadosRelatorio *ptDadosRelatorio=NULL;
+    
+    try
+    {
+        pclLogSIMLock = new LogSIMLock();
+
+        GET_WTREE("obrigatorio", szAux, 1);
+        pclLogSIMLock->setIdQueryObrigatoria(atoi(szAux));
+
+        GET_WTREE("valorObrigatorio", szAux, 1); pclLogSIMLock->setValorQueryObrigatoria(szAux);
+
+        GET_WTREE("opcional", szAux, 0); pclLogSIMLock->setIdQueryOpcional(atoi(szAux));
+        if(strlen(szAux) != 0) {
+            GET_WTREE("valorOpcinal", szAux, 1); pclLogSIMLock->setValorQueryOpcional(szAux);
+        }
+
+        GET_WTREE("totalReg", szAux, 0);
+        iTotalReg = strlen(szAux) == 0?0:atoi(szAux);
+        ULOG("iTotalReg(%d)", iTotalReg);
+
+        if(iTotalReg == -1)
+        {
+            iTotalRegBase = pclLogSIMLock->buscaQtdLogSIMLockPcDinamica();
+        }
+        else
+        {
+            GET_WTREE("nrPag", szAux, 1);        iPag = atoi(szAux);          ULOG("iPag(%d)", iPag);
+            GET_WTREE("totalRegPag", szAux, 1);  iTotalRegPag = atoi(szAux);  ULOG("iTotalRegPag(%d)", iTotalRegPag);
+
+            /* calcula os registros a serem obtidos */
+            iRegIni = (((iPag * iTotalRegPag) - iTotalRegPag) + 1);  ULOG("iRegIni(%d)", iRegIni); pclLogSIMLock->setRegIni(iRegIni);
+            iRegFim = (iPag * iTotalRegPag);                         ULOG("iRegFim(%d)", iRegFim); pclLogSIMLock->setRegFim(iRegFim);
+        }
+
+
+        /* Formatacao dos dados de saida */
+        pXmlG->createTag("RelatorioSimLockVO");
+        pXmlG->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+        if(iTotalReg == -1)
+        {
+            pXmlG->addItem("totalReg", iTotalRegBase);
+        }
+        else
+        {
+            while((ptDadosRelatorio = pclLogSIMLock->buscaLogSIMLockDinamica()) != NULL)
+            {
+                pXmlG->createTag("listaRelatorio");
+                    pXmlG->addItem("dtSolic",    ptDadosRelatorio->szDtUltimaAlteracao);
+                    pXmlG->addItem("imei",       ptDadosRelatorio->szIMEI);
+                    pXmlG->addItem("login",      ptDadosRelatorio->szNmLoginUsuario);
+                    pXmlG->addItem("ip",         ptDadosRelatorio->szIP);
+                    pXmlG->addItem("stConsulta", ptDadosRelatorio->szEstadoConsulta);
+                    pXmlG->addItem("nrLinha",    ptDadosRelatorio->szNrLinha);
+                    pXmlG->addItem("tpRelac",    ptDadosRelatorio->szNmTipoRelacionamento);
+                    pXmlG->addItem("tpDoc",      ptDadosRelatorio->szSgTipoDocumento);
+                    pXmlG->addItem("nrDoc",      ptDadosRelatorio->szNrDocumento);
+                    pXmlG->addItem("nmCli",      ptDadosRelatorio->szNmPessoa);
+                pXmlG->closeTag();
+            }
+        }
+        pXmlG->closeTag();
+
+    }
+    catch(...)
+    {
+        ULOG("Exception!");
+        delete pclLogSIMLock;
+        ULOG_END("implRELSIMLOCK::Execute");
+        throw;
+    }
+
+    delete pclLogSIMLock;
+    ULOG("local A");
+    ULOG_END("implRELSIMLOCK::Execute");
+
+	INFORMATION(NRO_OK);
+	setStatusCode(sNrMsg, MSG_OK);
+}

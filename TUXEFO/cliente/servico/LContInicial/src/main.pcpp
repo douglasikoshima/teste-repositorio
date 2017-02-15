@@ -1,0 +1,132 @@
+/*
+ * Serviço de Conteúdo - cadastro básico de clientes
+ * Versão inicial, 21/05/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+ 
+EXEC SQL BEGIN DECLARE SECTION;
+EXEC SQL INCLUDE "Global.h";
+EXEC SQL END DECLARE SECTION;
+
+#include "../include/CustContIni.h"
+
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classCstAssunto.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classCstAtributo.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/TipoApresentacaoPergunta.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classCanal.h";
+
+DECLARE_TUXEDO_SERVICE(LContInicial);
+
+void implLContInicial::Execute(DOMNode* pDnode, XMLGen* xml_g)
+{
+    int iAux;
+    CCstAssunto* oAss;
+    int iNroAss = 0;
+    int iNroApres = 0;
+    int iNroCanal = 0;
+    char *pParam;
+    CTipoApresentacaoPergunta* oTpoApr;
+    CCanal* oCanal;
+
+    ULOG_START( "implLContInicial::Execute()" );
+
+    try{
+	    // Monta raiz do XML
+	    xml_g->createTag(XML_OUT_ROOT);
+        xml_g->addProp("xmlns", XML_OUT_PROP);
+
+        pParam = walkTree(pDnode, XLM_IN_FILTRO, 0);
+        if(!pParam)
+        {
+            ERROR(NRO_FILTRO_QUERY_NE);
+            TAG_INEXISTENTE(XLM_IN_FILTRO);
+
+            if (pParam)
+                XMLString::release(&pParam);
+
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        if ( !*pParam)
+	        // Recupera a lista de todos os assuntos 
+	        oAss = CCstAssunto::RecuperarTodos(&iNroAss);
+        else
+	        // Recupera a lista de todos os assuntos excluindo por tipo apresentacao pergunta e monta essa parte do XML
+	        oAss = CCstAssunto::ListarPorTipoApresentacao(&iNroAss, pParam);
+
+        if (pParam)
+            XMLString::release(&pParam);
+
+	    xml_g->createTag(XML_OUT_ASSUNTOS);
+	    for (iAux = 0; iAux < iNroAss; iAux++) {
+		    xml_g->createTag(XML_OUT_ASSUNTO);
+		    xml_g->addItem(XML_OUT_CODIGO, oAss[iAux].getIdAssunto());
+		    xml_g->addItem(XML_OUT_DESCRICAO, rtrim(oAss[iAux].getDsAssunto()));
+	        xml_g->addItem(XML_OUT_DISPONIBILIDADE, rtrim(oAss[iAux].getInDisponibilidade()));
+
+		    xml_g->closeTag();
+	    }
+	    xml_g->closeTag();
+
+	    // Cria nó vazio com SubAssuntos
+	    xml_g->createTag(XML_OUT_SUBASSUNTOS);
+	    xml_g->closeTag();
+    
+	    // Recupera a lista de todos os tipos de apresentação e monta essa parte do XML
+            oTpoApr = CTipoApresentacaoPergunta::lista(&iNroApres);
+	    xml_g->createTag(XML_OUT_TIPOS_APRES);
+            for (iAux = 0; iAux < iNroApres; iAux++) {
+                xml_g->createTag(XML_OUT_TIPO_APRES);
+                xml_g->addItem(XML_OUT_CODIGO, oTpoApr[iAux].getIdTipoApresentacaoPergunta());
+                xml_g->addItem(XML_OUT_DESCRICAO, rtrim(oTpoApr[iAux].getDsTipoApresentacaoPergunta()));
+                xml_g->closeTag();
+            }
+	    xml_g->closeTag();
+
+	    // Cria lista de canais
+	    oCanal = CCanal::RecuperarTodos(&iNroCanal);
+	    xml_g->createTag(XML_OUT_CANAIS);
+	    for(iAux = 0; iAux < iNroCanal; iAux++) {
+		xml_g->createTag(XML_OUT_CANAL);
+		xml_g->addItem(XML_OUT_ID_CANAL, oCanal[iAux].getId());
+		xml_g->addItem(XML_OUT_NM_CANAL, oCanal[iAux].getDescricao());
+		xml_g->closeTag();
+	    }
+	    xml_g->closeTag();
+
+	    // Cria nó vazio com Disponibilidades.
+	    xml_g->createTag(XML_OUT_DISPONIBILIDADES);
+	    xml_g->closeTag();
+
+	    // Cria nó vazio com Dados Comportamentais
+	    xml_g->createTag(XML_OUT_DADOSCOMPORTAMENTAIS);
+	    xml_g->closeTag();
+
+
+	    // Fecha o nó principal
+	    xml_g->closeTag();
+
+        if (oAss)
+            free(oAss);
+
+        if (oTpoApr)
+            free(oTpoApr);
+
+        if (oCanal)
+            free(oCanal);
+    }
+    catch(...){
+        throw;
+    }
+
+
+	// Execução OK.
+    ULOG_END( "implLContInicial::Execute()" );
+	setStatusCode(NRO_ERR_OK, MSG_ERR_OK);
+}

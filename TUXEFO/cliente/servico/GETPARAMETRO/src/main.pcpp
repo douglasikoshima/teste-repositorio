@@ -1,0 +1,92 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include "../include/GETPARAMETRO.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/Parametro.h";
+
+DECLARE_TUXEDO_SERVICE(GETPARAMETRO);
+
+void implGETPARAMETRO::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    char *pPointer = NULL;
+    TApoioParametro tApoioParametro;
+    CParametro  clParametro;
+    char szCdParametro[LEN_CDPARAMETRO + LEN_EOS];
+    int iFlagErro=0;
+
+    ULOG_START("implGETPARAMETRO::Execute");
+
+    
+    try
+    {
+        memset(&tApoioParametro, 0x00, sizeof(TApoioParametro));
+
+        /* Referente a cdParametro */
+        pPointer = walkTree(pDnode, "cdParametro", 0); ULOG("cdParametro[%s]", pPointer?pPointer:"..NULL..");
+        strcpy(szCdParametro, pPointer?pPointer:"");
+        if(!pPointer) {
+            ERROR(NRO_CD_PARAMETRO_NE); TAG_INEXISTENTE("cdParametro"); iFlagErro=1;
+        }
+        else if(!*pPointer) {
+            ERROR(NRO_CD_PARAMETRO_VV); TAG_VALOR_VAZIO("cdParametro"); iFlagErro=1;
+        }
+        if(pPointer) XMLString::release(&pPointer);
+        if(iFlagErro) {
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+
+        /*
+		if((clParametro.buscaParametro(szCdParametro, &tApoioParametro)) == false) {
+            throw new TuxBasicSvcException("13E0001", "Erro obtendo parametro.");
+        }
+		*/
+
+        if((clParametro.buscaParametro(szCdParametro, &tApoioParametro)) == false) 
+		{
+			pXmlG->createTag("ParametroVO");
+			pXmlG->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+				pXmlG->addItem("idParametro", "");
+				pXmlG->addItem("cdParametro", "");
+				pXmlG->addItem("dsParametro", "");
+				pXmlG->addItem("dsValorParametro", "");
+				pXmlG->addItem("idUsuarioAlteracao", "");
+			pXmlG->closeTag();
+        }
+		else
+		{
+			/* Formatacao dos dados de saida */
+			pXmlG->createTag("ParametroVO");
+			pXmlG->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+				pXmlG->addItem("idParametro", tApoioParametro.szIdParametro);
+				pXmlG->addItem("cdParametro", tApoioParametro.szCdParametro);
+				pXmlG->addItem("dsParametro", tApoioParametro.szDsParametro);
+				pXmlG->addItem("dsValorParametro", tApoioParametro.szDsValorParametro);
+				pXmlG->addItem("idUsuarioAlteracao", tApoioParametro.szIdUsuarioAlteracao);
+			pXmlG->closeTag();
+		}
+
+    }
+    catch(...)
+    {
+        ULOG("Exception!");
+        ULOG_END("implGETPARAMETRO::Execute");
+        throw;
+    }
+
+    ULOG("local D");
+    ULOG_END("implGETPARAMETRO::Execute");
+
+	INFORMATION(NRO_OK);
+	setStatusCode(sNrMsg, MSG_OK);
+}

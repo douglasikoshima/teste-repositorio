@@ -1,0 +1,73 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+
+#include "tuxfw.h"
+#include "FilaPreEnvioSetCliInfopcTMA.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "PPGlobalTMA.h"
+EXEC SQL END DECLARE SECTION;
+
+/****************************************************************************************/
+void CFilaPreEnvioSetCliInfopc::inserir(const char *cdAreaRegistro)
+{
+    ULOG_START("CFilaPreEnvioSetCliInfopc::inserir");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *varOraIdPessoaEndereco = tilaPreEnvioSetCliInfo.idPessoaEndereco;
+        const char *varOraCdAreaRegistro = cdAreaRegistro;
+        char *varOraNrLinha = tilaPreEnvioSetCliInfo.nrLinha;
+        char *varOraIdUsuarioAlteracao = tilaPreEnvioSetCliInfo.idUsuarioAlteracao;
+
+        VARCHAR varOraIdAreaRegistro[LEN_IDAREAREGISTRO+LEN_EOS];
+        short statOraIdAreaRegistro=-1;
+
+        short statOraIdPessoaEndereco = *varOraIdPessoaEndereco==0?-1:0;
+        //short statOraIdAreaRegistro = *varOraIdAreaRegistro==0?-1:0;
+        short statOraNrLinha = *varOraNrLinha==0?-1:0;
+        short statOraIdUsuarioAlteracao = *varOraIdUsuarioAlteracao==0?-1:0;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR GOTO erro;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            IDAREAREGISTRO
+        INTO
+            :varOraIdAreaRegistro:statOraIdAreaRegistro
+        FROM
+            APOIO.AREAREGISTRO
+        WHERE
+            CDAREAREGISTRO = :varOraCdAreaRegistro;
+
+    EXEC SQL
+        INSERT INTO
+            INFRA.FILAPREENVIOSETCLIINFO
+            (IDFILAPREENVIOSETCLIINFO,
+             IDPESSOAENDERECO,
+             IDAREAREGISTRO,
+             NRLINHA,
+             DTULTIMAALTERACAO,
+             IDUSUARIOALTERACAO)
+        VALUES
+            (INFRA.FILAPREENVIOSETCLIINFOSQ.NEXTVAL,
+             :varOraIdPessoaEndereco:statOraIdPessoaEndereco,
+             :varOraIdAreaRegistro:statOraIdAreaRegistro,
+             :varOraNrLinha:statOraNrLinha,
+             SYSDATE,
+             :varOraIdUsuarioAlteracao:statOraIdUsuarioAlteracao
+            );
+
+    ULOGI("Finalizando inserir <OK>");
+    ULOG_END("CFilaPreEnvioSetCliInfopc::inserir");
+    return;
+
+    erro:
+        ULOGE("Finalizando inserir <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

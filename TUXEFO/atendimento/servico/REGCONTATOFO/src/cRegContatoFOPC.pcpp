@@ -1,0 +1,682 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio Garcia
+ * @version $Revision: 1.1.114.1 $
+ * @CVS     $Author: a5114878 $ - $Date: 2012/03/09 12:57:35 $
+ **/
+
+#include "../include/cRegContatoFOPC.h"
+#include "../include/cRCFOException.h"
+#include "../../../commons/queryMacro.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR mOra_idPessoa[22];
+    VARCHAR mOra_nmPessoa[255];
+    VARCHAR mOra_idTipoCarteira[22];
+    VARCHAR mOra_idSegmentacao[22];
+    VARCHAR mOra_idPessoaDePara[22];
+    VARCHAR mOra_idLinhaTelefonica[22];
+    VARCHAR mOra_idTipoRelacionamento[22];
+    VARCHAR mOra_idConta[22];
+    VARCHAR mOra_idPessoaLinhaHistorico[22];
+    VARCHAR mOra_nrLinhaPessoa[22];
+    VARCHAR mOra_DDDPessoa[4];
+
+    short mOra_iidPessoa=-1;
+    short mOra_inmPessoa=-1;
+    short mOra_iidTipoCarteira=-1;
+    short mOra_iidSegmentacao=-1;
+    short mOra_iidPessoaDePara=-1;
+    short mOra_iidLinhaTelefonica=-1;
+    short mOra_iidTipoRelacionamento=-1;
+    short mOra_iidConta=-1;
+    short mOra_iidPessoaLinhaHistorico=-1;
+    short mOra_inrLinhaPessoa=-1;
+    short mOra_iDDDPessoa=-1;
+
+    const char *mOra_idPessoaParam;
+    const char *mOra_idTipoRelacionamentoParam;
+    const char *mOra_nrLinha;
+    const char *mOra_DDD;
+EXEC SQL END DECLARE SECTION;
+
+bool cRegContatoFOPC::ObterDadosLinPessoaCliente(const char *ddd,const char *nrLinha)
+{
+    ULOG_START("cRegContatoFOPC::ObterDadosLinPessoaCliente()");
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFcRegContatoFOPC();
+
+    mOra_nrLinha = nrLinha;
+    mOra_DDD = ddd;
+
+    ULOG("ddd=%s",ddd);
+    ULOG("nrLinha=%s",nrLinha);
+
+    EXEC SQL
+        SELECT
+            PESSOA.IDPESSOA,
+            PESSOA.IDTIPOCARTEIRA,
+            // PESSOALINHAHISTORICO.IDPESSOALINHAHISTORICO,
+            DECODE(LINHASEGMENTACAO.IDSEGMENTACAO,NULL,'11',LINHASEGMENTACAO.IDSEGMENTACAO) AS IDSEGMENTACAO,
+            PESSOADEPARA.IDPESSOADEPARA,
+            LINHATELEFONICA.IDLINHATELEFONICA,
+            TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+        INTO
+            :mOra_idPessoa:mOra_iidPessoa,
+            :mOra_idTipoCarteira:mOra_iidTipoCarteira,
+            // :mOra_idPessoaLinhaHistorico:mOra_iidPessoaLinhaHistorico,
+            :mOra_idSegmentacao:mOra_iidSegmentacao,
+            :mOra_idPessoaDePara:mOra_iidPessoaDePara,
+            :mOra_idLinhaTelefonica:mOra_iidLinhaTelefonica,
+            :mOra_idTipoRelacionamento:mOra_iidTipoRelacionamento
+        FROM
+            CUSTOMER.PESSOA PESSOA,
+            CUSTOMER.PESSOADEPARA PESSOADEPARA,
+            CUSTOMER.PESSOALINHA PESSOALINHA,
+            // CUSTOMER.PESSOALINHAHISTORICO PESSOALINHAHISTORICO,
+            CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+            LINHA.LINHATELEFONICA LINHATELEFONICA,
+            LINHA.LINHABASE LINHABASE,
+            LINHA.LINHASEGMENTACAO LINHASEGMENTACAO,
+            APOIO.AREAREGISTRO AREAREGISTRO
+        WHERE
+            PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+        AND PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA
+        AND PESSOALINHA.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+        AND PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA
+        AND PESSOALINHA.IDLINHATELEFONICA = LINHASEGMENTACAO.IDLINHATELEFONICA (+)
+        // AND PESSOALINHAHISTORICO.IDPESSOADEPARA = PESSOADEPARA.IDPESSOADEPARA
+        // AND PESSOALINHAHISTORICO.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA
+        // AND PESSOALINHAHISTORICO.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+        AND (LINHATELEFONICA.DTEXPIRACAO >= SYSDATE OR LINHATELEFONICA.DTEXPIRACAO IS NULL)  
+        AND LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+        AND LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+        AND LINHABASE.NRLINHA = :mOra_nrLinha
+        AND AREAREGISTRO.CDAREAREGISTRO = :mOra_DDD
+        AND TIPORELACIONAMENTO.SGTIPORELACIONAMENTO = 'C';
+
+    if ( !sqlca.sqlcode )
+    {
+        CONVIND(mOra_idPessoa,mOra_iidPessoa);
+        CONVIND(mOra_idTipoCarteira,mOra_iidTipoCarteira);
+        CONVIND(mOra_idSegmentacao,mOra_iidSegmentacao);
+        CONVIND(mOra_idPessoaDePara,mOra_iidPessoaDePara);
+        CONVIND(mOra_idLinhaTelefonica,mOra_iidLinhaTelefonica);
+        CONVIND(mOra_idTipoRelacionamento,mOra_iidTipoRelacionamento);
+        // CONVIND(mOra_idPessoaLinhaHistorico,mOra_iidPessoaLinhaHistorico);
+
+        idPessoaCliente = (char*)mOra_idPessoa.arr;
+        idSegmentacaoCliente = (char*)mOra_idSegmentacao.arr;
+        idSegmentacao = (char*)mOra_idSegmentacao.arr;
+        idPessoaDeParaCliente = (char*)mOra_idPessoaDePara.arr;
+        idTipoCarteiraCliente = (char*)mOra_idTipoCarteira.arr;
+        idTipoCarteira = (char*)mOra_idTipoCarteira.arr;
+        idLinhaTelefonicaCliente = (char*)mOra_idLinhaTelefonica.arr;
+        idLinhaTelefonica = (char*)mOra_idLinhaTelefonica.arr;
+        idTipoRelacionamentoCliente = (char*)mOra_idTipoRelacionamento.arr;
+        // idPessoaLinhaHistorico = (char*)mOra_idPessoaLinhaHistorico.arr;
+
+        ULOG("idPessoaCliente=%s",idPessoaCliente.c_str());
+        ULOG("idSegmentacaoCliente=%s",idSegmentacaoCliente.c_str());
+        ULOG("idPessoaDeParaCliente=%s",idPessoaDeParaCliente.c_str());
+        ULOG("idTipoCarteiraCliente=%s",idTipoCarteiraCliente.c_str());
+        ULOG("idLinhaTelefonicaCliente=%s",idLinhaTelefonicaCliente.c_str());
+        ULOG("idTipoRelacionamentoCliente=%s",idTipoRelacionamentoCliente.c_str());
+        // ULOG("idPessoaLinhaHistorico=%s",idPessoaLinhaHistorico.c_str());
+    }
+
+    ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+
+    ULOG_END("cRegContatoFOPC::ObterDadosLinPessoaCliente()");
+
+    return sqlca.sqlcode == 0 ? true : false;
+}
+
+bool cRegContatoFOPC::ObterDadosLinPessoaUsuario(const char *ddd,const char *nrLinha)
+{
+    ULOG_START("cRegContatoFOPC::ObterDadosLinPessoaUsuario()");
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFcRegContatoFOPC();
+
+    mOra_nrLinha = nrLinha;
+    mOra_DDD = ddd;
+
+    ULOG("ddd=%s",ddd);
+    ULOG("nrLinha=%s",nrLinha);
+
+    EXEC SQL
+        SELECT
+            PESSOA.IDPESSOA,
+            PESSOA.IDTIPOCARTEIRA,
+            // PESSOALINHAHISTORICO.IDPESSOALINHAHISTORICO,
+            DECODE(LINHASEGMENTACAO.IDSEGMENTACAO,NULL,'11',LINHASEGMENTACAO.IDSEGMENTACAO),
+            PESSOADEPARA.IDPESSOADEPARA,
+            LINHATELEFONICA.IDLINHATELEFONICA,
+            TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+        INTO
+            :mOra_idPessoa:mOra_iidPessoa,
+            :mOra_idTipoCarteira:mOra_iidTipoCarteira,
+            // :mOra_idPessoaLinhaHistorico:mOra_iidPessoaLinhaHistorico,
+            :mOra_idSegmentacao:mOra_iidSegmentacao,
+            :mOra_idPessoaDePara:mOra_iidPessoaDePara,
+            :mOra_idLinhaTelefonica:mOra_iidLinhaTelefonica,
+            :mOra_idTipoRelacionamento:mOra_iidTipoRelacionamento
+        FROM
+            CUSTOMER.PESSOA PESSOA,
+            CUSTOMER.PESSOADEPARA PESSOADEPARA,
+            CUSTOMER.PESSOALINHA PESSOALINHA,
+            // CUSTOMER.PESSOALINHAHISTORICO PESSOALINHAHISTORICO,
+            CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+            LINHA.LINHATELEFONICA LINHATELEFONICA,
+            LINHA.LINHABASE LINHABASE,
+            LINHA.LINHASEGMENTACAO LINHASEGMENTACAO,
+            APOIO.AREAREGISTRO AREAREGISTRO
+        WHERE
+            PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+        AND PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA
+        AND PESSOALINHA.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+        AND PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA
+        AND PESSOALINHA.IDLINHATELEFONICA = LINHASEGMENTACAO.IDLINHATELEFONICA (+)
+        // AND PESSOALINHAHISTORICO.IDPESSOADEPARA = PESSOADEPARA.IDPESSOADEPARA
+        // AND PESSOALINHAHISTORICO.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA
+        // AND PESSOALINHAHISTORICO.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+        AND (LINHATELEFONICA.DTEXPIRACAO >= SYSDATE OR LINHATELEFONICA.DTEXPIRACAO IS NULL)  
+        AND LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+        AND LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+        AND LINHABASE.NRLINHA = :mOra_nrLinha
+        AND AREAREGISTRO.CDAREAREGISTRO = :mOra_DDD
+        AND TIPORELACIONAMENTO.SGTIPORELACIONAMENTO = 'U';
+
+    if ( !sqlca.sqlcode )
+    {
+        CONVIND(mOra_idPessoa,mOra_iidPessoa);
+        CONVIND(mOra_idTipoCarteira,mOra_iidTipoCarteira);
+        CONVIND(mOra_idSegmentacao,mOra_iidSegmentacao);
+        CONVIND(mOra_idPessoaDePara,mOra_iidPessoaDePara);
+        CONVIND(mOra_idLinhaTelefonica,mOra_iidLinhaTelefonica);
+        CONVIND(mOra_idTipoRelacionamento,mOra_iidTipoRelacionamento);
+        // CONVIND(mOra_idPessoaLinhaHistorico,mOra_iidPessoaLinhaHistorico);
+
+        idPessoaUsuario = (char*)mOra_idPessoa.arr;
+        idSegmentacaoUsuario = (char*)mOra_idSegmentacao.arr;
+        idSegmentacao = (char*)mOra_idSegmentacao.arr;
+        idPessoaDeParaUsuario = (char*)mOra_idPessoaDePara.arr;
+        idTipoCarteiraUsuario = (char*)mOra_idTipoCarteira.arr;
+        idTipoCarteira = (char*)mOra_idTipoCarteira.arr;
+        idLinhaTelefonicaUsuario = (char*)mOra_idLinhaTelefonica.arr;
+        idLinhaTelefonica = (char*)mOra_idLinhaTelefonica.arr;
+        idTipoRelacionamentoUsuario = (char*)mOra_idTipoRelacionamento.arr;
+        // idPessoaLinhaHistorico = (char*)mOra_idPessoaLinhaHistorico.arr;
+
+        ULOG("idPessoaUsuario=%s",idPessoaUsuario.c_str());
+        ULOG("idSegmentacaoUsuario=%s",idSegmentacaoUsuario.c_str());
+        ULOG("idPessoaDeParaUsuario=%s",idPessoaDeParaUsuario.c_str());
+        ULOG("idTipoCarteiraUsuario=%s",idTipoCarteiraUsuario.c_str());
+        ULOG("idLinhaTelefonicaUsuario=%s",idLinhaTelefonicaUsuario.c_str());
+        ULOG("idTipoRelacionamentoUsuario=%s",idTipoRelacionamentoUsuario.c_str());
+        // ULOG("idPessoaLinhaHistorico=%s",idPessoaLinhaHistorico.c_str());
+    }
+
+    ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+
+    ULOG_END("cRegContatoFOPC::ObterDadosLinPessoaUsuario()");
+
+    return sqlca.sqlcode == 0 ? true : false;
+}
+
+void cRegContatoFOPC::ObterIDConta(const char *_idLinhaTelefonica,const char *_idTipoRelacionamento)
+{
+    ULOG_START("cRegContatoFOPC::ObterIDConta()");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        const char *idLinhaTelefonica = _idLinhaTelefonica;
+        const char *idTipoRelacionamento = _idTipoRelacionamento;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("idLinhaTelefonica=%s",idLinhaTelefonica);
+    ULOG("idTipoRelacionamento=%s",idTipoRelacionamento);
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFcRegContatoFOPC();
+
+    EXEC SQL
+        SELECT
+            IDCONTA
+        INTO
+            :mOra_idConta:mOra_iidConta
+        FROM
+            CUSTOMER.LINHACONTA LINHACONTA
+        WHERE
+            LINHACONTA.IDLINHATELEFONICA = :idLinhaTelefonica
+        AND (LINHACONTA.DTEXPIRACAO >= SYSDATE OR LINHACONTA.DTEXPIRACAO IS NULL)
+        AND rownum < 2;
+
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("sqlcode=%d",sqlca.sqlcode);
+        ULOG_END("cRegContatoFOPC::ObterIDConta()");
+        throw new RCFOException(ERR_PRC_OBT_IDCONTA,__FILE__,__LINE__);
+    }
+
+    CONVIND(mOra_idConta,mOra_iidConta);
+
+    idConta = (char*)mOra_idConta.arr;
+
+    ULOG("idConta=%s",idConta.c_str());
+
+    ULOG_END("cRegContatoFOPC::ObterIDConta()");
+}
+
+// void cRegContatoFOPC::ObterIDPessoaLinhaHistorico(const char *_idPessoaDePara
+//                                                  ,const char *_idLinhaTelefonica
+//                                                  ,const char *_idTipoRelacionamento)
+// {
+//     ULOG_START("cRegContatoFOPC::ObterIDPessoaLinhaHistorico()");
+// 
+//     EXEC SQL BEGIN DECLARE SECTION;
+// 
+//         const char *idPessoaDePara = _idPessoaDePara;
+//         const char *idLinhaTelefonica = _idLinhaTelefonica;
+//         const char *idTipoRelacionamento = _idTipoRelacionamento;
+// 
+//     EXEC SQL END DECLARE SECTION;
+// 
+//     EXEC SQL WHENEVER SQLERROR DO sql_error_WFcRegContatoFOPC();
+// 
+//     EXEC SQL
+//         SELECT 
+//             PESSOALINHAHISTORICO.IDPESSOALINHAHISTORICO
+//         INTO 
+//             :mOra_idPessoaLinhaHistorico:mOra_iidPessoaLinhaHistorico
+//         FROM 
+//             CUSTOMER.PESSOALINHAHISTORICO PESSOALINHAHISTORICO
+//         WHERE 
+//             PESSOALINHAHISTORICO.IDPESSOADEPARA = :idPessoaDePara
+//         AND PESSOALINHAHISTORICO.IDLINHATELEFONICA = :idLinhaTelefonica
+//         AND PESSOALINHAHISTORICO.IDTIPORELACIONAMENTO = :idTipoRelacionamento;
+// 
+//     if ( sqlca.sqlcode )
+//     {
+//         ULOGW("sqlcode=%d",sqlca.sqlcode);
+//         ULOG_END("cRegContatoFOPC::ObterIDPessoaLinhaHistorico()");
+//         throw new RCFOException(ERR_PRC_OBT_IDPLINHAHISTORICO,__FILE__,__LINE__);
+//     }
+// 
+//     CONVIND(mOra_idPessoaLinhaHistorico,mOra_iidPessoaLinhaHistorico);
+// 
+//     idPessoaLinhaHistorico = (char*)mOra_idPessoaLinhaHistorico.arr;
+// 
+//     ULOG("idPessoaLinhaHistorico=%s",idPessoaLinhaHistorico.c_str());
+// 
+//     ULOG_END("cRegContatoFOPC::ObterIDPessoaLinhaHistorico()");
+// }
+
+void cRegContatoFOPC::ObterDadosPessoa(const char *_idPessoa)
+{
+    ULOG_START("cRegContatoFOPC::ObterDadosPessoa()");
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFcRegContatoFOPC();
+
+    mOra_idPessoaParam = _idPessoa;
+
+    bool telefoneNaoEncontrado = false;
+
+    ULOG("idPessoa=%s",mOra_idPessoaParam);
+    ULOG("idTipoRelacionamento=%s",mOra_idTipoRelacionamentoParam);
+
+    ////////////////////////////////////////////////////////////////////////////
+    // 1) Encontra o IDPESSOADEPARA e o tipo da carteira
+    EXEC SQL
+        SELECT
+            PESSOA.IDTIPOCARTEIRA,
+            PESSOA.NMPESSOA,
+            PESSOADEPARA.IDPESSOADEPARA
+        INTO
+            :mOra_idTipoCarteira:mOra_iidTipoCarteira,
+            :mOra_nmPessoa:mOra_inmPessoa,
+            :mOra_idPessoaDePara:mOra_iidPessoaDePara
+        FROM
+            CUSTOMER.PESSOA PESSOA,
+            CUSTOMER.PESSOADEPARA PESSOADEPARA
+        WHERE
+            PESSOA.IDPESSOA = :mOra_idPessoaParam
+        AND
+            PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA;
+
+    if ( sqlca.sqlcode )
+    { // O IDPESSOADEPARA é obrigatório, se não encontrar sai por exceção.
+        ULOGW("sqlcode=%d",sqlca.sqlcode);
+        ULOG_END("cRegContatoFOPC::ObterDadosPessoa()");
+        throw new RCFOException(ERR_IDPESSOADEPARA_NAOEXISTE,__FILE__,__LINE__);
+    }
+
+    CONVIND(mOra_idTipoCarteira,mOra_iidTipoCarteira);
+    CONVIND(mOra_nmPessoa,mOra_inmPessoa);
+    CONVIND(mOra_idPessoaDePara,mOra_iidPessoaDePara);
+
+    ////////////////////////////////////////////////////////////////////////////
+    // 2) Tenta obter o id da linha do cliente
+    //
+    //  Nota:
+    //    Em discusão com o analista funcional, Marcelo Rodrigues, ficou 
+    //    estabelecido que todas as consultas que forem feitas apenas pelo
+    //    numero da linha serão para linhas válidas e ativas na VIVO, 
+    //    garantindo com isso que o idPessoaLinhaHistorico mais novo que é
+    //    pesquisado ainda pertence ao usuário/cliente para o qual o processo
+    //    será aberto.
+    //    Dez/2006 - Cassio
+    //
+    ULOG("Obtendo número da linha do cliente idPessoaDePara=%s e ",(char*)mOra_idPessoaDePara.arr);
+
+    EXEC SQL
+        SELECT
+            IDPESSOALINHAHISTORICO,
+            IDLINHATELEFONICA
+        INTO
+            :mOra_idPessoaLinhaHistorico:mOra_iidPessoaLinhaHistorico,
+            :mOra_idLinhaTelefonica:mOra_iidLinhaTelefonica
+        FROM
+        (
+            SELECT
+                PESSOALINHAHISTORICO.IDPESSOALINHAHISTORICO,
+                PESSOALINHAHISTORICO.CDAREAREGISTRO,
+                PESSOALINHAHISTORICO.NRLINHA,
+                PESSOALINHAHISTORICO.IDLINHATELEFONICA
+            FROM
+                CUSTOMER.PESSOALINHAHISTORICO PESSOALINHAHISTORICO
+            WHERE
+                PESSOALINHAHISTORICO.IDPESSOADEPARA = :mOra_idPessoaDePara
+            ORDER BY 
+                PESSOALINHAHISTORICO.DTULTIMAALTERACAO DESC
+        )
+        WHERE ROWNUM < 2;
+
+    if ( sqlca.sqlcode )
+    { // Se não encontrou a linha, assume como não cliente
+    
+        ULOG("Telefone do cliente não encontrado, assumindo como NÃO CLIENTE");
+    
+        mOra_iidTipoRelacionamento=-1;
+        telefoneNaoEncontrado = true;
+    
+        EXEC SQL
+            SELECT
+                IDTIPORELACIONAMENTO
+            INTO
+                :mOra_idTipoRelacionamento:mOra_iidTipoRelacionamento
+            FROM
+                CUSTOMER.TIPORELACIONAMENTO
+            WHERE
+                SGTIPORELACIONAMENTO = 'NC';
+    
+        if ( sqlca.sqlcode )
+        { // Se não encontrou tipo de relacionamento para não cliente, sai por erro
+            ULOGW("sqlcode=%d",sqlca.sqlcode);
+            ULOG_END("cRegContatoFOPC::ObterDadosPessoa()");
+            throw new RCFOException(ERR_TPRELACIONAME_NCLI_NEXIS,__FILE__,__LINE__);
+        }
+    }
+    else
+    {
+        CONVIND(mOra_idLinhaTelefonica,mOra_iidLinhaTelefonica);
+    
+        ULOG("Vai obter idConta para idLinhaTelefonica=%s",(char*)mOra_idLinhaTelefonica.arr);
+    
+        EXEC SQL
+            SELECT
+                LINHACONTA.IDCONTA
+            INTO
+                :mOra_idConta:mOra_iidConta
+            FROM
+                CUSTOMER.LINHACONTA LINHACONTA
+            WHERE
+                LINHACONTA.IDLINHATELEFONICA = :mOra_idLinhaTelefonica
+            AND (LINHACONTA.DTEXPIRACAO >= SYSDATE OR LINHACONTA.DTEXPIRACAO IS NULL)
+            AND LINHACONTA.IDTIPORELACIONAMENTO = (SELECT TPR.IDTIPORELACIONAMENTO
+                                                     FROM CUSTOMER.TIPORELACIONAMENTO TPR
+                                                    WHERE TPR.SGTIPORELACIONAMENTO = 'C');
+    
+        CONVIND(mOra_idConta,mOra_iidConta);
+    
+        idConta = (char*)mOra_idConta.arr;
+    
+        ULOG("idConta=%s",idConta.c_str());
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // 3) Tenta obter a segmentação do cliente
+    mOra_iidSegmentacao = -1;
+
+    EXEC SQL
+        SELECT
+            PESSOASEGMENTACAOHISTORICO.IDSEGMENTACAO
+        INTO
+            :mOra_idSegmentacao:mOra_iidSegmentacao
+        FROM
+            CUSTOMER.PESSOASEGMENTACAOHISTORICO PESSOASEGMENTACAOHISTORICO,
+            CUSTOMER.PESSOASEGMENTACAO PESSOASEGMENTACAO
+        WHERE
+            PESSOASEGMENTACAOHISTORICO.IDPESSOADEPARA = :mOra_idPessoaDePara
+        AND PESSOASEGMENTACAO.IDPESSOASEGMENTACAO =
+                                 PESSOASEGMENTACAOHISTORICO.IDPESSOASEGMENTACAO;
+
+    if ( sqlca.sqlcode )
+    { // Se não encontrou a segmentação, assume como não segmentado
+
+        ULOG("Segmentaçao do cliente não encontrada, assumindo 'NÃO SEGMENTADO'");
+
+        mOra_iidSegmentacao = -1;
+
+        EXEC SQL
+            SELECT
+                IDSEGMENTACAO
+            INTO
+                :mOra_idSegmentacao:mOra_iidSegmentacao
+            FROM
+                APOIO.SEGMENTACAO
+            WHERE
+                DSSEGMENTACAO = 'NÃO SEGMENTADO';
+
+        if ( sqlca.sqlcode )
+        { // Se 'NÃO SEGMENTADO' não foi cadastrado, sai com erro.
+            ULOGW("sqlcode=%d",sqlca.sqlcode);
+            ULOG_END("cRegContatoFOPC::ObterDadosPessoa()");
+            throw new RCFOException(ERR_IDSEGMENTACAO_NSEG_NEXIS,__FILE__,__LINE__);
+        }
+    }
+
+    CONVIND(mOra_idSegmentacao,mOra_iidSegmentacao);
+    CONVIND(mOra_idLinhaTelefonica,mOra_iidLinhaTelefonica);
+    CONVIND(mOra_idTipoRelacionamento,mOra_iidTipoRelacionamento);
+    CONVIND(mOra_DDDPessoa,mOra_iDDDPessoa);
+    CONVIND(mOra_nrLinhaPessoa,mOra_inrLinhaPessoa);
+    CONVIND(mOra_idPessoaLinhaHistorico,mOra_iidPessoaLinhaHistorico);
+
+    idPessoa = _idPessoa;
+    idSegmentacao = (char*)mOra_idSegmentacao.arr;
+    idPessoaDePara = (char*)mOra_idPessoaDePara.arr;
+    idTipoCarteira = (char*)mOra_idTipoCarteira.arr;
+    idLinhaTelefonica = (char*)mOra_idLinhaTelefonica.arr;
+    idTipoRelacionamento = (char*)mOra_idTipoRelacionamento.arr;
+    idPessoaLinhaHistorico = (char*)mOra_idPessoaLinhaHistorico.arr;
+    ddd = telefoneNaoEncontrado ? "00" :(char*)mOra_DDDPessoa.arr;
+    nrTelefone = telefoneNaoEncontrado ? "999999999" :(char*)mOra_nrLinhaPessoa.arr;
+    nmPessoa = (char*)mOra_nmPessoa.arr;
+
+    ULOG("idPessoa=%s",idPessoa.c_str());
+    ULOG("idSegmentacao=%s",idSegmentacao.c_str());
+    ULOG("idTipoCarteira=%s",idTipoCarteira.c_str());
+    //ULOG("idLinhaTelefonica=%s",idLinhaTelefonica.c_str());
+    ULOG("idTipoRelacionamento=%s",idTipoRelacionamento.c_str());
+    //ULOG("idPessoaLinhaHistorico=%s",(char*)mOra_idPessoaLinhaHistorico.arr);
+    ULOG("ddd=%s",ddd.c_str());
+    ULOG("nrTelefone=%s",nrTelefone.c_str());
+
+    ULOG_END("cRegContatoFOPC::ObterDadosPessoa()");
+}
+
+void cRegContatoFOPC::VerificarProcedencia(const char *_idProcedencia)
+{
+    ULOG_START("cRegContatoFOPC::VerificarProcedencia()");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char *mOra_idProcedencia = _idProcedencia;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFcRegContatoFOPC();
+
+    EXEC SQL
+        SELECT
+            IDPROCEDENCIA
+        FROM
+            APOIO.PROCEDENCIA
+        WHERE
+            IDPROCEDENCIA = :mOra_idProcedencia;
+
+    ULOG("idProcedencia=%s",_idProcedencia);
+
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("cRegContatoFOPC::VerificarProcedencia(),sqlcode=%d",sqlca.sqlcode);
+        throw new RCFOException(ERR_IDPROCEDENCIA_NAOEXISTE,__FILE__,__LINE__);
+    }
+
+    ULOG_END("cRegContatoFOPC::VerificarProcedencia()");
+}
+
+void cRegContatoFOPC::ObterIdContato(const char *_cdContato, char **_idContato)
+{
+    ULOG_START("cRegContatoFOPC::ObterIdContato()");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char *mOra_cdContato = _cdContato;
+        VARCHAR mOra_dsValorParametro[256];
+        short mOra_idsValorParametro = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFcRegContatoFOPC();
+
+    EXEC SQL
+        SELECT 
+            DSVALORPARAMETRO
+        INTO
+            :mOra_dsValorParametro:mOra_idsValorParametro
+        FROM 
+            APOIO.PARAMETRO
+        WHERE 
+            CDPARAMETRO = :mOra_cdContato;
+
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("cRegContatoFOPC::ObterIdContato(),sqlcode=%d",sqlca.sqlcode);
+        throw new RCFOException(ERR_DSVALORPARAMETRO_NAOEXIS,__FILE__,__LINE__);
+    }
+
+    CONVIND(mOra_dsValorParametro,mOra_idsValorParametro);
+
+    *_idContato = new char [strlen((char*)mOra_dsValorParametro.arr)+1];
+    strcpy(*_idContato,(char*)mOra_dsValorParametro.arr);
+
+    ULOG_END("cRegContatoFOPC::ObterIdContato()");
+}
+
+void cRegContatoFOPC::VerificarCanal(const char *_idCanal)
+{
+    ULOG_START("cRegContatoFOPC::VerificarCanal()");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char *mOra_idCanal = _idCanal;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFcRegContatoFOPC();
+
+    EXEC SQL
+        SELECT
+            IDCANAL
+        FROM
+            APOIO.CANAL
+        WHERE
+            IDCANAL = :mOra_idCanal;
+
+    ULOG("idCanal=%s",_idCanal);
+
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("cRegContatoFOPC::VerificarCanal(),sqlcode=%d",sqlca.sqlcode);
+        throw new RCFOException(ERR_IDCANAL_NAOEXISTE,__FILE__,__LINE__);
+    }
+
+    ULOG_END("cRegContatoFOPC::VerificarCanal()");
+}
+
+void cRegContatoFOPC::VerificarContato(const char *_idContato)
+{
+    ULOG_START("cRegContatoFOPC::VerificarContato()");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char *mOra_idContato = _idContato;
+        int mOra_Indisponibilidade;
+        short mOra_iIndisponibilidade;
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("idContato=%s",_idContato);
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFcRegContatoFOPC();
+
+    EXEC SQL
+        SELECT
+            INDISPONIBILIDADE
+        INTO
+            :mOra_Indisponibilidade:mOra_iIndisponibilidade
+        FROM
+            CONTATOADM.CONTATO
+        WHERE
+            IDCONTATO = :mOra_idContato;
+
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("cRegContatoFOPC::VerificarContato(),sqlcode=%d",sqlca.sqlcode);
+        throw new RCFOException(ERR_IDCONTATO_NAOEXISTE,__FILE__,__LINE__);
+    }
+
+    ULOG("Indisponibilidade=%d",mOra_Indisponibilidade);
+
+    // ==========================================================================
+    // ==> Março, 2007 - Cassio
+    // O Miguel Benaventes solicitou que este serviço não verifique se o contato
+    // esta disponível para abrir um processo.
+    //
+    // if ( mOra_Indisponibilidade != 1 )
+    // {
+    //     ULOGW("cRegContatoFOPC::VerificarContato(),sqlcode=%d",sqlca.sqlcode);
+    //     throw new RCFOException(ERR_IDCONTATO_INDISPONI,__FILE__,__LINE__);
+    // }
+    // ==> Março, 2007 - Cassio
+    // ==========================================================================
+
+    EXEC SQL
+        SELECT
+            IDCONTATO
+        FROM
+            CONTATOADM.CONTATOFOLHA
+        WHERE
+            IDCONTATO = :mOra_idContato;
+
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("cRegContatoFOPC::VerificarContato(),sqlcode=%d",sqlca.sqlcode);
+        throw new RCFOException(ERR_IDCONTATO_NAOEHFOLHA,__FILE__,__LINE__);
+    }
+
+    ULOG_END("cRegContatoFOPC::VerificarContato()");
+}
+
+void cRegContatoFOPC::sql_error_WFcRegContatoFOPC()
+{
+    throw new TuxBasicOraException(sqlca.sqlcode
+                                  ,sqlca.sqlerrm.sqlerrmc
+                                  ,sqlca.sqlerrm.sqlerrml);
+}

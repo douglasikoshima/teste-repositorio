@@ -1,0 +1,174 @@
+/*
+ * Serviço de Correspondencia devolvida - Alteração de correspondência
+ * Versão inicial, 28/05/2004
+ */
+
+//*
+//* Review:
+//*
+//* Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../include/CorrDevAltera.h"
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/CorrespondenciaDevolvida.h";
+
+DECLARE_TUXEDO_SERVICE(CorrDevAltera);
+
+void implCorrDevAltera::Execute(DOMNode* dnode, XMLGen* xml_g) {
+    // Obrigatórios
+    char* pcIdCorr;
+    int iIdCorr;
+    char* pcIdPessoaUsuario;
+    int iIdPessoaUsuario;
+    char* pcIdUF;
+    int iIdUF;
+    char* pcIdPais;
+    int iIdPais;
+
+    // Não obrigatórios
+    char* pcDsEndereco;
+    char* pcNrEndereco;
+    char* pcDsComplemento;
+    char* pcDsBairro;
+    char* pcDsCidade;
+    char* pcNrCEP;
+
+    ULOG_START( "implCorrDevAltera::Execute()" );
+    
+    // Checa se os campos obrigatórios vieram e são válidos.
+    pcIdCorr = walkTree(dnode, XML_IN_ID_CORR_DEV, 0);
+    if (pcIdCorr == NULL) {
+        ERROR(NRO_ID_CORR_DEV_NE);
+        TAG_INEXISTENTE(XML_IN_ID_CORR_DEV);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcIdCorr) {
+        ERROR(NRO_ID_CORR_DEV_VV);
+        TAG_VALOR_VAZIO(XML_IN_ID_CORR_DEV);
+        XMLString::release(&pcIdCorr);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if ((iIdCorr = atoi(pcIdCorr)) <= 0) {
+        ERROR(NRO_ID_CORR_DEV_VI);
+        TAG_VALOR_INVALIDO(XML_IN_ID_CORR_DEV);
+        XMLString::release(&pcIdCorr);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    XMLString::release(&pcIdCorr);
+
+    pcIdUF = walkTree(dnode, XML_IN_ID_UF, 0);
+    if (pcIdUF == NULL) {
+        ERROR(NRO_ID_UF_NE);
+        TAG_INEXISTENTE(XML_IN_ID_UF);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcIdUF) {
+        ERROR(NRO_ID_UF_VV);
+        TAG_VALOR_VAZIO(XML_IN_ID_UF);
+        XMLString::release(&pcIdUF);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if ((iIdUF = atoi(pcIdUF)) <= 0) {
+        ERROR(NRO_ID_UF_VI);
+        TAG_VALOR_INVALIDO(XML_IN_ID_UF);
+        XMLString::release(&pcIdUF);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    XMLString::release(&pcIdUF);
+
+    pcIdPais = walkTree(dnode, XML_IN_ID_PAIS, 0);
+    if (pcIdPais == NULL) {
+        ERROR(NRO_ID_PAIS_NE);
+        TAG_INEXISTENTE(XML_IN_ID_PAIS);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcIdPais) {
+        ERROR(NRO_ID_PAIS_VV);
+        TAG_VALOR_VAZIO(XML_IN_ID_PAIS);
+        XMLString::release(&pcIdPais);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if ((iIdPais = atoi(pcIdPais)) <= 0) {
+        ERROR(NRO_ID_PAIS_VI);
+        TAG_VALOR_INVALIDO(XML_IN_ID_PAIS);
+        XMLString::release(&pcIdPais);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    XMLString::release(&pcIdPais);
+
+    pcIdPessoaUsuario = walkTree(dnode, XML_IN_ID_USUARIO, 0);
+    if (pcIdPessoaUsuario == NULL) {
+        ERROR(NRO_ID_USUARIO_NE);
+        TAG_INEXISTENTE(XML_IN_ID_USUARIO);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcIdPessoaUsuario) {
+        ERROR(NRO_ID_USUARIO_VV);
+        TAG_VALOR_VAZIO(XML_IN_ID_USUARIO);
+        XMLString::release(&pcIdPessoaUsuario);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if ((iIdPessoaUsuario = atoi(pcIdPessoaUsuario)) <= 0) {
+        ERROR(NRO_ID_USUARIO_VI);
+        TAG_VALOR_INVALIDO(XML_IN_ID_USUARIO);
+        XMLString::release(&pcIdPessoaUsuario);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    XMLString::release(&pcIdPessoaUsuario);
+
+    // Recupera os não obrigatórios
+    pcDsEndereco = walkTree(dnode, XML_IN_DS_END, 0);
+    pcNrEndereco = walkTree(dnode, XML_IN_NR_END, 0);
+    pcDsComplemento = walkTree(dnode, XML_IN_DS_COMPLEMENTO, 0);
+    pcDsBairro = walkTree(dnode, XML_IN_DS_BAIRRO, 0);
+    pcDsCidade = walkTree(dnode, XML_IN_DS_CIDADE, 0);
+    pcNrCEP = walkTree(dnode, XML_IN_NR_CEP, 0);
+
+    // Monta o objeto de correspondencia e checa se o ID de corr. é válido
+    CCorrespondenciaDevolvida oCorr(iIdCorr);
+    if (oCorr.getIdCorrespondenciaDevolvida() < 0) {
+        ERROR(NRO_ID_CORR_DEV_VI);
+        TAG_VALOR_INVALIDO(XML_IN_ID_CORR_DEV);
+        XMLString::release(&pcDsEndereco);
+        XMLString::release(&pcNrEndereco);
+        XMLString::release(&pcDsComplemento);
+        XMLString::release(&pcDsBairro);
+        XMLString::release(&pcDsCidade);
+        XMLString::release(&pcNrCEP);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+
+    // Atualiza as infos no objeto
+    oCorr.setIdPessoaUsuarioAlteracao(iIdPessoaUsuario);
+    oCorr.setIdUf(iIdUF);
+    oCorr.setIdPais(iIdPais);
+    oCorr.setNmLogradouro((pcDsEndereco != NULL && pcDsEndereco[0] == '\0') ? NULL : pcDsEndereco);
+    oCorr.setNrEndereco((pcNrEndereco != NULL && pcNrEndereco[0] == '\0') ? NULL : pcNrEndereco);
+    oCorr.setDsComplemento((!pcDsComplemento && !*pcDsComplemento) ? NULL : pcDsComplemento);
+    oCorr.setNmBairro((pcDsBairro != NULL && pcDsBairro[0] == '\0') ? NULL : pcDsBairro);
+    oCorr.setNmCidade((pcDsCidade != NULL && pcDsCidade[0] == '\0') ? NULL : pcDsCidade);
+    oCorr.setNrCEP((pcNrCEP != NULL && pcNrCEP[0] == '\0') ? NULL : pcNrCEP);
+
+    // Efetua a alteração no banco de dados
+    oCorr.setUsuarioAlteracao(getUser());
+    oCorr.altera();
+
+    XMLString::release(&pcDsEndereco);
+    XMLString::release(&pcNrEndereco);
+    XMLString::release(&pcDsComplemento);
+    XMLString::release(&pcDsBairro);
+    XMLString::release(&pcDsCidade);
+    XMLString::release(&pcNrCEP);
+
+    // Execução OK.
+    INFORMATION(NRO_OK);
+
+    ULOG_END( "implCorrDevAltera::Execute()" );
+    setStatusCode(sNrMsg, MSG_OK);
+}

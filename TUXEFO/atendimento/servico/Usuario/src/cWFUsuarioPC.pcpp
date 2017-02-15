@@ -1,0 +1,4518 @@
+/**
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author
+ * @version $Revision: 1.1.2.4.6.3 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/06 12:36:43 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+
+#include "../include/cApoio.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/Collection/include/Collection.h"
+#include "../../../commons/msgPadrao.h"
+#include "../../../commons/definesAtendimento.h"
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+    #include"../include/stUsuario.h"
+EXEC SQL END DECLARE SECTION;
+
+TuxHelper tx;
+
+// =============================================================================
+// Protótipos
+// =============================================================================
+bool proCPesquisaUsuarioPorGrupoNaoBlocado(DOMNode*entrada,XMLGen* saida);
+bool proCPesquisaUsuarioPorGrupoBlocado(DOMNode*entrada,XMLGen* saida,int nrRegistroInicial,int nrRegistroFinal);
+bool proCPesquisaLgUserPorGrupoBlocado(DOMNode*entrada,XMLGen* saida,int _nrRegistroInicial,int _nrRegistroFinal);
+bool proCPesquisaLgUserPorGrupoNaoBlocado(DOMNode*entrada,XMLGen* saida);
+bool proCPesquisaGrupoFase(st_VariaveisUsuario* _dados, int *_idGrupo,char *_nmGrupo);
+bool proCPesquisaGrupoFase(st_VariaveisUsuario* _dados,int &idGrupoDestino);
+bool proCPesquisaLgUserPorGrupoNaoBlocadoMC(DOMNode*entrada,XMLGen* saida,const char *nrPesoHierarquia,const char *idPessoaUsuario);
+bool proCPesquisaLgUserPorGrupoBlocadoMC(DOMNode*entrada,XMLGen* saida,const char *nrPesoHierarquia,const char *idPessoaUsuario,int _nrRegistroInicial,int _nrRegistroFinal);
+// bool proCExisteGrupoUsuario( unsigned long idGrupoCRIPrm , unsigned long idPessoaUsuarioPrm );
+
+void sql_error_WFPesquisaGrupo(sqlca*sqlca);
+
+// =============================================================================
+// Implementação
+// =============================================================================
+bool proCConsultaWFGrupos1(XMLGen* saida, int idUser)
+{
+    ULOG_START("proCConsultaWFGrupos1()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo; 
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+        int m_User = idUser;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE proCConsultaWFGrupos1 CURSOR FOR
+    SELECT DISTINCT aug.idgrupo, ag.nmgrupo
+           FROM acesso.usuariogrupo aug
+               ,acesso.grupo ag
+          WHERE aug.idpessoausuario = :m_User
+            AND ag.idgrupo = aug.idgrupo
+       ORDER BY UPPER (nmgrupo);
+
+    EXEC SQL OPEN proCConsultaWFGrupos1;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH proCConsultaWFGrupos1 INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+        saida->addItem("idGrupo",idgrupo);
+        saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+    EXEC SQL CLOSE proCConsultaWFGrupos1;
+
+    ULOG_END("proCConsultaWFGrupos1()");
+
+    return true;
+
+}
+
+
+bool proCConsultaWFGruposBko(XMLGen* saida, int idUser)
+{
+    ULOG_START("proCConsultaWFGruposBko()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo; 
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+        int m_User = idUser;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE proCConsultaWFGruposBko CURSOR FOR
+    SELECT DISTINCT 
+        AUG.IDGRUPO, AG.NMGRUPO
+    FROM 
+        ACESSO.USUARIOGRUPO AUG
+       ,ACESSO.GRUPO AG
+       ,APOIO.TIPOGRUPO TG 
+    WHERE 
+        AUG.IDPESSOAUSUARIO = :m_User
+    AND 
+        AG.IDGRUPO = AUG.IDGRUPO
+    AND
+        AG.IDTIPOGRUPO = TG.IDTIPOGRUPO
+    AND
+        TG.CDTIPOGRUPO = 'NORMAL'
+    ORDER BY 
+        UPPER (AG.NMGRUPO);
+
+    EXEC SQL OPEN proCConsultaWFGruposBko;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH proCConsultaWFGruposBko INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+        saida->addItem("idGrupo",idgrupo);
+        saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE proCConsultaWFGruposBko;
+
+    ULOG_END("proCConsultaWFGruposBko()");
+
+    return true;
+
+}
+
+bool proCConsultaWFGruposCri1(XMLGen* saida, int idUser)
+{
+    ULOG_START("proCConsultaWFGruposCri1()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo; 
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+        int m_User = idUser;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE proCConsultaWFGruposCri1 CURSOR FOR
+    SELECT DISTINCT aug.idgrupo, ag.nmgrupo
+           FROM acesso.usuariogrupo aug
+               ,acesso.grupo ag
+               ,apoio.tipogrupo atg
+          WHERE aug.idpessoausuario = :m_User
+            // AND ag.incri = 1
+            AND ag.idtipogrupo = atg.idtipogrupo
+            AND atg.cdtipogrupo = 'CRI'
+            AND ag.idgrupo = aug.idgrupo
+       ORDER BY UPPER (ag.nmgrupo);
+
+    EXEC SQL OPEN proCConsultaWFGruposCri1;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH proCConsultaWFGruposCri1 INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+        saida->addItem("idGrupo",idgrupo);
+        saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+    EXEC SQL CLOSE proCConsultaWFGruposCri1;
+
+    ULOG_END("proCConsultaWFGruposCri1()");
+
+    return true;
+}
+
+bool proCConsultaWFGruposRC(XMLGen* saida, int idUser)
+{
+    ULOG_START("proCConsultaWFGruposRC()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo; 
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+        int m_User = idUser;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE proCConsultaWFGruposRC CURSOR FOR
+
+    SELECT DISTINCT G.IDGRUPO, G.NMGRUPO
+           FROM ACESSO.USUARIOGRUPO UG
+               ,ACESSO.GRUPO G
+               ,APOIO.TIPOGRUPO TC
+          WHERE UG.IDPESSOAUSUARIO = :m_User
+            AND UG.IDGRUPO = G.IDGRUPO
+            AND G.IDTIPOGRUPO = TC.IDTIPOGRUPO
+            AND TC.CDTIPOGRUPO = 'RC'
+       ORDER BY UPPER (G.NMGRUPO);
+
+    EXEC SQL OPEN proCConsultaWFGruposRC;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH proCConsultaWFGruposRC 
+                  INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+        saida->addItem("idGrupo",idgrupo);
+        saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE proCConsultaWFGruposRC;
+
+    ULOG_END("proCConsultaWFGruposRC()");
+
+    return true;
+}
+
+bool proCAltInDisponivelWF(int idPessoaUsuario,int inDisponivelWF)
+{
+    ULOG_START("proCAltInDisponivelWF()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idpessoausuario = idPessoaUsuario;
+        int indisponivelwf = inDisponivelWF;
+
+    EXEC SQL END DECLARE SECTION;
+
+    bool iRet = false;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        UPDATE
+            ACESSO.USUARIO
+        SET
+            INDISPONIVELWF  = :indisponivelwf,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE
+            IDPESSOAUSUARIO = :idpessoausuario
+        AND
+            INDISPONIVELWF != :indisponivelwf;
+
+    if( sqlca.sqlcode == 1403 )
+        iRet = true;
+    else
+        iRet = sqlca.sqlcode ? false : true;
+
+    ULOG_END("proCAltInDisponivelWF()");;
+
+    return iRet;
+}
+
+bool proCAltInDisponivelWF(DOMNode*entrada)
+{
+    ULOG_START("proCAltInDisponivelWF(DOMNode*entrada)");
+
+    char *p;
+    int idPessoaUsuario = 0;
+    int inDisponivelWF = 0;
+
+    if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+    {
+        idPessoaUsuario = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    if ( p=tx.walkTree( entrada, "inDisponivelWF", 0 ),p )
+    {
+        inDisponivelWF = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    bool iRet = proCAltInDisponivelWF(idPessoaUsuario,inDisponivelWF);
+
+    ULOG_END("proCAltInDisponivelWF(DOMNode*entrada)");
+
+    return iRet;
+}
+
+bool proCGetINCRI(int _idGrupo)
+{
+    ULOG_START("proCGetINCRI()");
+
+    bool retorno = false;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idGrupo = _idGrupo;
+        int inCRI=0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL
+        SELECT
+            DECODE(ATG.CDTIPOGRUPO,'CRI',1,0)
+        INTO
+            :inCRI
+        FROM 
+            ACESSO.GRUPO G,
+            APOIO.TIPOGRUPO ATG
+        WHERE 
+            G.IDGRUPO = :idGrupo
+          AND
+            G.IDTIPOGRUPO = ATG.IDTIPOGRUPO;
+
+    if ( !sqlca.sqlcode )
+    {
+        retorno = inCRI == 1? true : false;
+    }
+
+    ULOG_END("proCGetINCRI()");
+
+    return retorno;
+}
+
+int proCGetInDisponivelWF(DOMNode*entrada)
+{
+    ULOG_START("proCGetInDisponivelWF()");;
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   idpessoausuario  = 0;
+        int   inDisponivelWF  = 0;
+        short i_inDisponivelWF = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+
+    if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+    {
+        idpessoausuario = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    EXEC SQL
+    SELECT 
+        inDisponivelWF 
+    INTO 
+        :inDisponivelWF:i_inDisponivelWF
+    FROM 
+        acesso.Usuario
+    WHERE 
+        idPessoaUsuario = :idpessoausuario;
+
+    ULOG_END("proCGetInDisponivelWF()");;
+
+    return inDisponivelWF;
+}
+
+int proCGetUsuarioSupervisorSimNao(int _idPessoaUsuario,int _idGrupo,bool &isSupervisor)
+{
+    ULOG_START("proCGetUsuarioSupervisorSimNao()");;
+
+    int retorno = 0; // FALHA
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idPessoaUsuario  = _idPessoaUsuario;
+        int idGrupo  = _idGrupo;
+
+        int inSupervisor;
+        short i_inSupervisor = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFPesquisaGrupo(&sqlca);
+
+    EXEC SQL
+        SELECT 
+               INSUPERVISOR
+          INTO 
+               :inSupervisor:i_inSupervisor
+          FROM 
+               ACESSO.USUARIOGRUPO
+         WHERE
+               IDPESSOAUSUARIO = :idPessoaUsuario
+           AND
+               IDGRUPO = :idGrupo;
+
+    if ( i_inSupervisor != -1 )
+    {
+        isSupervisor = inSupervisor ? true : false;
+        retorno = 1; // SUCESSO
+
+        ULOG("isSupervisor=%d",isSupervisor);
+    }
+    else
+    {
+        ULOG(resultadoNaoEncontradoSql());
+    }
+
+    ULOG_END("proCGetUsuarioSupervisorSimNao()");
+
+    return retorno;
+}
+
+int proCGetStatusDispUsuario(int _idPessoaUsuario,int *_idStatusUsuario,int *_inDisponivelWF)
+{
+    ULOG_START("proCGetStatusDispUsuario(int,nt,int)");
+
+    int retorno = 0; // SUCESSO
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   idpessoausuario  = _idPessoaUsuario;
+
+        int   idStatusUsuario  = 0;
+        short iidStatusUsuario = -1;
+
+        int   inDisponivelWF  = 0;
+        short iinDisponivelWF = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+
+    EXEC SQL
+        SELECT 
+               IDSTATUSUSUARIO,INDISPONIVELWF
+          INTO 
+               :idStatusUsuario:iidStatusUsuario,:inDisponivelWF:iinDisponivelWF
+          FROM 
+               ACESSO.USUARIO
+         WHERE
+               IDPESSOAUSUARIO = :idpessoausuario;
+
+    if ( iidStatusUsuario != -1 )
+    {
+        *_idStatusUsuario = idStatusUsuario;
+        *_inDisponivelWF = inDisponivelWF;
+    }
+    else
+    {
+        retorno = -1; // NOT FOUND
+    }
+
+    ULOG_END("proCGetStatusDispUsuario(int,nt,int)");
+
+    return retorno;
+}
+
+int proCGetStatusDispUsuario(DOMNode *entrada,int *_idStatusUsuario,int *_inDisponivelWF)
+{
+    ULOG_START("proCGetStatusDispUsuario(DOMNode *,int *,int *)");
+
+    int retorno = 0; // SUCESSO
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   idpessoausuario  = -1;
+
+        int   idStatusUsuario  = 0;
+        short iidStatusUsuario = -1;
+
+        int   inDisponivelWF  = 0;
+        short iinDisponivelWF = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+
+    if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+    {
+        idpessoausuario = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    EXEC SQL
+        SELECT 
+               INDISPONIVELWF,IDSTATUSUSUARIO 
+          INTO 
+               :idStatusUsuario:iidStatusUsuario,:inDisponivelWF:iinDisponivelWF
+          FROM 
+               ACESSO.USUARIO
+         WHERE
+               IDPESSOAUSUARIO = :idpessoausuario;
+
+    if ( iidStatusUsuario != -1 )
+    {
+        *_idStatusUsuario = idStatusUsuario;
+        *_inDisponivelWF = inDisponivelWF;
+    }
+    else
+    {
+        retorno = -1; // NOT FOUND
+    }
+
+    ULOG_END("proCGetStatusDispUsuario(DOMNode *,int *,int *)");
+
+    return retorno;
+}
+
+bool proCAltStatusUsuario(int idPessoaUsuario,int idStatusUsuario)
+{
+    ULOG_START("proCAltStatusUsuario(int *,int *)");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idpessoausuario = idPessoaUsuario;
+        int idstatususuario = idStatusUsuario;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+
+    EXEC SQL
+    UPDATE
+        acesso.Usuario
+    SET
+        idstatususuario = :idstatususuario,
+        dtStatusUsuario = SYSDATE,
+        dtUltimaAlteracao = SYSDATE
+    WHERE
+        idPessoaUsuario = :idpessoausuario;
+
+    ULOG_END("proCAltStatusUsuario(int *,int *)");
+
+    return true;
+}
+
+bool proCAltStatusUsuario(DOMNode*entrada)
+{
+    ULOG_START("proCAltStatusUsuario(DOMNode*)");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idpessoausuario = 0;
+        int idStatusUsuario = 0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+
+    if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+    {
+        idpessoausuario = atoi(p); 
+        XMLString::release(&p);
+    }
+    else
+    {
+        return false;
+    }
+
+    if ( p=tx.walkTree( entrada, "idStatusUsuario", 0 ),p )
+    {
+        idStatusUsuario = atoi(p); 
+        XMLString::release(&p);
+    }
+    else
+    {
+        return false;
+    }
+
+    EXEC SQL
+    UPDATE
+        acesso.Usuario
+    SET
+        idStatusUsuario = :idStatusUsuario,
+        dtStatusUsuario = SYSDATE,
+        dtUltimaAlteracao = SYSDATE
+    WHERE
+        idPessoaUsuario = :idpessoausuario;
+
+    ULOG_END("proCAltStatusUsuario(DOMNode*)");
+
+    return true;
+}
+
+int proCGetStatusUsuario(DOMNode*entrada)
+{
+    ULOG_START("proCGetStatusUsuario(DOMNode*)");
+
+    char *p;
+    struct sqlca sqlca;
+    int ret = 0; 
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   idpessoausuario  = 0;
+        int   idStatusUsuario  = 0;
+        short iidStatusUsuario = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+
+    if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+    {
+        idpessoausuario = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    EXEC SQL
+        SELECT 
+               IDSTATUSUSUARIO 
+          INTO 
+               :idStatusUsuario:iidStatusUsuario
+          FROM 
+               ACESSO.USUARIO 
+         WHERE 
+               IDPESSOAUSUARIO = :idpessoausuario;
+
+    if ( iidStatusUsuario >= 0 ) 
+        ret = idStatusUsuario;
+    
+    ULOG_END("proCGetStatusUsuario(DOMNode*)");;
+
+    return ret;
+}
+
+int proCGetStatusUsuario(int idPessoaUsuario)
+{
+   ULOG_START("proCGetStatusUsuario(int)");
+
+    struct sqlca sqlca;
+
+    int ret = 0; 
+
+    ULOG("idPessoaUsuario=%d",idPessoaUsuario);
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   idpessoausuario  = idPessoaUsuario;
+
+        int   idStatusUsuario  = 0;
+        short iidStatusUsuario = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+
+
+    EXEC SQL
+    SELECT 
+        IDSTATUSUSUARIO 
+        INTO :idStatusUsuario:iidStatusUsuario
+    FROM 
+        ACESSO.USUARIO 
+        WHERE IDPESSOAUSUARIO = :idpessoausuario;
+
+    if ( iidStatusUsuario >= 0 ) 
+        ret = idStatusUsuario;
+    
+    ULOG("idStatusUsuario=%d",ret);
+
+    ULOG_END("proCGetStatusUsuario(int)");
+
+    return ret;
+}
+
+int proCGetStatusUsuario(int idPessoaUsuario,DadosStatusUsuario &dadosStatusUsuario)
+{
+    ULOG_START("proCGetStatusUsuario(int,DadosStatusUsuario)");
+
+    struct sqlca sqlca;
+
+    int ret = 0; 
+
+    ULOG("idPessoaUsuario=%d",idPessoaUsuario);
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   idpessoausuario  = idPessoaUsuario;
+
+        int   idStatusUsuario  = 0;
+        short iidStatusUsuario = -1;
+        short isgStatusUsuario = -1;
+        short idsStatusUsuario = -1;
+
+        VARCHAR sgStatusUsuario[256];
+        VARCHAR dsStatusUsuario[256];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL SELECT 
+                    SU.IDSTATUSUSUARIO
+                   ,SU.SGSTATUSUSUARIO
+                   ,SU.DSSTATUSUSUARIO
+                    INTO :idStatusUsuario:iidStatusUsuario,
+                         :sgStatusUsuario:isgStatusUsuario,
+                         :dsStatusUsuario:idsStatusUsuario
+               FROM
+                   ACESSO.USUARIO U
+                  ,APOIO.STATUSUSUARIO SU
+              WHERE
+                   U.IDPESSOAUSUARIO = :idpessoausuario
+              AND  U.IDSTATUSUSUARIO = SU.IDSTATUSUSUARIO;
+
+    if ( iidStatusUsuario >= 0 ) 
+    {
+        CONVIND(sgStatusUsuario,isgStatusUsuario);
+        CONVIND(dsStatusUsuario,idsStatusUsuario);
+
+        ret = idStatusUsuario;
+        dadosStatusUsuario.idStatusUsuario = idStatusUsuario;
+        
+        sprintf(dadosStatusUsuario.sgStatusUsuario,"%.*s"
+                ,sizeof(dadosStatusUsuario.sgStatusUsuario)-1
+                ,(char*)(sgStatusUsuario.arr));
+
+        sprintf(dadosStatusUsuario.dsStatusUsuario,"%.*s"
+                ,sizeof(dadosStatusUsuario.dsStatusUsuario)-1
+                ,(char*)(dsStatusUsuario.arr));
+
+        ULOG("idStatusUsuario=%d",idStatusUsuario);
+
+        ULOG("sgStatusUsuario=%s",dadosStatusUsuario.sgStatusUsuario);
+
+        ULOG("dsStatusUsuario=%s",dadosStatusUsuario.dsStatusUsuario);
+    }
+    else
+    {
+        ULOG("status do usuario nao encontrado para idpessoausuario=%d"
+                ,idpessoausuario);
+    }
+    
+    ULOG_END("proCGetStatusUsuario(int,DadosStatusUsuario)");
+
+    return ret;
+}
+
+bool proCPesquisaUsuario(st_VariaveisUsuario* _dados, st_Result *result)
+{
+    ULOG_START("proCPesquisaUsuario()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idpessoausuario = _dados->idPessoaUsuario;
+
+        VARCHAR idPessoaUsuario[256];
+        VARCHAR idStatusUsuario[256];
+        VARCHAR nmNome[256];
+        VARCHAR nmLoginUsuario[256];
+        VARCHAR inDisponivelWF[256];
+
+        short i_idPessoaUsuario=-1;
+        short i_idStatusUsuario=-1;
+        short i_nmNome=-1;
+        short i_nmLoginUsuario=-1;
+        short i_inDisponivelWF=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("idpessoausuario=%d",idpessoausuario);
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFPesquisaGrupo(&sqlca);
+
+   
+    EXEC SQL
+        SELECT
+            U.IDPESSOAUSUARIO,
+            P.NMNOME,
+            U.NMLOGINUSUARIO,
+            U.IDSTATUSUSUARIO,
+            U.INDISPONIVELWF
+        INTO
+            idPessoaUsuario:i_idPessoaUsuario,
+            nmNome:i_nmNome,
+            nmLoginUsuario:i_nmLoginUsuario,
+            idStatusUsuario:i_idStatusUsuario,
+            inDisponivelWF:i_inDisponivelWF
+        FROM 
+            ACESSO.USUARIO U,
+            CUSTOMER.PESSOA P
+        WHERE
+            U.IDPESSOAUSUARIO = :idpessoausuario
+        AND U.IDPESSOAUSUARIO = P.IDPESSOA;
+
+    CONVIND(idPessoaUsuario, i_idPessoaUsuario);
+    CONVIND(nmNome, i_nmNome);
+    CONVIND(nmLoginUsuario, i_nmLoginUsuario);
+    CONVIND(idStatusUsuario, i_idStatusUsuario);
+    CONVIND(inDisponivelWF, i_inDisponivelWF);
+
+    ULOG("idStatusUsuario=%s",(char *)idStatusUsuario.arr);
+
+    ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+
+    if( sqlca.sqlcode )
+    {
+        ULOG_END("proCPesquisaUsuario() -> false ");
+        return false;
+    }
+
+    sprintf(result->idPessoaUsuario,"%.*s",sizeof(result->idPessoaUsuario)-1,idPessoaUsuario.arr);
+    sprintf(result->nmNome,"%.*s",sizeof(result->nmNome)-1,nmNome.arr);
+    sprintf(result->nmLoginUsuario,"%.*s",sizeof(result->nmLoginUsuario)-1,nmLoginUsuario.arr);
+    sprintf(result->idStatusUsuario,"%.*s",sizeof(result->idStatusUsuario)-1,idStatusUsuario.arr);
+    sprintf(result->inDisponivelWF,"%.*s",sizeof(result->inDisponivelWF)-1,inDisponivelWF.arr);
+
+    ULOG_END("proCPesquisaUsuario() -> true ");
+
+    return true;
+}
+
+// bool proCPesquisaGrupoAberturaUsuario(DOMNode*entrada,XMLGen* saida)
+// {
+//     ULOG_START("proCPesquisaGrupoAberturaUsuario()");
+// 
+//     char *p;
+//     struct sqlca sqlca;
+// 
+//     EXEC SQL BEGIN DECLARE SECTION;
+//         int idpessoausuario = 0;
+// 
+//         VARCHAR nmNome[256];
+//         VARCHAR nmLoginUsuario[256];
+//         int idStatusUsuario;
+//         int inDisponivelWF;
+// 
+//         short i_nmNome=-1;
+//         short i_nmLoginUsuario=-1;
+//         short i_idStatusUsuario=-1;
+//         short i_inDisponivelWF=-1;
+// 
+//     EXEC SQL END DECLARE SECTION;
+// 
+//     EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+// 
+//     if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+//     {
+//         idpessoausuario = atoi(p); 
+//         XMLString::release(&p);
+//     }
+// 
+//   
+// 
+//     EXEC SQL
+//         SELECT
+//             P.NMNOME, 
+//             U.NMLOGINUSUARIO,
+//             U.IDSTATUSUSUARIO,
+//             U.INDISPONIVELWF
+//         INTO
+//             nmNome:i_nmNome,
+//             nmLoginUsuario:i_nmLoginUsuario,
+//             idStatusUsuario:i_idStatusUsuario,
+//             inDisponivelWF:i_inDisponivelWF
+//         FROM 
+//             ACESSO.USUARIO U,
+//             CUSTOMER.PESSOA P
+//         WHERE
+//             U.IDPESSOAUSUARIO = :idpessoausuario
+//         AND U.IDPESSOAUSUARIO = P.IDPESSOA;
+// 
+//     CONVIND(nmNome, i_nmNome);
+//     CONVIND(nmLoginUsuario, i_nmLoginUsuario);
+// 
+//     saida->createTag("UsuarioVIVO");
+//     saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+//     saida->addItem("idPessoaUsuario",idpessoausuario);
+//     saida->addItem("nmNome", (char*)nmNome.arr);
+//     saida->addItem("nmLoginUsuario",(char*)nmLoginUsuario.arr);
+//     saida->addItem("idStatusUsuario",CONVINT(idStatusUsuario,i_idStatusUsuario));
+//     saida->addItem("inDisponivelWF",CONVINT(inDisponivelWF,i_inDisponivelWF));
+//     saida->closeTag();
+// 
+//     ULOG_END("proCPesquisaGrupoAberturaUsuario()");
+// 
+//     return true;
+// }
+
+bool proCConsultaWFGrupos(XMLGen* saida)
+{
+    ULOG_START("proCConsultaWFGrupos()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo; 
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE tsqlcursor1 CURSOR FOR
+    SELECT 
+        idGrupo, 
+        nmGrupo 
+    FROM 
+        acesso.Grupo
+   WHERE
+    dtexclusao is null
+    AND idGrupo > 0
+    ORDER BY 
+        UPPER(nmGrupo);
+
+    EXEC SQL OPEN tsqlcursor1;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH tsqlcursor1 INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+        saida->addItem("idGrupo",idgrupo);
+        saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+    EXEC SQL CLOSE tsqlcursor1;
+
+    ULOG_END("proCConsultaWFGrupos()");
+
+    return true;
+}
+
+bool proCConsultaWFGruposCri(XMLGen* saida)
+{
+    ULOG_START("proCConsultaWFGruposCri()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo; 
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE tsqlcursorr1 CURSOR FOR
+    SELECT 
+        idGrupo, 
+        nmGrupo 
+    FROM 
+        acesso.Grupo g
+       ,apoio.tipogrupo atg
+   WHERE
+        g.dtexclusao is null
+    AND g.idGrupo > 0
+    AND g.idtipogrupo = atg.idtipogrupo
+    AND atg.cdtipogrupo = 'CRI' 
+    //AND g.inCri = 1
+    ORDER BY 
+        UPPER(nmGrupo);
+
+    EXEC SQL OPEN tsqlcursorr1;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH tsqlcursorr1 INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+        saida->addItem("idGrupo",idgrupo);
+        saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+    EXEC SQL CLOSE tsqlcursorr1;
+
+    ULOG_END("proCConsultaWFGruposCri()");
+
+    return true;
+}
+
+bool proCConsultaWFGruposRelatorios(XMLGen* saida)
+{
+    ULOG_START("proCConsultaWFGruposRelatorios()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo; 
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE tsqlcursorRel1 CURSOR FOR
+    SELECT 
+        GRUPO.IDGRUPO,
+        GRUPO.NMGRUPO
+    FROM 
+        ACESSO.GRUPO GRUPO
+        //APOIO.TIPOGRUPO TIPOGRUPO
+    WHERE
+        GRUPO.IDGRUPO > 0
+    //AND 
+    //    GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+    //AND 
+    //    (TIPOGRUPO.CDTIPOGRUPO = 'NORMAL' OR TIPOGRUPO.CDTIPOGRUPO = 'CRI')
+    ORDER BY 
+        UPPER(GRUPO.NMGRUPO);
+
+    EXEC SQL OPEN tsqlcursorRel1;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH tsqlcursorRel1 INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+        saida->addItem("idGrupo",idgrupo);
+        saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+    EXEC SQL CLOSE tsqlcursorRel1;
+
+    ULOG_END("proCConsultaWFGruposRelatorios()");
+
+    return true;
+}
+
+bool proCConsultaWFGruposFilaProcesso(int _idPessoaUsuario,Collection* _grupos)
+{
+    ULOG_START("proCConsultaWFGruposFilaProcesso()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idPessoaUsuario = _idPessoaUsuario;
+
+        int idgrupo;
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE ReadGruposProcFila CURSOR FOR
+       SELECT 
+          a.idgrupo, a.nmgrupo
+       FROM 
+          acesso.grupo a
+         ,acesso.usuariogrupo b
+       WHERE 
+          a.idgrupo = b.idgrupo 
+       AND 
+          b.idpessoausuario = :idPessoaUsuario
+       ORDER BY
+          UPPER(a.nmgrupo);
+
+    EXEC SQL OPEN ReadGruposProcFila;
+    
+    for(;;) 
+    {
+        EXEC SQL FETCH ReadGruposProcFila INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        DadosGrupo* dg = new DadosGrupo();
+
+        if ( dg )
+        {
+            dg->idGrupo = idgrupo;
+            strcpy(dg->dsGrupo, (char*) nmgrupo.arr);
+
+            _grupos->AddItem((void*) dg);
+        }
+        else
+        {
+            ULOGE(erroFalhaAlocacaoMemoria());
+            break;
+        }
+    }
+
+    EXEC SQL CLOSE ReadGruposProcFila;
+
+    ULOG_END("proCConsultaWFGruposFilaProcesso()");
+
+    return true;
+}
+
+bool proCPesquisaUsuarioPorGrupo(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaUsuarioPorGrupo()");
+
+    bool retorno;
+    char *p;
+    int nrRegistroInicial;
+    int nrRegistroFinal;
+
+    // Verifica se existe numero de registro inicial
+    if ( p=tx.walkTree( entrada, "nrRegistroInicial", 0 ),p )
+    {
+        nrRegistroInicial  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("nrRegistroInicial=%d",nrRegistroInicial);
+    }
+    else
+    {
+        nrRegistroInicial = -1;
+        ULOG("nrRegistroInicial=%d (nao informado)",nrRegistroInicial);
+    }
+
+    // Verifica se existe numero de registro final
+    if ( p=tx.walkTree( entrada, "nrRegistroFinal", 0 ),p )
+    {
+        nrRegistroFinal  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("nrRegistroFinal=%d",nrRegistroFinal);
+    }
+    else
+    {
+        nrRegistroFinal = -1;
+        ULOG("nrRegistroFinal=%d (nao informado)",nrRegistroFinal);
+    }
+
+    //================================================================================
+    // Esta função esta sendo dividida em duas para uma tentativa de ganho de
+    // performance no ambiente de produção. A versão original estava tentando
+    // generalizar a existencia ou não de números de linhas na busca do
+    // dos registros e com isso se utilizada do subterfúgio do (x=nlin OR nlin=-1)
+    // deixando a query mais oneroza. Esta versão verifica se os números de linhas
+    // foram fornecidos e caso sim, executa a query com retorno blocado e caso não
+    // executa a query sem levar em consideração numeros de linhas e com isso 
+    // melhora o processamento.
+    // Fev/2006 - Cassio
+    //================================================================================
+    //
+    if ( nrRegistroInicial >= 0 && nrRegistroFinal >= 0 )
+    {
+        retorno = proCPesquisaUsuarioPorGrupoBlocado(entrada,saida
+                                                    ,nrRegistroInicial,nrRegistroFinal);
+    }
+    else
+    {
+        retorno = proCPesquisaUsuarioPorGrupoNaoBlocado(entrada,saida);
+    }
+
+    ULOG_END("proCPesquisaUsuarioPorGrupo()");
+    
+    return retorno;
+}
+
+bool proCPesquisaUsuarioPorGrupoBlocado(DOMNode*entrada,XMLGen* saida,int _nrRegistroInicial,int _nrRegistroFinal)
+{
+    ULOG_START("proCPesquisaUsuarioPorGrupoBlocado()");
+    
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo  = 0;
+        int status  = 0;
+        int idPessoaUsuario; 
+        int nrRegistroInicial = _nrRegistroInicial;
+        int nrRegistroFinal = _nrRegistroFinal;
+        int nrRegistros;
+
+        VARCHAR nmNome[256];
+        VARCHAR nmLoginUsuario[256];
+        int idStatusUsuario;
+        int inDisponivelWF;
+
+        short i_idPessoaUsuario;
+        short i_nmNome;
+        short i_nmLoginUsuario;
+        short i_idStatusUsuario;
+        short i_inDisponivelWF;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    if ( p=tx.walkTree( entrada, "idGrupo", 0 ),p )
+    {
+        idgrupo  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("grupo=%d",idgrupo);
+    }
+    else
+    {
+        ULOG("grupo=%d (nao informado)",idgrupo);
+    }
+
+    if ( p=tx.walkTree( entrada, "status", 0 ),p )
+    {
+        status  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("status=%d",status);
+    }
+    else
+    {
+        ULOG("status=%d (nao informado)",status);
+    }
+
+    EXEC SQL DECLARE usuarioGrupoBloco CURSOR FOR
+    SELECT
+        idPessoaUsuario,nmNome,nmLoginUsuario,idStatusUsuario,inDisponivelWF
+    FROM
+        (
+            SELECT
+                idPessoaUsuario,nmNome,nmLoginUsuario,
+                idStatusUsuario,inDisponivelWF,ROWNUM as nrLinha
+              FROM
+              (                                             
+                    SELECT
+                        u.idPessoaUsuario,p.nmNome,u.nmLoginUsuario,
+                        u.idStatusUsuario,u.inDisponivelWF
+                    FROM 
+                        acesso.usuario u,
+                        acesso.usuarioGrupo ug,
+                        customer.pessoa p
+                    WHERE
+                        ug.idGrupo = :idgrupo
+                    AND (u.idStatusUsuario = 1 OR 0=:status)
+                    AND ug.idPessoaUsuario = u.idPessoaUsuario
+                    AND u.idPessoaUsuario = p.idPessoa
+                    ORDER BY
+                        UPPER(u.nmLoginUsuario)
+                )
+        )
+    WHERE
+          (nrLinha >= :nrRegistroInicial)
+      AND (nrLinha <= (:nrRegistroFinal+1));
+
+   // Controla o número de registros a retornar;
+    nrRegistros = (nrRegistroInicial-1);
+
+    EXEC SQL OPEN usuarioGrupoBloco;
+
+    for(;;) 
+    {
+        i_idPessoaUsuario=i_nmNome=i_nmLoginUsuario=i_idStatusUsuario=i_inDisponivelWF=-1;
+
+        EXEC SQL FETCH usuarioGrupoBloco INTO :idPessoaUsuario:i_idPessoaUsuario, 
+                                         :nmNome:i_nmNome,
+                                         :nmLoginUsuario:i_nmLoginUsuario,
+                                         :idStatusUsuario:i_idStatusUsuario,
+                                         :inDisponivelWF:i_inDisponivelWF;
+
+        CONVIND(nmNome, i_nmNome);
+        CONVIND(nmLoginUsuario, i_nmLoginUsuario);
+
+        saida->createTag("UsuarioVIVO");
+            saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+            saida->addItem("idPessoaUsuario",idPessoaUsuario);
+            saida->addItem("nmNome", (char*)nmNome.arr);
+            saida->addItem("nmLoginUsuario",(char*)nmLoginUsuario.arr);
+            saida->addItem("idStatusUsuario",CONVINT(idStatusUsuario,i_idStatusUsuario));
+            saida->addItem("inDisponivelWF",CONVINT(inDisponivelWF,i_inDisponivelWF));
+        saida->closeTag();
+
+        nrRegistros++;
+        if (nrRegistroInicial > 0 && nrRegistroFinal > 0 && nrRegistros >= nrRegistroFinal)
+        {
+            break;
+        }
+    }
+
+    if (nrRegistroInicial > 0 && nrRegistroFinal > 0 && nrRegistros < nrRegistroFinal)
+    {
+        saida->addItem("inFim","1");
+    }
+    else if (nrRegistroInicial > 0 && nrRegistroFinal > 0 && nrRegistros >= nrRegistroFinal)
+    {
+        saida->addItem("inFim","0");
+    }
+
+    EXEC SQL CLOSE usuarioGrupoBloco;
+
+    ULOG_END("proCPesquisaUsuarioPorGrupoBlocado()");
+
+    return true;
+}
+
+
+bool proCPesquisaUsuarioPorGrupoNaoBlocado(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaUsuarioPorGrupoNaoBlocado()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo  = 0;
+        int status  = 0;
+        int idPessoaUsuario; 
+
+        VARCHAR nmNome[256];
+        VARCHAR nmLoginUsuario[256];
+        int idStatusUsuario;
+        int inDisponivelWF;
+
+        short i_idPessoaUsuario;
+        short i_nmNome;
+        short i_nmLoginUsuario;
+        short i_idStatusUsuario;
+        short i_inDisponivelWF;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    if ( p=tx.walkTree( entrada, "idGrupo", 0 ),p )
+    {
+        idgrupo  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("grupo=%d",idgrupo);
+    }
+    else
+    {
+        ULOG("grupo=%d (nao informado)",idgrupo);
+    }
+
+    if ( p=tx.walkTree( entrada, "status", 0 ),p )
+    {
+        status  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("status=%d",status);
+    }
+    else
+    {
+        ULOG("status=%d (nao informado)",status);
+    }
+
+    EXEC SQL DECLARE usuarioGrupo CURSOR FOR
+        SELECT
+            U.IDPESSOAUSUARIO,
+            P.NMNOME,
+            U.NMLOGINUSUARIO,
+            U.IDSTATUSUSUARIO,
+            U.INDISPONIVELWF
+        FROM 
+            ACESSO.USUARIO U,
+            ACESSO.USUARIOGRUPO UG,
+            CUSTOMER.PESSOA P
+        WHERE
+            UG.IDGRUPO = :idgrupo
+        AND (U.IDSTATUSUSUARIO = 1 OR 0=:status)
+        AND UG.IDPESSOAUSUARIO = U.IDPESSOAUSUARIO
+        AND U.IDPESSOAUSUARIO = P.IDPESSOA
+        ORDER BY
+            UPPER(U.NMLOGINUSUARIO);
+
+    EXEC SQL OPEN usuarioGrupo;
+
+    for(;;)
+    {
+        i_idPessoaUsuario=i_nmNome=i_nmLoginUsuario=i_idStatusUsuario=i_inDisponivelWF=-1;
+
+        EXEC SQL FETCH usuarioGrupo INTO :idPessoaUsuario:i_idPessoaUsuario, 
+                                         :nmNome:i_nmNome,
+                                         :nmLoginUsuario:i_nmLoginUsuario,
+                                         :idStatusUsuario:i_idStatusUsuario,
+                                         :inDisponivelWF:i_inDisponivelWF;
+
+        CONVIND(nmNome, i_nmNome);
+        CONVIND(nmLoginUsuario, i_nmLoginUsuario);
+
+        saida->createTag("UsuarioVIVO");
+            saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+            saida->addItem("idPessoaUsuario",idPessoaUsuario);
+            saida->addItem("nmNome", (char*)nmNome.arr);
+            saida->addItem("nmLoginUsuario",(char*)nmLoginUsuario.arr);
+            saida->addItem("idStatusUsuario",CONVINT(idStatusUsuario,i_idStatusUsuario));
+            saida->addItem("inDisponivelWF",CONVINT(inDisponivelWF,i_inDisponivelWF));
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE usuarioGrupo;
+
+    ULOG_END("proCPesquisaUsuarioPorGrupoNaoBlocado()");
+
+    return true;
+}
+
+bool proCPesquisaUsuarioRelatorio(int sIdGrupo,XMLGen* saida, int start, int stop)
+{
+    ULOG_START("proCPesquisaUsuarioRelatorio()");
+
+    struct sqlca sqlca;
+    int i;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idGrupo  = sIdGrupo;
+        int startidx = start;
+        int stopidx = stop;
+
+    int idPessoaUsuario; 
+    VARCHAR nmLoginUsuario[256];
+
+        short i_idPessoaUsuario=-1;
+        short i_nmLoginUsuario=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE usuarioGrupoRel CURSOR FOR
+        /*SELECT idPessoaUsuario, nmLoginUsuario
+          FROM ( SELECT ROWNUM AS nLin, 
+                        U.idPessoaUsuario,
+                        U.nmLoginUsuario
+                   FROM acesso.UsuarioGrupo UG,
+                        acesso.Usuario U
+                  WHERE UG.idPessoaUsuario = U.idPessoaUsuario
+                    AND UG.idGrupo = :idGrupo
+               ORDER BY UPPER(nmLoginUsuario)
+               )
+         WHERE nLin >= :startidx
+           AND nLin <= :stopidx;*/
+
+        SELECT idpessoausuario, nmloginusuario
+          FROM (SELECT ROWNUM AS nlin, idpessoausuario, nmloginusuario
+                  FROM (SELECT   u.idpessoausuario AS idpessoausuario,
+                                 u.nmloginusuario AS nmloginusuario
+                            FROM acesso.usuariogrupo ug, acesso.usuario u
+                           WHERE ug.idpessoausuario = u.idpessoausuario
+                             AND ug.idgrupo = :idGrupo
+                        ORDER BY UPPER (nmloginusuario)))
+         WHERE nlin >= :startidx AND nlin <= :stopidx;
+
+    EXEC SQL OPEN usuarioGrupoRel;
+
+    for(i = start; i < stop+2; i++) 
+    {
+        EXEC SQL FETCH usuarioGrupoRel INTO :idPessoaUsuario:i_idPessoaUsuario,
+                                         :nmLoginUsuario:i_nmLoginUsuario;
+        if(i!=stop+1)
+        {
+            CONVIND(nmLoginUsuario, i_nmLoginUsuario);
+
+            saida->createTag("WFRFRVO");
+                saida->addItem("id",idPessoaUsuario);
+                saida->addItem("ds",(char*)nmLoginUsuario.arr);
+            saida->closeTag();
+        }
+    }
+
+    if(sqlca.sqlcode==1403)
+        saida->addItem("inTotal",1);
+    else
+        saida->addItem("inTotal",0);
+
+    EXEC SQL CLOSE usuarioGrupoRel;
+
+    ULOG_END("proCPesquisaUsuarioRelatorio()");
+
+    return true;
+}
+
+bool proCPesquisaUsuarioRelatorioTodo(int sIdGrupo, XMLGen* saida)
+{
+    ULOG_START("proCPesquisaUsuarioRelatorioTodo()");
+
+    struct sqlca sqlca;
+    //int i;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idGrupo  = sIdGrupo;
+        //int startidx = start;
+        //int stopidx = stop;
+
+    int idPessoaUsuario; 
+    VARCHAR nmLoginUsuario[256];
+
+        short i_idPessoaUsuario=-1;
+        short i_nmLoginUsuario=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE usuarioGrupoRelTodo CURSOR FOR
+        /*SELECT idPessoaUsuario, nmLoginUsuario
+          FROM ( SELECT ROWNUM AS nLin, 
+                        U.idPessoaUsuario,
+                        U.nmLoginUsuario
+                   FROM acesso.UsuarioGrupo UG,
+                        acesso.Usuario U
+                  WHERE UG.idPessoaUsuario = U.idPessoaUsuario
+                    AND UG.idGrupo = :idGrupo
+               ORDER BY UPPER(nmLoginUsuario)
+               )
+         WHERE nLin >= :startidx
+           AND nLin <= :stopidx;*/
+
+        SELECT idpessoausuario, nmloginusuario
+          FROM (SELECT ROWNUM AS nlin, idpessoausuario, nmloginusuario
+                  FROM (SELECT   u.idpessoausuario AS idpessoausuario,
+                                 u.nmloginusuario AS nmloginusuario
+                            FROM acesso.usuariogrupo ug, acesso.usuario u
+                           WHERE ug.idpessoausuario = u.idpessoausuario
+                             AND ug.idgrupo = :idGrupo
+                        ORDER BY UPPER (nmloginusuario)));
+
+    EXEC SQL OPEN usuarioGrupoRelTodo;
+
+    for(; ; ) 
+    {
+        EXEC SQL FETCH usuarioGrupoRelTodo INTO :idPessoaUsuario:i_idPessoaUsuario,
+                                         :nmLoginUsuario:i_nmLoginUsuario;
+        CONVIND(nmLoginUsuario, i_nmLoginUsuario);
+
+        saida->createTag("WFRFRVO");
+            saida->addItem("id",idPessoaUsuario);
+            saida->addItem("ds",(char*)nmLoginUsuario.arr);
+        saida->closeTag();
+
+    }
+
+    if(sqlca.sqlcode==1403)
+        saida->addItem("inTotal",1);
+    else
+        saida->addItem("inTotal",0);
+
+    EXEC SQL CLOSE usuarioGrupoRelTodo;
+
+    ULOG_END("proCPesquisaUsuarioRelatorioTodo()");
+
+    return true;
+}
+
+bool proCPesquisaGrupoUsuarioAbertura(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaGrupoUsuarioAbertura()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idpessoausuario = 0;
+        int idGrupo; 
+        int idSequencia; 
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+    {
+        idpessoausuario = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    EXEC SQL DECLARE usuarioGrupoAbertura CURSOR FOR
+    SELECT 
+        idGrupo,
+        idSequencia
+    FROM 
+        atendimento.PesquisaGrupoUsuarioV01
+    WHERE
+        idPessoaUsuario = :idpessoausuario;
+
+    EXEC SQL OPEN usuarioGrupoAbertura;
+
+    for(;;)
+    {
+        EXEC SQL FETCH usuarioGrupoAbertura INTO :idGrupo, 
+                                                 :idSequencia;
+
+        saida->createTag("GrupoAbertura");
+            saida->addItem("idPessoaUsuario", idpessoausuario);
+            saida->addItem("idGrupo", idGrupo);
+            saida->addItem("idSequencia", idSequencia);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE usuarioGrupoAbertura;
+
+    ULOG_END("proCPesquisaGrupoUsuarioAbertura()");
+
+    return true;
+}
+
+/**
+ * Essa função é usada em:
+ *
+ * TUXEFO/atendimento/servico/PSQINBOX
+ */
+bool proCConsultaGruposUsuario( int _idPessoaUsuario, XMLGen* saida )
+{
+    ULOG_START("proCConsultaGruposUsuario(int,XMLGen*)");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idpessoausuario = _idPessoaUsuario;
+
+        int idgrupo; 
+        VARCHAR nmgrupo[256];
+        int idTipoSequencia;
+        VARCHAR nmTipoSequencia[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+        short i_idTipoSequencia;
+        short i_nmTipoSequencia;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE tsqlcursor2 CURSOR FOR
+    SELECT 
+        idGrupo, 
+        nmGrupo,
+        idTipoSequencia,
+        nmTipoSequencia
+    FROM 
+        acesso.UsuarioGrupoTpTratV01
+    WHERE
+        idPessoaUsuario = :idpessoausuario
+    ORDER BY 
+        nmGrupo;
+
+    EXEC SQL OPEN tsqlcursor2;
+
+    int idGrupoOriginal = -1;
+
+    for(;;)
+    {
+        EXEC SQL FETCH tsqlcursor2 INTO 
+                                        :idgrupo:i_idgrupo, 
+                                        :nmgrupo:i_nmgrupo,
+                                        :idTipoSequencia:i_idTipoSequencia,
+                                        :nmTipoSequencia:i_nmTipoSequencia;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+        CONVIND(nmTipoSequencia, i_nmTipoSequencia);
+
+        if (
+            idGrupoOriginal == -1 || 
+            (idGrupoOriginal != -1 && idgrupo != idGrupoOriginal)
+           )
+        {
+            if (idGrupoOriginal != -1)
+            {
+                saida->closeTag();
+            }
+
+            idGrupoOriginal = idgrupo;
+
+            saida->createTag("WFGrupoVO");
+                saida->addProp("xmlns","workflow.fo.vivo.com.br/vo");
+                saida->addItem("idGrupo",idgrupo);
+                saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        }
+
+        saida->createTag("WFTipoSequenciaVO");
+            saida->addItem("idTipoSequencia",idTipoSequencia);
+            saida->addItem("nmTipoSequencia",(char*)nmTipoSequencia.arr);
+        saida->closeTag();
+    }
+    saida->closeTag();
+    EXEC SQL CLOSE tsqlcursor2;
+
+    ULOG_END("proCConsultaGruposUsuario(int,XMLGen*)");
+
+    return true;
+}
+
+bool proCConsultaGruposUsuario(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCConsultaGruposUsuario(DOMNode*,XMLGen* )");
+
+    char *p;
+    int idPessoaUsuario = 0;
+    
+    if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+    {
+        idPessoaUsuario = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    ULOG_END("proCConsultaGruposUsuario(DOMNode*,XMLGen* )");
+
+    return proCConsultaGruposUsuario( idPessoaUsuario, saida );
+}
+
+bool proCPesquisaGrupoFaseVariables(st_VariaveisUsuario* _dados, XMLGen* saida, int *contadorLinhas)
+{ // APENAS GRUPOS NORMAIS (BKO)
+    ULOG_START("proCConsultaGruposUsuario(st_VariaveisUsuario* , XMLGen* , int * )");
+
+    struct sqlca sqlca;
+    int numLinhas = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_VariaveisUsuario dados;
+
+        int idGrupo;
+        VARCHAR nmGrupo[256];
+        
+        short i_idGrupo;
+        short i_nmGrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&dados, _dados, sizeof(dados));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    if ( !contadorLinhas )
+    {
+        ULOG(mensagemSimples("Sem contator de linhas"));
+    }
+
+    // Alteração referente a incidência de WR 3346 que trata da avaliação da UFOperadora para encaminhar o processo
+    // Quando o idUFOperadora não for passado, executamos a consulta sem essa verificação (consulta antiga)
+    if( dados.idUFOperadora <= 0 )
+    {
+        EXEC SQL DECLARE consultaNivelGrAt CURSOR FOR
+        SELECT 
+            IDGRUPO,
+            NMGRUPO
+        FROM 
+        (
+            SELECT 
+                IDGRUPO,
+                NMGRUPO
+            FROM 
+                ATENDIMENTO.PESQUISAGRUPOFASEV01
+            WHERE
+                    IDTIPOSEQUENCIA      = :dados.idFase
+                AND IDTIPOCARTEIRA       = :dados.idTipoCarteira
+                AND IDSEGMENTACAO        = :dados.idSegmentacao
+                AND IDPROCEDENCIA        = :dados.idProcedencia
+                AND IDCONTATO            = :dados.idContato
+                AND GRUPOABERTURA        = :dados.idGrupoAbertura
+                AND IDTIPOPESSOA         = :dados.idTipoPessoa
+                AND IDCANAL              = :dados.idCanal
+                AND IDTIPORELACIONAMENTO = :dados.idTipoRelacionamento
+                AND IDTIPOLINHA          = :dados.idTipoLinha
+                //AND IDUFOPERADORA        = :dados.idUFOperadora
+                AND CDTIPOGRUPO          = 'NORMAL'
+                AND DTEXCLUSAO IS NULL
+            ORDER BY SQORDEM
+        )
+        WHERE ROWNUM <= 1;
+
+        EXEC SQL OPEN consultaNivelGrAt;
+
+        while (true)
+        {
+            EXEC SQL FETCH consultaNivelGrAt INTO
+                :idGrupo:i_idGrupo,
+                :nmGrupo:i_nmGrupo;
+                        
+            CONVIND(nmGrupo, i_nmGrupo);
+
+            saida->createTag("NivelVO");
+
+                saida->addItem("idGrupo", idGrupo);
+                saida->addItem("nmGrupo", (char *)nmGrupo.arr);
+                saida->addItem("idAtividade", "");
+                saida->addItem("dsAtividade", "");
+                saida->addItem("status", "2");
+            
+            saida->closeTag();
+
+            if ( contadorLinhas ) { numLinhas++; }
+
+        }
+
+        EXEC SQL CLOSE consultaNivelGrAt;
+    }
+    else // Quando o idUFOperadora for passado, executamos a consulta solicitada pela incidência WR 3346
+    {
+        EXEC SQL DECLARE consultaNivelGrAt2 CURSOR FOR
+        SELECT 
+            IDGRUPO,
+            NMGRUPO
+        FROM 
+        (
+            SELECT 
+                IDGRUPO,
+                NMGRUPO
+            FROM 
+                ATENDIMENTO.PESQUISAGRUPOFASEV01
+            WHERE
+                    IDTIPOSEQUENCIA      = :dados.idFase
+                AND IDTIPOCARTEIRA       = :dados.idTipoCarteira
+                AND IDSEGMENTACAO        = :dados.idSegmentacao
+                AND IDPROCEDENCIA        = :dados.idProcedencia
+                AND IDCONTATO            = :dados.idContato
+                AND GRUPOABERTURA        = :dados.idGrupoAbertura
+                AND IDTIPOPESSOA         = :dados.idTipoPessoa
+                AND IDCANAL              = :dados.idCanal
+                AND IDTIPORELACIONAMENTO = :dados.idTipoRelacionamento
+                AND IDTIPOLINHA          = :dados.idTipoLinha
+                AND IDUFOPERADORA        = :dados.idUFOperadora
+                AND CDTIPOGRUPO          = 'NORMAL'
+                AND DTEXCLUSAO IS NULL
+            ORDER BY SQORDEM
+        )
+        WHERE ROWNUM <= 1;
+
+        EXEC SQL OPEN consultaNivelGrAt2;
+
+        while (true)
+        {
+            EXEC SQL FETCH consultaNivelGrAt2 INTO
+                :idGrupo:i_idGrupo,
+                :nmGrupo:i_nmGrupo;
+                        
+            CONVIND(nmGrupo, i_nmGrupo);
+
+            saida->createTag("NivelVO");
+
+                saida->addItem("idGrupo", idGrupo);
+                saida->addItem("nmGrupo", (char *)nmGrupo.arr);
+                saida->addItem("idAtividade", "");
+                saida->addItem("dsAtividade", "");
+                saida->addItem("status", "2");
+            
+            saida->closeTag();
+
+            if ( contadorLinhas ) { numLinhas++; }
+
+        }
+
+        EXEC SQL CLOSE consultaNivelGrAt2;
+    }
+
+    if ( contadorLinhas )
+    {
+        *contadorLinhas = numLinhas;
+
+        ULOG("numLinhas=%d",numLinhas);
+    }
+
+    ULOG_END("proCConsultaGruposUsuario(st_VariaveisUsuario* , XMLGen* , int * )");
+
+    return true;
+}
+
+// ------------------------------------------------------------------------------------
+// -- Devolve um grupo da fase RETORNO o qual as variáveis de encaminhamento batam
+// -- com as variáveis de retorno para RETORNO POR GRUPO DE RETORNO (aba retorno da 
+// -- Árvore de Contatos) o qual também bata com as variáveis do processo sendo 
+// -- analisado pelo chamador desta operação.
+// ------------------------------------------------------------------------------------
+int proCPesquisaGrupoRetornoGrupoRetorno(st_VariaveisUsuario* _dados,char *_nmGrupo,int *inAssociado)
+{
+    ULOG_START("proCPesquisaGrupoRetornoGrupoRetorno()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR nmGrupo[256];
+        struct st_VariaveisUsuario *dados = _dados;
+        int idGrupo;
+        short i_nmGrupo=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("idFase=%d",dados->idFase);
+    ULOG("idTipoCarteira=%d",dados->idTipoCarteira);
+    ULOG("idSegmentacao=%d",dados->idSegmentacao);
+    ULOG("idProcedencia=%d",dados->idProcedencia);
+    ULOG("idContato=%d",dados->idContato);
+    ULOG("idGrupoAbertura=%d",dados->idGrupoAbertura);
+    ULOG("idTipoPessoa=%d",dados->idTipoPessoa);
+    ULOG("idCanal=%d",dados->idCanal);
+    ULOG("idTipoRelacionamento=%d",dados->idTipoRelacionamento);
+    ULOG("idTipoLinha=%d",dados->idTipoLinha);
+    ULOG("idUFOperadora=%d",dados->idUFOperadora);
+
+    if ( inAssociado )
+    {
+        *inAssociado = 0; // COLUNA INASSOCIADO DE ATENDIMENTO.ATENDIMENTOGRUPOBKO
+    }
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+    SELECT
+        IDGRUPO
+    INTO
+       :idGrupo
+    FROM
+    (
+        SELECT
+            IDGRUPO,
+            SQORDEM
+        FROM
+            ATENDIMENTO.PESQUISAGRUPOFASERETORNOV01
+        WHERE
+            IDTIPOSEQUENCIA      = :dados->idFase
+        AND IDTIPOCARTEIRA       = :dados->idTipoCarteira
+        AND IDSEGMENTACAO        = :dados->idSegmentacao
+        AND IDPROCEDENCIA        = :dados->idProcedencia
+        AND IDCONTATO            = :dados->idContato
+        AND GRUPOABERTURA        = :dados->idGrupoAbertura
+        AND IDTIPOPESSOA         = :dados->idTipoPessoa
+        AND IDCANAL              = :dados->idCanal
+        AND IDTIPORELACIONAMENTO = :dados->idTipoRelacionamento
+        AND IDTIPOLINHA          = :dados->idTipoLinha
+        AND IDUFOPERADORA        = :dados->idUFOperadora
+        AND IDTIPORETORNOCONTATO = 2 // Retorno por Grupo de Retorno
+        ORDER BY 
+            SQORDEM
+    )
+    WHERE ROWNUM < 2;
+
+    if ( !sqlca.sqlcode )
+    {
+        if ( _nmGrupo )
+        {
+            EXEC SQL
+            SELECT
+                NMGRUPO
+            INTO
+                :nmGrupo:i_nmGrupo
+            FROM
+                ACESSO.GRUPO
+            WHERE
+                IDGRUPO = :idGrupo;
+
+            CONVIND(nmGrupo,i_nmGrupo);
+            strcpy(_nmGrupo,(char*)nmGrupo.arr);
+        }
+
+        ULOG("idGrupo=%d",idGrupo);
+
+    } // se não encontrou um grupo na fase sendo pesquisada, então devolve o primeiro grupo da
+      // lista de grupos da fase
+    else
+    {
+        if ( inAssociado )
+        {
+            *inAssociado = 1;
+        }
+
+        if ( proCPesquisaGrupoFase(_dados, &idGrupo,_nmGrupo) == false )
+        {
+            idGrupo = -1;
+        }
+    }
+
+    ULOG_END("proCPesquisaGrupoRetornoGrupoRetorno()");
+
+    return idGrupo;
+}
+
+// ------------------------------------------------------------------------------------
+// -- Devolve um grupo da fase solicitada o qual as variáveis de encaminhamento batam
+// -- com as variáveis de retorno (aba retorno da Árvore de Contatos) o qual também
+// -- bata com as variáveis do processo sendo analisado pelo chamador desta operação.
+// ------------------------------------------------------------------------------------
+int proCPesquisaGrupoFaseRetorno(st_VariaveisUsuario* _dados)
+{
+    ULOG_START("proCPesquisaGrupoFaseRetorno()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_VariaveisUsuario *dados = _dados;
+        int idGrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+    SELECT
+        IDGRUPO
+    INTO
+       :idGrupo
+    FROM
+    (
+        SELECT
+            IDGRUPO,
+            SQORDEM
+        FROM
+            ATENDIMENTO.PESQUISAGRUPOFASERETORNOV01
+        WHERE
+            IDTIPOSEQUENCIA      = :dados->idFase
+        AND IDTIPOCARTEIRA       = :dados->idTipoCarteira
+        AND IDSEGMENTACAO        = :dados->idSegmentacao
+        AND IDPROCEDENCIA        = :dados->idProcedencia
+        AND IDCONTATO            = :dados->idContato
+        AND GRUPOABERTURA        = :dados->idGrupoAbertura
+        AND IDTIPOPESSOA         = :dados->idTipoPessoa
+        AND IDCANAL              = :dados->idCanal
+        AND IDTIPORELACIONAMENTO = :dados->idTipoRelacionamento
+        AND IDTIPOLINHA          = :dados->idTipoLinha
+        AND IDUFOPERADORA        = :dados->idUFOperadora
+        ORDER BY 
+            SQORDEM
+    )
+    WHERE ROWNUM < 2;
+
+    if ( sqlca.sqlcode )
+    { // se não encontrou um grupo na fase sendo pesquisada, então devolve o primeiro grupo da
+      // lista de grupos da fase
+        if ( proCPesquisaGrupoFase(_dados,idGrupo) == false )
+        {
+            idGrupo = -1;
+        }
+    }
+
+    ULOG("idGrupo=%d (se = -1 então não encontrou um grupo)",idGrupo);
+
+    ULOG_END("proCPesquisaGrupoFaseRetorno()");
+
+    return idGrupo;
+}
+
+bool proCPesquisaGrupoFaseVariables(st_VariaveisUsuario* _dados, Collection* _grupos)
+{ // APENAS GRUPOS NORMAIS (BKO)
+    ULOG_START("proCPesquisaGrupoFaseVariables(st_VariaveisUsuario* , Collection* )");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_VariaveisUsuario dados;
+
+        VARCHAR idGrupo[256]; 
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&dados, _dados, sizeof(dados));
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFPesquisaGrupo(&sqlca);
+
+    // Alteração referente a incidência de WR 3346 que trata da avaliação da UFOperadora para encaminhar o processo
+    // Quando o idUFOperadora não for passado, executamos a consulta sem essa verificação (consulta antiga)
+    if(dados.idUFOperadora <= 0)
+    {
+        EXEC SQL DECLARE grupoFaseVariables CURSOR FOR
+        SELECT 
+            IDGRUPO
+        FROM 
+            ATENDIMENTO.PESQUISAGRUPOFASEV01
+        WHERE
+                IDTIPOSEQUENCIA      = :dados.idFase
+            AND IDTIPOCARTEIRA       = :dados.idTipoCarteira
+            AND IDSEGMENTACAO        = :dados.idSegmentacao
+            AND IDPROCEDENCIA        = :dados.idProcedencia
+            AND IDCONTATO            = :dados.idContato
+            AND GRUPOABERTURA        = :dados.idGrupoAbertura
+            AND IDTIPOPESSOA         = :dados.idTipoPessoa
+            AND IDCANAL              = :dados.idCanal
+            AND IDTIPORELACIONAMENTO = :dados.idTipoRelacionamento
+            AND IDTIPOLINHA          = :dados.idTipoLinha
+            // AND IDUFOPERADORA        = :dados.idUFOperadora
+            AND CDTIPOGRUPO          = 'NORMAL'
+            AND DTEXCLUSAO IS NULL
+        ORDER BY SQORDEM;
+    
+        EXEC SQL OPEN grupoFaseVariables;
+
+        ULOG("sqlca.sqlcode = '%d'",sqlca.sqlcode);
+
+        if( sqlca.sqlcode )
+        { // erro no open do cursor
+            return false;
+        }
+
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+        if ( _grupos )
+        {
+            for(;;)
+            {
+                EXEC SQL FETCH grupoFaseVariables INTO :idGrupo;
+
+                CONV(idGrupo);
+
+                if ( strlen((char*)idGrupo.arr) )
+                {
+                    if ( p = new char[strlen((char*)idGrupo.arr)+1],p  )
+                    {
+                        strcpy(p,(char*)idGrupo.arr);
+                        _grupos->AddItem( (void*) p );
+                    }
+                    else
+                    {
+                        ULOGE(erroFalhaAlocacaoMemoria());
+                        break;
+                    }
+                }
+            }
+        }
+
+        EXEC SQL CLOSE grupoFaseVariables;
+    }
+    else // Quando o idUFOperadora for passado, executamos a consulta solicitada pela incidência WR 3346
+    {
+        EXEC SQL DECLARE grupoFaseVariables2 CURSOR FOR
+        SELECT 
+            IDGRUPO
+        FROM 
+            ATENDIMENTO.PESQUISAGRUPOFASEV01
+        WHERE
+                IDTIPOSEQUENCIA      = :dados.idFase
+            AND IDTIPOCARTEIRA       = :dados.idTipoCarteira
+            AND IDSEGMENTACAO        = :dados.idSegmentacao
+            AND IDPROCEDENCIA        = :dados.idProcedencia
+            AND IDCONTATO            = :dados.idContato
+            AND GRUPOABERTURA        = :dados.idGrupoAbertura
+            AND IDTIPOPESSOA         = :dados.idTipoPessoa
+            AND IDCANAL              = :dados.idCanal
+            AND IDTIPORELACIONAMENTO = :dados.idTipoRelacionamento
+            AND IDTIPOLINHA          = :dados.idTipoLinha
+            AND IDUFOPERADORA        = :dados.idUFOperadora
+            AND CDTIPOGRUPO          = 'NORMAL'
+            AND DTEXCLUSAO IS NULL
+        ORDER BY SQORDEM;
+
+        EXEC SQL OPEN grupoFaseVariables2;
+
+        ULOG("sqlca.sqlcode = '%d'",sqlca.sqlcode);
+
+        if( sqlca.sqlcode )
+        { // erro no open do cursor
+            return false;
+        }
+
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+        if ( _grupos )
+        {
+            for(;;)
+            {
+                EXEC SQL FETCH grupoFaseVariables2 INTO :idGrupo;
+
+                CONV(idGrupo);
+
+                if ( strlen((char*)idGrupo.arr) )
+                {
+                    if ( p = new char[strlen((char*)idGrupo.arr)+1],p  )
+                    {
+                        strcpy(p,(char*)idGrupo.arr);
+                        _grupos->AddItem( (void*) p );
+                    }
+                    else
+                    {
+                        ULOGE(erroFalhaAlocacaoMemoria());
+                        break;
+                    }
+                }
+            }
+        }
+
+        EXEC SQL CLOSE grupoFaseVariables2;
+    }
+    
+
+    ULOG_END("proCPesquisaGrupoFaseVariables(st_VariaveisUsuario* , Collection* )");
+
+    return true;
+}
+
+
+bool proCPesquisaGrupoFaseVariables(st_VariaveisUsuario* _dados,int &idGrupoDestino)
+{
+    ULOG_START("proCPesquisaGrupoFaseVariables()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_VariaveisUsuario dados;
+
+        int idGrupo;
+        
+        short i_idGrupo=-1;
+ 
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&dados, _dados, sizeof(dados));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    // Alteração referente a incidência de WR 3346 que trata da avaliação da UFOperadora para encaminhar o processo
+    // Quando o idUFOperadora não for passado, executamos a consulta sem essa verificação (consulta antiga)
+    if(dados.idUFOperadora <= 0)
+    {
+        EXEC SQL
+        SELECT 
+            IDGRUPO
+        INTO
+            :idGrupo:i_idGrupo
+        FROM 
+        (
+            SELECT 
+                IDGRUPO
+            FROM 
+                ATENDIMENTO.PESQUISAGRUPOFASEV01
+            WHERE
+                    IDTIPOSEQUENCIA      = :dados.idFase
+                AND IDTIPOCARTEIRA       = :dados.idTipoCarteira
+                AND IDSEGMENTACAO        = :dados.idSegmentacao
+                AND IDPROCEDENCIA        = :dados.idProcedencia
+                AND IDCONTATO            = :dados.idContato
+                AND GRUPOABERTURA        = :dados.idGrupoAbertura
+                AND IDTIPOPESSOA         = :dados.idTipoPessoa
+                AND IDCANAL              = :dados.idCanal
+                AND IDTIPORELACIONAMENTO = :dados.idTipoRelacionamento
+                AND IDTIPOLINHA          = :dados.idTipoLinha
+                AND CDTIPOGRUPO          = 'NORMAL'
+                AND DTEXCLUSAO IS NULL
+            ORDER BY SQORDEM
+        )
+        WHERE ROWNUM < 2;
+    }
+    else // Quando o idUFOperadora for passado, executamos a consulta solicitada pela incidência WR 3346
+    {
+        EXEC SQL
+        SELECT 
+            IDGRUPO
+        INTO
+            :idGrupo:i_idGrupo
+        FROM 
+        (
+            SELECT 
+                IDGRUPO
+            FROM 
+                ATENDIMENTO.PESQUISAGRUPOFASEV01
+            WHERE
+                    IDTIPOSEQUENCIA      = :dados.idFase
+                AND IDTIPOCARTEIRA       = :dados.idTipoCarteira
+                AND IDSEGMENTACAO        = :dados.idSegmentacao
+                AND IDPROCEDENCIA        = :dados.idProcedencia
+                AND IDCONTATO            = :dados.idContato
+                AND GRUPOABERTURA        = :dados.idGrupoAbertura
+                AND IDTIPOPESSOA         = :dados.idTipoPessoa
+                AND IDCANAL              = :dados.idCanal
+                AND IDTIPORELACIONAMENTO = :dados.idTipoRelacionamento
+                AND IDTIPOLINHA          = :dados.idTipoLinha
+                AND IDUFOPERADORA        = :dados.idUFOperadora
+                AND CDTIPOGRUPO          = 'NORMAL'
+                AND DTEXCLUSAO IS NULL
+            ORDER BY SQORDEM
+        )
+        WHERE ROWNUM < 2;
+    }
+    
+    idGrupoDestino = i_idGrupo == -1 ? -1 : idGrupo;
+    
+    ULOG("idGrupoDestino=%d (se =-1 não encontrou!)",idGrupoDestino);
+
+    ULOG_END("proCPesquisaGrupoFaseVariables()");
+
+    return i_idGrupo == -1 ? false : true;
+}
+
+bool proCPesquisaGrupoFaseVariablesCRI(st_VariaveisUsuario* _dados, Collection* _grupos)
+{ // APENAS GRUPOS CRI
+    ULOG_START("proCPesquisaGrupoFaseVariablesCRI()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_VariaveisUsuario dados;
+
+        VARCHAR idGrupo[256]; 
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&dados, _dados, sizeof(dados));
+
+    EXEC SQL DECLARE curGrupoFaseVariablesCRI CURSOR FOR
+    SELECT 
+        idGrupo
+    FROM 
+        atendimento.PesquisaGrupoFaseV01
+    WHERE
+            idTipoSequencia      = :dados.idFase
+        AND idTipoCarteira       = :dados.idTipoCarteira
+        AND idSegmentacao        = :dados.idSegmentacao
+        AND idProcedencia        = :dados.idProcedencia
+        AND idContato            = :dados.idContato
+        AND GrupoAbertura        = :dados.idGrupoAbertura
+        AND idTipoPessoa         = :dados.idTipoPessoa
+        AND idCanal              = :dados.idCanal
+        AND idTipoRelacionamento = :dados.idTipoRelacionamento
+        AND idTipoLinha          = :dados.idTipoLinha
+        AND idUFOperadora        = :dados.idUFOperadora
+        AND cdTipoGrupo          = 'CRI'
+    ORDER BY sqOrdem;
+    
+    EXEC SQL OPEN curGrupoFaseVariablesCRI;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG("sqlca.sqlcode = '%d'",sqlca.sqlcode);
+
+    if( sqlca.sqlcode )
+    {
+        return false;
+    }
+
+    if ( _grupos )
+    {
+        for(;;)
+        {
+            EXEC SQL FETCH curGrupoFaseVariablesCRI INTO :idGrupo;
+
+            CONV(idGrupo);
+
+            if ( strlen((char*)idGrupo.arr) )
+            {
+                if ( p = new char[strlen((char*)idGrupo.arr)+1],p  )
+                {
+                    strcpy(p,(char*)idGrupo.arr);
+                    _grupos->AddItem( (void*) p );
+                }
+                else
+                {
+                    ULOGE(erroFalhaAlocacaoMemoria());
+                    break;
+                }
+            }
+        }
+    }
+
+    EXEC SQL CLOSE curGrupoFaseVariablesCRI;
+
+    ULOG_END("proCPesquisaGrupoFaseVariablesCRI()");
+
+    return true;
+}
+
+bool proCPesquisaGrupoFaseVariablesUsuario(st_VariaveisUsuario* _dados, Collection* _grupos)
+{
+    ULOG_START("proCPesquisaGrupoFaseVariablesUsuario()");
+
+    if ( !_grupos )
+    {
+        ULOG("area para armazenar resultados nao informada");
+
+        ULOG_END("proCPesquisaGrupoFaseVariablesUsuario()");
+
+        return true;
+    }
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_VariaveisUsuario dados;
+        VARCHAR sequencia[256];
+        VARCHAR idGrupo[256]; 
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&dados, _dados, sizeof(dados));
+
+    ULOG("idPessoaUsuario=%d",dados.idPessoaUsuario);
+    ULOG("idFase=%d",dados.idFase);
+    ULOG("idTipoCarteira=%d",dados.idTipoCarteira);
+    ULOG("idSegmentacao=%d",dados.idSegmentacao);
+    ULOG("idProcedencia=%d",dados.idProcedencia);
+    ULOG("idContato=%d",dados.idContato);
+    ULOG("idGrupoAbertura=%d",dados.idGrupoAbertura);
+    ULOG("idTipoPessoa=%d",dados.idTipoPessoa);
+    ULOG("idCanal=%d",dados.idCanal);
+    ULOG("idTipoRelacionamento=%d",dados.idTipoRelacionamento);
+    ULOG("idTipoLinha=%d",dados.idTipoLinha);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE grupoFaseVarUsuario CURSOR FOR
+    SELECT
+        SEQUENCIA.SQORDEM,
+        CONTATOGRUPO.IDGRUPO
+    FROM
+        ACESSO.USUARIOGRUPO USUARIOGRUPO,
+        CONTATOADM.CONTATOGRUPO CONTATOGRUPO,
+        CONTATOADM.TIPOCARTEIRAGRUPO TIPOCARTEIRAGRUPO,
+        CONTATOADM.SEGMENTACAOGRUPO SEGMENTACAOGRUPO,
+        CONTATOADM.PROCEDENCIAGRUPO PROCEDENCIAGRUPO,
+        CONTATOADM.SEQUENCIA SEQUENCIA,
+        CONTATOADM.GRUPOABERTURAGRUPO GRUPOABERTURAGRUPO,
+        CONTATOADM.TIPOPESSOAGRUPO TIPOPESSOAGRUPO,
+        CONTATOADM.TIPORELACIONAMENTOGRUPO TIPORELACIONAMENTOGRUPO,
+        CONTATOADM.CANALGRUPO CANALGRUPO,
+        CONTATOADM.TIPOLINHAGRUPO TIPOLINHAGRUPO
+    WHERE
+        PROCEDENCIAGRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+    AND SEGMENTACAOGRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+    AND TIPOCARTEIRAGRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+    AND GRUPOABERTURAGRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+    AND TIPOPESSOAGRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+    AND TIPORELACIONAMENTOGRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+    AND CANALGRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+    AND TIPOLINHAGRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+    AND CONTATOGRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+    AND CONTATOGRUPO.IDCONTATO = :dados.idContato
+    AND SEQUENCIA.IDCONTATOGRUPO = CONTATOGRUPO.IDCONTATOGRUPO
+    AND USUARIOGRUPO.IDGRUPO IN (SELECT IDGRUPO 
+                                   FROM CONTATOADM.UFOPERADORAGRUPO UFOPERADORAGRUPO 
+                                  WHERE UFOPERADORAGRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO)
+    AND USUARIOGRUPO.IDPESSOAUSUARIO = :dados.idPessoaUsuario
+    AND SEQUENCIA.IDTIPOSEQUENCIA = :dados.idFase
+    AND TIPOCARTEIRAGRUPO.IDTIPOCARTEIRA = :dados.idTipoCarteira
+    AND SEGMENTACAOGRUPO.IDSEGMENTACAO = :dados.idSegmentacao
+    AND PROCEDENCIAGRUPO.IDPROCEDENCIA = :dados.idProcedencia
+    AND GRUPOABERTURAGRUPO.IDGRUPOPAI = :dados.idGrupoAbertura
+    AND TIPOPESSOAGRUPO.IDTIPOPESSOA = :dados.idTipoPessoa
+    AND CANALGRUPO.IDCANAL = :dados.idCanal
+    AND TIPORELACIONAMENTOGRUPO.IDTIPORELACIONAMENTO = :dados.idTipoRelacionamento
+    AND TIPOLINHAGRUPO.IDTIPOLINHA = :dados.idTipoLinha
+    AND NOT EXISTS (SELECT *
+                      FROM ACESSO.USUARIOGRUPOINATIVO USUARIOGRUPOINATIVO
+                     WHERE USUARIOGRUPOINATIVO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+                       AND USUARIOGRUPO.IDPESSOAUSUARIO = USUARIOGRUPOINATIVO.IDPESSOAUSUARIO)
+    ORDER BY SEQUENCIA.SQORDEM;
+
+    EXEC SQL OPEN grupoFaseVarUsuario;
+
+    while (true)
+    {
+        EXEC SQL FETCH grupoFaseVarUsuario INTO :sequencia,:idGrupo;
+
+        CONV(idGrupo);
+
+        if ( strlen((char*)idGrupo.arr) )
+        {
+            if ( p = new char[strlen((char*)idGrupo.arr)+1],p )
+            {
+                strcpy(p,(char*)idGrupo.arr);
+                _grupos->AddItem( (void*) p );
+            }
+            else
+            {
+                ULOGE(erroFalhaAlocacaoMemoria());
+                break;
+            }
+        }
+    }
+
+    EXEC SQL CLOSE grupoFaseVarUsuario;
+
+    ULOG_END("proCPesquisaGrupoFaseVariablesUsuario()");
+
+    return true;
+}
+
+bool proCPesquisaGrupoFaseVariablesUsuario(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaGrupoFaseVariablesUsuario(DOMNode*,XMLGen*)");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idFase          = 0;
+        int idTipoCarteira  = 0;
+        int idSegmentacao   = 0;
+        int idProcedencia   = 0;
+        int idContato       = 0;
+        int idPessoaUsuario = 0;
+        int idGrupo; 
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    if ( p=tx.walkTree( entrada, "idFase", 0 ),p )
+    {
+        idFase          = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    if ( p=tx.walkTree( entrada, "idTipoCarteira", 0 ),p )
+    {
+        idTipoCarteira  = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    if ( p=tx.walkTree( entrada, "idSegmentacao", 0 ),p )
+    {
+        idSegmentacao   = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    if ( p=tx.walkTree( entrada, "idProcedencia", 0 ),p )
+    {
+        idProcedencia   = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    if ( p=tx.walkTree( entrada, "idContato", 0 ),p )
+    {
+        idContato       = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+    {
+        idPessoaUsuario = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    EXEC SQL DECLARE grupoFaseVariablesUsuario CURSOR FOR
+    SELECT 
+        IDGRUPO
+    FROM 
+        ATENDIMENTO.PESQUISAGRUPOFASEUSUARIOV01
+    WHERE
+        IDFASE          = :idFase
+    AND IDTIPOCARTEIRA  = :idTipoCarteira
+    AND IDSEGMENTACAO   = :idSegmentacao
+    AND IDPROCEDENCIA   = :idProcedencia
+    AND IDCONTATO       = :idContato
+    AND IDPESSOAUSUARIO = :idPessoaUsuario
+    AND IDUFOPERADORA   = (SELECT IDUFOPERADORA 
+                             FROM ACESSO.USUARIO 
+                            WHERE IDPESSOAUSUARIO = :idPessoaUsuario)
+    ORDER BY numOrdem;
+    
+    EXEC SQL OPEN grupoFaseVariablesUsuario;
+
+    for(;;)
+    {
+        EXEC SQL FETCH grupoFaseVariablesUsuario INTO :idGrupo;
+
+        saida->createTag("GrupoFase");
+            saida->addItem("idGrupo", idGrupo);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE grupoFaseVariablesUsuario;
+
+    ULOG_END("proCPesquisaGrupoFaseVariablesUsuario(DOMNode*,XMLGen*)");
+
+    return true;
+}
+
+bool proCPesquisaGrupoProxNivel(st_VariaveisUsuario* _dados, XMLGen* saida,int *qtdeLinhas)
+{
+    ULOG_START("proCPesquisaGrupoProxNivel()");
+
+    struct sqlca sqlca;
+
+    int numLinhas = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct st_VariaveisUsuario dados;
+        VARCHAR idGrupo[256]; 
+        VARCHAR nmGrupo[256]; 
+
+        short i_idgrupo;
+        short i_nmgrupo;
+   EXEC SQL END DECLARE SECTION;
+
+    if ( !qtdeLinhas )
+    { 
+        ULOG(mensagemSimples("Sem contator de linhas"));
+    }
+
+    memcpy(&dados, _dados, sizeof(dados));
+
+    ULOG("idAtendimento: %d"
+                      "\nidTipoCarteira: %d"
+                      "\nidSegmentacao: %d"
+                      "\nidProcedencia: %d"
+                      "\nidContato: %d"
+                      "\nidGrupoAbertura: %d"
+                      "\nidTipoPessoa: %d"
+                      "\nidCanal: %d"
+                      "\nidTipoRelacionamento: %d"
+                      "\nidTipoLinha: %d"
+                      "\nnrNivel: %d",dados.idAtendimento
+                                     ,dados.idTipoCarteira
+                                     ,dados.idSegmentacao
+                                     ,dados.idProcedencia
+                                     ,dados.idContato
+                                     ,dados.idGrupoAbertura
+                                     ,dados.idTipoPessoa
+                                     ,dados.idCanal
+                                     ,dados.idTipoRelacionamento
+                                     ,dados.idTipoLinha
+                                     ,dados.nrNivel);
+
+   EXEC SQL DECLARE grupoProxNivel2 CURSOR FOR
+    
+    SELECT 
+        idGrupoAtual
+    ,nmGrupo
+    FROM
+    (SELECT 
+        idGrupoAtual
+        ,nmGrupo
+        FROM 
+        atendimento.nivelSeqGrAtualV01
+        WHERE
+        idAtendimento       = :dados.idAtendimento
+            AND idTipoCarteira  = :dados.idTipoCarteira
+            AND idSegmentacao   = :dados.idSegmentacao
+            AND idProcedencia   = :dados.idProcedencia
+            AND idContato       = :dados.idContato
+            AND GrupoAbertura   = :dados.idGrupoAbertura
+            AND idTipoPessoa    = :dados.idTipoPessoa
+            AND idCanal         = :dados.idCanal
+            AND idTipoRelacionamento = :dados.idTipoRelacionamento
+            AND idTipoLinha = :dados.idTipoLinha
+            AND ( nrNivel = :dados.nrNivel OR :dados.nrNivel = -1 )
+        ORDER BY nrNivel, sqOrdem)
+    WHERE ROWNUM <= 1;
+    
+    EXEC SQL OPEN grupoProxNivel2;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG("sqlca.sqlcode = '%d'",sqlca.sqlcode);
+
+    if( sqlca.sqlcode )
+    {
+        return false;
+    }
+
+    for(;;)
+    {
+        EXEC SQL FETCH grupoProxNivel2 INTO :idGrupo:i_idgrupo
+                        ,:nmGrupo:i_nmgrupo;
+
+        CONVIND(idGrupo, i_idgrupo);
+        CONVIND(nmGrupo, i_nmgrupo);
+
+        saida->createTag("NivelVO");
+            saida->addItem("idGrupo",(char*)idGrupo.arr);
+            saida->addItem("nmGrupo",(char*)nmGrupo.arr);
+            saida->addItem("idAtividade", "");
+            saida->addItem("dsAtividade", "");
+           saida->addItem("status","2");
+        saida->closeTag();
+
+        if ( qtdeLinhas ) { numLinhas++; }
+    }
+
+    EXEC SQL CLOSE grupoProxNivel2;
+
+    if ( qtdeLinhas )
+    {
+        *qtdeLinhas = numLinhas;
+
+        ULOG("numLinhas = %d",numLinhas);
+    }
+
+    ULOG_END("proCPesquisaGrupoProxNivel()");
+
+    return true;
+}
+
+bool proCPesquisaGrupoProxNivel(st_VariaveisUsuario* _dados, Collection* _grupos)
+{
+    ULOG_START("proCPesquisaGrupoProxNivel(st_VariaveisUsuario* , Collection* )");
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_VariaveisUsuario dados;
+
+        VARCHAR idGrupo[256]; 
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&dados, _dados, sizeof(dados));
+
+    EXEC SQL DECLARE grupoProxNivel CURSOR FOR
+    SELECT 
+        idGrupoAtual
+    FROM 
+        atendimento.NIVELSEQGRATUALV01
+    WHERE
+        idAtendimento       = :dados.idAtendimento
+        AND idTipoCarteira  = :dados.idTipoCarteira
+        AND idSegmentacao   = :dados.idSegmentacao
+        AND idProcedencia   = :dados.idProcedencia
+        AND idContato       = :dados.idContato
+        AND GrupoAbertura   = :dados.idGrupoAbertura
+        AND idTipoPessoa    = :dados.idTipoPessoa
+        AND idCanal         = :dados.idCanal
+        AND idTipoRelacionamento = :dados.idTipoRelacionamento
+        AND idTipoLinha = :dados.idTipoLinha
+    ORDER BY nrNivel, sqOrdem;
+    
+    EXEC SQL OPEN grupoProxNivel;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG("sqlca.sqlcode = '%d'",sqlca.sqlcode);
+
+    if( sqlca.sqlcode )
+    {
+        return false;
+    }
+
+    if ( _grupos )
+    {
+        for(;;)
+        {
+            EXEC SQL FETCH grupoProxNivel INTO :idGrupo;
+
+            CONV(idGrupo);
+
+            if ( strlen((char*)idGrupo.arr) )
+            {
+                if ( p = new char[strlen((char*)idGrupo.arr)+1],p  )
+                {
+                    strcpy(p,(char*)idGrupo.arr);
+                    _grupos->AddItem( (void*) p );
+                }
+                else
+                {
+                    ULOGE(erroFalhaAlocacaoMemoria());
+                    break;
+                }
+            }
+        }
+    }
+
+    EXEC SQL CLOSE grupoProxNivel;
+
+    ULOG_END("proCPesquisaGrupoProxNivel(st_VariaveisUsuario* , Collection* )");
+
+    return true;
+}
+
+bool proCPesquisaGrupoFase(st_VariaveisUsuario* _dados, int *_idGrupo,char *_nmGrupo)
+{
+    ULOG_START("proCPesquisaGrupoFase()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct st_VariaveisUsuario *dados = _dados;
+        int idGrupo;
+        VARCHAR nmGrupo[256];
+        short i_nmGrupo=-1;
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("idFase=%d",dados->idFase);
+    ULOG("idContato=%d",dados->idContato);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+    SELECT
+        IDGRUPO
+       ,NMGRUPO
+    INTO
+       :idGrupo
+      ,:nmGrupo:i_nmGrupo
+    FROM
+    (
+        SELECT
+           SEQUENCIA.SQORDEM
+          ,CONTATOGRUPO.IDGRUPO
+          ,GRUPO.NMGRUPO
+        FROM
+            CONTATOADM.CONTATOGRUPO CONTATOGRUPO,
+            CONTATOADM.SEQUENCIA SEQUENCIA,
+            ACESSO.GRUPO GRUPO
+        WHERE
+            CONTATOGRUPO.IDCONTATOGRUPO = SEQUENCIA.IDCONTATOGRUPO
+        AND SEQUENCIA.IDTIPOSEQUENCIA = :dados->idFase
+        AND CONTATOGRUPO.IDCONTATO = :dados->idContato
+        AND CONTATOGRUPO.IDGRUPO = GRUPO.IDGRUPO
+        AND GRUPO.IDTIPOGRUPO = 1 // SOMENTE GRUPOS BKO
+        AND SEQUENCIA.DTEXCLUSAO IS NULL
+        AND GRUPO.DTEXCLUSAO IS NULL
+        ORDER BY
+            SEQUENCIA.SQORDEM
+    )
+    WHERE ROWNUM < 2;
+
+    if ( 0 == sqlca.sqlcode )
+    {
+        if ( _idGrupo )
+        {
+            *_idGrupo = idGrupo;
+        }
+
+        if ( _nmGrupo )
+        {
+            CONVIND(nmGrupo,i_nmGrupo);
+            strcpy(_nmGrupo,(char*)nmGrupo.arr);
+        }
+    }
+    else
+    {
+        if ( _idGrupo )
+        {
+            *_idGrupo = -1;
+        }
+    }
+
+    ULOG("idGrupo=%d",idGrupo);
+
+    ULOG_END("proCPesquisaGrupoFase()");
+
+    return 0 == sqlca.sqlcode ? true : false;
+}
+
+bool proCPesquisaGrupoFase(st_VariaveisUsuario* _dados,int &idGrupoDestino)
+{
+    ULOG_START("proCPesquisaGrupoFase() (2)");
+
+    int idGrupo;
+
+    bool retorno = proCPesquisaGrupoFase(_dados,&idGrupo,0);
+
+    idGrupoDestino = idGrupo;
+
+    ULOG_END("proCPesquisaGrupoFase() (2)");
+
+    return retorno;
+}
+
+bool proCPesquisaGrupoAtual(long _idAtendimento,int &idGrupoDestino)
+{
+    ULOG_START("proCPesquisaGrupoAtual()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = _idAtendimento;
+
+        int idGrupo;
+        short i_idGrupo=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL
+    //     SELECT
+    //         ATENDIMENTOGRUPOATUAL.IDGRUPO
+    //     INTO
+    //         :idGrupo:i_idGrupo
+    //     FROM
+    //         ATENDIMENTO.ATENDIMENTOGRUPOATUAL ATENDIMENTOGRUPOATUAL
+    //     WHERE 
+    //         ATENDIMENTOGRUPOATUAL.IDATENDIMENTO = :idAtendimento;
+
+    EXEC SQL
+        SELECT
+            ATENDIMENTO.IDGRUPOATUAL
+        INTO
+            :idGrupo:i_idGrupo
+        FROM
+            ATENDIMENTO.ATENDIMENTO ATENDIMENTO
+        WHERE 
+            ATENDIMENTO.IDATENDIMENTO = :idAtendimento;
+
+    idGrupoDestino = i_idGrupo == -1 ? 0 : idGrupo;
+
+    ULOG("i_idGrupo=%d)",i_idGrupo);
+
+    ULOG("idGrupoDestino=%d",idGrupoDestino);
+
+    ULOG_END("proCPesquisaGrupoAtual()");
+
+    return idGrupoDestino == 0 ? false : true;
+}
+
+bool proCPesquisaGrupoFaseCRI(st_VariaveisUsuario* _dados, Collection* _grupos)
+{ // APENAS GRUPOS CRI!
+    ULOG_START("proCPesquisaGrupoFaseCRI()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_VariaveisUsuario dados;
+
+        VARCHAR idGrupo[256]; 
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&dados, _dados, sizeof(dados));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE cursorGrupoFaseCRI CURSOR FOR
+    SELECT
+       DISTINCT CG.IDGRUPO, SQ.SQORDEM
+    FROM
+        CONTATOADM.CONTATOGRUPO CG,
+        CONTATOADM.SEQUENCIA SQ,
+        ACESSO.GRUPO G,
+        APOIO.TIPOGRUPO TG
+    WHERE
+          CG.IDCONTATOGRUPO = SQ.IDCONTATOGRUPO
+      AND SQ.IDTIPOSEQUENCIA = :dados.idFase
+      AND CG.IDCONTATO = :dados.idContato
+      AND CG.IDGRUPO = G.IDGRUPO
+      AND G.IDTIPOGRUPO = TG.IDTIPOGRUPO
+      AND CDTIPOGRUPO = 'CRI'
+    ORDER BY SQ.SQORDEM;
+    
+    EXEC SQL OPEN cursorGrupoFaseCRI;
+
+    if ( _grupos )
+    {
+        for(;;)
+        {
+            EXEC SQL FETCH cursorGrupoFaseCRI INTO :idGrupo;
+
+            CONV(idGrupo);
+
+            if ( strlen((char*)idGrupo.arr) )
+            {
+                if ( p = new char[strlen((char*)idGrupo.arr)+1],p  )
+                {
+                    strcpy(p,(char*)idGrupo.arr);
+                    _grupos->AddItem( (void*) p );
+                }
+                else
+                {
+                    ULOGE(erroFalhaAlocacaoMemoria());
+                    break;
+                }
+            }
+        }
+    }
+
+    EXEC SQL CLOSE cursorGrupoFaseCRI;
+
+    ULOG_END("proCPesquisaGrupoFaseCRI()");
+
+    return true;
+}
+
+bool proCPesquisaGrupoFaseUsuario(st_VariaveisUsuario* _dados, Collection* _grupos)
+{
+    ULOG_START("proCPesquisaGrupoFaseUsuario()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_VariaveisUsuario dados;
+
+        VARCHAR idGrupo[256]; 
+        short i_idGrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&dados, _dados, sizeof(dados));
+
+    ULOG("SELECT DISTINCT cg.idgrupo, sq.sqordem "
+                      "FROM  acesso.usuariogrupo ug, "
+                            "contatoadm.contatogrupo cg, "
+                            "contatoadm.sequencia sq "
+                      "WHERE ug.idGrupo = cg.idGrupo "
+                      "AND cg.idcontatogrupo = sq.idcontatogrupo "
+                      "AND ug.idPessoaUsuario = %d "
+                      "AND sq.idTipoSequencia = %d "
+                      "AND cg.idContato = %d "
+                      "ORDER BY sq.sqOrdem"
+        ,dados.idPessoaUsuario
+        ,dados.idFase
+        ,dados.idContato);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE grupoFaseUsr CURSOR FOR
+    SELECT
+        DISTINCT cg.idgrupo, sq.sqordem
+    FROM
+        acesso.usuariogrupo ug,
+        contatoadm.contatogrupo cg,
+        contatoadm.sequencia sq
+    WHERE
+        ug.idGrupo = cg.idGrupo
+    AND    cg.idcontatogrupo = sq.idcontatogrupo
+        AND ug.idPessoaUsuario = :dados.idPessoaUsuario
+    AND sq.idTipoSequencia = :dados.idFase
+        AND cg.idContato = :dados.idContato
+    ORDER BY 
+        sq.sqOrdem;
+    
+    EXEC SQL OPEN grupoFaseUsr;
+
+    if ( _grupos )
+    {
+        for(;;)
+        {
+            i_idGrupo = -1;
+
+            EXEC SQL FETCH grupoFaseUsr INTO :idGrupo:i_idGrupo;
+
+            CONVIND(idGrupo,i_idGrupo);
+
+            if ( strlen((char*)idGrupo.arr) )
+            {
+                if ( p = new char[strlen((char*)idGrupo.arr)+1],p  )
+                {
+                    strcpy(p,(char*)idGrupo.arr);
+                    _grupos->AddItem( (void*) p );
+                }
+                else
+                {
+                    ULOGE(erroFalhaAlocacaoMemoria());
+                    break;
+                }
+            }
+        }
+    }
+
+    EXEC SQL CLOSE grupoFaseUsr;
+
+    ULOG_END("proCPesquisaGrupoFaseUsuario()");
+
+    return true;
+}
+
+bool proCPesquisaGrupoFaseUsuario(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaGrupoFaseUsuario(DOMNode*,XMLGen*)");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idFase          = 0;
+        int idContato       = 0;
+        int idPessoaUsuario = 0;
+        int idGrupo; 
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    if ( p=tx.walkTree( entrada, "idFase", 0 ),p )
+    {
+        idFase          = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    if ( p=tx.walkTree( entrada, "idContato", 0 ),p )
+    {
+        idContato       = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+    {
+        idPessoaUsuario = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    EXEC SQL DECLARE grupoFaseUsuario CURSOR FOR
+    SELECT 
+        idGrupo
+    FROM 
+        atendimento.PesquisaGrupoFaseUsuarioV01
+    WHERE
+        idFase              = :idFase
+        AND idContato       = :idContato
+        AND idPessoaUsuario = :idPessoaUsuario
+    ORDER BY numOrdem;
+    
+    EXEC SQL OPEN grupoFaseUsuario;
+
+    for(;;)
+    {
+        EXEC SQL FETCH grupoFaseUsuario INTO :idGrupo;
+
+        saida->createTag("GrupoFase");
+            saida->addItem("idGrupo", idGrupo);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE grupoFaseUsuario;
+
+    ULOG_END("proCPesquisaGrupoFaseUsuario(DOMNode*,XMLGen*)");
+
+    return true;
+}
+
+bool proCPesquisaGrupoCanal(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaGrupoCanal(DOMNode*,XMLGen*)");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idGrupo = -1;
+        int idCanal; 
+        int prioridadeExibicao;
+        VARCHAR nmCanal[256];
+
+        short i_idCanal;
+        short i_nmCanal;
+        short i_prioridadeExibicao;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    if ( p=tx.walkTree( entrada, "idGrupo", 0 ),p )
+    {
+        idGrupo = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    EXEC SQL DECLARE cursorGrupoCanal CURSOR FOR
+        SELECT
+            CANAL.IDCANAL,
+            CANAL.NMCANAL,
+            CANAL.PRIORIDADEEXIBICAO
+        FROM
+            ACESSO.GRUPOCANAL GRUPOCANAL,
+            APOIO.CANAL CANAL
+        WHERE
+            GRUPOCANAL.IDCANAL = CANAL.IDCANAL
+        AND GRUPOCANAL.IDGRUPO = :idGrupo
+        AND CANAL.INATIVO = 1
+        ORDER BY
+            CANAL.PRIORIDADEEXIBICAO,UPPER(CANAL.NMCANAL);
+
+    EXEC SQL OPEN cursorGrupoCanal;
+
+    for(;;)
+    {
+        EXEC SQL FETCH cursorGrupoCanal INTO 
+                                            :idCanal:i_idCanal,
+                                            :nmCanal:i_nmCanal,
+                                            :prioridadeExibicao:i_prioridadeExibicao;
+        CONVIND(nmCanal, i_nmCanal)
+
+        saida->createTag("CanalVO");
+            saida->addItem("idCanal", idCanal);
+            saida->addItem("nmCanal", (char*)nmCanal.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE cursorGrupoCanal;
+
+    ULOG_START("proCPesquisaGrupoCanal(DOMNode*,XMLGen*)");
+
+    return true;
+}
+
+bool proCPesquisaUsuarioGrupoCanal(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaGrupoCanal()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idGrupo = 0;
+        int idPessoaUsuario = 0;
+
+        int idCanal; 
+        VARCHAR nmCanal[256];
+
+        short i_idCanal;
+        short i_nmCanal;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    if ( p=tx.walkTree( entrada, "idGrupo", 0 ),p )
+    {
+        idGrupo = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+    {
+        idPessoaUsuario = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    EXEC SQL DECLARE usuarioGrupoCanal CURSOR FOR
+    SELECT DISTINCT
+        IDCANAL,
+        NMCANAL
+    FROM
+        ACESSO.USUARIOGRUPOCANALV01
+    WHERE
+        IDPESSOAUSUARIO = :idPessoaUsuario
+    AND
+        IDGRUPO = :idGrupo
+    AND
+        INATIVO = 1
+    ORDER BY
+        NMCANAL;
+
+    EXEC SQL OPEN usuarioGrupoCanal;
+
+    for(;;)
+    {
+        EXEC SQL FETCH usuarioGrupoCanal INTO 
+                                            :idCanal:i_idCanal,
+                                            :nmCanal:i_nmCanal;
+        CONVIND(nmCanal, i_nmCanal)
+
+        saida->createTag("CanalVO");
+            saida->addItem("idCanal", idCanal);
+            saida->addItem("nmCanal", (char*)nmCanal.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE usuarioGrupoCanal;
+
+    ULOG_END("proCPesquisaGrupoCanal()");
+
+    return true;
+}
+
+bool proCPesquisaGrupoProcedencia(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaGrupoProcedencia()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idGrupo = -1;
+        int idProcedencia;
+        int prioridadeExibicao;
+
+        VARCHAR dsProcedencia[256];
+
+        short i_idProcedencia;
+        short i_dsProcedencia;
+        short i_prioridadeExibicao;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    if ( p=tx.walkTree( entrada, "idGrupo", 0 ),p )
+    {
+        idGrupo = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    EXEC SQL DECLARE cursorGrupoProcedencia CURSOR FOR
+        SELECT
+            PROCEDENCIA.IDPROCEDENCIA,
+            PROCEDENCIA.DSPROCEDENCIA,
+            PROCEDENCIA.PRIORIDADEEXIBICAO
+        FROM 
+            ACESSO.GRUPO GRUPO,
+            APOIO.PROCEDENCIA PROCEDENCIA,
+            CONTATOADM.PROCEDENCIAGRUPO PROCEDENCIAGRUPO
+        WHERE
+            GRUPO.IDGRUPO = PROCEDENCIAGRUPO.IDGRUPO
+        AND PROCEDENCIAGRUPO.IDPROCEDENCIA = PROCEDENCIA.IDPROCEDENCIA
+        AND PROCEDENCIAGRUPO.IDGRUPO = :idGrupo
+        ORDER BY
+            PROCEDENCIA.PRIORIDADEEXIBICAO,PROCEDENCIA.DSPROCEDENCIA;
+    
+    EXEC SQL OPEN cursorGrupoProcedencia;
+
+    for(;;)
+    {
+        i_dsProcedencia = -1;
+
+        EXEC SQL FETCH cursorGrupoProcedencia INTO 
+                                                :idProcedencia:i_idProcedencia,
+                                                :dsProcedencia:i_dsProcedencia,
+                                                :prioridadeExibicao:i_prioridadeExibicao;
+
+        CONVIND(dsProcedencia, i_dsProcedencia)
+
+        saida->createTag("ProcedenciaVO");
+            saida->addProp("xmlns","admsistemas.fo.vivo.com.br/vo");
+            saida->addItem("idProcedencia", idProcedencia);
+            saida->addItem("dsProcedencia", (char*)dsProcedencia.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE cursorGrupoProcedencia;
+
+    ULOG_END("proCPesquisaGrupoProcedencia()");
+
+    return true;
+}
+
+bool proCPesquisaUsuarioGrupoProcedencia(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaUsuarioGrupoProcedencia()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idGrupo = 0;
+        int idPessoaUsuario = 0;
+
+        int idProcedencia; 
+        VARCHAR dsProcedencia[256];
+
+        short i_idProcedencia;
+        short i_dsProcedencia;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    if ( p=tx.walkTree( entrada, "idGrupo", 0 ),p )
+    {
+        idGrupo = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    if ( p=tx.walkTree( entrada, "idPessoaUsuario", 0 ),p )
+    {
+        idPessoaUsuario = atoi(p); 
+        XMLString::release(&p);
+    }
+
+    EXEC SQL DECLARE usuarioGrupoProcedencia CURSOR FOR
+    SELECT DISTINCT
+        IDPROCEDENCIA,
+        DSPROCEDENCIA
+    FROM 
+        ACESSO.USUARIOGRUPOPROCEDENCIAV01
+    WHERE
+        IDPESSOAUSUARIO = :idPessoaUsuario
+    AND 
+        IDGRUPO = :idGrupo
+    ORDER BY
+        DSPROCEDENCIA;
+    
+    EXEC SQL OPEN usuarioGrupoProcedencia;
+
+    for(;;)
+    {
+
+        EXEC SQL FETCH usuarioGrupoProcedencia INTO 
+                                                :idProcedencia:i_idProcedencia,
+                                                :dsProcedencia:i_dsProcedencia;
+
+        CONVIND(dsProcedencia, i_dsProcedencia)
+
+        saida->createTag("ProcedenciaVO");
+            saida->addProp("xmlns","admsistemas.fo.vivo.com.br/vo");
+            saida->addItem("idProcedencia", idProcedencia);
+            saida->addItem("dsProcedencia", (char*)dsProcedencia.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE usuarioGrupoProcedencia;
+
+    ULOG_END("proCPesquisaUsuarioGrupoProcedencia()");
+
+    return true;
+}
+
+void proCGetListaStatusUsuario(XMLGen* saida)
+{
+    ULOG_START("proCGetListaStatusUsuario()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   idStatusUsuario  = 0;
+        short iidStatusUsuario = -1;
+        short isgStatusUsuario = -1;
+        short idsStatusUsuario = -1;
+
+        VARCHAR sgStatusUsuario[256];
+        VARCHAR dsStatusUsuario[256];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE cursorGetLstStUsu CURSOR FOR
+    SELECT 
+        IDSTATUSUSUARIO,
+        SGSTATUSUSUARIO,
+        DSSTATUSUSUARIO
+    FROM 
+        APOIO.STATUSUSUARIO
+    ORDER BY 
+        UPPER(SGSTATUSUSUARIO);
+
+    EXEC SQL OPEN cursorGetLstStUsu;
+
+    for(;;)
+    {
+        EXEC SQL FETCH cursorGetLstStUsu
+                  INTO :idStatusUsuario:iidStatusUsuario
+                     , :sgStatusUsuario:isgStatusUsuario
+                     , :dsStatusUsuario:idsStatusUsuario;
+
+        CONVIND(sgStatusUsuario, isgStatusUsuario);
+        CONVIND(dsStatusUsuario, idsStatusUsuario);
+
+        saida->createTag("StatusUsuarioVO");
+        saida->addProp("xmlns","usuario.fo.vivo.com.br/vo");
+            saida->addItem("idStatus", idStatusUsuario);
+            saida->addItem("sgStatus", (char*)sgStatusUsuario.arr);
+            saida->addItem("nmStatus", (char*)dsStatusUsuario.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE cursorGetLstStUsu;
+
+    ULOG_END("proCGetListaStatusUsuario()");
+}
+
+bool proCConsultaWFGruposRelatoriosCRI(XMLGen* saida)
+{
+    ULOG_START("proCConsultaWFGruposRelatoriosCRI()");
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo; 
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE tsqlcursorRel1CRI CURSOR FOR
+    SELECT 
+        GRUPO.IDGRUPO, 
+        GRUPO.NMGRUPO
+    FROM 
+        ACESSO.GRUPO GRUPO,
+        APOIO.TIPOGRUPO TIPOGRUPO
+    WHERE
+        GRUPO.IDGRUPO > 0
+    AND 
+        G.DTEXCLUSAO IS NULL
+    AND 
+        GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+    AND 
+        TIPOGRUPO.CDTIPOGRUPO = 'CRI'
+    ORDER BY 
+        UPPER(GRUPO.NMGRUPO);
+
+    EXEC SQL OPEN tsqlcursorRel1CRI;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH tsqlcursorRel1CRI INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+        saida->addItem("idGrupo",idgrupo);
+        saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+    EXEC SQL CLOSE tsqlcursorRel1CRI;
+
+    ULOG_END("proCConsultaWFGruposRelatoriosCRI()");
+
+    return true;
+}
+
+bool proCPesquisaLgUserPorGrupo(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaLgUserPorGrupo()");
+
+    bool retorno;
+    char *p;
+    int nrRegistroInicial;
+    int nrRegistroFinal;
+
+    // Verifica se existe numero de registro inicial
+    if ( p=tx.walkTree( entrada, "nrRegistroInicial", 0 ),p )
+    {
+        nrRegistroInicial  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("nrRegistroInicial=%d",nrRegistroInicial);
+    }
+    else
+    {
+        nrRegistroInicial = -1;
+        ULOG("nrRegistroInicial=%d (nao informado)",nrRegistroInicial);
+    }
+
+    // Verifica se existe numero de registro final
+    if ( p=tx.walkTree( entrada, "nrRegistroFinal", 0 ),p )
+    {
+        nrRegistroFinal  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("nrRegistroFinal=%d",nrRegistroFinal);
+    }
+    else
+    {
+        nrRegistroFinal = -1;
+        ULOG("nrRegistroFinal=%d (nao informado)",nrRegistroFinal);
+    }
+
+    //================================================================================
+    // Esta função esta sendo dividida em duas para uma tentativa de ganho de
+    // performance no ambiente de produção. A versão original estava tentando
+    // generalizar a existencia ou não de números de linhas na busca do
+    // dos registros e com isso se utilizada do subterfúgio do (x=nlin OR nlin=-1)
+    // deixando a query mais oneroza. Esta versão verifica se os números de linhas
+    // foram fornecidos e caso sim, executa a query com retorno blocado e caso não
+    // executa a query sem levar em consideração numeros de linhas e com isso 
+    // melhora o processamento.
+    // Fev/2006 - Cassio
+    //================================================================================
+    //
+    if ( nrRegistroInicial >= 0 && nrRegistroFinal >= 0 )
+    {
+        retorno = proCPesquisaLgUserPorGrupoBlocado(entrada,saida
+                                                    ,nrRegistroInicial,nrRegistroFinal);
+    }
+    else
+    {
+        retorno = proCPesquisaLgUserPorGrupoNaoBlocado(entrada,saida);
+    }
+
+    ULOG_END("proCPesquisaLgUserPorGrupo()");
+
+    return retorno;
+}
+
+
+bool proCPesquisaLgUserPorGrupoBlocado(DOMNode*entrada,XMLGen* saida,int _nrRegistroInicial,int _nrRegistroFinal)
+{
+    ULOG_START("proCPesquisaLgUserPorGrupoBlocado()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo  = 0;
+        int status  = 0;
+        long idPessoaUsuario; 
+        int nrRegistroInicial = _nrRegistroInicial;
+        int nrRegistroFinal = _nrRegistroFinal;
+        int nrRegistros;
+
+        VARCHAR nmLoginUsuario[256];
+        int idStatusUsuario;
+        int inDisponivelWF;
+
+        short i_idPessoaUsuario;
+        short i_nmLoginUsuario;
+        short i_idStatusUsuario;
+        short i_inDisponivelWF;
+
+    EXEC SQL END DECLARE SECTION;
+
+    if ( p=tx.walkTree( entrada, "idGrupo", 0 ),p )
+    {
+        idgrupo  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("grupo=%d",idgrupo);
+    }
+    else
+    {
+        saida->createTag("UsuarioVIVO");
+            saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+        saida->closeTag();
+
+        return true;
+    }
+
+    if ( p=tx.walkTree( entrada, "status", 0 ),p )
+    {
+        status  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("status=%d",status);
+    }
+    else
+    {
+        ULOG("status=%d (nao informado)",status);
+    }
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE curLgUserGrupoBloco CURSOR FOR
+     SELECT
+            idPessoaUsuario,nmLoginUsuario,idStatusUsuario,inDisponivelWF
+        FROM
+            (
+                SELECT
+                    idPessoaUsuario,nmLoginUsuario,
+                    idStatusUsuario,inDisponivelWF,ROWNUM as nrLinha
+                  FROM
+                  (
+                        SELECT /*+ parallel(u,8) */
+                            u.idPessoaUsuario,u.nmLoginUsuario,
+                            u.idStatusUsuario,u.inDisponivelWF
+                        FROM
+                            acesso.usuario u,
+                            acesso.usuarioGrupo ug
+                        WHERE
+                            ug.idGrupo = :idgrupo
+                        AND (u.idStatusUsuario = 1 OR 0=:status)
+                        AND ug.idPessoaUsuario = u.idPessoaUsuario
+                        AND ug.idPessoaUsuario = COALESCE(ug.idPessoaUsuario, UID )
+                        AND u.idPessoaUsuario = COALESCE(u.idPessoaUsuario, UID )
+                        ORDER BY
+                            UPPER(u.nmLoginUsuario)
+                    )
+            )
+        WHERE
+              (nrLinha >= :nrRegistroInicial)
+          AND (nrLinha <= (:nrRegistroFinal+1)); 
+
+
+    /*
+    SELECT
+        idPessoaUsuario,nmLoginUsuario,idStatusUsuario,inDisponivelWF
+    FROM
+        (
+            SELECT
+                idPessoaUsuario,nmLoginUsuario,
+                idStatusUsuario,inDisponivelWF,ROWNUM as nrLinha
+              FROM
+              (
+                    SELECT
+                        u.idPessoaUsuario,u.nmLoginUsuario,
+                        u.idStatusUsuario,u.inDisponivelWF
+                    FROM 
+                        acesso.usuario u,
+                        acesso.usuarioGrupo ug
+                    WHERE
+                        ug.idGrupo = :idgrupo
+                    AND (u.idStatusUsuario = 1 OR 0=:status)
+                    AND ug.idPessoaUsuario = u.idPessoaUsuario
+                    ORDER BY
+                        UPPER(u.nmLoginUsuario)
+                )
+        )
+    WHERE
+          (nrLinha >= :nrRegistroInicial)
+      AND (nrLinha <= (:nrRegistroFinal+1));
+    
+    */
+    
+
+    // Controla o número de registros a retornar;
+    nrRegistros = (nrRegistroInicial-1);
+
+    EXEC SQL OPEN curLgUserGrupoBloco;
+
+    for(;;) 
+    {
+        i_idPessoaUsuario=i_nmLoginUsuario=i_idStatusUsuario=i_inDisponivelWF=-1;
+
+        EXEC SQL FETCH curLgUserGrupoBloco INTO :idPessoaUsuario:i_idPessoaUsuario, 
+                                                :nmLoginUsuario:i_nmLoginUsuario,
+                                                :idStatusUsuario:i_idStatusUsuario,
+                                                :inDisponivelWF:i_inDisponivelWF;
+
+        CONVIND(nmLoginUsuario, i_nmLoginUsuario);
+
+        saida->createTag("UsuarioVIVO");
+            saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+            saida->addItem("idPessoaUsuario",idPessoaUsuario);
+            saida->addItem("nmLoginUsuario",(char*)nmLoginUsuario.arr);
+            saida->addItem("idStatusUsuario",CONVINT(idStatusUsuario,i_idStatusUsuario));
+            saida->addItem("inDisponivelWF",CONVINT(inDisponivelWF,i_inDisponivelWF));
+        saida->closeTag();
+
+        nrRegistros++;
+        if (nrRegistroInicial > 0 && nrRegistroFinal > 0 && nrRegistros >= nrRegistroFinal)
+        {
+            break;
+        }
+    }
+
+    if (nrRegistroInicial > 0 && nrRegistroFinal > 0 && nrRegistros < nrRegistroFinal)
+    {
+        saida->addItem("inFim","1");
+    }
+    else if (nrRegistroInicial > 0 && nrRegistroFinal > 0 && nrRegistros >= nrRegistroFinal)
+    {
+        saida->addItem("inFim","0");
+    }
+
+    EXEC SQL CLOSE curLgUserGrupoBloco;
+
+    ULOG_END("proCPesquisaLgUserPorGrupoBlocado()");
+
+    return true;
+}
+
+
+bool proCPesquisaLgUserPorGrupoNaoBlocado(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaLgUserPorGrupoNaoBlocado()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idgrupo  = 0;
+        int status  = 0;
+        long idPessoaUsuario; 
+
+        VARCHAR nmLoginUsuario[256];
+        int idStatusUsuario;
+        int inDisponivelWF;
+
+        short i_idPessoaUsuario;
+        short i_nmLoginUsuario;
+        short i_idStatusUsuario;
+        short i_inDisponivelWF;
+
+    EXEC SQL END DECLARE SECTION;
+
+    if ( p=tx.walkTree( entrada, "idGrupo", 0 ),p )
+    {
+        idgrupo  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("grupo=%d",idgrupo);
+    }
+    else
+    {
+        saida->createTag("UsuarioVIVO");
+            saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+        saida->closeTag();
+
+        return true;
+    }
+
+    if ( p=tx.walkTree( entrada, "status", 0 ),p )
+    {
+        status  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("status=%d",status);
+    }
+    else
+    {
+        ULOG("status=%d (nao informado)",status);
+    }
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE CurLgUser CURSOR FOR
+    SELECT
+        u.idPessoaUsuario,u.nmLoginUsuario,
+        u.idStatusUsuario,u.inDisponivelWF
+    FROM 
+        acesso.usuario u,
+        acesso.usuarioGrupo ug
+    WHERE
+        ug.idGrupo = :idgrupo
+    AND (u.idStatusUsuario = 1 OR 0=:status)
+    AND ug.idPessoaUsuario = u.idPessoaUsuario
+    ORDER BY
+        UPPER(u.nmLoginUsuario);
+
+    EXEC SQL OPEN CurLgUser;
+
+    for(;;)
+    {
+        i_idPessoaUsuario=i_nmLoginUsuario=i_idStatusUsuario=i_inDisponivelWF=-1;
+
+        EXEC SQL FETCH CurLgUser INTO :idPessoaUsuario:i_idPessoaUsuario, 
+                                      :nmLoginUsuario:i_nmLoginUsuario,
+                                      :idStatusUsuario:i_idStatusUsuario,
+                                      :inDisponivelWF:i_inDisponivelWF;
+
+        CONVIND(nmLoginUsuario, i_nmLoginUsuario);
+
+        saida->createTag("UsuarioVIVO");
+            saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+            saida->addItem("idPessoaUsuario",idPessoaUsuario);
+            saida->addItem("nmLoginUsuario",(char*)nmLoginUsuario.arr);
+            saida->addItem("idStatusUsuario",CONVINT(idStatusUsuario,i_idStatusUsuario));
+            saida->addItem("inDisponivelWF",CONVINT(inDisponivelWF,i_inDisponivelWF));
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE CurLgUser;
+
+    ULOG_END("proCPesquisaLgUserPorGrupoNaoBlocado()");
+
+    return true;
+}
+
+//
+// Esta função verifica se este atendimento é referente a um 'Não Cliente'(idpessoa = 26), retornando
+// true e alterando _idUFOperadoraNaoCliente para a UFOperadora responsável por não clientes
+// Alteração realizada para atender a incidência de WR 3346
+//
+bool proCObtemUFOperadoraAtendimentoNaoCliente(long _idAtendimento, int *_idUFOperadoraNaoCliente)
+{
+    ULOG_START("proCObtemUFOperadoraAtendimentoNaoCliente()");
+
+    bool retorno = false;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long idAtendimento = _idAtendimento;
+        int idUFOperadora = 0;
+        int inNaoCliente = 0;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+    SELECT 
+           UFOPERADORA.IDUFOPERADORA, 
+           DECODE(PESSOA.IDPESSOA, 26, 1, 0) AS NAO_CLIENTE 
+    INTO
+           :idUFOperadora,
+           :inNaoCliente
+    FROM 
+           CUSTOMER.UFOPERADORA UFOPERADORA,
+           CUSTOMER.PESSOA PESSOA,
+           CUSTOMER.PESSOADEPARA PESSOADEPARA,
+           ATENDIMENTO.ATENDIMENTOPESSOA ATENDIMENTOPESSOA
+    WHERE 
+           UFOPERADORA.IDUF = PESSOA.IDUF
+           AND PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+           AND ATENDIMENTOPESSOA.IDPESSOADEPARA = PESSOADEPARA.IDPESSOADEPARA
+           AND ATENDIMENTOPESSOA.IDATENDIMENTO = :idAtendimento
+           AND ROWNUM < 2;
+
+    if ( !sqlca.sqlcode )
+    {
+        // Caso este seja o atendimento de um Não Cliente, retornamos o UFOperadora do mesmo
+        if( inNaoCliente != 0 )
+        {
+            *_idUFOperadoraNaoCliente = idUFOperadora;
+            retorno = true;
+        }
+        else // Se não, indicamos que a ufoperadora não foi alterada
+            retorno = false;
+    }
+
+    ULOG_END("proCObtemUFOperadoraAtendimentoNaoCliente()");
+
+    return retorno;
+}
+
+bool proCPesquisaMC1GrpUser(DOMNode*entrada,XMLGen* saida)
+{
+    ULOG_START("proCPesquisaMC1GrpUser()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char *varOraIdAtendimento = tx.walkTree(entrada,"idAtendimento",0);
+
+        VARCHAR varOraIdPessoaUsuario[39];
+        VARCHAR varOraNmLoginUsuario[32];
+        VARCHAR varOraIdStatusUsuario[39];
+        VARCHAR varOraInDisponivelWF[5];
+
+        short statOraIdPessoaUsuario=-1;
+        short statOraNmLoginUsuario=-1;
+        short statOraIdStatusUsuario=-1;
+        short statOraInDisponivelWF=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    if ( varOraIdAtendimento )
+    {
+        EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+        ULOG("usuário atual do atendimento=%s",varOraIdAtendimento);
+
+        EXEC SQL
+            SELECT
+                USUARIO.IDPESSOAUSUARIO,
+                USUARIO.NMLOGINUSUARIO,
+                USUARIO.IDSTATUSUSUARIO,
+                USUARIO.INDISPONIVELWF
+            INTO
+                :varOraIdPessoaUsuario:statOraIdPessoaUsuario,
+                :varOraNmLoginUsuario:statOraNmLoginUsuario,
+                :varOraIdStatusUsuario:statOraIdStatusUsuario,
+                :varOraInDisponivelWF:statOraInDisponivelWF
+            FROM 
+                ATENDIMENTO.ATENDIMENTO ATENDIMENTO,
+                ACESSO.USUARIO USUARIO
+            WHERE
+                ATENDIMENTO.IDATENDIMENTO = :varOraIdAtendimento
+            AND ATENDIMENTO.IDPESSOAUSUARIOATUAL = USUARIO.IDPESSOAUSUARIO;
+
+        XMLString::release(&varOraIdAtendimento);
+
+        if ( sqlca.sqlcode == 0 )
+        {
+            CONVIND(varOraIdPessoaUsuario,statOraIdPessoaUsuario);
+            CONVIND(varOraNmLoginUsuario,statOraNmLoginUsuario);
+            CONVIND(varOraIdStatusUsuario,statOraIdStatusUsuario);
+            CONVIND(varOraInDisponivelWF,statOraInDisponivelWF);
+
+            saida->createTag("UsuarioVIVO");
+                saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+                saida->addItem("idPessoaUsuario",(char*)varOraIdPessoaUsuario.arr);
+                saida->addItem("nmLoginUsuario",(char*)varOraNmLoginUsuario.arr);
+                saida->addItem("idStatusUsuario",(char*)varOraIdStatusUsuario.arr);
+                saida->addItem("inDisponivelWF",(char*)varOraInDisponivelWF.arr);
+            saida->closeTag();
+            saida->addItem("inFim","1");
+        }
+    }
+    else
+    {
+        ULOGW("tag <idAtendimento> não encontrada!");
+    }
+
+    ULOG_END("proCPesquisaMC1GrpUser()");
+
+    return true;
+}
+
+// incidencia 2939
+bool proCExisteGrupoUsuario( unsigned long idGrupoCRIPrm , unsigned long idPessoaUsuarioPrm )
+{
+    ULOG_START( "proCExisteGrupoUsuario()" );
+    
+    ULOG( "idGrupoCRIPrm=[%d]",idGrupoCRIPrm );
+    ULOG( "idPessoaUsuarioPrm=[%d]",idPessoaUsuarioPrm );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        unsigned long idPessoaUsuario = idPessoaUsuarioPrm;
+        unsigned long idGrupo = idGrupoCRIPrm;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG( "idPessoaUsuario [%lu]",idPessoaUsuario );
+
+    ULOG( "idGrupo [%lu]",idGrupo );
+
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+        SELECT 
+            IDPESSOAUSUARIO
+        FROM
+            ACESSO.USUARIOGRUPO
+        WHERE
+            IDPESSOAUSUARIO = :idPessoaUsuario
+        AND
+            IDGRUPO = :idGrupo;
+    bool ret = false ; 
+    
+    if ( !sqlca.sqlcode )
+    { 
+        ULOG( "Usuario continua associado ao grupo [%lu] original do processo encontrado",idGrupoCRIPrm );
+        ret =  true;
+    }
+    else
+        ULOG( "Usuario nao continua associado ao grupo [%lu] original do processo encontrado",idGrupoCRIPrm );
+
+
+    ULOG_END( "cEncContatoPC::proCObterGrupoUsuario()" );
+
+    return ret ;
+}
+
+bool proCPesquisaLgUserPorGrupoMC(DOMNode*entrada,XMLGen* saida,const char *idPessoaUsuario)
+{
+    ULOG_START("proCPesquisaLgUserPorGrupoMC()");
+
+    bool retorno;
+    char *p;
+    int nrRegistroInicial;
+    int nrRegistroFinal;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char * varOraIdPessoaUsuario = idPessoaUsuario;
+
+        //VARCHAR varOraIdPerfilConsultorAtd[11];
+        //short statOraIdPerfilConsultorAtd=-1;
+
+        VARCHAR varOraNrPesoHierarquia[11];
+        short statOraNrPesoHierarquia=-1;
+
+        //VARCHAR varOraIdFornecedorConsultorAtd[11];
+        //short statOraIdFornecedorConsultorAtd=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("idPessoaUsuario=%s",varOraIdPessoaUsuario);
+
+    EXEC SQL
+        SELECT
+            PERFILCONSULTORATD.NRPESOHIERARQUIA
+           //,PERFILCONSULTORATD.IDPERFILCONSULTORATD
+           //,NVL(USUARIO.IDFORNECEDORCONSULTORATD,'VIVO') AS IDFORNECEDORCONSULTORATD
+        INTO
+            :varOraNrPesoHierarquia:statOraNrPesoHierarquia
+           //,:varOraIdPerfilConsultorAtd:statOraIdPerfilConsultorAtd
+           //,:varOraIdFornecedorConsultorAtd:statOraIdFornecedorConsultorAtd
+        FROM
+            ACESSO.USUARIO USUARIO,
+            APOIO.PERFILCONSULTORATD PERFILCONSULTORATD
+        WHERE
+            USUARIO.IDPESSOAUSUARIO = :varOraIdPessoaUsuario
+        AND NVL(USUARIO.IDPERFILCONSULTORATD,'VIVO') = PERFILCONSULTORATD.IDPERFILCONSULTORATD;
+
+    if ( sqlca.sqlcode )
+    {
+        strcpy((char*)varOraNrPesoHierarquia.arr,"99");
+        varOraNrPesoHierarquia.len = 2;
+    }
+    else
+    {
+        CONVIND(varOraNrPesoHierarquia,statOraNrPesoHierarquia);
+        //CONVIND(varOraIdPerfilConsultorAtd,statOraIdPerfilConsultorAtd);
+        //CONVIND(varOraIdFornecedorConsultorAtd,statOraIdFornecedorConsultorAtd);
+
+        //SAFE_STRNCPY(dados->nrPesoHierarquia,(char*)varOraNrPesoHierarquia.arr);
+        //SAFE_STRNCPY(dados->idFornecedorConsultorAtd,(char*)varOraIdFornecedorConsultorAtd.arr);
+        //SAFE_STRNCPY(dados->idPerfilConsultorAtd,(char*)varOraIdPerfilConsultorAtd.arr);
+    }
+
+    //ULOG("idFornecedorConsultorAtd='%s'",dados->idFornecedorConsultorAtd);
+    //ULOG("    idPerfilConsultorAtd='%s'",dados->idPerfilConsultorAtd);
+    ULOG("        nrPesoHierarquia='%s'",varOraNrPesoHierarquia.arr);
+
+    // Verifica se existe numero de registro inicial
+    if ( p=tx.walkTree( entrada, "nrRegistroInicial", 0 ),p )
+    {
+        nrRegistroInicial  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("nrRegistroInicial=%d",nrRegistroInicial);
+    }
+    else
+    {
+        nrRegistroInicial = -1;
+        ULOG("nrRegistroInicial=%d (nao informado)",nrRegistroInicial);
+    }
+
+    // Verifica se existe numero de registro final
+    if ( p=tx.walkTree( entrada, "nrRegistroFinal", 0 ),p )
+    {
+        nrRegistroFinal  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("nrRegistroFinal=%d",nrRegistroFinal);
+    }
+    else
+    {
+        nrRegistroFinal = -1;
+        ULOG("nrRegistroFinal=%d (nao informado)",nrRegistroFinal);
+    }
+
+    //================================================================================
+    // Esta função esta sendo dividida em duas para uma tentativa de ganho de
+    // performance no ambiente de produção. A versão original estava tentando
+    // generalizar a existencia ou não de números de linhas na busca do
+    // dos registros e com isso se utilizada do subterfúgio do (x=nlin OR nlin=-1)
+    // deixando a query mais oneroza. Esta versão verifica se os números de linhas
+    // foram fornecidos e caso sim, executa a query com retorno blocado e caso não
+    // executa a query sem levar em consideração numeros de linhas e com isso 
+    // melhora o processamento.
+    // Fev/2006 - Cassio
+    //================================================================================
+    //
+    if ( nrRegistroInicial >= 0 && nrRegistroFinal >= 0 )
+    {
+        retorno = proCPesquisaLgUserPorGrupoBlocadoMC(entrada,saida,(const char*)varOraNrPesoHierarquia.arr,idPessoaUsuario
+                                                    ,nrRegistroInicial,nrRegistroFinal);
+    }
+    else
+    {
+        retorno = proCPesquisaLgUserPorGrupoNaoBlocadoMC(entrada,saida,(const char*)varOraNrPesoHierarquia.arr,idPessoaUsuario);
+    }
+
+    ULOG_END("proCPesquisaLgUserPorGrupoMC()");
+
+    return retorno;
+}
+
+
+bool proCPesquisaLgUserPorGrupoBlocadoMC(DOMNode*entrada,XMLGen* saida,const char *nrPesoHierarquia,const char *idPessoaUsuario
+                                        ,int _nrRegistroInicial,int _nrRegistroFinal)
+{
+    ULOG_START("proCPesquisaLgUserPorGrupoBlocadoMC()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int varOraIdGrupo  = 0;
+        int varOraIdStatusUsuario  = 0;
+        int varOraIdPessoaUsuario; 
+        int varOraNrRegistroInicial = _nrRegistroInicial;
+        int varOraNrRegistroFinal = _nrRegistroFinal;
+        int varOraNrRegistros;
+        int varOraInDisponivelWF;
+
+        const char *varOraIdPessoaUsuarioIN = idPessoaUsuario;
+
+        const char *varOraNrPesoHierarquia = nrPesoHierarquia;
+
+        VARCHAR varOraNmLoginUsuario[256];
+
+        short i_idPessoaUsuario;
+        short i_nmLoginUsuario;
+        short i_idStatusUsuario;
+        short i_inDisponivelWF;
+
+    EXEC SQL END DECLARE SECTION;
+
+    if ( p=tx.walkTree( entrada, "idGrupo", 0 ),p )
+    {
+        varOraIdGrupo  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("grupo=%d",varOraIdGrupo);
+    }
+    else
+    {
+        saida->createTag("UsuarioVIVO");
+            saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+        saida->closeTag();
+
+        return true;
+    }
+
+    if ( p=tx.walkTree( entrada, "status", 0 ),p )
+    {
+        varOraIdStatusUsuario  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("idStatusUsuario=%d",varOraIdStatusUsuario);
+    }
+    else
+    {
+        ULOG("idStatusUsuario=%d (nao informado)",varOraIdStatusUsuario);
+    }
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE curLgUserGrupoBlocoMC CURSOR FOR
+        SELECT
+            idPessoaUsuario,nmLoginUsuario,idStatusUsuario,inDisponivelWF
+        FROM
+            (
+                SELECT
+                    idPessoaUsuario,nmLoginUsuario,
+                    idStatusUsuario,inDisponivelWF,ROWNUM as nrLinha
+                  FROM
+                  (
+                    SELECT
+                        idPessoaUsuario,nmLoginUsuario,
+                        idStatusUsuario,inDisponivelWF
+                      FROM
+                      (
+                            SELECT
+                                u.idPessoaUsuario,u.nmLoginUsuario,
+                                u.idStatusUsuario,u.inDisponivelWF
+                            FROM 
+                                acesso.usuario u,
+                                acesso.usuarioGrupo ug,
+                                APOIO.PERFILCONSULTORATD PERFILCONSULTORATD
+                            WHERE
+                                ug.idGrupo = :varOraIdGrupo
+                            --//AND (u.idStatusUsuario = 1 OR 0=:varOraIdStatusUsuario)
+                            AND u.idStatusUsuario = DECODE(:varOraIdStatusUsuario,0,u.idStatusUsuario,1)
+                            AND ug.idPessoaUsuario = u.idPessoaUsuario
+                            AND NVL(U.IDPERFILCONSULTORATD,'VIVO') = PERFILCONSULTORATD.IDPERFILCONSULTORATD
+                            AND PERFILCONSULTORATD.NRPESOHIERARQUIA < :varOraNrPesoHierarquia
+                        UNION
+                            SELECT
+                                u.idPessoaUsuario,u.nmLoginUsuario,
+                                u.idStatusUsuario,u.inDisponivelWF
+                            FROM 
+                                acesso.usuario u,
+                                acesso.usuarioGrupo ug
+                            WHERE
+                                ug.idGrupo = :varOraIdGrupo
+                            AND u.idStatusUsuario = DECODE(:varOraIdStatusUsuario,0,u.idStatusUsuario,1)
+                            AND ug.idPessoaUsuario = u.idPessoaUsuario
+                            AND ug.insupervisor = 1
+                            AND u.idpessoausuario = :varOraIdPessoaUsuarioIN
+                        )
+                        ORDER BY
+                            UPPER(nmLoginUsuario)
+                  )
+            )
+        WHERE
+            (nrLinha >= :varOraNrRegistroInicial)
+        AND (nrLinha <= (:varOraNrRegistroFinal+1));
+
+    // Controla o número de registros a retornar;
+    varOraNrRegistros = (varOraNrRegistroInicial-1);
+
+    EXEC SQL OPEN curLgUserGrupoBlocoMC;
+
+    for(;;) 
+    {
+        i_idPessoaUsuario=i_nmLoginUsuario=i_idStatusUsuario=i_inDisponivelWF=-1;
+
+        EXEC SQL FETCH curLgUserGrupoBlocoMC INTO :varOraIdPessoaUsuario:i_idPessoaUsuario, 
+                                                :varOraNmLoginUsuario:i_nmLoginUsuario,
+                                                :varOraIdStatusUsuario:i_idStatusUsuario,
+                                                :varOraInDisponivelWF:i_inDisponivelWF;
+
+        CONVIND(varOraNmLoginUsuario, i_nmLoginUsuario);
+
+        saida->createTag("UsuarioVIVO");
+            saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+            saida->addItem("idPessoaUsuario",varOraIdPessoaUsuario);
+            saida->addItem("nmLoginUsuario",(char*)varOraNmLoginUsuario.arr);
+            saida->addItem("idStatusUsuario",CONVINT(varOraIdStatusUsuario,i_idStatusUsuario));
+            saida->addItem("inDisponivelWF",CONVINT(varOraInDisponivelWF,i_inDisponivelWF));
+        saida->closeTag();
+
+        varOraNrRegistros++;
+        if (varOraNrRegistroInicial > 0 && varOraNrRegistroFinal > 0 && varOraNrRegistros >= varOraNrRegistroFinal)
+        {
+            break;
+        }
+    }
+
+    if (varOraNrRegistroInicial > 0 && varOraNrRegistroFinal > 0 && varOraNrRegistros < varOraNrRegistroFinal)
+    {
+        saida->addItem("inFim","1");
+    }
+    else if (varOraNrRegistroInicial > 0 && varOraNrRegistroFinal > 0 && varOraNrRegistros >= varOraNrRegistroFinal)
+    {
+        saida->addItem("inFim","0");
+    }
+
+    EXEC SQL CLOSE curLgUserGrupoBlocoMC;
+
+    ULOG_END("proCPesquisaLgUserPorGrupoBlocadoMC()");
+
+    return true;
+}
+
+
+bool proCPesquisaLgUserPorGrupoNaoBlocadoMC(DOMNode*entrada,XMLGen* saida,const char *nrPesoHierarquia,const char *idPessoaUsuario)
+{
+    ULOG_START("proCPesquisaLgUserPorGrupoNaoBlocadoMC()");
+
+    char *p;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int varOraIdGrupo  = 0;
+        int varOraIdStatusUsuario  = 0;
+        int varOraIdPessoaUsuario; 
+
+        const char *varOraNrPesoHierarquia = nrPesoHierarquia;
+        const char *varOraIdPessoaUsuarioIN = idPessoaUsuario;
+
+        VARCHAR varOraNmLoginUsuario[256];
+        int varOraInDisponivelWF;
+
+        short i_idPessoaUsuario;
+        short i_nmLoginUsuario;
+        short i_idStatusUsuario;
+        short i_inDisponivelWF;
+
+    EXEC SQL END DECLARE SECTION;
+
+    if ( p=tx.walkTree( entrada, "idGrupo", 0 ),p )
+    {
+        varOraIdGrupo  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("grupo=%d",varOraIdGrupo);
+    }
+    else
+    {
+        saida->createTag("UsuarioVIVO");
+            saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+        saida->closeTag();
+
+        return true;
+    }
+
+    if ( p=tx.walkTree( entrada, "status", 0 ),p )
+    {
+        varOraIdStatusUsuario  = atoi(p); 
+        XMLString::release(&p);
+
+        ULOG("idStatusUsuario=%d",varOraIdStatusUsuario);
+    }
+    else
+    {
+        ULOG("idStatusUsuario=%d (nao informado)",varOraIdStatusUsuario);
+    }
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFPesquisaGrupo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE CurLgUserMC CURSOR FOR
+                SELECT
+                    idPessoaUsuario,nmLoginUsuario,
+                    idStatusUsuario,inDisponivelWF
+                  FROM
+                  (
+                        SELECT
+                            u.idPessoaUsuario,u.nmLoginUsuario,
+                            u.idStatusUsuario,u.inDisponivelWF
+                        FROM 
+                            acesso.usuario u,
+                            acesso.usuarioGrupo ug,
+                            APOIO.PERFILCONSULTORATD PERFILCONSULTORATD
+                        WHERE
+                            ug.idGrupo = :varOraIdGrupo
+                        AND u.idStatusUsuario = DECODE(:varOraIdStatusUsuario,0,u.idStatusUsuario,1)
+                        AND ug.idPessoaUsuario = u.idPessoaUsuario
+                        AND NVL(U.IDPERFILCONSULTORATD,'VIVO') = PERFILCONSULTORATD.IDPERFILCONSULTORATD
+                        AND PERFILCONSULTORATD.NRPESOHIERARQUIA < :varOraNrPesoHierarquia
+                    UNION
+                        SELECT
+                            u.idPessoaUsuario,u.nmLoginUsuario,
+                            u.idStatusUsuario,u.inDisponivelWF
+                        FROM 
+                            acesso.usuario u,
+                            acesso.usuarioGrupo ug
+                        WHERE
+                            ug.idGrupo = :varOraIdGrupo
+                        AND u.idStatusUsuario = DECODE(:varOraIdStatusUsuario,0,u.idStatusUsuario,1)
+                        AND ug.idPessoaUsuario = u.idPessoaUsuario
+                        AND ug.INSUPERVISOR = 1
+                        AND u.idpessoausuario = :varOraIdPessoaUsuarioIN
+                    )
+                    ORDER BY
+                        UPPER(nmLoginUsuario);
+
+    EXEC SQL OPEN CurLgUserMC;
+
+    for(;;)
+    {
+        i_idPessoaUsuario=i_nmLoginUsuario=i_idStatusUsuario=i_inDisponivelWF=-1;
+
+        EXEC SQL FETCH CurLgUserMC INTO :varOraIdPessoaUsuario:i_idPessoaUsuario, 
+                                      :varOraNmLoginUsuario:i_nmLoginUsuario,
+                                      :varOraIdStatusUsuario:i_idStatusUsuario,
+                                      :varOraInDisponivelWF:i_inDisponivelWF;
+
+        CONVIND(varOraNmLoginUsuario, i_nmLoginUsuario);
+
+        saida->createTag("UsuarioVIVO");
+            saida->addProp("xmlns", "usuario.fo.vivo.com.br/vo");
+            saida->addItem("idPessoaUsuario",varOraIdPessoaUsuario);
+            saida->addItem("nmLoginUsuario",(char*)varOraNmLoginUsuario.arr);
+            saida->addItem("idStatusUsuario",CONVINT(varOraIdStatusUsuario,i_idStatusUsuario));
+            saida->addItem("inDisponivelWF",CONVINT(varOraInDisponivelWF,i_inDisponivelWF));
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE CurLgUserMC;
+
+    ULOG_END("proCPesquisaLgUserPorGrupoNaoBlocadoMC()");
+
+    return true;
+}
+
+// fim  2939
+void sql_error_WFPesquisaGrupo(sqlca*sqlca)
+{
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

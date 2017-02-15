@@ -1,0 +1,410 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1.114.1 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/06 12:36:44 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../include/cWFAtdPsqNomeContato.h"
+
+void WFATDPSQNMCTOErro(sqlca*sqlca);
+
+int cWFAtdPsqNomeContato::proCPesquisaNomeFolha()
+{
+    ULOG_START("proCPesquisaNomeFolha()");
+
+    char linIni[32],linFin[32];
+    int retorno = SUCESSO;
+    struct sqlca sqlca;
+    string nmPadraoStr = "'%" + dados.pesquisa + "%'";
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char *pQuery;
+        int idUFOperadora = atoi(dados.idUFOperadora.c_str());
+        int idTipoRelacionamento = atoi(dados.idTipoRelacionamento.c_str());
+        int idTipoLinha = atoi(dados.idTipoLinha.c_str());
+        int idTipoCarteira = atoi(dados.idTipoCarteira.c_str());
+        int idSegmentacao = atoi(dados.idSegmentacao.c_str());
+        int idGrupo = atoi(dados.idGrupo.c_str());
+        char s_pesquisa[256];
+        VARCHAR psq[256];
+        
+        int LinhaIni;
+        int LinhaFin;
+
+        int idContato;
+        VARCHAR nmContato[256];
+        VARCHAR nmUrlContato[256];
+        VARCHAR dsMensagemAviso[256];
+        VARCHAR nmPath[4001];
+        VARCHAR nmUrlContatoAcao[256];
+
+        short i_psq = -1;
+        short i_idContato;
+        short i_nmContato;
+        short i_nmUrlContato;
+        short i_dsMensagemAviso;
+        short i_nmPath;
+        short i_nmUrlContatoAcao;
+    EXEC SQL END DECLARE SECTION;
+
+    memset(&psq,0x0,sizeof(psq));
+
+    sprintf( s_pesquisa, "%%%s%%", (char*)dados.pesquisa.c_str() );
+    ULOG( "s_pesquisa [%s]",s_pesquisa );
+    
+    sprintf(linIni,"%d",dados.pageNumber * dados.tamamhoDoBloco + 1);
+    LinhaIni = atoi(linIni);
+    
+    sprintf(linFin,"%d",(dados.pageNumber+1) * dados.tamamhoDoBloco + 1); //+1 aqui é necessário para controle de fim de relatório
+    LinhaFin = atoi(linFin);
+
+    EXEC SQL
+    SELECT TRIM(UPPER(REPLACE(REPLACE(:s_pesquisa,'''','\'''),'\"','\'''))) INTO :psq:i_psq FROM DUAL;
+    CONVIND(psq,i_psq);
+    ULOG( "psq [%s]",(char*)psq.arr );
+    
+    
+
+    EXEC SQL DECLARE curPsqNmContato CURSOR FOR 
+    SELECT 
+       IDCONTATO,
+       NMCONTATO,
+       NMPATH
+    FROM
+    (
+        SELECT ROWNUM AS NLIN,IDCONTATO,NMCONTATO,NMPATH
+        FROM
+        (
+            SELECT 
+                CONTATO.IDCONTATO,
+                NOMECONTATO.NMCONTATO,
+                CONTATO.NMPATH
+            FROM 
+                CONTATOADM.CONTATO CONTATO,
+                CONTATOADM.CONTATOFOLHA CONTATOFOLHA,
+                CONTATOADM.NOMECONTATO NOMECONTATO,
+                CONTATOADM.CONTATOTIPOLINHA CONTATOTIPOLINHA,
+                CONTATOADM.CONTATOTIPOCARTEIRA CONTATOTIPOCARTEIRA,
+                CONTATOADM.CONTATOSEGMENTACAO CONTATOSEGMENTACAO,
+                CONTATOADM.CONTATOUFOPERADORA CONTATOUFOPERADORA,
+                CONTATOADM.CONTATOTIPORELACIONAMENTO CONTATOTIPORELACIONAMENTO
+            WHERE
+                CONTATO.INDISPONIBILIDADE = 1
+                AND CONTATO.IDCONTATO = CONTATOFOLHA.IDCONTATO
+                AND CONTATO.IDCONTATO = CONTATOTIPORELACIONAMENTO.IDCONTATO
+                AND CONTATO.IDCONTATO = CONTATOUFOPERADORA.IDCONTATO
+                AND CONTATO.IDCONTATO = CONTATOTIPOLINHA.IDCONTATO 
+                AND CONTATOTIPOLINHA.IDTIPOLINHA = :idTipoLinha
+                AND CONTATO.IDCONTATO = CONTATOTIPOCARTEIRA.IDCONTATO
+                AND CONTATOTIPOCARTEIRA.IDTIPOCARTEIRA = :idTipoCarteira
+                AND CONTATO.IDCONTATO = CONTATOSEGMENTACAO.IDCONTATO
+                AND CONTATOSEGMENTACAO.IDSEGMENTACAO = :idSegmentacao
+                AND CONTATO.IDNOMECONTATO = NOMECONTATO.IDNOMECONTATO
+                AND CONTATOUFOPERADORA.IDUFOPERADORA = :idUFOperadora
+                AND CONTATOTIPORELACIONAMENTO.IDTIPORELACIONAMENTO = :idTipoRelacionamento
+                AND TRUNC(NVL(CONTATOUFOPERADORA.DTINICIOVIGENCIA,SYSDATE)) <= TRUNC(SYSDATE) 
+                AND TRUNC(NVL(CONTATOUFOPERADORA.DTFIMVIGENCIA,SYSDATE)) >= TRUNC(SYSDATE) 
+                AND UPPER(NOMECONTATO.NMCONTATO) LIKE UPPER (:s_pesquisa)
+                AND EXISTS
+                (
+                    SELECT
+                        CONTATOGRUPO.IDCONTATO
+                    FROM
+                        CONTATOADM.CONTATOGRUPO CONTATOGRUPO,
+                        CONTATOADM.SEQUENCIA SEQUENCIA,
+                        CONTATOADM.TIPOSEQUENCIA TIPOSEQUENCIA,
+                        ACESSO.GRUPO GRUPO
+                    WHERE
+                        CONTATO.IDCONTATO = CONTATOGRUPO.IDCONTATO
+                        AND CONTATOGRUPO.IDGRUPO = :idGrupo
+                        AND CONTATOGRUPO.IDGRUPO = GRUPO.IDGRUPO
+                        AND GRUPO.DTEXCLUSAO IS NULL
+                        AND CONTATOGRUPO.IDCONTATOGRUPO = SEQUENCIA.IDCONTATOGRUPO
+                        AND SEQUENCIA.DTEXCLUSAO IS NULL
+                        AND SEQUENCIA.IDTIPOSEQUENCIA = TIPOSEQUENCIA.IDTIPOSEQUENCIA
+                        AND TIPOSEQUENCIA.NMTIPOSEQUENCIA = 'ABERTURA'
+                        AND ROWNUM < 2
+                )
+                ORDER BY UPPER(CONTATO.NMPATH),UPPER(NOMECONTATO.NMCONTATO)
+            )
+        )
+    WHERE NLIN >= :LinhaIni AND NLIN <= :LinhaFin;
+
+
+
+    // string outerJoinYN = " (+) ";
+    // if (1 == status.idTipoLinha && 1 == status.idTipoCarteira && 1 == status.idSegmentacao )
+    // {
+        // outerJoinYN = " ";
+    // }
+
+    // bool verificarUrl = false;
+    // if ( 1 == status.idUFOperadora && 1 == status.idTipoRelacionamento && 1 == status.idTipoLinha )
+    // {
+        // verificarUrl = true;
+    // }
+
+    // string queryStr =
+       // "SELECT IDCONTATO,NMCONTATO,NMPATH"
+       // "\nFROM"
+       // "\n("
+           // "\n\tSELECT ROWNUM AS NLIN,IDCONTATO,NMCONTATO,NMPATH"
+           // "\n\tFROM"
+           // "\n\t("
+               // "\n\t\tSELECT /*+ NO_CPU_COSTING */"
+                   // "\n\t\t\tCONTATO.IDCONTATO,"
+                   // "\n\t\t\tNOMECONTATO.NMCONTATO,"
+                   // "\n\t\t\tCONTATO.NMPATH"
+               // "\n\t\tFROM "
+                   // "\n\t\t\tCONTATOADM.CONTATO CONTATO,"
+                   // "\n\t\t\tCONTATOADM.CONTATOFOLHA CONTATOFOLHA,"
+                   // "\n\t\t\tCONTATOADM.NOMECONTATO NOMECONTATO,";
+   // if ( status.idTipoLinha != -1 )
+   // {
+        // queryStr +=
+                   // "\n\t\t\tCONTATOADM.CONTATOTIPOLINHA CONTATOTIPOLINHA,";
+   // }
+   // if ( status.idTipoLinha != -1 )
+   // {
+        // queryStr +=
+                   // "\n\t\t\tCONTATOADM.CONTATOTIPOCARTEIRA CONTATOTIPOCARTEIRA,";
+   // }
+   // if ( status.idTipoLinha != -1 )
+   // {
+        // queryStr +=
+                   // "\n\t\t\tCONTATOADM.CONTATOSEGMENTACAO CONTATOSEGMENTACAO,";
+   // }
+    // queryStr +=
+                   // "\n\t\t\tCONTATOADM.CONTATOUFOPERADORA CONTATOUFOPERADORA,"
+                   // "\n\t\t\tCONTATOADM.CONTATOTIPORELACIONAMENTO CONTATOTIPORELACIONAMENTO"
+               // "\n\t\tWHERE"
+                   // "\n\t\t\tCONTATO.INDISPONIBILIDADE = 1"
+               // "\n\t\tAND CONTATO.IDCONTATO = CONTATOFOLHA.IDCONTATO"
+               // "\n\t\tAND CONTATO.IDCONTATO = CONTATOTIPORELACIONAMENTO.IDCONTATO"
+               // "\n\t\tAND CONTATO.IDCONTATO = CONTATOUFOPERADORA.IDCONTATO";
+   // if ( status.idTipoLinha != -1 )
+   // {
+        // queryStr +=
+               // "\n\t\tAND CONTATO.IDCONTATO = CONTATOTIPOLINHA.IDCONTATO"+outerJoinYN+
+               // "\n\t\tAND CONTATOTIPOLINHA.IDTIPOLINHA = "+dados.idTipoLinha;
+   // }
+   // if ( status.idTipoLinha != -1 )
+   // {
+        // queryStr +=
+               // "\n\t\tAND CONTATO.IDCONTATO = CONTATOTIPOCARTEIRA.IDCONTATO"+outerJoinYN+
+               // "\n\t\tAND CONTATOTIPOCARTEIRA.IDTIPOCARTEIRA = "+dados.idTipoCarteira;
+   // }
+   // if ( status.idTipoLinha != -1 )
+   // {
+        // queryStr +=
+               // "\n\t\tAND CONTATO.IDCONTATO = CONTATOSEGMENTACAO.IDCONTATO"+outerJoinYN+
+               // "\n\t\tAND CONTATOSEGMENTACAO.IDSEGMENTACAO = "+dados.idSegmentacao;
+   // }
+        // queryStr +=
+               // "\n\t\tAND CONTATO.IDNOMECONTATO = NOMECONTATO.IDNOMECONTATO";
+
+   // if ( status.idUFOperadora != -1 )
+   // {
+        // queryStr +=
+               // "\n\t\tAND CONTATOUFOPERADORA.IDUFOPERADORA = "+dados.idUFOperadora;
+   // }
+
+   // if ( status.idTipoRelacionamento != -1 )
+   // {
+        // queryStr +=
+               // "\n\t\tAND CONTATOTIPORELACIONAMENTO.IDTIPORELACIONAMENTO = "+dados.idTipoRelacionamento;
+   // }
+
+        // queryStr +=
+               // "\n\t\tAND TRUNC(NVL(CONTATOUFOPERADORA.DTINICIOVIGENCIA,SYSDATE)) <= TRUNC(SYSDATE) "
+               // "\n\t\tAND TRUNC(NVL(CONTATOUFOPERADORA.DTFIMVIGENCIA,SYSDATE)) >= TRUNC(SYSDATE) "
+               // "\n\t\tAND UPPER(NOMECONTATO.NMCONTATO) LIKE (SELECT UPPER(REPLACE(REPLACE("+nmPadraoStr+",'''','\'''),'\"','\''')) FROM DUAL)"+
+               // "\n\t\tAND EXISTS"
+                   // "\n\t\t\t("
+                       // "\n\t\t\t\tSELECT"
+                           // "\n\t\t\t\t\tCONTATOGRUPO.IDCONTATO"
+                       // "\n\t\t\t\tFROM"
+                           // "\n\t\t\t\t\tCONTATOADM.CONTATOGRUPO CONTATOGRUPO,"
+                           // "\n\t\t\t\t\tCONTATOADM.SEQUENCIA SEQUENCIA,"
+                           // "\n\t\t\t\t\tCONTATOADM.TIPOSEQUENCIA TIPOSEQUENCIA,"
+                           // "\n\t\t\t\t\tACESSO.GRUPO GRUPO"
+                       // "\n\t\t\t\tWHERE"
+                           // "\n\t\t\t\tCONTATO.IDCONTATO = CONTATOGRUPO.IDCONTATO";
+   // if ( status.idGrupo != -1 )
+   // {
+        // queryStr +=
+                       // "\n\t\t\t\tAND CONTATOGRUPO.IDGRUPO = "+dados.idGrupo;
+   // }
+
+        // queryStr +=
+                       // "\n\t\t\t\tAND CONTATOGRUPO.IDGRUPO = GRUPO.IDGRUPO"
+                       // "\n\t\t\t\tAND GRUPO.DTEXCLUSAO IS NULL"
+                       // "\n\t\t\t\tAND CONTATOGRUPO.IDCONTATOGRUPO = SEQUENCIA.IDCONTATOGRUPO"
+                       // "\n\t\t\t\tAND SEQUENCIA.DTEXCLUSAO IS NULL"
+                       // "\n\t\t\t\tAND SEQUENCIA.IDTIPOSEQUENCIA = TIPOSEQUENCIA.IDTIPOSEQUENCIA"
+                       // "\n\t\t\t\tAND TIPOSEQUENCIA.NMTIPOSEQUENCIA = 'ABERTURA'"
+                       // "\n\t\t\t\tAND ROWNUM < 2"
+                   // "\n\t\t\t)"
+               // "\n\t\tORDER BY"
+                   // "\n\t\t\tUPPER(CONTATO.NMPATH),UPPER(NOMECONTATO.NMCONTATO)"
+           // "\n\t)"
+       // "\n)"
+       // "\nWHERE NLIN >= "+(string)linIni+" AND NLIN <= "+(string)linFin;
+
+    // pQuery = queryStr.c_str();
+    // ULOG("QUERY=%s",pQuery);
+
+    EXEC SQL WHENEVER SQLERROR DO WFATDPSQNMCTOErro(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    // EXEC SQL PREPARE queryPsqNmContato FROM :pQuery;
+    // EXEC SQL DECLARE curPsqNmContato CURSOR FOR queryPsqNmContato;
+    EXEC SQL OPEN curPsqNmContato;
+
+    int nRegs = 0;
+    bool bFim = false;
+
+    while ( !bFim )
+    {
+        nRegs++;
+
+        i_nmContato = i_nmPath = -1;
+
+        EXEC SQL
+            FETCH 
+                curPsqNmContato 
+            INTO
+                :idContato:i_idContato,
+                :nmContato:i_nmContato,
+                :nmPath:i_nmPath;
+
+        if ( sqlca.sqlcode )
+        {
+            bFim = true;
+        }
+
+        if ( nRegs > dados.tamamhoDoBloco )
+        {
+            break;
+        }
+
+        if ( !bFim )
+        {
+            i_dsMensagemAviso = -1;
+            EXEC SQL
+                SELECT
+                    MENSAGEMAVISO.DSMENSAGEMAVISO
+                INTO
+                    :dsMensagemAviso:i_dsMensagemAviso
+                FROM
+                    CONTATOADM.CONTATOFOLHAMENSAGEMAVISO CONTATOFOLHAMENSAGEMAVISO,
+                    CONTATOADM.MENSAGEMAVISO MENSAGEMAVISO
+                WHERE
+                    CONTATOFOLHAMENSAGEMAVISO.IDMENSAGEMAVISO = MENSAGEMAVISO.IDMENSAGEMAVISO
+                AND  
+                    CONTATOFOLHAMENSAGEMAVISO.IDCONTATO = :idContato;
+
+            CONVIND(dsMensagemAviso,i_dsMensagemAviso);
+
+            i_nmUrlContato = -1;
+
+            //if ( verificarUrl )
+            //{
+                EXEC SQL
+                    SELECT
+                        NMURLCONTATOINFORMACAO
+                    INTO
+                        :nmUrlContato:i_nmUrlContato
+                    FROM
+                        CONTATOADM.CONTATOINFORMACAO
+                    WHERE
+                        IDCONTATO = :idContato
+                    AND IDUFOPERADORA = :idUFOperadora
+                    AND IDTIPORELACIONAMENTO = :idTipoRelacionamento
+                    AND IDTIPOLINHA = :idTipoLinha;
+
+                CONVIND(nmUrlContato,i_nmUrlContato);
+            //}
+
+            CONVIND(nmContato,i_nmContato);
+            CONVIND(nmPath,i_nmPath);
+
+            i_nmUrlContatoAcao = -1;
+
+            EXEC SQL
+                SELECT
+                    NMURLCONTATOACAO
+                INTO
+                    :nmUrlContatoAcao:i_nmUrlContatoAcao
+                FROM
+                    CONTATOADM.CONTATOACAO
+                WHERE
+                    IDCONTATO = :idContato
+                AND IDUFOPERADORA = :idUFOperadora
+                AND IDTIPOLINHA = :idTipoLinha;
+
+            CONVIND(nmUrlContatoAcao,i_nmUrlContatoAcao);
+
+            if (saida)
+            {
+                saida->createTag("ContatoFolha");
+                    saida->addItem("idContato", idContato);
+                    saida->addItem("nmContato", (char*)nmContato.arr);
+                    saida->addItem("nmPath", (char*)nmPath.arr);
+                    saida->addItem("inRelacionamento", "1");
+
+                    if (i_nmUrlContato != -1) 
+                    {
+                        saida->addItem("nmPath", (char*)nmPath.arr);
+                    }
+
+                    if (i_dsMensagemAviso != -1) 
+                    {
+                        saida->addItem("mensagem", (char*)dsMensagemAviso.arr);
+                    }
+
+                    saida->addItem("nmUrlFunc", (char*)nmUrlContatoAcao.arr);
+                saida->closeTag();
+            }
+        }
+    }
+
+    if (saida)
+    {
+        saida->addItem("inFin", sqlca.sqlcode == 1403 ? true:false);
+    }
+
+    if ( sqlca.sqlcode == 1403 )
+    {
+        if ( 0 == dados.pageNumber && nRegs < 2 )
+        {
+            retorno = PADRAO_NAO_ENCONTRADO;
+        }
+    }
+
+    EXEC SQL CLOSE curPsqNmContato;
+
+    ULOG_START("proCPesquisaNomeFolha()");
+
+    return retorno;
+}
+
+void WFATDPSQNMCTOErro(sqlca*sqlca)
+{
+    ULOGE("WFATDPSQNMCTOErro:sqlcode=%d,sqlerrmc=%.70s"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

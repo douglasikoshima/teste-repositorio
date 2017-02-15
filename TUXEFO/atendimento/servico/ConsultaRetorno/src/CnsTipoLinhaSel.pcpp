@@ -1,0 +1,101 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <tuxfw.h>
+
+int ConsultaTpLinhaSel( const char *idContatoParam , const char *idRetorno, XMLGen *Saida )
+{
+    ULOG_START("ConsultaTpLinhaSel()");
+    struct sqlca sqlca;
+    sqlca.sqlcode=0 ;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR sgTipoLinha[256];
+        VARCHAR dsTipoLinha[256];
+        unsigned long idTipoLinha;
+        VARCHAR vlPeso[256];
+        unsigned long idContato = atol(idContatoParam );
+        unsigned long ORA_idRetorno = atol( idRetorno );
+
+        short   i_sgTipoLinha;
+        short   i_dsTipoLinha;
+        short   i_vlPeso;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL DECLARE ReadSelTipoLinha CURSOR FOR 
+        SELECT 
+            b.idTipoLinha, 
+            b.sgTipoLinha, 
+            b.dsTipoLinha, 
+            nvl(b.vlPeso,0) as vlpeso 
+        FROM 
+            ContatoAdm.TipoRetornoTipoLinha   a ,
+            Apoio.TipoLinha                   b ,
+            ContatoAdm.ContatoTipoRetorno     c
+        WHERE
+            a.idTipoLinha > 0
+        AND  
+            a.idTipoLinha = b.idTipoLinha 
+        AND 
+            a.idContatoTipoRetorno = c.idContatoTipoRetorno
+        AND
+            c.idContato = :idContato
+        AND 
+            c.idTipoRetornoContato = :ORA_idRetorno
+        ORDER BY dsTipoLinha;
+
+    EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+   
+    EXEC SQL OPEN ReadSelTipoLinha;
+
+    for( ;; )
+    {
+        EXEC SQL FETCH ReadSelTipoLinha INTO :idTipoLinha,
+                                             :sgTipoLinha:i_sgTipoLinha, 
+                                             :dsTipoLinha:i_dsTipoLinha, 
+                                             :vlPeso:i_vlPeso;
+        if ( i_sgTipoLinha < 0 )
+            sgTipoLinha.arr[0] = 0x0;
+        else
+            sgTipoLinha.arr[ sgTipoLinha.len ] = 0x0;
+
+        if ( i_dsTipoLinha < 0 )
+            dsTipoLinha.arr[0] = 0x0;
+        else
+            dsTipoLinha.arr[ dsTipoLinha.len ] = 0x0;
+
+        if ( i_vlPeso < 0 )
+            vlPeso.arr[0] = 0x0;
+        else
+            vlPeso.arr[ vlPeso.len ] = 0x0;
+
+        Saida->createTag( "AdmTipoLinhaVO" );
+            Saida->addItem( "idTipoLinha",idTipoLinha );
+            Saida->addItem( "sgTipoLinha",(char*)sgTipoLinha.arr );
+            Saida->addItem( "dsTipoLinha",(char*)dsTipoLinha.arr );
+            Saida->addItem( "vlPeso",(char*)vlPeso.arr );
+        Saida->closeTag();
+
+        memset( (char *)sgTipoLinha.arr , 0x0 , sizeof(sgTipoLinha.arr) );
+        memset( (char *)dsTipoLinha.arr , 0x0 , sizeof(dsTipoLinha.arr) );
+        memset( (char *)vlPeso.arr , 0x0 , sizeof(vlPeso.arr) );
+    }
+
+    EXEC SQL CLOSE ReadSelTipoLinha;
+    
+   ULOG_END("ConsultaTpLinhaSel()");
+   
+   return 1;
+
+UndefinedError:
+        throw new TuxBasicOraException( sqlca.sqlcode,
+                                        sqlca.sqlerrm.sqlerrmc,
+                                        sqlca.sqlerrm.sqlerrml );
+
+}
+

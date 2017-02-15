@@ -1,0 +1,32 @@
+.SILENT:
+
+#Variable Section
+BIN=dscAdmSisFunc
+CUSTOBJ=
+CUSTSO=dscIncUsuDis dscExcUsuDis dscAltUsuDis
+TUXSERVICES=INCUSUDISCADOR,EXCUSUDISCADOR,ALTUSUDISCADOR
+
+#Fix Section
+export CFLAGS=-L$(ORALIBDIR) -L/opt/esac/dvfo01rt/staging/lib -L/opt/tuxedo/current/lib -L/usr/lib -L/usr/local/lib -L/home/druida/imentone/libs -L../so
+export CC='xlC -qrtti'
+ORAINCDIR=-I$(ORACLE_HOME)/precomp/public
+ORAXACMD=-r Oracle_XA
+XERCES_CLIB=-l-lxerces-c
+FWLIB=-f "-ltuxfw"
+CC=$(SACCPP) $(PINCLUDE) $(PLIBPATH)
+BUILDSERV=buildserver -o
+CSOLNK=`echo $(CUSTSO)|awk '{flds=split($$0,v," ");for(i=1;i<=flds;i++)printf("-l-l%s ",v[i]);next;}'`
+
+all: $(BIN)
+$(BIN):
+	echo Building Server...
+	if ! [ -d bin ]; then mkdir bin; fi
+	$(BUILDSERV) bin/$(BIN) -brtl -f " $(CUSTOBJ)" $(CSOLNK) $(FWLIB) $(XERCES_CLIB) $(ORAXACMD) -s $(TUXSERVICES)
+
+install:
+	echo Installing $(BIN)...
+	cp bin/$(BIN) $(TUXDIR_DES)/bin/$(BIN)
+
+clean:
+	echo Cleaning $(BIN)...
+	rm -f bin/$(BIN)

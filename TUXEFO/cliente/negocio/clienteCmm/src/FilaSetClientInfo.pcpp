@@ -1,0 +1,784 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../include/FilaSetClientInfo.h"
+#include <tuxfw.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+FilaSetClientInfo::FilaSetClientInfo(void)
+{
+    ULOG_START("FilaSetClientInfo::FilaSetClientInfo");
+    memset(&m_tFilaSetClientInfo, 0x00, sizeof(TFilaSetClientInfo));
+    m_iRegIni=m_iRegFim=0;
+    ULOG_END("FilaSetClientInfo::FilaSetClientInfo");
+}
+
+FilaSetClientInfo::~FilaSetClientInfo(void)
+{
+    ULOG("FilaSetClientInfo::~FilaSetClientInfo");
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::controleAlocacao(void)
+{
+    m_iQtdElementosAlocados=QTD_ELEMENTOS_FILA_PRE;
+    m_iQtdElementosObtidos=0;
+
+    ULOG("m_iQtdElementosAlocados(%d)", m_iQtdElementosAlocados);
+    ULOG("sizeof(TFilaSetClientInfo)(%d)", sizeof(TFilaSetClientInfo));
+
+    if((m_ptFilaSetClientInfo = (TFilaSetClientInfo *) malloc((sizeof(TFilaSetClientInfo) * (m_iQtdElementosAlocados)))) == NULL ) {
+        throw new TuxBasicSvcException("13E0001", "Erro alocando memoria!");
+    }
+    ULOG("Memoria alocada m_ptFilaSetClientInfo (%p)", m_ptFilaSetClientInfo);
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::setRegIni(char *pszRegIni)
+{
+    m_iRegIni = atoi(pszRegIni);
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::setRegFim(char *pszRegFim)
+{
+    m_iRegFim = atoi(pszRegFim);
+}
+
+/*******************************************************************************************************/
+int FilaSetClientInfo::getRegIni(void)
+{
+    return m_iRegIni;
+}
+
+/*******************************************************************************************************/
+int FilaSetClientInfo::getRegFim(void)
+{
+    return m_iRegFim;
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::setIdFilaSetClientInfo(char *pszIdFilaSetClientInfo)
+{
+    strcpy(m_tFilaSetClientInfo.szIdFilaSetClientInfo, pszIdFilaSetClientInfo);
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::setCdErro(char *pszCdErro)
+{
+    strcpy(m_tFilaSetClientInfo.szCdErro, pszCdErro);
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::clearFilaSetClientInfo(void)
+{
+    memset(&m_tFilaSetClientInfo, 0x00, sizeof(TFilaSetClientInfo));
+}
+
+/*******************************************************************************************************/
+TFilaSetClientInfo *FilaSetClientInfo::buscaFilaSetClientInfoGroupError(void)
+{
+    static int iFlag=0;
+    static TFilaSetClientInfo tFilaSetClientInfoAux;
+    static TFilaSetClientInfo *ptFilaSetClientInfoAux;
+    static int iCount=0;
+
+    ULOG_START("FilaSetClientInfo::buscaFilaSetClientInfoGroupError");
+
+    if(iFlag == 0) {
+        this->controleAlocacao();
+        this->buscaFilaSetClientInfoPcGroupError();
+        ptFilaSetClientInfoAux=m_ptFilaSetClientInfo;
+        iFlag=1;
+    }
+
+    ULOG("m_ptFilaSetClientInfo(%p)ptFilaSetClientInfoAux(%p)", m_ptFilaSetClientInfo, ptFilaSetClientInfoAux);
+    ULOG("m_iQtdElementosAlocados(%d)m_iQtdElementosObtidos(%d)iCount(%d)", m_iQtdElementosAlocados, m_iQtdElementosObtidos, iCount);
+
+    if(iCount < m_iQtdElementosObtidos)
+    {
+        memcpy(&tFilaSetClientInfoAux, ptFilaSetClientInfoAux, sizeof(TFilaSetClientInfo));
+        iCount++;
+        ptFilaSetClientInfoAux++;
+
+        ULOG_END("FilaSetClientInfo::buscaFilaSetClientInfoGroupError <NOT NULL>");
+        return &tFilaSetClientInfoAux;
+    }
+    else
+    {
+        ULOG("Desalocando memoria ->m_ptFilaSetClientInfo(%p)", m_ptFilaSetClientInfo);
+        free(m_ptFilaSetClientInfo);
+        m_ptFilaSetClientInfo=NULL;
+        iFlag=0;
+        iCount=0;
+        m_iQtdElementosObtidos=0;
+
+        ULOG_END("FilaSetClientInfo::buscaFilaSetClientInfoGroupError <NULL>");
+        return NULL;
+    }
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::buscaFilaSetClientInfoPcGroupError(void)
+{
+    ULOG_START("FilaSetClientInfo::buscaFilaSetClientInfoPcGroupError");
+
+    struct sqlca sqlca;
+    int iCount;
+    TFilaSetClientInfo *ptFilaSetClientInfoAux;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszCdErro[LEN_CDERRO];
+        VARCHAR oszDsErro[LEN_DSERRO];
+        VARCHAR oszCount[LEN_NUMBER_ORA];
+
+        char cPesquisa[2000];
+    EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+
+    strcpy( cPesquisa,
+       "select a.cderro,a.qtde, "
+              "( "
+                   "select d.dserro "
+                   "from "
+                   "( "
+                       "select cderro,dserro "
+                       "from "
+                       "( "
+                           "SELECT "
+                               "nvl(b.cderro,'99E9999') as cderro,"
+                               "nvl(b.dserro,'Erro Indefinido') as dserro "
+                           "FROM "
+                               "infra.filasetclientinfo b "
+                           "WHERE "
+                               "b.qtretry >= NVL((SELECT TO_NUMBER(dsvalorparametro) FROM apoio.parametro WHERE cdparametro = 'FILASETCLIENTINFO_QTRETRYMAX'),10) "
+                           "UNION ALL "
+                           "SELECT "
+                               "'NULO' as cderro,"
+                               "' Registros para processar' as dserro "
+                           "FROM "
+                               "infra.filasetclientinfo b "
+                           "WHERE "
+                               "b.qtretry = 0 "
+                           "AND rownum < 2 "
+                           ") "
+                   ") d "
+                   "where d.cderro = a.cderro "
+                   "and rownum < 2 "
+              ") as dserro "
+       "from "
+       "( "
+           "select cderro,count(1) as qtde "
+           "from "
+           "( "
+               "SELECT "
+                   "nvl(b.cderro,'99E9999') as cderro,"
+                   "nvl(b.dserro,'Erro Indefinido') as dserro  "
+               "FROM "
+                   "infra.filasetclientinfo b "
+               "WHERE "
+                   "b.qtretry >= NVL((SELECT TO_NUMBER(dsvalorparametro) FROM apoio.parametro WHERE cdparametro = 'FILASETCLIENTINFO_QTRETRYMAX'),10) "
+               "UNION ALL           "
+               "SELECT "
+                   "'NULO' as cderro,"
+                   "' Registros para processar' as dserro "
+               "FROM "
+                   "infra.filasetclientinfo b "
+               "WHERE "
+                   "b.qtretry = 0 "
+               ") "
+               "group by (cderro) "
+       ") a "
+       "order by 3 ");
+
+    // strcpy( cPesquisa,
+    //     "SELECT "
+    //       "NVL(cderro, 'NULO') as cderro, "
+    //       "qtd, "
+    //       "NVL(dserro, ' Registros para processar') as dserro "
+    //     "FROM "
+    //     "( "
+    //       "SELECT "
+    //         "cderro, "
+    //         "count(1) as qtd, "
+    //         "( "
+    //         "SELECT "
+    //           "b.dserro "
+    //         "FROM "
+    //           "infra.filasetclientinfo b "
+    //         "WHERE "
+    //           "a.cderro = b.cderro "
+    //         "AND "
+    //           "b.qtretry >= NVL((SELECT TO_NUMBER(dsvalorparametro) "
+    //                               "FROM apoio.parametro "
+    //                              "WHERE cdparametro = 'FILASETCLIENTINFO_QTRETRYMAX'),10) "
+    //         "AND "
+    //           "ROWNUM < 2 "
+    //         ") as dserro "
+    //       "FROM "
+    //         "infra.filasetclientinfo a "
+    //       "GROUP BY "
+    //         "cderro "
+    //     ") "
+    //     "ORDER BY "
+    //       "dserro");
+
+    ULOGI("Pesquisa[%s]", cPesquisa);
+
+    EXEC SQL PREPARE qPesquisa FROM :cPesquisa;
+    EXEC SQL DECLARE cFSCInfoGE CURSOR FOR qPesquisa;
+
+    EXEC SQL OPEN cFSCInfoGE;
+
+    for(iCount=0, ptFilaSetClientInfoAux=m_ptFilaSetClientInfo;;iCount++, ptFilaSetClientInfoAux++, m_iQtdElementosObtidos++)
+    {
+        EXEC SQL FETCH cFSCInfoGE INTO
+            :oszCdErro,
+            :oszCount,
+            :oszDsErro;
+
+        ULOG("m_iQtdElementosAlocados(%d)iCount(%d)", m_iQtdElementosAlocados, iCount);
+
+        /* Verifica se precisa realocar espaco */
+        if(iCount >= m_iQtdElementosAlocados) {
+            m_iQtdElementosAlocados++;
+
+            ULOG("Realocando memoria [%p]", m_ptFilaSetClientInfo);
+            m_ptFilaSetClientInfo = (TFilaSetClientInfo *) realloc(m_ptFilaSetClientInfo, sizeof(TFilaSetClientInfo) * (m_iQtdElementosAlocados));
+            ULOG("Memoria realocada [%p] bloco(%d)", m_ptFilaSetClientInfo, sizeof(TFilaSetClientInfo) * (m_iQtdElementosAlocados));
+
+            /* Atribui o novo endereco obtido e posiciona o ponteiro na posicao do ultimo registro obtido antes da realocacao */
+            ptFilaSetClientInfoAux = m_ptFilaSetClientInfo+iCount;
+        }
+
+        /* copia as informacoes obtidas para o ponteiro */
+        memset(ptFilaSetClientInfoAux, 0x00, sizeof(TFilaSetClientInfo));
+        STRCPY_FROM_ORA(ptFilaSetClientInfoAux->szCdErro, oszCdErro);
+        STRCPY_FROM_ORA(ptFilaSetClientInfoAux->szCount, oszCount);
+        STRCPY_FROM_ORA(ptFilaSetClientInfoAux->szDsErro, oszDsErro);
+    }
+
+    EXEC SQL CLOSE cFSCInfoGE;
+
+    ULOG("iCount(%d) m_iQtdElementosAlocados(%d) m_iQtdElementosObtidos(%d)", iCount, m_iQtdElementosAlocados, m_iQtdElementosObtidos);
+
+    ULOGI("Finalizando FilaSetClientInfo::buscaFilaSetClientInfoPcGroupError");
+    ULOG_END("FilaSetClientInfo::buscaFilaSetClientInfoPcGroupError");
+    return;
+
+    erro:
+        ULOGE("Finalizando FilaSetClientInfo::buscaFilaSetClientInfoPcGroupError <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************************************/
+TFilaSetClientInfo *FilaSetClientInfo::buscaFilaSetClientInfoDetailError(void)
+{
+    static int iFlag=0;
+    static TFilaSetClientInfo tFilaSetClientInfoAux;
+    static TFilaSetClientInfo *ptFilaSetClientInfoAux;
+    static int iCount=0;
+
+    ULOG_START("FilaSetClientInfo::buscaFilaSetClientInfoDetailError");
+
+    if(iFlag == 0) {
+        this->controleAlocacao();
+        this->buscaFilaSetClientInfoPcDetailError();
+        ptFilaSetClientInfoAux=m_ptFilaSetClientInfo;
+        iFlag=1;
+    }
+
+    ULOG("m_ptFilaSetClientInfo(%p)ptFilaSetClientInfoAux(%p)", m_ptFilaSetClientInfo, ptFilaSetClientInfoAux);
+    ULOG("m_iQtdElementosAlocados(%d)m_iQtdElementosObtidos(%d)iCount(%d)", m_iQtdElementosAlocados, m_iQtdElementosObtidos, iCount);
+
+    if(iCount < m_iQtdElementosObtidos)
+    {
+        memcpy(&tFilaSetClientInfoAux, ptFilaSetClientInfoAux, sizeof(TFilaSetClientInfo));
+        iCount++;
+        ptFilaSetClientInfoAux++;
+
+        ULOG_END("FilaSetClientInfo::buscaFilaSetClientInfoDetailError <NOT NULL>");
+        return &tFilaSetClientInfoAux;
+    }
+    else
+    {
+        ULOG("Desalocando memoria ->m_ptFilaSetClientInfo(%p)", m_ptFilaSetClientInfo);
+        free(m_ptFilaSetClientInfo);
+        m_ptFilaSetClientInfo=NULL;
+        iFlag=0;
+        iCount=0;
+        m_iQtdElementosObtidos=0;
+
+        ULOG_END("FilaSetClientInfo::buscaFilaSetClientInfoDetailError <NULL>");
+        return NULL;
+    }
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::buscaFilaSetClientInfoPcDetailError(void)
+{
+    ULOG_START("FilaSetClientInfo::buscaFilaSetClientInfoPcDetailError");
+
+    struct sqlca sqlca;
+    int iCount;
+    TFilaSetClientInfo *ptFilaSetClientInfoAux;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszCdErro[LEN_CDERRO];
+
+        VARCHAR oszIdFilaSetClientInfo[LEN_IDFILASETCLIENTINFO];
+        VARCHAR oszDtTimeStamp[LEN_DTTIMESTAMP];
+        VARCHAR oszDtErro[LEN_DTERRO];
+        VARCHAR oszXml1[LEN_XML1];
+
+        short iIdFilaSetClientInfo;
+        short iDtTimeStamp;
+        short iDtErro;
+        short iXml1;
+
+        int varOraQtRetriesMax;
+        short statOraQtRetriesMax=0;
+
+        int oiRegIni;
+        int oiRegFim;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            TO_NUMBER(dsvalorparametro)
+        INTO
+            :varOraQtRetriesMax:statOraQtRetriesMax
+        FROM
+            apoio.parametro 
+        WHERE
+            cdparametro = 'FILASETCLIENTINFO_QTRETRYMAX';
+
+    if ( sqlca.sqlcode )
+    { // se não encontrar, usa valor default
+        varOraQtRetriesMax = 10;
+    }
+
+    ULOG("FILASETCLIENTINFO_QTRETRYMAX=%d", varOraQtRetriesMax);
+
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    STRCPY_TO_ORA(oszCdErro, m_tFilaSetClientInfo.szCdErro);
+    oiRegIni=this->getRegIni(); ULOG("oiRegIni(%d)", oiRegIni);
+    oiRegFim=this->getRegFim(); ULOG("oiRegFim(%d)", oiRegFim);
+
+    EXEC SQL DECLARE cFSCInfoDE CURSOR for
+        SELECT
+          idfilasetclientinfo,
+          TO_CHAR(dttimestamp, 'DD/MM/YYYY HH:MI:SS') AS dttimestamp,
+          TO_CHAR(dterro, 'DD/MM/YYYY HH:MI:SS') AS dterro,
+          xml1
+        FROM
+        (
+          SELECT
+            idfilasetclientinfo,
+            dttimestamp,
+            dterro,
+            xml1,
+            ROWNUM AS linha
+          FROM
+          (
+            SELECT
+              idfilasetclientinfo,
+              dttimestamp,
+              dterro,
+              xml1
+            FROM
+              infra.filasetclientinfo
+            WHERE
+              NVL(cderro,'99E9999') = :oszCdErro
+            AND qtretry >= :varOraQtRetriesMax
+            ORDER BY
+              dttimestamp 
+          )
+          WHERE
+            ROWNUM <= :oiRegFim
+        )
+        WHERE
+          linha >= :oiRegIni;
+
+    EXEC SQL OPEN cFSCInfoDE;
+
+    for(iCount=0, ptFilaSetClientInfoAux=m_ptFilaSetClientInfo;;iCount++, ptFilaSetClientInfoAux++, m_iQtdElementosObtidos++)
+    {
+        memset(&oszIdFilaSetClientInfo,0,LEN_IDFILASETCLIENTINFO);
+        memset(&oszDtTimeStamp,0,LEN_DTTIMESTAMP);
+        memset(&oszDtErro,0,LEN_DTERRO);
+        memset(&oszXml1,0,LEN_XML1);
+
+        iIdFilaSetClientInfo=iDtTimeStamp=iDtErro=iXml1=0;
+
+        EXEC SQL FETCH cFSCInfoDE INTO
+            :oszIdFilaSetClientInfo:iIdFilaSetClientInfo,
+            :oszDtTimeStamp:iDtTimeStamp,
+            :oszDtErro:iDtErro,
+            :oszXml1:iXml1;
+
+        ULOG("m_iQtdElementosAlocados(%d)iCount(%d)", m_iQtdElementosAlocados, iCount);
+
+        /* Verifica se precisa realocar espaco */
+        if(iCount >= m_iQtdElementosAlocados) {
+            m_iQtdElementosAlocados++;
+
+            ULOG("Realocando memoria [%p]", m_ptFilaSetClientInfo);
+            m_ptFilaSetClientInfo = (TFilaSetClientInfo *) realloc(m_ptFilaSetClientInfo, sizeof(TFilaSetClientInfo) * (m_iQtdElementosAlocados));
+            ULOG("Memoria realocada [%p] bloco(%d)", m_ptFilaSetClientInfo, sizeof(TFilaSetClientInfo) * (m_iQtdElementosAlocados));
+
+            /* Atribui o novo endereco obtido e posiciona o ponteiro na posicao do ultimo registro obtido antes da realocacao */
+            ptFilaSetClientInfoAux = m_ptFilaSetClientInfo+iCount;
+        }
+
+        /* copia as informacoes obtidas para o ponteiro */
+        memset(ptFilaSetClientInfoAux, 0x00, sizeof(TFilaSetClientInfo));
+        STRCPY_FROM_ORA(ptFilaSetClientInfoAux->szIdFilaSetClientInfo, oszIdFilaSetClientInfo);
+        STRCPY_FROM_ORA(ptFilaSetClientInfoAux->szDtTimeStamp, oszDtTimeStamp);
+        STRCPY_FROM_ORA(ptFilaSetClientInfoAux->szDtErro, oszDtErro);
+        STRCPY_FROM_ORA(ptFilaSetClientInfoAux->szXml1, oszXml1);
+    }
+
+    EXEC SQL CLOSE cFSCInfoDE;
+
+    ULOG("iCount(%d) m_iQtdElementosAlocados(%d) m_iQtdElementosObtidos(%d)", iCount, m_iQtdElementosAlocados, m_iQtdElementosObtidos);
+
+    ULOGI("Finalizando FilaSetClientInfo::buscaFilaSetClientInfoPcDetailError");
+    ULOG_END("FilaSetClientInfo::buscaFilaSetClientInfoPcDetailError");
+    return;
+
+    erro:
+        ULOGE("Finalizando FilaSetClientInfo::buscaFilaSetClientInfoPcDetailError <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::apagaGrupoErroFilaSetClientInfo(void)
+{
+    ULOG_START("FilaSetClientInfo::apagaGrupoErroFilaSetClientInfo");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszCdErro[LEN_CDERRO];
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto notFound;
+
+    ULOG("m_tFilaSetClientInfo.szCdErro[%s]", m_tFilaSetClientInfo.szCdErro);
+    STRCPY_TO_ORA(oszCdErro, m_tFilaSetClientInfo.szCdErro);
+
+    EXEC SQL
+        DELETE FROM
+            infra.filasetclientinfo
+        WHERE
+            cderro = :oszCdErro;
+
+
+    ULOGI("Finalizando FilaSetClientInfo::apagaGrupoErroFilaSetClientInfo <OK>");
+    ULOG_END("FilaSetClientInfo::apagaGrupoErroFilaSetClientInfo");
+    return;
+
+    erro:
+        ULOGE("Finalizando FilaSetClientInfo::apagaGrupoErroFilaSetClientInfo <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+
+    notFound:
+        ULOGI("Finalizando FilaSetClientInfo::apagaGrupoErroFilaSetClientInfo <NOT FOUND>");
+        ULOG_END("FilaSetClientInfo::apagaGrupoErroFilaSetClientInfo");
+        return;
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::atualizaGrupoErroFilaSetClientInfo(void)
+{
+    ULOG_START("FilaSetClientInfo::atualizaGrupoErroFilaSetClientInfo");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszCdErro[LEN_CDERRO];
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto notFound;
+
+    ULOG("m_tFilaSetClientInfo.szCdErro[%s]", m_tFilaSetClientInfo.szCdErro);
+    STRCPY_TO_ORA(oszCdErro, m_tFilaSetClientInfo.szCdErro);
+
+    EXEC SQL
+        UPDATE
+            infra.filasetclientinfo
+        SET
+            cderro = NULL,
+            dserro = NULL,
+            dterro = NULL,
+            qtretry = 0
+        WHERE
+            cderro = :oszCdErro;
+
+
+    ULOGI("Finalizando FilaSetClientInfo::atualizaGrupoErroFilaSetClientInfo <OK>");
+    ULOG_END("FilaSetClientInfo::atualizaGrupoErroFilaSetClientInfo");
+    return;
+
+    erro:
+        ULOGE("Finalizando FilaSetClientInfo::atualizaGrupoErroFilaSetClientInfo <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+
+    notFound:
+        ULOGI("Finalizando FilaSetClientInfo::atualizaGrupoErroFilaSetClientInfo <NOT FOUND>");
+        ULOG_END("FilaSetClientInfo::atualizaGrupoErroFilaSetClientInfo");
+        return;
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::apagaIdFilaSetClientInfo(void)
+{
+    ULOG_START("FilaSetClientInfo::apagaIdFilaSetClientInfo");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdFilaSetClientInfo[LEN_IDFILASETCLIENTINFO];
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto notFound;
+
+    ULOG("m_tFilaSetClientInfo.szIdFilaSetClientInfo[%s]", m_tFilaSetClientInfo.szIdFilaSetClientInfo);
+    STRCPY_TO_ORA(oszIdFilaSetClientInfo, m_tFilaSetClientInfo.szIdFilaSetClientInfo);
+
+    EXEC SQL
+        DELETE FROM
+            infra.filasetclientinfo
+        WHERE
+            idfilasetclientinfo = :oszIdFilaSetClientInfo;
+
+
+    ULOGI("Finalizando FilaSetClientInfo::apagaIdFilaSetClientInfo <OK>");
+    ULOG_END("FilaSetClientInfo::apagaIdFilaSetClientInfo");
+    return;
+
+    erro:
+        ULOGE("Finalizando FilaSetClientInfo::apagaIdFilaSetClientInfo <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+
+    notFound:
+        ULOGI("Finalizando FilaSetClientInfo::apagaIdFilaSetClientInfo <NOT FOUND>");
+        ULOG_END("FilaSetClientInfo::apagaIdFilaSetClientInfo");
+        return;
+}
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::atualizaIdFilaSetClientInfo(void)
+{
+    ULOG_START("FilaSetClientInfo::atualizaIdFilaSetClientInfo");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdFilaSetClientInfo[LEN_IDFILASETCLIENTINFO];
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto notFound;
+
+    ULOG("m_tFilaSetClientInfo.szIdFilaSetClientInfo[%s]", m_tFilaSetClientInfo.szIdFilaSetClientInfo);
+    STRCPY_TO_ORA(oszIdFilaSetClientInfo, m_tFilaSetClientInfo.szIdFilaSetClientInfo);
+
+    EXEC SQL
+        UPDATE
+            infra.filasetclientinfo
+        SET
+            cderro = NULL,
+            dserro = NULL,
+            dterro = NULL,
+            qtretry = 0
+        WHERE
+            idfilasetclientinfo = :oszIdFilaSetClientInfo;
+
+
+    ULOGI("Finalizando FilaSetClientInfo::atualizaIdFilaSetClientInfo <OK>");
+    ULOG_END("FilaSetClientInfo::atualizaIdFilaSetClientInfo");
+    return;
+
+    erro:
+        ULOGE("Finalizando FilaSetClientInfo::atualizaIdFilaSetClientInfo <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+
+    notFound:
+        ULOGI("Finalizando FilaSetClientInfo::atualizaIdFilaSetClientInfo <NOT FOUND>");
+        ULOG_END("FilaSetClientInfo::atualizaIdFilaSetClientInfo");
+        return;
+}
+
+
+/*******************************************************************************************************/
+void FilaSetClientInfo::buscaFilaSetClientInfo(TFilaSetClientInfo *ptFilaSetClientInfo)
+{
+    ULOG_START("FilaSetClientInfo::buscaFilaSetClientInfo");
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdFilaSetClientInfo[LEN_IDFILASETCLIENTINFO];
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszXml1[LEN_XML1];
+    EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto erro;
+
+    STRCPY_TO_ORA(oszIdFilaSetClientInfo, ptFilaSetClientInfo->szIdFilaSetClientInfo);
+    ULOG("oszIdFilaSetClientInfo[%.*s]", oszIdFilaSetClientInfo.len, oszIdFilaSetClientInfo.arr);
+
+    EXEC SQL
+        SELECT
+            idlinhatelefonica,
+            xml1
+        INTO
+            :oszIdLinhaTelefonica,
+            :oszXml1
+        FROM
+            infra.filasetclientinfo
+        WHERE
+            idfilasetclientinfo = :oszIdFilaSetClientInfo;
+
+
+    STRCPY_FROM_ORA(ptFilaSetClientInfo->szIdLinhaTelefonica, oszIdLinhaTelefonica); ULOG("oszIdLinhaTelefonica[%.*s]", oszIdLinhaTelefonica.len, oszIdLinhaTelefonica.arr);
+    STRCPY_FROM_ORA(ptFilaSetClientInfo->szXml1, oszXml1); ULOG("oszXml1[%.*s]", oszXml1.len, oszXml1.arr);
+
+
+    ULOGI("Finalizando FilaSetClientInfo::buscaFilaSetClientInfo");
+    ULOG_END("FilaSetClientInfo::buscaFilaSetClientInfo");
+    return;
+
+    erro:
+        ULOGE("Finalizando FilaSetClientInfo::buscaFilaSetClientInfo <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+
+/*******************************************************************************************************/
+TFilaSetClientInfo *FilaSetClientInfo::buscaFilaSetClientInfoCdErro(char *pszCdErro)
+{
+    ULOG_START("FilaSetClientInfo::buscaFilaSetClientInfoCdErro");
+
+    struct sqlca sqlca;
+    static int iQtdAlocado=0;
+    static int iCountReturn=0;
+    static TFilaSetClientInfo tFilaSetClientInfo;
+    static TFilaSetClientInfo *ptFilaSetClientInfo=NULL;
+    static TFilaSetClientInfo *ptFilaSetClientInfoAux=NULL;
+    static int iFlag=0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszCdErro[LEN_CDERRO];
+        VARCHAR oszIdFilaSetClientInfo[LEN_IDFILASETCLIENTINFO];
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszXml1[LEN_XML1];
+    EXEC SQL END DECLARE SECTION;
+
+
+    if(iFlag==0)
+    {
+        EXEC SQL WHENEVER SQLERROR goto erro;
+        EXEC SQL WHENEVER NOT FOUND DO break;
+    
+        STRCPY_TO_ORA(oszCdErro, pszCdErro);
+        ULOG("oszCdErro[%.*s]", oszCdErro.len, oszCdErro.arr);
+    
+        EXEC SQL DECLARE cFSCInfoCdErro CURSOR for
+            SELECT
+                idlinhatelefonica,
+                xml1
+            FROM
+                infra.filasetclientinfo
+            WHERE
+                cderro = :oszCdErro;
+    
+        EXEC SQL OPEN cFSCInfoCdErro;
+    
+        for(;;iQtdAlocado++)
+        {
+            EXEC SQL FETCH cFSCInfoCdErro INTO
+                :oszIdLinhaTelefonica,
+                :oszXml1;
+    
+            ULOG("iQtdAlocado(%d)", iQtdAlocado);
+    
+            if((ptFilaSetClientInfo = (TFilaSetClientInfo *) realloc(ptFilaSetClientInfo, (sizeof(TFilaSetClientInfo) * (iQtdAlocado+1)))) == NULL) {
+                throw new TuxBasicSvcException("13E1313", "Erro realocando memoria.");
+            }
+
+            ULOG("Memoria realocada [%p] bloco(%d)", ptFilaSetClientInfo, sizeof(TFilaSetClientInfo) * (iQtdAlocado+1));
+            ptFilaSetClientInfoAux=ptFilaSetClientInfo;
+            ptFilaSetClientInfoAux+=iQtdAlocado; ULOG("ptFilaSetClientInfoAux[%p]", ptFilaSetClientInfoAux);
+    
+            /* copia as informacoes obtidas para o ponteiro */
+            memset(ptFilaSetClientInfoAux, 0x00, sizeof(TFilaSetClientInfo));
+            STRCPY_FROM_ORA(ptFilaSetClientInfoAux->szIdLinhaTelefonica, oszIdLinhaTelefonica);
+            STRCPY_FROM_ORA(ptFilaSetClientInfoAux->szXml1, oszXml1);
+        }
+    
+        EXEC SQL CLOSE cFSCInfoCdErro;
+    
+        ULOG("iQtdAlocado(%d)", iQtdAlocado);
+        /* posiciona o ponteiro no primeiro elemento para iniciar leitura */
+        ptFilaSetClientInfoAux=ptFilaSetClientInfo;
+
+        iFlag=1;
+    }
+
+    ULOG("iQtdAlocado(%d)iCountReturn(%d)", iQtdAlocado, iCountReturn);
+    
+    if(iCountReturn < iQtdAlocado)
+    {
+        ULOG("ptFilaSetClientInfoAux[%p]", ptFilaSetClientInfoAux);
+        memcpy(&tFilaSetClientInfo, ptFilaSetClientInfoAux, sizeof(TFilaSetClientInfo));
+
+        ULOGI("Finalizando FilaSetClientInfo::buscaFilaSetClientInfoCdErro <NOT NULL>");
+        ULOG_END("FilaSetClientInfo::buscaFilaSetClientInfoCdErro");
+
+        iCountReturn++;
+        ptFilaSetClientInfoAux++;
+
+        return &tFilaSetClientInfo;
+    }
+    else
+    {
+        if(ptFilaSetClientInfo)
+            free(ptFilaSetClientInfo);
+        ptFilaSetClientInfo=ptFilaSetClientInfoAux=NULL;
+        iFlag=iQtdAlocado=iCountReturn=0;
+    
+        ULOGI("Finalizando FilaSetClientInfo::buscaFilaSetClientInfoCdErro <NULL>");
+        ULOG_END("FilaSetClientInfo::buscaFilaSetClientInfoCdErro");
+    
+        return NULL;
+    }
+
+    erro:
+        if(ptFilaSetClientInfo)
+            free(ptFilaSetClientInfo);
+        ptFilaSetClientInfo=ptFilaSetClientInfoAux=NULL;
+        iFlag=iQtdAlocado=iCountReturn=0;
+
+        ULOGE("Finalizando FilaSetClientInfo::buscaFilaSetClientInfoCdErro <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

@@ -1,0 +1,287 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:34:29 $
+ **/ 
+
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+
+#include <tuxfw.h>
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+#include "../../../commons/SmallString.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+	#include "../include/stcWFAtividadeMotivo.h"
+EXEC SQL END DECLARE SECTION;
+
+void sql_error_AtividadeMotivo(sqlca*sqlca);
+
+bool proCIncluirAtividadeMotivo(st_AtividadeMotivo* dados, st_vlAtividadeMotivo* status, XMLGen* saida)
+{
+    ULOG_START( "proCIncluirAtividadeMotivo()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AtividadeMotivo   oDados;
+		struct st_vlAtividadeMotivo oStatus;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_AtividadeMotivo(&sqlca);
+
+	EXEC SQL SELECT atendimento.AtividadeMotivoSQ.NEXTVAL INTO :oDados.idAtividadeMotivo FROM DUAL;
+
+	EXEC SQL 
+		INSERT INTO
+			WORKFLOW.AtividadeMotivo
+			(
+				idAtividadeMotivo,
+				idAtividade,
+				idMotivo,
+				idUsuarioAlteracao,
+				dtUltimaAlteracao
+			)
+			VALUES
+			(
+				:oDados.idAtividadeMotivo,
+				:oDados.idAtividade,
+				:oDados.idMotivo,
+				DECODE(:oStatus.idUsuarioAlteracao,-1,NULL,:oDados.idUsuarioAlteracao),
+                TO_DATE(DECODE(:oStatus.dtUltimaAlteracao,-1,NULL,:oDados.dtUltimaAlteracao),'DD/MM/YYYY HH24:MI:SS')
+			);
+
+    ULOG_END( "proCIncluirAtividadeMotivo()" );
+
+    return sqlca.sqlcode == 0 ? true : false;
+}
+
+
+bool proCAlterarAtividadeMotivo(st_AtividadeMotivo* dados, st_vlAtividadeMotivo* status, XMLGen* saida)
+{
+    ULOG_START( "proCAlterarAtividadeMotivo()" );
+
+	struct sqlca sqlca;
+	SmallString query = "UPDATE WORKFLOW.AtividadeMotivo SET ";
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AtividadeMotivo   oDados;
+		struct st_vlAtividadeMotivo oStatus;
+        char *pQuery;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_AtividadeMotivo(&sqlca);
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+	bool separa = false;
+
+	if (status->idAtividade != -1)
+    {
+		montarUpdate(query,"idAtividade", oDados.idAtividade, TIPO_INT);
+    }
+
+	if (status->idUsuarioAlteracao != -1) 
+    {
+		montarUpdate(query,"idUsuarioAlteracao", oDados.idUsuarioAlteracao, TIPO_INT);
+    }
+
+	if (status->idMotivo != -1) 
+    {
+		montarUpdate(query,"idMotivo", oDados.idMotivo, TIPO_INT);
+    }
+
+	if (status->dtUltimaAlteracao != -1) 
+    {
+		montarUpdate(query,"dtUltimaAlteracao", oDados.dtUltimaAlteracao, TIPO_DATAHORA);
+    }
+
+	query += "WHERE idMotivo = ";
+    query += dados->idAtividadeMotivo;
+
+    pQuery = query.c_str();
+
+    ULOG("QUERY=%s",pQuery);
+
+	EXEC SQL EXECUTE IMMEDIATE :pQuery;
+
+    ULOG_END( "proCAlterarAtividadeMotivo()" );
+
+    return sqlca.sqlcode == 0 ? true : false;
+}
+
+bool proCExcluirAtividadeMotivo(st_AtividadeMotivo* dados, st_vlAtividadeMotivo* status, XMLGen* saida)
+{
+    ULOG_START( "proCExcluirAtividadeMotivo()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idAtividadeMotivo = dados->idAtividadeMotivo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_AtividadeMotivo(&sqlca);
+
+	EXEC SQL 
+		DELETE
+			WORKFLOW.AtividadeMotivo
+		WHERE
+			IDATIVIDADEMOTIVO = :idAtividadeMotivo;
+
+    ULOG( "idAtividadeMotivo excluido=%d",idAtividadeMotivo );
+
+    ULOG_END( "proCExcluirAtividadeMotivo()" );
+
+    return sqlca.sqlcode == 0 ? true : false;
+}
+
+// DADO UMA ATIVIDADE RETORNA OS MOTIVOS ASSOCIADOS
+bool proCObterAtividadeMotivo(int _idAtividade,XMLGen* saida)
+{
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idAtividade = _idAtividade;
+		int idMotivo;
+		VARCHAR dsMotivo[256];
+
+		short i_dsMotivo=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_AtividadeMotivo(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE tsqlcursorAtividadeMotivo CURSOR for
+	   SELECT 
+		       MOTIVO.IDMOTIVO, 
+		       MOTIVO.DSMOTIVO
+	   FROM  
+  	           WORKFLOW.ATIVIDADEMOTIVO ATIVIDADEMOTIVO,
+		       ATENDIMENTO.MOTIVO MOTIVO
+	   WHERE
+		       ATIVIDADEMOTIVO.IDMOTIVO = MOTIVO.IDMOTIVO
+  	   AND 
+			   ATIVIDADEMOTIVO.IDATIVIDADEMOTIVO = :idAtividade
+       ORDER BY
+               UPPER(MOTIVO.DSMOTIVO);
+		
+	EXEC SQL OPEN tsqlcursorAtividadeMotivo;
+	
+	for(;;) 
+   {
+		EXEC SQL FETCH tsqlcursorAtividadeMotivo INTO 
+                idMotivo, 
+                dsMotivo:i_dsMotivo;
+
+		CONVIND( dsMotivo,i_dsMotivo );
+	
+		saida->createTag("WFMotivoVO");
+	   	    saida->addItem( "idMotivo",idMotivo );
+	   	    saida->addItem( "dsMotivo",(char *)dsMotivo.arr );
+		saida->closeTag();
+	}
+	
+   EXEC SQL CLOSE tsqlcursorAtividadeMotivo;
+
+   if ( i_dsMotivo == -1)
+   {
+       return false;
+   }
+   else
+   { 
+      return true;
+   }
+
+}
+
+
+bool proCObterAtividadeMotivoFase(int _idAtividade,int _idFase,XMLGen* saida)
+{
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idAtividade = _idAtividade;
+		int idFase = _idFase;
+		int idMotivo;
+		VARCHAR dsMotivo[256];
+
+		short i_dsMotivo=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_AtividadeMotivo(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE tsqlcursorAtividadeMotivoFase CURSOR for
+	   SELECT 
+		       MOTIVO.IDMOTIVO, 
+		       MOTIVO.DSMOTIVO
+	   FROM  
+  	           WORKFLOW.ATIVIDADEMOTIVO ATIVIDADEMOTIVO,
+		       ATENDIMENTO.MOTIVO MOTIVO,
+		       ATENDIMENTO.MOTIVOFASE MOTIVOFASE
+	   WHERE
+		       ATIVIDADEMOTIVO.IDMOTIVO = MOTIVO.IDMOTIVO
+		AND       
+		       MOTIVOFASE.IDMOTIVO      = MOTIVO.IDMOTIVO
+  	   AND 
+			   ATIVIDADEMOTIVO.IDATIVIDADEMOTIVO = :idAtividade
+		AND	   
+  	         MOTIVOFASE.IDFASE = :idFase
+      ORDER BY
+               UPPER(MOTIVO.DSMOTIVO);
+		
+	EXEC SQL OPEN tsqlcursorAtividadeMotivoFase;
+	
+	for(;;) 
+   {
+		EXEC SQL FETCH tsqlcursorAtividadeMotivoFase INTO 
+                idMotivo, 
+                dsMotivo:i_dsMotivo;
+
+		CONVIND( dsMotivo,i_dsMotivo );
+	
+		saida->createTag("WFMotivoVO");
+	   	    saida->addItem( "idMotivo",idMotivo );
+	   	    saida->addItem( "dsMotivo",(char *)dsMotivo.arr );
+		saida->closeTag();
+	}
+	
+   EXEC SQL CLOSE tsqlcursorAtividadeMotivoFase;
+
+   if ( i_dsMotivo == -1)
+   {
+       return false;
+   }
+   else
+   { 
+      return true;
+   }
+
+}
+
+
+void sql_error_AtividadeMotivo(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

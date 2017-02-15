@@ -1,0 +1,327 @@
+// HLRHexa.pcpp: implementation for the 
+// CHLRHexa class.
+//////////////////////////////////////////////////////////////////////
+
+//* Review:
+//*
+//* Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw.h>
+#include "../include/Global.h"
+#include "../include/Funcoes.h"
+#include "../include/HLRHexa.h"
+#include "../include/DES.h"
+#include "../include/TripleDES.h"
+
+// Construtor e Destrutor
+CHLRHexa::CHLRHexa(int iIdLinha) {
+	
+	ULOG_START("CHLRHexa::CHLRHexa()");
+	
+    struct sqlca sqlca;
+    int iSz = 0;
+    char* pCodErro=0;
+    char* ret=0;
+    char szDsValorParametro[255 + 1];
+
+    const char *pMemBufId = "inputInfo";
+    TuxRemoteService* remoteService = 0;
+    TuxMessage* inputMessage = 0;
+    MemBufInputSource *pMemBuf=0;
+    XercesDOMParser* pParser=0;
+    DOMNode* pDoc;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        // Entrada
+        int iOraIdLinha;
+
+        // Saida
+        char cNrLinha[10];
+        char cDDD[3];
+
+        VARCHAR oszDsValorParametro[255 + 1];
+    EXEC SQL END DECLARE SECTION;
+
+    iOraIdLinha = iIdLinha;
+
+    // Busca o número da linha
+    EXEC SQL 
+    SELECT 
+        CDAREAREGISTRO,
+        NRLINHA
+    INTO
+        :cDDD,
+        :cNrLinha
+    FROM
+        LINHA.LINHATELEFONICA LINHATELEFONICA,
+        LINHA.LINHABASE LINHABASE,
+        APOIO.AREAREGISTRO AREAREGISTRO
+    WHERE
+    	LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+    AND
+    	LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+    AND
+        IDLINHATELEFONICA = :iOraIdLinha;
+
+    if (sqlca.sqlcode == NO_DATA_FOUND) {
+        throw new TuxBasicSvcException(NRO_ERR_LINHA_NAO_ENCONTRADA, MSG_ERR_LINHA_NAO_ENCONTRADA);
+    }
+
+	ULOG("Linha Encontrada: (%s)%s", cDDD, cNrLinha);
+
+	// Monta XML de entrada para consulta no serviço de HLR
+	XMLGen xmlGen;
+	xmlGen.addItem("areaCode", cDDD);
+	xmlGen.addItem("number", cNrLinha);
+
+	ULOG("Busca chave de criptografia");
+
+    EXEC SQL
+        SELECT
+            dsvalorparametro
+        INTO
+            :oszDsValorParametro
+        FROM
+            apoio.parametro
+        WHERE
+            cdparametro = 'SENHA_HEXA_HLR';
+
+    if (sqlca.sqlcode == NO_DATA_FOUND) {
+        throw new TuxBasicSvcException(NRO_ERR_CHAVE_NAO_ENCONTRADA, MSG_ERR_CHAVE_NAO_ENCONTRADA);
+    }
+
+	ULOG("chave obtida[%.*s](%d)", oszDsValorParametro.len, oszDsValorParametro.arr, oszDsValorParametro.len);
+
+    memset(szDsValorParametro, 0x00, sizeof(szDsValorParametro));
+    memcpy(szDsValorParametro, oszDsValorParametro.arr, oszDsValorParametro.len);
+
+	ULOG("szDsValorParametro[%s]", szDsValorParametro);
+
+    // Faz a solicitação ao serviço de consulta de HEXA na HLR.
+    try {
+        remoteService = new TuxRemoteService();
+        inputMessage = new TuxMessage();
+
+        inputMessage->setUser("0");
+        inputMessage->setService("HLRQuery");
+        inputMessage->setMessageBody(&xmlGen);
+
+        remoteService->setServiceName("HLRQuery");
+        remoteService->setInputMessage(inputMessage);
+
+        if(remoteService->remoteCall() != TUXFWRET_OK) {
+            delete remoteService;
+            delete inputMessage;
+            throw new TuxBasicSvcException(NRO_ERR_COMM_HLR ,"Erro de comunicação com sistema NGIN.");
+        }
+        ret = remoteService->getOutputMessage()->getMessageBody();
+	    ULOG("XML recebido do HLR: %s", ret);
+    }
+    catch(TuxException* tE) {
+        delete remoteService;
+        delete inputMessage;
+
+        throw tE;
+    }
+
+    char* fullRet = (char*) malloc(strlen(ret) + 100);
+    sprintf(fullRet, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>%s", ret);
+
+    pParser = new XercesDOMParser;
+    pMemBuf = new MemBufInputSource((const XMLByte*)fullRet, strlen(fullRet), pMemBufId);
+
+    pParser->parse(*pMemBuf);
+    pDoc = pParser->getDocument();
+	
+    // cod-erro
+	pCodErro = walkTree(pDoc, "cod-erro", 0);
+    ULOG("cod-erro->pCodErro:[%s]", pCodErro?pCodErro:"...NULL...");
+	if (pCodErro == NULL || atoi(pCodErro) != 0) {
+
+        // descricao-erro
+		char *pDescErro = walkTree(pDoc, "descricao-erro", 0);
+        ULOG("descricao-erro->pDescErro:[%s]", pDescErro?pDescErro:"...NULL...");
+        char szMessageErro[512];
+        sprintf(szMessageErro,"%.*s" ,sizeof(szMessageErro)-1,pDescErro?pDescErro:"Erro de comunicação com sistema de NGIN..");
+        if(pDescErro) XMLString::release(&pDescErro);
+
+        // descricao-erro-interno
+		char *pDescErroInterno = walkTree(pDoc, "descricao-erro-interno", 0);
+        ULOG("descricao-erro-interno->pDescErroInterno:[%s]", pDescErroInterno?pDescErroInterno:"...NULL...");
+        if (pDescErroInterno) XMLString::release(&pDescErroInterno);
+
+        // tipo-erro
+		char *pTipoErro = walkTree(pDoc, "tipo-erro", 0);
+        ULOG("tipo-erro->pTipoErro:[%s]", pTipoErro?pTipoErro:"...NULL...");
+        if (pTipoErro) XMLString::release(&pTipoErro);
+
+        // cod-erro-interno
+		char *pCodErroInterno = walkTree(pDoc, "cod-erro-interno", 0);
+        ULOG("cod-erro-interno->pCodErroInterno:[%s]", pCodErroInterno?pCodErroInterno:"...NULL...");
+        if (pCodErroInterno) XMLString::release(&pCodErroInterno);
+
+
+        delete remoteService;
+        delete inputMessage;
+
+        delete pParser;
+        delete pMemBuf;
+
+        if ( fullRet ) free(fullRet);
+
+		throw new TuxBasicSvcException(NRO_ERR_COMM_HLR, szMessageErro);
+	}
+
+
+    // id-solicitacao
+	char *pIdSolicitacao = walkTree(pDoc, "id-solicitacao", 0);
+    ULOG("id-solicitacao->pIdSolicitacao:[%s]", pIdSolicitacao?pIdSolicitacao:"...NULL...");
+    if (pIdSolicitacao) XMLString::release(&pIdSolicitacao);
+
+
+    // kmin (MIN)
+    char *pKmin = walkTree(pDoc, "kmin", 0);
+    ULOG("kmin->pKmin:[%s]", pKmin?pKmin:"...NULL...");
+    // if (pKmin) XMLString::release(&pKmin);
+
+
+    // kesn (SERIAL)
+    char *pKesn = walkTree(pDoc, "kesn", 0);
+    ULOG("kesn->pKesn:[%s]", pKesn?pKesn:"...NULL...");
+    // if (pKesn) XMLString::release(&pKesn);
+
+    if (pKesn == NULL || !*pKesn) {
+        delete remoteService;
+        delete inputMessage;
+
+        delete pParser;
+        delete pMemBuf;
+
+        if ( pKesn ) XMLString::release(&pKesn);
+        if ( pKmin ) XMLString::release(&pKmin);
+        if ( fullRet ) free(fullRet);
+
+		throw new TuxBasicSvcException(NRO_ERR_COMM_HLR, "NGIN devolveu um hexa inválido.");
+	}
+
+    if (pKmin == NULL || !*pKmin) {
+        delete remoteService;
+        delete inputMessage;
+
+        delete pParser;
+        delete pMemBuf;
+
+        if ( pKesn ) XMLString::release(&pKesn);
+        if ( pKmin ) XMLString::release(&pKmin);
+        if ( fullRet ) free(fullRet);
+
+		throw new TuxBasicSvcException(NRO_ERR_COMM_HLR, "NGIN devolveu um min inválido..");
+    }
+
+    // Cria o objeto para criptografia
+    CTripleDES *pclTripleDES;
+    pclTripleDES = new CTripleDES;
+
+
+    // SETAGEM DAS CHAVES DE CRIPTOGRAFIA
+    unsigned char szChaveHexa[48 + 1];
+    sprintf((char *)szChaveHexa, "%s%s%s%s%s%s%s%s%s", szDsValorParametro, cDDD, cNrLinha, cDDD, cNrLinha, cDDD, cNrLinha, cDDD, cNrLinha);
+
+    ULOG("szChaveHexa[%s]", (char *)szChaveHexa);
+
+    unsigned char szChaveHexAux[16 + 1];
+
+    memset(szChaveHexAux, 0x00, sizeof(szChaveHexAux));
+    memcpy(szChaveHexAux, szChaveHexa, 16);
+    ULOG("szChaveHexAux 1[%s]", szChaveHexAux);
+    unsigned char *pChaveBin1 = pclTripleDES->hex2bin(szChaveHexAux);
+    pclTripleDES->setKey1(pChaveBin1);
+
+    memset(szChaveHexAux, 0x00, sizeof(szChaveHexAux));
+    memcpy(szChaveHexAux, szChaveHexa+16, 16);
+    ULOG("szChaveHexAux 2[%s]", szChaveHexAux);
+    unsigned char *pChaveBin2 = pclTripleDES->hex2bin(szChaveHexAux);
+    pclTripleDES->setKey2(pChaveBin2);
+
+    memset(szChaveHexAux, 0x00, sizeof(szChaveHexAux));
+    memcpy(szChaveHexAux, szChaveHexa+32, 16);
+    ULOG("szChaveHexAux 3[%s]", szChaveHexAux);
+    unsigned char *pChaveBin3 = pclTripleDES->hex2bin(szChaveHexAux);
+    pclTripleDES->setKey3(pChaveBin3);
+
+
+
+
+
+    // PROCESSO DE DESCRIPTOGRAFIA PARA SERIAL
+    unsigned char szHexaCrypt[16 + 1];
+	pclTripleDES->upper(pKesn); sprintf((char *)szHexaCrypt, "%16.16s", pKesn);
+    ULOG("Hexa encriptado:[%s]", szHexaCrypt);
+
+    // Converte para binario
+    unsigned char *pHexaCryptBinAux=pclTripleDES->hex2bin(szHexaCrypt);
+    unsigned char szHexaCryptBin[8];
+    memcpy(szHexaCryptBin, pHexaCryptBinAux, 8);
+    
+    // Realiza a descriptografia
+    unsigned char szHexaDecryptBin[8];
+    pclTripleDES->decrypt(szHexaCryptBin, szHexaDecryptBin);
+    ULOG("Resultado da descriptografia para serial em Hexa[%s]", pclTripleDES->bin2hex(szHexaDecryptBin));
+
+    // Guarda na variável privada.
+    sprintf(cHexa, "%8.8s", pclTripleDES->bin2hex(szHexaDecryptBin));
+    ULOG("Hexa tratado: %s", cHexa);
+
+
+
+
+
+    // PROCESSO DE DESCRIPTOGRAFIA PARA MIN
+    unsigned char szMinCrypt[16 + 1];
+	pclTripleDES->upper(pKmin); sprintf((char *)szMinCrypt, "%16.16s", pKmin);
+    ULOG("Min encriptado:[%s]", szMinCrypt);
+
+    // Converte para binario
+    unsigned char *pMinCryptBinAux=pclTripleDES->hex2bin(szMinCrypt);
+    unsigned char szMinCryptBin[8];
+    memcpy(szMinCryptBin, pMinCryptBinAux, 8);
+    
+    // Realiza a descriptografia
+    unsigned char szMinDecryptBin[8];
+    pclTripleDES->decrypt(szMinCryptBin, szMinDecryptBin);
+    ULOG("Resultado da descriptografia para serial em Hexa[%s]", pclTripleDES->bin2hex(szMinDecryptBin));
+
+    // Guarda na variável privada.
+    sprintf(szMin, "%8.8s", pclTripleDES->bin2hex(szMinDecryptBin));
+    ULOGI("Min tratado: %s", szMin);
+
+
+
+    delete pclTripleDES;
+    delete remoteService;
+    delete inputMessage;
+    delete pParser;
+    delete pMemBuf;
+    if ( pKmin ) XMLString::release(&pKmin);
+    if ( pKesn ) XMLString::release(&pKesn);
+    free(fullRet);
+    
+    ULOG_END("CHLRHexa::CHLRHexa()");
+}
+
+CHLRHexa::~CHLRHexa() {
+}
+
+//
+// Metodos getter
+char* CHLRHexa::getHexa(){
+	return cHexa;
+}
+
+char* CHLRHexa::getMin(){
+	return szMin;
+}

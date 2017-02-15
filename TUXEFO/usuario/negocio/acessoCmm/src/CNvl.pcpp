@@ -1,0 +1,264 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "CNvl.h"
+
+CNvl::CNvl()
+{
+}
+
+CNvl::~CNvl()
+{
+}
+
+char* CNvl::RTrim(char *pszString)
+{
+    ULOG_START("CNvl::RTrim()");
+    
+    int iLen;
+
+    iLen=strlen(pszString);
+
+    for(;;)
+    {
+        if(pszString[iLen-1] != ' ')
+            break;
+
+        iLen--;
+
+        if(iLen == 0)
+            break;
+    }
+    pszString[iLen] = 0x00;
+    ULOG_END("CNvl::RTrim()");
+	return pszString;
+}
+
+int CNvl::Insert( char* cdsNivel,
+				  char* cLogUser )
+{
+	ULOG_START("CNvl::Insert( )");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidNivel[21+1];
+		char* cAuxdsNivel  = cdsNivel;
+	EXEC SQL END DECLARE SECTION;
+	
+	ZeraNivel();
+	
+	memset( &cAuxidNivel, 0, sizeof(cAuxidNivel) );
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+	sqlca.sqlcode=0;
+	
+	//Pega um id unico e sequencia para a insercao
+	EXEC SQL
+		SELECT C_EMARINS.NIVELSQ.NEXTVAL
+		INTO :cAuxidNivel
+		FROM DUAL;
+
+	EXEC SQL 
+		INSERT INTO C_EMARINS.NIVEL
+		  (IDNIVEL, 
+		   DSNIVEL )
+		VALUES
+		  (:cAuxidNivel, 
+		   :cAuxidNivel );
+	
+	if( sqlca.sqlcode == 0 )
+	{
+	    ULOG_END("CNvl::Insert( )");
+		return 1;
+	}
+	else
+	{
+		ULOG_END("CNvl::Insert( )");
+		return 0;
+    }
+GotoInsert:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CNvl::Update( char* cidNivel, 
+				  char* cdsNivel )
+{
+	ULOG_START("CNvl::Update(  )");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidNivel  = cidNivel;
+		char* cAuxdsNivel  = cdsNivel;
+	EXEC SQL END DECLARE SECTION;
+	
+	ZeraNivel();
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+	sqlca.sqlcode=0;
+	
+	EXEC SQL 
+		UPDATE C_EMARINS.NIVEL
+		   SET DSNIVEL = :cAuxdsNivel
+		 WHERE IDNIVEL = :cAuxidNivel;  
+	
+	if( sqlca.sqlcode == 0 )
+	{
+		ULOG_END("CNvl::Update( )");
+		return 1;
+	}
+	else
+	{
+		ULOG_END("CNvl::Update( )");
+		return 0;
+	}
+
+GotoUpdate:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CNvl::ListId( char* cid )
+{
+	ULOG_START("CNvl::ListId( )");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidOra = cid;
+		struct
+		{
+			VARCHAR stidNivel[21+1];
+			VARCHAR stdsNivel[255+1];
+		} stNivel;
+		struct
+		{
+			short iidNivel;
+			short idsNivel;
+		} stNivelInd;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraNivel();
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+	sqlca.sqlcode=0;
+
+   	EXEC SQL DECLARE CursorNivelListId CURSOR FOR
+		SELECT IDNIVEL, 
+		       DSNIVEL 
+		  FROM C_EMARINS.NIVEL
+		 WHERE IDNIVEL = :cidOra;
+
+	EXEC SQL OPEN CursorNivelListId;
+
+	if(sqlca.sqlcode)
+	{
+	    ULOG_END("CNvl::ListId( )");
+		return 0;
+	}
+	else
+	{
+		for(;;)
+		{
+			memset( &stNivel, 0, sizeof(stNivel) );
+			EXEC SQL FETCH CursorNivelListId INTO :stNivel:stNivelInd;
+
+			Add( (char*)stNivel.stidNivel.arr, (char*)stNivel.stdsNivel.arr );
+
+			iCont++;
+
+		}
+		EXEC SQL CLOSE CursorNivelListId;
+	}
+
+	ULOG_END("CNvl::ListId( )");
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CNvl::ListAll( void )
+{
+	ULOG_START("CNvl::ListAll()");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidNivel[21+1];
+			VARCHAR stdsNivel[255+1];
+		} stNivel;
+		struct
+		{
+			short iidNivel;
+			short idsNivel;
+		} stNivelInd;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraNivel();
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+	sqlca.sqlcode=0;
+
+   	EXEC SQL DECLARE CursorNivelListAll CURSOR FOR
+		SELECT IDNIVEL, 
+		       DSNIVEL 
+		  FROM C_EMARINS.NIVEL;
+
+	EXEC SQL OPEN CursorNivelListAll;
+
+	if(sqlca.sqlcode)
+	{
+	    ULOG_END("CNvl::ListAll()");
+		return 0;
+	}
+	else
+	{
+		for(;;)
+		{
+			memset( &stNivel, 0, sizeof(stNivel) );
+			EXEC SQL FETCH CursorNivelListAll INTO :stNivel:stNivelInd;
+
+			Add( (char*)stNivel.stidNivel.arr, (char*)stNivel.stdsNivel.arr );
+
+			iCont++;
+
+		}
+		EXEC SQL CLOSE CursorNivelListAll;
+	}
+
+	ULOG_END("CNvl::ListAll( )");
+	return iCont;
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CNvl::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	ULOG_START("CNvl::GetXml()");
+	if( Quantidade() > 0 )
+	{
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			xml->createTag(cNomeTag);
+			xml->addProp(	"xmlns", "usuario.fo.vivo.com.br/vo" );
+			if( Registro( x ) != NULL )
+			{
+				xml->addItem("idNivel"   , Registro(x)->cidNivel   );
+				xml->addItem("dsNivel"   , Registro(x)->cdsNivel   );
+			}
+			xml->closeTag();
+		}
+	}
+	ULOG_END("CNvl::GetXml()");
+}

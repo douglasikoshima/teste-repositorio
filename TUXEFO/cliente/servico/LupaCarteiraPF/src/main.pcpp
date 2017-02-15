@@ -1,0 +1,110 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Modulo: main.pcpp
+//* Servico: LupaCarteiraPF
+//* Servidor: LupaCarteira
+//*
+//* Ficheiro: TUXEFO/cliente/LupaCarteira/LupaCarteiraPF/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson da S. Martins
+//*
+//* Fecha primeira version:25/06/2004
+//*
+//* Version actual: 01.00
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Servico para listar todas as linhas da tabela PessoaRecusaMeioContato.
+//* 
+//* Review:
+//*
+//* Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+//*
+//*//-------------------------------------------------------------------------------
+//---------------------------------------------------------------------
+
+//EXEC SQL INCLUDE SQLCA; 
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Exception.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+
+#include "../include/LupaCarteiraPF.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classCarteirizacao.h";
+
+DECLARE_TUXEDO_SERVICE(LupaCarteiraPF);
+
+void implLupaCarteiraPF::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    CCarteirizacao oObj;
+    char* pParam=0;
+
+    ULOG_START( "implLupaCarteiraPF::Execute()" );
+    try{
+        pParam = walkTree(pDnode, XML_IN_ID, 0);
+        if(!pParam)
+        {
+            ERROR(NRO_ID_PESSOA_NE);
+            TAG_INEXISTENTE(XML_IN_ID);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !*pParam)
+        {
+            ERROR(NRO_ID_PESSOA_VV);
+            TAG_VALOR_VAZIO(XML_IN_ID);
+            XMLString::release(&pParam);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !IsNumeric(pParam) ){
+            ERROR(NRO_ID_PESSOA_VI);
+            TAG_VALOR_INVALIDO(XML_IN_ID);
+            XMLString::release(&pParam);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        oObj.RecuperaPorIdPessoaUsuario(pParam);
+        XMLString::release(&pParam);
+
+        pXmlG->createTag(XML_OUT_ROOT);
+        pXmlG->addProp("xmlns",XML_PROP);
+
+            pXmlG->addItem(XML_OUT_NOME, oObj.getNome());
+            pXmlG->addItem(XML_OUT_FONE, oObj.getTelefone());
+            pXmlG->addItem(XML_OUT_CELULAR, oObj.getCelular());
+            pXmlG->addItem(XML_OUT_EMAIL, oObj.getEmail());
+            pXmlG->createTag(XML_OUT_TPRELA);
+            pXmlG->closeTag();
+
+        pXmlG->closeTag();
+
+        if ( pParam ) XMLString::release(&pParam);
+    }
+    catch(...){
+        if ( pParam ) XMLString::release(&pParam);
+        throw;  //repassando o erro para nucleo
+    }
+
+    ULOG_END( "implLupaCarteiraPF::Execute()" );
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}

@@ -1,0 +1,60 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+
+#include "tuxfw.h"
+#include "UFpcTMA.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "PPGlobalTMA.h"
+EXEC SQL END DECLARE SECTION;
+
+/****************************************************************************************/
+bool CUFpc::proCBuscaUF(TUF *ptUF)
+{
+    ULOG_START("CUFpc::proCBuscaUF");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdUf[LEN_IDUF];
+        VARCHAR oszSgUf[LEN_SGUF];
+        VARCHAR oszNmUf[LEN_NMUF];
+
+        short iSgUf = 0;
+        short iNmUf = 0;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdUf, ptUF->szIdUf);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    EXEC SQL SELECT sguf
+                  , nmuf
+               INTO :oszSgUf:iSgUf
+                  , :oszNmUf:iNmUf
+               FROM apoio.uf
+              WHERE iduf = :oszIdUf;
+
+
+    if(iSgUf != -1) {
+        STRCPY_FROM_ORA(ptUF->szSgUf, oszSgUf);
+    }
+    if(iNmUf != -1) {
+        STRCPY_FROM_ORA(ptUF->szNmUf, oszNmUf);
+    }
+
+
+    ULOGI("Finalizando proCBuscaUF <FOUND>");
+    ULOG_END("CUFpc::proCBuscaUF");
+    return true;
+
+    naoexiste:
+        ULOGI("Finalizando proCBuscaUF <NOT FOUND>");
+        return false;
+
+    erro:
+        ULOGE("Finalizando proCBuscaUF <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}

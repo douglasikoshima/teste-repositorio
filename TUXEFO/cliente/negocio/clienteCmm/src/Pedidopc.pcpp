@@ -1,0 +1,408 @@
+/**
+ * @modulo  Clientes
+ * @usecase Aba Tracking
+ * @remark  Rotinas básicas para a tabela Pedido
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:17 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../include/Pedidopc.h"
+#include "../include/OrdemVendapc.h"
+#include "../include/OrdemNotaFiscalpc.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+
+#include "../include/GlobalPedido.h"
+
+    struct TPedidoOra
+    {
+        VARCHAR ordem[LEN_ORDEM+LEN_EOS];
+        VARCHAR cdAgenteFilial[LEN_CDAGENTEFILIAL+LEN_EOS];
+        VARCHAR cdCpfCnpj[LEN_CDCPFCNPJ+LEN_EOS];
+        VARCHAR dsCanalOrigem[LEN_DSCANALORIGEM+LEN_EOS];
+        VARCHAR dtAberturaPedido[LEN_DTABERTURAPEDIDO+LEN_EOS];
+        VARCHAR EnderecoEntrega[LEN_ENDERECOENTREGA+LEN_EOS];
+        VARCHAR FormaPagamento[LEN_FORMAPAGAMENTO+LEN_EOS];
+        VARCHAR idPedido[LEN_IDPEDIDO+LEN_EOS];
+        VARCHAR idSistemaOrigem[LEN_IDSISTEMAORIGEM+LEN_EOS];
+        VARCHAR idOrdemVenda[LEN_IDORDEMVENDA+LEN_EOS];
+        VARCHAR idTipoLinha[LEN_IDTIPOLINHA+LEN_EOS];
+        VARCHAR observacaoPedido[LEN_OBSERVACAOETAPA+LEN_EOS];
+        VARCHAR qtPontoResgatado[LEN_QTPONTORESGATADO+LEN_EOS];
+        VARCHAR sgUF[LEN_SGUF+LEN_EOS];
+        VARCHAR vlParcela[LEN_VLPARCELA+LEN_EOS];
+        VARCHAR vlTotalPedido[LEN_VLTOTALPEDIDO+LEN_EOS];
+        VARCHAR nmNomeRazaoSocial[LEN_NMNOMERAZAOSOCIAL+LEN_EOS];
+        VARCHAR nmGestor[LEN_NMGESTOR+LEN_EOS];
+        VARCHAR nrTelefoneGestor[LEN_NRTELEFONEGESTOR+LEN_EOS];
+        VARCHAR dsTipoLinha[LEN_DSTIPOLINHA+LEN_EOS];
+        VARCHAR nmSistemaOrigem[LEN_NM_SISTEMA_ORIGEM+LEN_EOS];
+    };
+
+    struct TPedidoStatusOra
+    {
+        short ordem;
+        short cdAgenteFilial;
+        short cdCpfCnpj;
+        short dsCanalOrigem;
+        short dtAberturaPedido;
+        short EnderecoEntrega;
+        short FormaPagamento;
+        short idPedido;
+        short idSistemaOrigem;
+        short idOrdemVenda;
+        short idTipoLinha;
+        short observacaoPedido;
+        short qtPontoResgatado;
+        short sgUF;
+        short vlParcela;
+        short vlTotalPedido;
+        short nmNomeRazaoSocial;
+        short nmGestor;
+        short nrTelefoneGestor;
+        short dsTipoLinha;
+        short nmSistemaOrigem;
+    };
+
+EXEC SQL END DECLARE SECTION;
+
+//==============================================================================
+int CPedidopc::procBuscarDetPedidoPorDocumento(struct DadosParametros *pDadosParametros,VEC_TPEDIDO &vecTPedido)
+{
+    ULOG_START("CPedidopc::procBuscarDetPedidoPorDocumento()");
+
+    if ( 0 == *pDadosParametros->nrDoc )
+    {
+        throw new TuxException("04E9999","Número do documento não fornecido para busca de detalhe de pedido.");
+    }
+
+    int retorno = RET_NAO_EXISTEM_DADOS;
+    struct sqlca sqlca;
+    TPedido tPedido;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct TPedidoOra tPedidoOra;
+        struct TPedidoStatusOra tPedidoStatusOra;
+
+        const char *pOraCdCpfCnpj = pDadosParametros->nrDoc;
+        const char *pOraIdPedido = pDadosParametros->nrPedido;
+        const char *pOraNrOrdemVenda = pDadosParametros->nrOrdemVenda;
+
+        short statusOraNrOrdemVenda = strlen(pOraNrOrdemVenda) ? 1 : 0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("          nrDoc = '%s'",pDadosParametros->nrDoc);
+    ULOG("       nrPedido = '%s'",pDadosParametros->nrPedido);
+
+    memset( &tPedidoOra, 0, sizeof(tPedidoOra) );
+    memset( &tPedidoStatusOra,-1, sizeof(tPedidoStatusOra) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO erro;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            1 AS ORDEM,
+            PEDIDO.CDAGENTEFILIAL,
+            PEDIDO.CDCPFCNPJ,
+            PEDIDO.DSCANALORIGEM,
+            TO_CHAR(PEDIDO.DTABERTURAPEDIDO,'DD/MM/YYYY HH24:MI:SS') AS DTABERTURAPEDIDO,
+            PEDIDO.ENDERECOENTREGA,
+            PEDIDO.FORMAPAGAMENTO,
+            PEDIDO.IDPEDIDO,
+            PEDIDO.IDSISTEMAORIGEM,
+            NULL AS IDORDEMVENDA,
+            PEDIDO.IDTIPOLINHA,
+            NVL(PEDIDO.OBSERVACAOPEDIDO,' ') AS OBSERVACAOPEDIDO,
+            PEDIDO.QTPONTORESGATADO,
+            PEDIDO.SGUF,
+            RTRIM(LTRIM(TO_CHAR(PEDIDO.VLPARCELA,'9999,999,999,990.00MI'))) AS VLPARCELA,
+            RTRIM(LTRIM(TO_CHAR(PEDIDO.VLTOTALPEDIDO,'9999,999,999,990.00MI'))) AS VLTOTALPEDIDO,
+            PEDIDO.NMNOMERAZAOSOCIAL,
+            PEDIDO.NMGESTOR,
+            PEDIDO.NRTELEFONEGESTOR,
+            TIPOLINHA.DSTIPOLINHA,
+            SISTEMAORIGEM.NMSISTEMAORIGEM
+        INTO
+            :tPedidoOra:tPedidoStatusOra
+        FROM
+            RETENCAO.PEDIDO PEDIDO,
+            APOIO.SISTEMAORIGEM SISTEMAORIGEM,
+            APOIO.TIPOLINHA TIPOLINHA
+        WHERE
+            PEDIDO.IDTIPOLINHA = TIPOLINHA.IDTIPOLINHA (+)
+        AND PEDIDO.IDSISTEMAORIGEM = SISTEMAORIGEM.IDSISTEMAORIGEM (+)
+        AND PEDIDO.CDCPFCNPJ = :pOraCdCpfCnpj
+        AND PEDIDO.IDPEDIDO = :pOraIdPedido;
+
+    if ( 0 == sqlca.sqlcode )
+    {
+        CONVIND(tPedidoOra.cdAgenteFilial,tPedidoStatusOra.cdAgenteFilial);
+        CONVIND(tPedidoOra.cdCpfCnpj,tPedidoStatusOra.cdCpfCnpj);
+        CONVIND(tPedidoOra.dsCanalOrigem,tPedidoStatusOra.dsCanalOrigem);
+        CONVIND(tPedidoOra.dtAberturaPedido,tPedidoStatusOra.dtAberturaPedido);
+        CONVIND(tPedidoOra.EnderecoEntrega,tPedidoStatusOra.EnderecoEntrega);
+        CONVIND(tPedidoOra.FormaPagamento,tPedidoStatusOra.FormaPagamento);
+        CONVIND(tPedidoOra.idPedido,tPedidoStatusOra.idPedido);
+        CONVIND(tPedidoOra.idSistemaOrigem,tPedidoStatusOra.idSistemaOrigem);
+        CONVIND(tPedidoOra.idOrdemVenda,tPedidoStatusOra.idOrdemVenda);
+        CONVIND(tPedidoOra.idTipoLinha,tPedidoStatusOra.idTipoLinha);
+        CONVIND(tPedidoOra.observacaoPedido,tPedidoStatusOra.observacaoPedido);
+        CONVIND(tPedidoOra.qtPontoResgatado,tPedidoStatusOra.qtPontoResgatado);
+        CONVIND(tPedidoOra.sgUF,tPedidoStatusOra.sgUF);
+        CONVIND(tPedidoOra.vlParcela,tPedidoStatusOra.vlParcela);
+        CONVIND(tPedidoOra.vlTotalPedido,tPedidoStatusOra.vlTotalPedido);
+        CONVIND(tPedidoOra.dsTipoLinha,tPedidoStatusOra.dsTipoLinha);
+        CONVIND(tPedidoOra.nmSistemaOrigem,tPedidoStatusOra.nmSistemaOrigem);
+
+        tPedido.setCdAgenteFilial(tPedidoOra.cdAgenteFilial.arr);
+        tPedido.setCdCpfCnpj(tPedidoOra.cdCpfCnpj.arr);
+        tPedido.setDsCanalOrigem(tPedidoOra.dsCanalOrigem.arr);
+        tPedido.setDtAberturaPedido(tPedidoOra.dtAberturaPedido.arr);
+        tPedido.setEnderecoEntrega(tPedidoOra.EnderecoEntrega.arr);
+        tPedido.setFormaPagamento(tPedidoOra.FormaPagamento.arr);
+        tPedido.setIdPedido(tPedidoOra.idPedido.arr);
+        tPedido.setIdSistemaOrigem(tPedidoOra.idSistemaOrigem.arr);
+        tPedido.setIdTipoLinha(tPedidoOra.idTipoLinha.arr);
+        tPedido.setObservacaoPedido(tPedidoOra.observacaoPedido.arr);
+        tPedido.setQtPontoResgatado(tPedidoOra.qtPontoResgatado.arr);
+        tPedido.setSgUF(tPedidoOra.sgUF.arr);
+        tPedido.setVlParcela(tPedidoOra.vlParcela.arr);
+        tPedido.setVlTotalPedido(tPedidoOra.vlTotalPedido.arr);
+        tPedido.setDsTipoLinha(tPedidoOra.dsTipoLinha.arr);
+        tPedido.setNmSistemaOrigem(tPedidoOra.nmSistemaOrigem.arr);
+
+        vecTPedido.push_back(tPedido);
+
+        retorno = RET_SUCESSO;
+    }
+
+    ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+    ULOG("retorno=%d",retorno);
+
+    ULOG_END("CPedidopc::procBuscarDetPedidoPorDocumento()");
+
+    return retorno;
+
+    erro:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("CPedidopc::procBuscarDetPedidoPorDocumento()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+//==============================================================================
+int CPedidopc::procCompletarDetPedidoOrdemPorDocumento(struct DadosParametros *pDadosParametros,VEC_TPEDIDO &vecTPedido)
+{
+    ULOG_START("CPedidopc::procCompletarDetPedidoOrdemPorDocumento()");
+
+    if ( 0 == *pDadosParametros->nrDoc )
+    {
+        throw new TuxException("04E9999","Número do documento não fornecido para busca de detalhe de pedido.");
+    }
+
+    int retorno = RET_NAO_EXISTEM_DADOS;
+    struct sqlca sqlca;
+    TPedido tPedido;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct TPedidoOra tPedidoOra;
+        struct TPedidoStatusOra tPedidoStatusOra;
+
+        const char *pOraCdCpfCnpj = pDadosParametros->nrDoc;
+        const char *pOraIdPedido = pDadosParametros->nrPedido;
+        const char *pOraIdSistemaOrigem = pDadosParametros->idSistemaOrigem;
+        const char *pOraNrOrdemVenda = pDadosParametros->nrOrdemVenda;
+
+        short statusOraNrOrdemVenda = strlen(pOraNrOrdemVenda) ? 1 : 0;
+        short statusOraIdSistemaOrigem = strlen(pOraIdSistemaOrigem) ? 1 : 0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("          nrDoc = '%s'",pDadosParametros->nrDoc);
+    ULOG("       nrPedido = '%s'",pDadosParametros->nrPedido);
+    ULOG("idSistemaOrigem = '%s',status = %d",pDadosParametros->idSistemaOrigem,statusOraIdSistemaOrigem);
+
+    memset( &tPedidoOra, 0, sizeof(tPedidoOra) );
+    memset( &tPedidoStatusOra,-1, sizeof(tPedidoStatusOra) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO erro;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+       SELECT
+            ORDEM,
+            CDAGENTEFILIAL,
+            CDCPFCNPJ,
+            DSCANALORIGEM,
+            TO_CHAR(DTABERTURAPEDIDO,'DD/MM/YYYY HH24:MI:SS') AS DTABERTURAPEDIDO,
+            ENDERECOENTREGA,
+            FORMAPAGAMENTO,
+            IDPEDIDO,
+            IDSISTEMAORIGEM,
+            IDORDEMVENDA,
+            IDTIPOLINHA,
+            OBSERVACAOPEDIDO,
+            QTPONTORESGATADO,
+            SGUF,
+            VLPARCELA,
+            VLTOTALPEDIDO,
+            NMNOMERAZAOSOCIAL,
+            NMGESTOR,
+            NRTELEFONEGESTOR,
+            DSTIPOLINHA,
+            NMSISTEMAORIGEM
+        INTO
+            :tPedidoOra:tPedidoStatusOra
+        FROM
+        (
+            SELECT
+                ORDEM,
+                CDAGENTEFILIAL,
+                CDCPFCNPJ,
+                DSCANALORIGEM,
+                DTABERTURAPEDIDO,
+                ENDERECOENTREGA,
+                FORMAPAGAMENTO,
+                IDPEDIDO,
+                IDSISTEMAORIGEM,
+                IDORDEMVENDA,
+                IDTIPOLINHA,
+                OBSERVACAOPEDIDO,
+                QTPONTORESGATADO,
+                SGUF,
+                VLPARCELA,
+                VLTOTALPEDIDO,
+                NMNOMERAZAOSOCIAL,
+                NMGESTOR,
+                NRTELEFONEGESTOR,
+                DSTIPOLINHA,
+                NMSISTEMAORIGEM
+            FROM
+            (
+                SELECT
+                    1 AS ORDEM,
+                    NULL AS CDAGENTEFILIAL,
+                    NULL AS CDCPFCNPJ,
+                    NULL AS DSCANALORIGEM,
+                    PEDIDO.DTABERTURAPEDIDO,
+                    NULL AS ENDERECOENTREGA,
+                    NULL AS FORMAPAGAMENTO,
+                    NULL AS IDPEDIDO,
+                    PEDIDO.IDSISTEMAORIGEM,
+                    NULL AS IDORDEMVENDA,
+                    NULL AS IDTIPOLINHA,
+                    NULL AS OBSERVACAOPEDIDO,
+                    NULL AS QTPONTORESGATADO,
+                    PEDIDO.SGUF,
+                    NULL AS VLPARCELA,
+                    NULL AS VLTOTALPEDIDO,
+                    NULL AS NMNOMERAZAOSOCIAL,
+                    NULL AS NMGESTOR,
+                    NULL AS NRTELEFONEGESTOR,
+                    NULL AS DSTIPOLINHA,
+                    SISTEMAORIGEM.NMSISTEMAORIGEM
+                FROM
+                    RETENCAO.PEDIDO PEDIDO,
+                    APOIO.SISTEMAORIGEM SISTEMAORIGEM
+                WHERE
+                    PEDIDO.IDSISTEMAORIGEM = SISTEMAORIGEM.IDSISTEMAORIGEM (+)
+                AND PEDIDO.CDCPFCNPJ = :pOraCdCpfCnpj
+                AND PEDIDO.IDPEDIDO = :pOraIdPedido
+            UNION
+                SELECT
+                    2 AS ORDEM,
+                    NULL AS CDAGENTEFILIAL,
+                    NULL AS CDCPFCNPJ,
+                    NULL AS DSCANALORIGEM,
+                    ORDEMVENDA.DTABERTURAPEDIDO,
+                    NULL AS ENDERECOENTREGA,
+                    NULL AS FORMAPAGAMENTO,
+                    NULL AS NRPEDIDO,
+                    ORDEMVENDA.IDSISTEMAORIGEM,
+                    ORDEMVENDA.IDORDEMVENDA,
+                    NULL AS IDTIPOLINHA,
+                    NULL AS OBSERVACAOPEDIDO,
+                    NULL AS QTPONTORESGATADO,
+                    ORDEMVENDA.UFORDEM AS SGUF,
+                    NULL AS VLPARCELA,
+                    NULL AS VLTOTALPEDIDO,
+                    NULL AS NMNOMERAZAOSOCIAL,
+                    NULL AS NMGESTOR,
+                    NULL AS NRTELEFONEGESTOR,
+                    NULL AS DSTIPOLINHA,
+                    ORDEMVENDA.NMRESPONSAVELORDEMVENDA AS NMSISTEMAORIGEM
+                FROM
+                    RETENCAO.ORDEMVENDA ORDEMVENDA
+                WHERE 
+                    ORDEMVENDA.CDCPFCNPJ = :pOraCdCpfCnpj
+                AND ORDEMVENDA.NRPEDIDO = :pOraIdPedido
+                AND ORDEMVENDA.NRORDEMVENDA = :pOraNrOrdemVenda
+            )
+            ORDER BY ORDEM
+        )
+        WHERE ROWNUM < 2;
+
+    if ( 0 == sqlca.sqlcode )
+    {
+        CONVIND(tPedidoOra.cdAgenteFilial,tPedidoStatusOra.cdAgenteFilial);
+        CONVIND(tPedidoOra.cdCpfCnpj,tPedidoStatusOra.cdCpfCnpj);
+        CONVIND(tPedidoOra.dsCanalOrigem,tPedidoStatusOra.dsCanalOrigem);
+        CONVIND(tPedidoOra.dtAberturaPedido,tPedidoStatusOra.dtAberturaPedido);
+        CONVIND(tPedidoOra.EnderecoEntrega,tPedidoStatusOra.EnderecoEntrega);
+        CONVIND(tPedidoOra.FormaPagamento,tPedidoStatusOra.FormaPagamento);
+        CONVIND(tPedidoOra.idPedido,tPedidoStatusOra.idPedido);
+        CONVIND(tPedidoOra.idSistemaOrigem,tPedidoStatusOra.idSistemaOrigem);
+        CONVIND(tPedidoOra.idOrdemVenda,tPedidoStatusOra.idOrdemVenda);
+        CONVIND(tPedidoOra.idTipoLinha,tPedidoStatusOra.idTipoLinha);
+        CONVIND(tPedidoOra.observacaoPedido,tPedidoStatusOra.observacaoPedido);
+        CONVIND(tPedidoOra.qtPontoResgatado,tPedidoStatusOra.qtPontoResgatado);
+        CONVIND(tPedidoOra.sgUF,tPedidoStatusOra.sgUF);
+        CONVIND(tPedidoOra.vlParcela,tPedidoStatusOra.vlParcela);
+        CONVIND(tPedidoOra.vlTotalPedido,tPedidoStatusOra.vlTotalPedido);
+        CONVIND(tPedidoOra.dsTipoLinha,tPedidoStatusOra.dsTipoLinha);
+        CONVIND(tPedidoOra.nmSistemaOrigem,tPedidoStatusOra.nmSistemaOrigem);
+
+        tPedido.setCdAgenteFilial(tPedidoOra.cdAgenteFilial.arr);
+        tPedido.setCdCpfCnpj(tPedidoOra.cdCpfCnpj.arr);
+        tPedido.setDsCanalOrigem(tPedidoOra.dsCanalOrigem.arr);
+        tPedido.setDtAberturaPedido(tPedidoOra.dtAberturaPedido.arr);
+        tPedido.setEnderecoEntrega(tPedidoOra.EnderecoEntrega.arr);
+        tPedido.setFormaPagamento(tPedidoOra.FormaPagamento.arr);
+        tPedido.setIdPedido(tPedidoOra.idPedido.arr);
+        tPedido.setIdSistemaOrigem(tPedidoOra.idSistemaOrigem.arr);
+        tPedido.setIdTipoLinha(tPedidoOra.idTipoLinha.arr);
+        tPedido.setObservacaoPedido(tPedidoOra.observacaoPedido.arr);
+        tPedido.setQtPontoResgatado(tPedidoOra.qtPontoResgatado.arr);
+        tPedido.setSgUF(tPedidoOra.sgUF.arr);
+        tPedido.setVlParcela(tPedidoOra.vlParcela.arr);
+        tPedido.setVlTotalPedido(tPedidoOra.vlTotalPedido.arr);
+        tPedido.setDsTipoLinha(tPedidoOra.dsTipoLinha.arr);
+        tPedido.setNmSistemaOrigem(tPedidoOra.nmSistemaOrigem.arr);
+
+        vecTPedido.push_back(tPedido);
+
+        retorno = RET_SUCESSO;
+    }
+
+    ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+    ULOG("retorno=%d",retorno);
+
+    ULOG_END("CPedidopc::procCompletarDetPedidoOrdemPorDocumento()");
+
+    return retorno;
+
+    erro:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("CPedidopc::procCompletarDetPedidoOrdemPorDocumento()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

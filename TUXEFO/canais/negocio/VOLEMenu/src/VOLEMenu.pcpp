@@ -1,0 +1,160 @@
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <tuxfw.h>
+#include <sqlca.h>
+#include <ctype.h>
+ 
+EXEC SQL INCLUDE SQLCA;
+
+char * rtrim(char *pStr)
+{
+	int rInd;
+
+	if (pStr == NULL)
+			return NULL;
+
+   rInd = strlen(pStr) - 1;
+   while ( isspace(pStr[rInd]) && rInd >= 0){
+      rInd--;
+   }
+
+   pStr[rInd + 1] = '\0';
+   
+   return pStr;
+}
+
+char * ltrim(char *pStr)
+{
+	int lInd = 0;
+
+	if (pStr == NULL)
+			return NULL;
+
+    //rInd = strlen(pStr) - 1;
+
+    while (isspace(pStr[lInd])){
+        lInd++;
+	}
+
+	pStr = pStr + lInd;
+     
+   return pStr;
+}
+
+char * trim(char *pStr){
+	return ltrim(rtrim(pStr));		
+}
+
+
+
+void getItensMenu( char * idCanalPrm, 
+                   char * idTipoCarteiraPrm, 
+                   char * idUfOperadoraPrm,
+				   char * idSegmentacaoPrm , 
+                   XMLGen * xml_g )
+{
+    ULOG_START( "getItensMenu()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char idCanal[43];
+	   char idTipoCarteira[43];
+	   char idUfOperadora[43];
+	   char idSegmentacao[43];
+       
+       char idItemMenu[43];
+	   char nmItem[256];
+	   char idItemMenuPai[43];
+	   char dsURL[401];
+	   char sqApresentacao[43];
+	   char inAtivo[2];
+	   char nmPai[256];
+
+       short i_idItemMenu = -1;	   	   
+       short i_nmItem = -1;
+	   short i_idItemMenuPai = -1;
+	   short i_dsURL = -1;
+	   short i_sqApresentacao = -1;
+	   short i_inAtivo = -1;
+	   short i_nmPai = -1;
+       
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( idCanal , idCanalPrm );
+	strcpy( idTipoCarteira , idTipoCarteiraPrm );
+	strcpy( idUfOperadora , idUfOperadoraPrm );
+	strcpy( idSegmentacao , idSegmentacaoPrm );
+
+    ULOG( "idCanal  [%s]", idCanal );
+	ULOG( "idTipoCarteira  [%s]", idTipoCarteira );
+	ULOG( "idUfOperadora  [%s]", idUfOperadora );
+	ULOG( "idSegmentacao  [%s]", idSegmentacao );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+   
+    EXEC SQL DECLARE csrMenu CURSOR FOR
+	select 
+        iditemmenu, 
+        nmitem, 
+        iditemmenupai, 
+        dsurl, 
+        sqapresentacao, 
+        inativo, 
+        nmpai 
+    from 
+        vol.menuV01
+	where idcanal = :idCanal
+	and idtipocarteira = :idTipoCarteira 
+	and idufoperadora = :idUfOperadora
+	and idsegmentacao = :idSegmentacao
+	order by iditemmenupai, sqapresentacao;
+		
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	xml_g->createTag( "MenuVO" );
+    EXEC SQL OPEN csrMenu;
+    for( ;; ) 
+    {
+	    memset( idItemMenu, 0x0, sizeof(idItemMenu) );
+		memset( nmItem, 0x0, sizeof(nmItem) );
+		memset( idItemMenuPai, 0x0, sizeof(idItemMenuPai) );
+		memset( dsURL, 0x0, sizeof(dsURL) );
+		memset( sqApresentacao, 0x0, sizeof(sqApresentacao) );
+		memset( inAtivo, 0x0, sizeof(inAtivo) );
+		memset( nmPai, 0x0, sizeof(nmPai) );
+				
+        EXEC SQL FETCH csrMenu INTO 
+		   :idItemMenu:i_idItemMenu,
+		   :nmItem:i_nmItem,
+		   :idItemMenuPai:i_idItemMenuPai,
+		   :dsURL:i_dsURL,
+		   :sqApresentacao:i_sqApresentacao,
+		   :inAtivo:i_inAtivo,
+		   :nmPai:i_nmPai;
+    
+		xml_g->createTag( "ItemMenuVO" );
+			xml_g->addItem( "idItemMenu",  trim(idItemMenu) );
+			xml_g->addItem( "nmItem",  trim(nmItem) );
+			xml_g->addItem( "idItemMenuPai",  trim(idItemMenuPai) );
+			xml_g->addItem( "dsURL",  trim(dsURL) );
+			xml_g->addItem( "sqApresentacao",  trim(sqApresentacao) );
+			xml_g->addItem( "inAtivo",  trim(inAtivo) );
+			xml_g->addItem( "nmPai",  trim(nmPai) );
+		xml_g->closeTag();
+	
+	}
+	xml_g->closeTag();
+
+    EXEC SQL CLOSE csrMenu;
+    
+    ULOG_END( "getItensMenu()" );
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+} 

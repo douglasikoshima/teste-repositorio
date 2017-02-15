@@ -1,0 +1,234 @@
+//
+// $Id: sel_aparelho.pcpp,v 1.1 2009/07/31 15:34:37 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+// Prototipos
+void GetTipoAparelho( int idAparelho, int *cdTipoAparelho );
+
+int sel_aparelho(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char parm[256];
+  char szAuxNM[256];
+  int  cdTipoAparelho = 1;
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  int     idAparelho;
+  int     idAparelhoCor;
+  int     idMarca;
+  VARCHAR nmMarca[255];
+  VARCHAR dsModelo[255];
+  VARCHAR nmCor[255];
+  VARCHAR dsManualURL[255];
+  short   dsManualURLInd;
+
+  VARCHAR nmModelo[256];
+  VARCHAR nmModeloRTE[256];
+  int	  idMarcaGet=0;
+  int	  idCorGet=0;
+  
+  VARCHAR vlAparelho[256];
+  VARCHAR cdSap[32];
+  
+  short i_vlAparelho = -1;
+  short i_cdSap = -1;
+
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  EXEC SQL WHENEVER NOT FOUND DO break;
+  
+  memset( &vlAparelho,0x0,sizeof(vlAparelho));
+  memset( &cdSap,0x0,sizeof(cdSap));
+
+  try{
+    //  Obtendo dados do xml
+	
+	  if( get_tag(parm,dnode,"nmModelo",0,-1)!=-1) 
+	  {
+		
+		  strToOra(nmModeloRTE,parm);
+		  sprintf(szAuxNM,"%%%s%%",(char *)nmModeloRTE.arr);
+		  strToOra(nmModelo,szAuxNM);
+		  ULOG_VAR(nmModelo);
+		
+	  }
+
+	  else 
+	  {
+		  strToOra(nmModelo,"-1");
+	  }
+	
+	  ULOG_VAR(nmModelo);
+	
+	  get_tag(parm,dnode,"idMarca",0,0);
+	  idMarcaGet=atoi(parm);
+
+	  get_tag(parm,dnode,"idCor",0,0);
+	  idCorGet=atoi(parm);
+
+	  (idMarcaGet!=0)?idMarcaGet:idMarcaGet=-1;
+      (idCorGet!=0)?idCorGet:idCorGet=-1;
+		
+	  ULOG_INT(idCorGet);
+
+
+
+    // Pegando lista de aparelhos
+    EXEC SQL DECLARE crsAp CURSOR FOR
+    SELECT 
+       ra.idAparelho,
+       ra.dsModelo,
+       rm.idMarca,
+       rm.nmMarca,
+       ra.dsManualUrl
+    FROM
+       retencao.aparelho ra, 
+       retencao.marca rm
+    WHERE 
+       ra.idmarca = rm.idmarca
+    AND 
+       ra.inativo=1
+    ORDER BY UPPER(rm.nmMarca), UPPER(ra.dsModelo);     	
+	 
+     
+     /*
+     SELECT idAparelho,dsModelo,idMarca,nmMarca,dsManualUrl
+      FROM   retencao.AparelhoV02
+      WHERE  inAtivo = 1
+	  AND    (dsModelo LIKE :nmModelo OR :nmModelo='-1')
+	  AND	 (idMarca=:idMarcaGet OR :idMarcaGet='-1')
+	  //AND	 idAparelho IN(SELECT idaparelho
+		//				   FROM retencao.aparelhocor
+			//			   WHERE (idcor=:idCorGet OR :idCorGet=-1)
+				//		   and inativo=1)
+	 ORDER BY UPPER(nmMarca), UPPER(dsModelo);
+	*/
+	
+	EXEC SQL DECLARE crsApCor CURSOR FOR
+      		SELECT RAC.IDAPARELHOCOR,
+				   AC.NMCOR,
+                   TRIM (REPLACE (TO_CHAR (RAC.VLAPARELHO, '99999990D99'), '.', ',')),
+                   trim(RAC.CDSAPAPARELHO)
+      		FROM   RETENCAO.APARELHOCOR RAC,
+				   RETENCAO.APARELHO	RA,
+				   APOIO.COR			AC
+      		WHERE  RA.INATIVO = 1
+			AND    RAC.INATIVO=1
+			AND    RA.IDAPARELHO=RAC.IDAPARELHO
+			AND	   RAC.IDCOR=AC.IDCOR
+			AND    RA.IDAPARELHO = :idAparelho;	  
+   
+    EXEC SQL OPEN crsAp;
+
+    for(;;) 
+	{
+      EXEC SQL FETCH crsAp into :idAparelho,
+		  						:dsModelo,
+								:idMarca,
+								:nmMarca,
+								:dsManualURL:dsManualURLInd;
+
+            if (dsManualURLInd < 0)
+            {
+                strToOra(dsManualURL,"null");
+            }
+			endOraStr(dsModelo);
+			endOraStr(nmMarca);
+			endOraStr(dsManualURL);
+			ULOG_INT(idAparelho);
+			ULOG_VAR(dsModelo);
+			ULOG_INT(idMarca);
+			ULOG_VAR(nmMarca);
+			ULOG_VAR(dsManualURL);
+
+		xml->createTag("tns:aparelhoVO");
+		xml->addItem("idAparelho",idAparelho);
+		xml->addItem("modelo",(char *)dsModelo.arr);
+		xml->addItem("idMarca",idMarca);
+		xml->addItem("marca",(char *)nmMarca.arr);
+		xml->addItem("url_manual",(char *)dsManualURL.arr);
+        
+        /*
+         * SM250 - @Marcelo, Jan/2007
+         */
+        GetTipoAparelho( idAparelho, &cdTipoAparelho );
+		xml->addItem( "inTipoAparelho", cdTipoAparelho );
+		
+
+        EXEC SQL OPEN crsApCor;
+		for(;;) 
+		{
+				EXEC SQL FETCH crsApCor into :idAparelhoCor, 
+											 :nmCor,
+                                             :vlAparelho,
+                                             :cdSap:i_cdSap;
+
+				endOraStr(nmCor);
+				endOraStr(vlAparelho);
+				endOraStr(cdSap);
+				ULOG_INT(idAparelhoCor);
+				ULOG_VAR(nmCor);
+			xml->createTag("tns:corVO");
+    			xml->addItem("idAparelhoCor",idAparelhoCor);
+    			xml->addItem("nmCor",(char *)nmCor.arr);
+    			xml->addItem("valorAparelho",(char*)vlAparelho.arr);
+    			xml->addItem("codigoSAP",(char *)cdSap.arr);
+			xml->closeTag();
+		}
+      xml->closeTag();
+      EXEC SQL CLOSE crsApCor;
+    }
+
+    EXEC SQL CLOSE crsAp;
+
+  }
+  catch(...)
+  {
+	  throw;
+  }
+
+
+  return 1;
+}
+
+
+
+/*
+ * SM250 - Venda de Aparelhos GSM
+ * @Marcelo, Jan/2007
+ */
+void GetTipoAparelho( int idAparelhoPrm, int *cdTipoAprelhoPrm )
+{
+    ULOG_START( "GetTipoAparelho()" );
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idAparelho = idAparelhoPrm;
+        int cdTipoAparelho = 1;
+
+        short i_cdTipoAparelho = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT 
+            IDTIPOAPARELHO
+        INTO
+            :cdTipoAparelho:i_cdTipoAparelho
+        FROM
+            RETENCAO.APARELHO
+        WHERE
+            IDAPARELHO = :idAparelho;
+
+    ULOG( "Retornando idAparelho [%d], TipoAparelho [%d]", idAparelho, cdTipoAparelho );
+
+    if ( i_cdTipoAparelho != -1 )
+        *cdTipoAprelhoPrm = cdTipoAparelho;
+
+    ULOG_END( "GetTipoAparelho()" );
+}
+

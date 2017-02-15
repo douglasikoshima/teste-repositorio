@@ -1,0 +1,272 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <CUF.h>
+
+CUF::CUF()
+{
+}
+
+CUF::~CUF()
+{
+}
+
+int CUF::ListId( char* cidUF )
+{
+    ULOG_START("CUF::ListId");
+
+    //Variavel de controle para a quantidade de registros retornada
+    int    iCont = 0;
+
+    //Variavel de status do oracle para PROC
+    struct sqlca sqlca;
+
+    if ( cidUF && *cidUF )
+    {
+	    //Declaracao das variaveis para o PROC
+	    EXEC SQL BEGIN DECLARE SECTION;
+		    char* cAuxidUF = cidUF; 
+		    struct
+		    {
+			    VARCHAR stidUF[21+1];
+			    VARCHAR stsgUF[255+1];
+			    VARCHAR stnmUF[255+1];
+			    VARCHAR stnrFusoHorario[21+1];
+		    } stUFRegistro;
+		    struct
+		    {
+			    short iidUF;
+			    short isgUF;
+			    short inmUF;
+			    short inrFusoHorario;
+		    } stUFIndicator;
+	    EXEC SQL END DECLARE SECTION;
+
+	    //Processamento Principal
+	    try
+	    {
+		    //Zera a estrutura da classe
+		    ZeraUF();
+
+		    //Ativa as acoes decorrentes de erros ORACLE
+		    EXEC SQL WHENEVER NOT FOUND DO break;
+		    EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		    sqlca.sqlcode=0;
+
+		    //Declara um cursor para listar os IDs
+   		    EXEC SQL 
+			    DECLARE 
+				    CursorUFId CURSOR FOR 
+   			    SELECT 	
+				    IDUF,
+				    SGUF,
+				    NMUF,
+				    NRFUSOHORARIO
+			    FROM 
+				    APOIO.UF
+			    WHERE 
+				    IDUF = :cAuxidUF;
+
+		    //Abre o cursor
+		    EXEC SQL OPEN CursorUFId;
+
+		    //Verifica se nao house erro ORACLE
+		    if(sqlca.sqlcode)
+            {
+                ULOGE("CUF::ListId <ERROR>");
+                ULOG_END("CUF::ListId");
+			    return 0;//Erro
+            }
+		    else
+		    {
+			    //Caso inexista registros sair do loop
+			    EXEC SQL WHENEVER NOT FOUND DO break;
+			    for(;;)
+			    {
+				    //Zera a estrutura de restorno
+				    memset( &stUFRegistro, 0, sizeof(stUFRegistro) );
+				    //Pega um registro no CURSOR
+				    EXEC SQL FETCH CursorUFId INTO :stUFRegistro:stUFIndicator;
+				    //Adiciona a classe
+				    Add(
+					    (char*)stUFRegistro.stidUF.arr,
+					    (char*)stUFRegistro.stsgUF.arr,
+					    (char*)stUFRegistro.stnmUF.arr,
+					    (char*)stUFRegistro.stnrFusoHorario.arr
+				    );
+				    //conta quantos existem
+				    iCont++;
+			    }
+			    //Fecha o CURSOR
+			    EXEC SQL CLOSE CursorUFId;
+		    }
+	    }
+	    catch(...)
+	    {
+		    throw;
+	    }
+    } // if ( cidUF && *cidUF )
+
+    ULOGI("CUF::ListId <OK>");
+    ULOG_END("CUF::ListId");
+
+    //Retorna a quantidade de registros
+    return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CUF::ListAll( void )
+{
+    ULOG_START("CUF::ListAll");
+
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidUF[21+1];
+			VARCHAR stsgUF[255+1];
+			VARCHAR stnmUF[255+1];
+			VARCHAR stnrFusoHorario[21+1];
+		} stUFRegistro;
+		struct
+		{
+			short iidUF;
+			short isgUF;
+			short inmUF;
+			short inrFusoHorario;
+		} stUFIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraUF();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL 
+			DECLARE 
+				CursorUFAll CURSOR FOR
+   			SELECT 	
+				UF.IDUF,
+				UF.SGUF,
+				UF.NMUF,
+				UF.NRFUSOHORARIO
+			FROM 
+				APOIO.UF UF
+			WHERE
+				UF.IDUF > 0
+            AND UF.SGUF != 'SPSP'
+			AND UF.SGUF IN ('AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO')
+			ORDER BY
+				UF.NMUF;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorUFAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+        {
+            ULOGE("CUF::ListAll <ERROR>");
+            ULOG_END("CUF::ListAll");
+			return 0;//Erro
+        }
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stUFRegistro, 0, sizeof(stUFRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorUFAll INTO :stUFRegistro:stUFIndicator;
+				//Adiciona a classe
+				Add( 	
+					(char*)stUFRegistro.stidUF.arr,
+					(char*)stUFRegistro.stsgUF.arr,
+					(char*)stUFRegistro.stnmUF.arr,
+					(char*)stUFRegistro.stnrFusoHorario.arr
+				);
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorUFAll;
+		}
+        ULOGI("CUF::ListAll <OK>");
+        ULOG_END("CUF::ListAll");
+
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CUF::getXmlBasico( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			xml->createTag(cNomeTag);
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idUF", Registro(x)->cidUF );
+				xml->addItem("sgUF", Registro(x)->csgUF );
+				xml->addItem("nmUF", Registro(x)->cnmUF );
+				xml->addItem("nrFusoHorario", Registro(x)->cnrFusoHorario ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			xml->closeTag();
+		}
+	}
+}
+
+void CUF::getXmlLista( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			xml->createTag(cNomeTag);
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idUF", Registro(x)->cidUF );
+				xml->addItem("sgUF", Registro(x)->csgUF );
+			}
+			//So fecha um tag se abriu anteriormente
+			xml->closeTag();
+		}
+	}
+}

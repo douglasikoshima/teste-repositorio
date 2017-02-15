@@ -1,0 +1,3062 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+
+#include <tuxfw.h>
+#include <PPExceptionTMA.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "PPGlobalTMA.h"
+EXEC SQL END DECLARE SECTION;
+
+#ifdef CONVIND
+    #undef CONVIND
+#endif
+
+#define CONVIND(O,I) \
+{ \
+	if (I == -1) { \
+		##O.arr[0]=0; \
+	} else { \
+		##O.arr[##O.len]=0; \
+	} \
+}
+
+/* prototipos */
+bool BuscaDadosPessoaFisica(XMLGen *pclXmlGen,char *pszNrDocumento,char *pszIdTipoDocumento,char *pszSgTipoRelacionamento,char *pszIdPessoa);
+void BuscaDadosTelefone(XMLGen *pclXmlGen, char *pszIdPessoa, bool bFlagNotFoundError, bool bFlagCriaXml, char *pszNrDocumento, char *pszIdTipoDocumento, char *pszIdTipoPessoa,bool buscarTelefone);
+void BuscaDadosPessoaFisicaValorPossivel(XMLGen *pclXmlGen, char *pszIdPessoa, char *pszIdAtributo, bool bFlagNotFoundError);
+void BuscaDadosPessoaFisicaDocumento(XMLGen *pclXmlGen, char *pszIdPessoa, char *pszIdTipoDocumento, bool bFlagNotFoundError);
+void BuscaDadosPessoaFisicaComunicacao(XMLGen *pclXmlGen, char *pszIdPessoa, char *pszSgTipoComunicacao, bool bFlagNotFoundError);
+void BuscaDadosPessoaJuridica(XMLGen *pclXmlGen, char *pszNrDocumento, char *pszSgTipoRelacionamento, char *pszIdPessoa, bool bFlagNotFoundError);
+void BuscaDadosPessoaJuridicaInscricao(XMLGen *pclXmlGen, char *pszIdPessoa, bool bFlagNotFoundError);
+void BuscaDadosEndereco(XMLGen *pclXmlGen, char *pszIdPessoa, char *pszSgTipoRelacionamento, bool bFlagNotFoundError, bool bFlagCriaXmlm, char *idLinhatelefonica);
+void BuscaDadosDocumento(XMLGen *pclXmlGen, char *pszSgClassificacao, char *pszIdPessoa, bool bFlagNotFoundError);
+
+bool BuscaDadosAlteraTrocaTitularidadePF(XMLGen *pclXmlGen, char *pszSgTipoRelacionamento, char *pszIdPessoa, char *pszIdLinhaTelefonica);
+bool BuscaDadosAlteraTrocaTitularidadePJ(XMLGen *pclXmlGen, char *pszSgTipoRelacionamento, char *pszIdPessoa, char *pszIdLinhaTelefonica);
+void BuscaDadosPessoaFisicaDocumentoTrocaTit(XMLGen *pclXmlGen, char *pszSgTipoRelacionamento, char *pszIdPessoa, char *pszIdLinhaTelefonica, bool bFlagNotFoundError);
+
+void BuscaEnderecoPrincipal(char *pszIdPessoa, char *pszIdPessoaEndereco);
+void BuscaEnderecoPrincipalCompleto(XMLGen *pclXmlGen, char *pszIdPessoa);
+
+bool BuscaListaPessoaDocumento(XMLGen *pclXmlGen,
+                                char *pszNrDocumento,
+                                char * pszNrLinha,
+                                char * pszNrConta,
+                                char *pszIdTipoDocumento,
+                                char *pszIdTipoPessoa,
+                                const char *pszNrPagina
+                              );
+
+int BuscaListaPessoaDocumentoCount(char *pszNrDocumento, char *pszIdTipoDocumento, char *pszIdTipoPessoa);
+int BuscaQuantidadeLinhasPorPagina(const char *cdParametro);
+
+bool ClienteEhUsuario(XMLGen *pclXmlGen, char *pszIdPessoa);
+
+DECLARE_TUXEDO_SERVICE(GETPPDOCTMA);
+
+void implGETPPDOCTMA::Execute(DOMNode *dnode, XMLGen *xml_g)
+{
+    XMLGen *pclXmlGen=NULL;
+
+    try
+    {
+        ULOG_START("GETPPDOCTMA");
+
+        pclXmlGen = new XMLGen;
+        char *pclXmlGenText=NULL;
+        int iLenXmlGenText;
+
+        /* Usadas na macro GETTREE */
+        char szMessage[LEN_RETURN_MESSAGE + LEN_EOS];
+        char *pTree;
+
+        char szAux[LEN_AUX + LEN_EOS];
+        int iCount;
+        
+        char szNrLinha[16];
+        char szNrConta[101];
+
+        char szIdTipoPessoa[LEN_IDTIPOPESSOA + LEN_EOS];
+        char szIdTipoPessoaCtrl[LEN_IDTIPOPESSOA + LEN_EOS];
+        char szIdTipoDocumento[LEN_IDTIPODOCUMENTO + LEN_EOS];
+        char szNrDocumento[LEN_NRDOCUMENTO + LEN_EOS];
+        char szIdPessoa[LEN_IDPESSOA + LEN_EOS];
+        char szIdPessoaIn[LEN_IDPESSOA + LEN_EOS];
+        char szIdLinhaTelefonica[LEN_IDLINHATELEFONICA + LEN_EOS];
+        char szInPesquisaCliente[2];
+        char szNrPagina[6];
+        bool bClientUser=false;
+        bool bTrocaTit=false;
+        int QtPessoasDocumento=0;
+        bool buscarTelefone = false;
+
+        /* tipo de pessoa 1 - Fisica  2 - Juridica */
+        GETTREE(szIdTipoPessoa, dnode, "idTipoPessoa", 0, OBRIGATORIO, "idTipoPessoa"); ULOG("szIdTipoPessoa[%s]", szIdTipoPessoa);
+        GETTREE(szIdLinhaTelefonica, dnode, "idLinhaTelefonica", 0, NOBRIGATORIO, "idLinhaTelefonica"); ULOG("szIdLinhaTelefonica[%s]", szIdLinhaTelefonica);
+        GETTREE(szInPesquisaCliente, dnode, "inPesquisaCliente", 0, NOBRIGATORIO, "inPesquisaCliente"); ULOG("szInPesquisaCliente[%s]", szInPesquisaCliente);
+
+        if ( !strcmp(szInPesquisaCliente,"1") ) {
+            if( !strcmp(szIdTipoPessoa, "1") ) {
+                GETTREE(szIdTipoDocumento, dnode, "idTipoDocumento", 0, OBRIGATORIO, "idTipoDocumento");
+                ULOG("szIdTipoDocumento[%s]", szIdTipoDocumento);
+            }
+            GETTREE(szNrDocumento, dnode, "nrDocumento", 0, OBRIGATORIO, "nrDocumento");
+            ULOG("szNrDocumento[%s]", szNrDocumento);
+            QtPessoasDocumento = BuscaListaPessoaDocumentoCount(szNrDocumento,szIdTipoDocumento,szIdTipoPessoa);
+            buscarTelefone = QtPessoasDocumento>0?false:true;
+        }
+
+        if ( QtPessoasDocumento>1 )
+        {
+            pclXmlGen->createTag("PrePagoVO");
+            pclXmlGen->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+            pclXmlGen->addItem("inTipoPessoa", szIdTipoPessoa);
+
+            GETTREE(szNrPagina, dnode, "nrPagina", 0, OBRIGATORIO, "nrPagina"); ULOG("szNrPagina[%s]", szNrPagina);
+
+            szNrLinha[0] = 0x0;
+            GETTREE(szNrLinha, dnode, "nrLinha", 0, NOBRIGATORIO, "nrLinha"); ULOG("szNrLinha[%s]", szNrLinha);
+            
+            szNrConta[0] = 0x0;
+            GETTREE(szNrConta, dnode, "nrConta", 0, NOBRIGATORIO, "nrConta"); ULOG("szNrConta[%s]", szNrConta);
+            
+            BuscaListaPessoaDocumento(pclXmlGen,szNrDocumento,szNrLinha,szNrConta,szIdTipoDocumento,szIdTipoPessoa,szNrPagina);
+            pclXmlGen->closeTag();
+        }
+        else
+        {
+            if(strlen(szIdLinhaTelefonica) > 0)
+            {
+                GETTREE(szIdPessoaIn, dnode, "idPessoa", 0, OBRIGATORIO, "idPessoa"); ULOG("szIdPessoaIn[%s]", szIdPessoaIn);
+                bTrocaTit=true;
+            }
+            else
+            {
+                if(!strcmp(szIdTipoPessoa, "1")) {
+                    GETTREE(szIdTipoDocumento, dnode, "idTipoDocumento", 0, OBRIGATORIO, "idTipoDocumento"); ULOG("szIdTipoDocumento[%s]", szIdTipoDocumento);
+                }
+                GETTREE(szNrDocumento, dnode, "nrDocumento", 0, OBRIGATORIO, "nrDocumento"); ULOG("szNrDocumento[%s]", szNrDocumento);
+            }
+
+            /* inicio da logica para navegacao dos nohs do XML de entrada */
+            strcpy(szIdTipoPessoaCtrl, szIdTipoPessoa);
+
+            pclXmlGen->createTag("PrePagoVO");
+            pclXmlGen->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+            pclXmlGen->addItem("inTipoPessoa", szIdTipoPessoa);
+
+            memset(szIdPessoa, 0x00, sizeof(szIdPessoa));
+            for(iCount=0; iCount < 2; iCount++)
+            {
+                ULOG("iCount(%d)[%s]", iCount, (iCount == 0)?"C":"U");
+                ULOG("szIdTipoPessoa[%s]", szIdTipoPessoa);
+                ULOG("szIdTipoPessoaCtrl[%s]", szIdTipoPessoaCtrl);
+
+                if(szIdTipoPessoaCtrl[0] == '1')  // Pessoa Fisica
+                {
+                    pclXmlGen->createTag("PF");
+
+                    if(bTrocaTit == false)
+                    {
+                        if(BuscaDadosPessoaFisica(pclXmlGen, szNrDocumento, szIdTipoDocumento, (iCount == 0)?"C":"U", szIdPessoa) == false)
+                            throw PPExceptionTMA(ERRO_EXECUCAO, "Nao foi possivel obter dados.");
+                    }
+                    else
+                    {
+                        if(BuscaDadosAlteraTrocaTitularidadePF(pclXmlGen, (iCount == 0)?"C":"U", szIdPessoa, szIdLinhaTelefonica) == false)
+                            throw PPExceptionTMA(ERRO_EXECUCAO, "Nao foi possivel obter dados.");
+
+                        ULOG("PESSOA FISICA IDPESSOA[%s][%s]", szIdPessoa, (iCount == 0)?"C":"U");
+                    }
+
+                    bClientUser = ClienteEhUsuario(pclXmlGen, szIdPessoa);
+
+                    BuscaDadosPessoaFisicaValorPossivel(pclXmlGen, szIdPessoa, "90", false);
+                    BuscaDadosPessoaFisicaValorPossivel(pclXmlGen, szIdPessoa, "107", false);
+                    BuscaDadosDocumento(pclXmlGen, "CPR", szIdPessoa, false);
+                    BuscaDadosPessoaFisicaComunicacao(pclXmlGen, szIdPessoa, "EM COM", false);
+                    BuscaDadosPessoaFisicaComunicacao(pclXmlGen, szIdPessoa, "EM PART", false);
+
+                    BuscaDadosTelefone(pclXmlGen,szIdPessoa,false,false,szNrDocumento,szIdTipoDocumento,szIdTipoPessoa,buscarTelefone);
+
+                    if(bTrocaTit == false)
+                        BuscaDadosPessoaFisicaDocumento(pclXmlGen, szIdPessoa, szIdTipoDocumento, false);
+                    else
+                        BuscaDadosPessoaFisicaDocumentoTrocaTit(pclXmlGen, (iCount == 0)?"C":"U", szIdPessoa, szIdLinhaTelefonica, false);
+                    BuscaDadosEndereco(pclXmlGen, szIdPessoa, (iCount == 0)?"C":"U", false, false,szIdLinhaTelefonica);
+
+                    pclXmlGen->closeTag(); //PF
+
+
+                }
+                else if(szIdTipoPessoaCtrl[0] == '2')  // Pessoa Juridica
+                {
+                    pclXmlGen->createTag("PJ");
+
+                    if(bTrocaTit == false)
+                        BuscaDadosPessoaJuridica(pclXmlGen, szNrDocumento, (iCount == 0)?"C":"U", szIdPessoa, true);
+                    else
+                    {
+                        if(BuscaDadosAlteraTrocaTitularidadePJ(pclXmlGen, (iCount == 0)?"C":"U", szIdPessoa, szIdLinhaTelefonica) == false)
+                            throw PPExceptionTMA(ERRO_EXECUCAO, "Nao foi possivel obter dados.");
+
+                        ULOG("PESSOA JURIDICA IDPESSOA[%s][%s]", szIdPessoa, (iCount == 0)?"C":"U");
+                    }
+
+                    bClientUser = ClienteEhUsuario(pclXmlGen, szIdPessoa);
+
+                    BuscaDadosPessoaJuridicaInscricao(pclXmlGen, szIdPessoa, false);
+                    BuscaDadosDocumento(pclXmlGen, "CNPJ", szIdPessoa, false);
+                    BuscaDadosDocumento(pclXmlGen, "CNAE", szIdPessoa, false);
+                    BuscaDadosDocumento(pclXmlGen, "CCM", szIdPessoa, false);
+
+                    if(iCount == 0) { // Cliente
+                        BuscaDadosTelefone(pclXmlGen, szIdPessoa, true, true,szNrDocumento,szIdTipoDocumento,szIdTipoPessoa,buscarTelefone);
+                    }
+
+                    BuscaDadosEndereco(pclXmlGen, szIdPessoa, (iCount == 0)?"C":"U", false, false,szIdLinhaTelefonica);
+
+                    pclXmlGen->closeTag(); //PJ
+
+                }
+                else
+                    throw PPExceptionTMA(ERRO_EXECUCAO, "idTipoPessoa invalido");
+
+
+                ULOG("bClientUser(%d) bTrocaTit(%d) szIdTipoPessoa[%s]", bClientUser, bTrocaTit, szIdTipoPessoa);
+                if(bClientUser == true || bTrocaTit == false) {
+                    ULOG("local1");
+                    break;
+                }
+
+                if(bClientUser == false && szIdTipoPessoa[0] == '2') {
+                    ULOG("local2");
+                    strcpy(szIdTipoPessoaCtrl, "1"); // direciona para o noh de Pessoa Física para buscar os dados do usuario
+                }
+            }
+
+            if(bClientUser == true)
+                pclXmlGen->addItem("inUsuario", "1");
+            else
+                pclXmlGen->addItem("inUsuario", "0");
+
+            pclXmlGen->closeTag(); //PrePagoVO
+
+        } // if ( strcmp(szInPesquisaCliente,"1") != 0 )
+
+        /* tratamento no caso de exception, para o xml nao ficar com dados adicionados anteriormente,
+           poderia usar a funcao clearAndDestroy(), mas ela apresenta um bug quando se abre uma Tag sem fecha-la */
+        pclXmlGenText = pclXmlGen->retrieveXML(&iLenXmlGenText);
+        ULOG("pclXmlGenText(%p) iLenXmlGenText(%d) strlen(pclXmlGenText)(%d)", pclXmlGenText, iLenXmlGenText, strlen(pclXmlGenText));
+
+        ULOG("aggregateXML");
+        xml_g->aggregateXML(pclXmlGenText);
+
+    }
+    catch(PPExceptionTMA ExcepTMA)
+    {
+        ULOG("Exception PPExceptionTMA");
+        ULOG("ExcepTMA.getTipo()(%d)", ExcepTMA.getTipo());
+        ULOG("ExcepTMA.getMsg()[%s]", ExcepTMA.getMsg());
+        ULOG("Exception Tratada....");
+
+        // pclXmlGen->clearAndDestroy(); // zero os dados adicionados no xml
+        xml_g->createTag("PrePagoVO");
+        xml_g->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+        xml_g->addItem("codError", ExcepTMA.getTipo());
+        xml_g->addItem("msgError", ExcepTMA.getMsg());
+        xml_g->closeTag(); //PrePagoVO
+    }
+    catch(...)
+    {
+        ULOG("Exception ...");
+        if(pclXmlGen) {
+            ULOG("destroy pclXmlGen...");
+            delete pclXmlGen;
+            pclXmlGen=NULL;
+        }
+        throw;
+    }
+
+    if(pclXmlGen) {
+        ULOG("destroy pclXmlGen OK");
+        delete pclXmlGen;
+        pclXmlGen=NULL;
+    }
+
+    ULOG_END("GETPPDOCTMA");
+    setStatusCode("13I1313", "Sucesso");
+}
+
+/*******************************************************************************
+ * BuscaDadosPessoaFisicaDocumentoTrocaTit
+ *******************************************************************************/
+void BuscaDadosPessoaFisicaDocumentoTrocaTit(XMLGen *pclXmlGen, char *pszSgTipoRelacionamento, char *pszIdPessoa, char *pszIdLinhaTelefonica, bool bFlagNotFoundError)
+{
+    ULOG_START("BuscaDadosPessoaFisicaDocumentoTrocaTit");
+
+    struct sqlca sqlca;
+    int iCount;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+    bool bFlagStop=false;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszSgTipoRelacionamento[LEN_SGTIPORELACIONAMENTO];
+
+
+        VARCHAR oszIdTipoDocumento[LEN_IDTIPODOCUMENTO];
+        VARCHAR oszIdDocumento[LEN_IDDOCUMENTO];
+        VARCHAR oszNrDocumento[LEN_NRDOCUMENTO];
+        VARCHAR oszDtEmissao[LEN_DTEMISSAO];
+        VARCHAR oszSgOrgaoExpeditor[LEN_SGORGAOEXPEDIDOR];
+        VARCHAR oszIdUF[LEN_IDUF];
+
+        short oiIdTipoDocumento=0;
+        short oiIdDocumento=0;
+        short oiNrDocumento=0;
+        short oiDtEmissao=0;
+        short oiSgOrgaoExpeditor=0;
+        short oiIdUF=0;
+    EXEC SQL END DECLARE SECTION;
+
+
+    MEMSET_ORA(oszIdDocumento);
+    MEMSET_ORA(oszIdTipoDocumento);
+    MEMSET_ORA(oszNrDocumento);
+    MEMSET_ORA(oszDtEmissao);
+    MEMSET_ORA(oszSgOrgaoExpeditor);
+    MEMSET_ORA(oszIdUF);
+
+    ULOG("bFlagNotFoundError(%d)", bFlagNotFoundError);
+    STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa); ULOG("oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, pszIdLinhaTelefonica); ULOG("oszIdLinhaTelefonica[%.*s]", oszIdLinhaTelefonica.len, oszIdLinhaTelefonica.arr);
+    STRCPY_TO_ORA(oszSgTipoRelacionamento, pszSgTipoRelacionamento);  ULOG("oszSgTipoRelacionamento[%.*s]", oszSgTipoRelacionamento.len, oszSgTipoRelacionamento.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    EXEC SQL DECLARE cDocumentoTT CURSOR FOR
+        SELECT
+            cd.idtipodocumento,
+            cd.iddocumento,
+            cd.idtipodocumento,
+            cd.nrdocumento,
+            TO_CHAR(cd.dtemissao, 'DD/MM/YYYY') as dtemissao,
+            cd.sgorgaoexpedidor,
+            cd.iduf
+        FROM
+            customer.pessoadocumento cpd,
+            customer.documento cd,
+            customer.pessoadepara cpdp,
+            customer.pessoalinha cpl,
+            customer.tiporelacionamento ctr
+        WHERE
+            cpd.iddocumento = cd.iddocumento
+        AND
+            cpd.idpessoa = cpdp.idpessoa
+        AND
+            cpdp.idpessoadepara = cpl.idpessoadepara
+        AND
+            cpd.idpessoa = :oszIdPessoa
+        AND
+            cpl.idlinhatelefonica = :oszIdLinhaTelefonica
+        AND
+            cd.idtipodocumento <> 30
+        AND
+            cpl.idtiporelacionamento = ctr.idtiporelacionamento
+        AND
+            ctr.sgtiporelacionamento = :oszSgTipoRelacionamento;
+
+
+//        SELECT
+//            cd.idtipodocumento,
+//            cd.iddocumento,
+//            cd.idtipodocumento,
+//            cd.nrdocumento,
+//            TO_CHAR(cd.dtemissao, 'DD/MM/YYYY') as dtemissao,
+//            cd.sgorgaoexpedidor,
+//            cd.iduf
+//        FROM
+//            customer.documento cd,
+//            customer.pessoadocumento cpd,
+//            customer.pessoalinha cpl,
+//            customer.pessoadepara cpdp,
+//            linha.linhatelefonica llt,
+//            apoio.tipodocumento atd,
+//            customer.tiporelacionamento ctr
+//        WHERE
+//            cd.iddocumento = cpd.iddocumento
+//        AND
+//            cpd.idpessoa = cpdp.idpessoa
+//        AND
+//           cpdp.idpessoadepara = cpl.idpessoadepara
+//        AND
+//           cpl.idlinhatelefonica = llt.idlinhatelefonica
+//        AND
+//            ctr.idtiporelacionamento = cpl.idtiporelacionamento
+//        AND
+//            cd.idtipodocumento = atd.idtipodocumento
+//        AND
+//            atd.nrprioridade =
+//            (
+//                SELECT
+//                    MIN(tipodocumento.nrprioridade)
+//                FROM
+//                    customer.pessoadocumento pessoadocumento,
+//                    customer.documento documento,
+//                    apoio.tipodocumento tipodocumento
+//                WHERE
+//                    cpdp.idpessoa = pessoadocumento.idpessoa
+//                AND
+//                    documento.iddocumento = pessoadocumento.iddocumento
+//                AND
+//                    documento.idtipodocumento = tipodocumento.idtipodocumento
+//            )
+//        AND
+//            ctr.sgtiporelacionamento = :oszSgTipoRelacionamento
+//        AND
+//            cpd.idpessoa = :oszIdPessoa
+//        AND
+//            llt.idlinhatelefonica = :oszIdLinhaTelefonica;
+
+
+    EXEC SQL OPEN cDocumentoTT;
+
+    for(iCount=0;;iCount++)
+    {
+        EXEC SQL FETCH cDocumentoTT INTO   :oszIdTipoDocumento:oiIdTipoDocumento,
+                                           :oszIdDocumento:oiIdDocumento,
+                                           :oszIdTipoDocumento:oiIdTipoDocumento,
+                                           :oszNrDocumento:oiNrDocumento,
+                                           :oszDtEmissao:oiDtEmissao,
+                                           :oszSgOrgaoExpeditor:oiSgOrgaoExpeditor,
+                                           :oszIdUF:oiIdUF;
+
+
+        ULOG("sqlca.sqlcode(%d) iCount(%d)", sqlca.sqlcode, iCount);
+        if(sqlca.sqlcode == 1403) {
+            if(iCount == 0 && bFlagNotFoundError == true) {
+                EXEC SQL CLOSE cDocumentoTT;
+                throw PPExceptionTMA(ERRO_EXECUCAO, "Register Not Found...");
+            }
+            bFlagStop=true;
+            if(iCount > 0) {
+                break;
+            }
+        }
+
+        pclXmlGen->createTag("Documento");
+
+        ULOG("oszIdDocumento[%.*s](%d)",oszIdDocumento.len, oszIdDocumento.arr, oiIdDocumento);
+        szAux[0]=0x00;
+        if(oiIdDocumento != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdDocumento);
+        }
+        pclXmlGen->addItem("idDocumento", szAux);
+
+
+        ULOG("oszIdTipoDocumento[%.*s](%d)",oszIdTipoDocumento.len, oszIdTipoDocumento.arr, oiIdTipoDocumento);
+        szAux[0]=0x00;
+        if(oiIdTipoDocumento != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdTipoDocumento);
+        }
+        pclXmlGen->addItem("idTipoDocumento", szAux);
+
+
+        ULOG("oszNrDocumento[%.*s](%d)",oszNrDocumento.len, oszNrDocumento.arr, oiNrDocumento);
+        szAux[0]=0x00;
+        if(oiNrDocumento != -1) {
+            STRCPY_FROM_ORA(szAux, oszNrDocumento);
+        }
+        pclXmlGen->addItem("nrDocumento", szAux);
+
+
+        ULOG("oszDtEmissao[%.*s](%d)",oszDtEmissao.len, oszDtEmissao.arr, oiDtEmissao);
+        szAux[0]=0x00;
+        if(oiDtEmissao != -1) {
+            STRCPY_FROM_ORA(szAux, oszDtEmissao);
+        }
+        pclXmlGen->addItem("dtExpedicao", szAux);
+
+
+        ULOG("oszSgOrgaoExpeditor[%.*s](%d)",oszSgOrgaoExpeditor.len, oszSgOrgaoExpeditor.arr, oiSgOrgaoExpeditor);
+        szAux[0]=0x00;
+        if(oiSgOrgaoExpeditor != -1) {
+            STRCPY_FROM_ORA(szAux, oszSgOrgaoExpeditor);
+        }
+        pclXmlGen->addItem("dsOrgaoEmissor", szAux);
+
+
+        ULOG("oszIdUF[%.*s](%d)",oszIdUF.len, oszIdUF.arr, oiIdUF);
+        szAux[0]=0x00;
+        if(oiIdUF != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdUF);
+        }
+        pclXmlGen->addItem("idUFDocumento", szAux);
+
+
+
+        pclXmlGen->closeTag(); //Documento
+
+        if(bFlagStop == true) {
+            break;
+        }
+    }
+
+    EXEC SQL CLOSE cDocumentoTT;
+
+    ULOG("Quantidade de elementos obtidos (%d)", iCount);
+
+    if(iCount == 0) {
+        ULOG_END("BuscaDadosPessoaFisicaDocumentoTrocaTit <NOT FOUND>");
+        return;
+    }
+
+    ULOG_END("BuscaDadosPessoaFisicaDocumentoTrocaTit <OK>");
+    return;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosPessoaFisicaDocumentoTrocaTit <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaDadosDocumento
+ *******************************************************************************/
+void BuscaDadosDocumento(XMLGen *pclXmlGen, char *pszSgClassificacao, char *pszIdPessoa, bool bFlagNotFoundError)
+{
+    ULOG_START("BuscaDadosDocumento");
+
+    struct sqlca sqlca;
+    int iCount;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+    bool bFlagStop=false;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+        VARCHAR oszSgClassificacao[LEN_SGCLASSIFICACAO];
+
+        VARCHAR oszNrDocumento[LEN_NRDOCUMENTO];
+
+        short oiNrDocumento=0;
+    EXEC SQL END DECLARE SECTION;
+
+    MEMSET_ORA(oszNrDocumento);
+
+    ULOG("bFlagNotFoundError(%d)", bFlagNotFoundError);
+    STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa); ULOG("oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+    STRCPY_TO_ORA(oszSgClassificacao, pszSgClassificacao); ULOG("oszSgClassificacao[%.*s]", oszSgClassificacao.len, oszSgClassificacao.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    EXEC SQL DECLARE cDadosDocumento CURSOR FOR
+        SELECT
+            cd.nrdocumento
+        FROM
+            apoio.tipodocumento atd,
+            customer.pessoadocumento cpd,
+            customer.documento cd
+        WHERE
+            atd.sgclassificacao = :oszSgClassificacao
+        AND
+            atd.invisualiza = 1
+        AND
+            atd.idtipodocumento = cd.idtipodocumento
+        AND
+            cpd.iddocumento = cd.iddocumento
+        AND
+            cpd.idpessoa = :oszIdPessoa;
+
+
+
+    EXEC SQL OPEN cDadosDocumento;
+
+    for(iCount=0;;iCount++)
+    {
+
+        EXEC SQL FETCH cDadosDocumento INTO :oszNrDocumento:oiNrDocumento;
+
+
+        ULOG("sqlca.sqlcode(%d) iCount(%d)", sqlca.sqlcode, iCount);
+        if(sqlca.sqlcode == 1403) {
+            if(iCount == 0 && bFlagNotFoundError == true) {
+                EXEC SQL CLOSE cDadosDocumento;
+                throw PPExceptionTMA(ERRO_EXECUCAO, "Register Not Found...");
+            }
+            bFlagStop=true;
+            if(iCount > 0) {
+                break;
+            }
+        }
+
+
+        ULOG("oszNrDocumento[%.*s](%d)",oszNrDocumento.len, oszNrDocumento.arr, oiNrDocumento);
+        szAux[0]=0x00;
+        if(oiNrDocumento != -1) {
+            STRCPY_FROM_ORA(szAux, oszNrDocumento);
+        }
+
+        if(!strcmp(pszSgClassificacao, "CCM"))
+        {
+            pclXmlGen->addItem("nrCCM", szAux);
+        }
+        else if(!strcmp(pszSgClassificacao, "CNPJ"))
+        {
+            pclXmlGen->addItem("nrCNPJ", szAux);
+        }
+        else if(!strcmp(pszSgClassificacao, "CNAE"))
+        {
+            pclXmlGen->addItem("nrCNAE", szAux);
+        }
+        else if(!strcmp(pszSgClassificacao, "CPR"))
+        {
+            pclXmlGen->addItem("nrCPR", szAux);
+        }
+
+
+        if(bFlagStop == true) {
+            break;
+        }
+    }
+
+    EXEC SQL CLOSE cDadosDocumento;
+
+    ULOG("Quantidade de elementos obtidos (%d)", iCount);
+
+    if(iCount == 0) {
+        ULOG_END("BuscaDadosDocumento <NOT FOUND>");
+        return;
+    }
+
+    ULOG_END("BuscaDadosDocumento <OK>");
+    return;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosDocumento <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+
+/*******************************************************************************
+ * BuscaDadosPessoaJuridicaInscricao
+ *******************************************************************************/
+void BuscaDadosPessoaJuridicaInscricao(XMLGen *pclXmlGen, char *pszIdPessoa, bool bFlagNotFoundError)
+{
+    ULOG_START("BuscaDadosPessoaJuridicaInscricao");
+
+    struct sqlca sqlca;
+    int iCount;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+    bool bFlagStop=false;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+
+        VARCHAR oszIdTipoDocumento[LEN_IDTIPODOCUMENTO];
+        VARCHAR oszNrDocumento[LEN_NRDOCUMENTO];
+
+        short oiIdTipoDocumento=0;
+        short oiNrDocumento=0;
+    EXEC SQL END DECLARE SECTION;
+
+    MEMSET_ORA(oszIdTipoDocumento);
+    MEMSET_ORA(oszNrDocumento);
+
+    ULOG("bFlagNotFoundError(%d)", bFlagNotFoundError);
+    STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa); ULOG("oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    EXEC SQL DECLARE cDadosPessoaJuridicaInscricao CURSOR FOR
+        SELECT
+            atd.idtipodocumento,
+            cd.nrdocumento
+        FROM
+            apoio.tipodocumento atd,
+            apoio.tipopessoa atp,
+            customer.documento cd,
+            customer.pessoadocumento cpd
+        WHERE
+            atd.sgclassificacao IN ('IE', 'IF', 'IM', 'II')
+        AND
+            atd.invisualiza = 1
+        AND
+            atd.idtipopessoa = atp.idtipopessoa
+        AND
+            atp.sgtipopessoa = 'PJ'
+        AND
+            atd.idtipodocumento = cd.idtipodocumento
+        AND
+            cpd.iddocumento = cd.iddocumento
+        AND
+            cpd.idpessoa = :oszIdPessoa;
+
+
+    EXEC SQL OPEN cDadosPessoaJuridicaInscricao;
+
+    for(iCount=0;;iCount++)
+    {
+
+        EXEC SQL FETCH cDadosPessoaJuridicaInscricao INTO   :oszIdTipoDocumento:oiIdTipoDocumento,
+                                                            :oszNrDocumento:oiNrDocumento;
+
+
+        ULOG("sqlca.sqlcode(%d) iCount(%d)", sqlca.sqlcode, iCount);
+        if(sqlca.sqlcode == 1403) {
+            if(iCount == 0 && bFlagNotFoundError == true) {
+                EXEC SQL CLOSE cDadosPessoaJuridicaInscricao;
+                throw PPExceptionTMA(ERRO_EXECUCAO, "Register Not Found...");
+            }
+            bFlagStop=true;
+            if(iCount > 0) {
+                break;
+            }
+        }
+
+
+        ULOG("oszIdTipoDocumento[%.*s](%d)",oszIdTipoDocumento.len, oszIdTipoDocumento.arr, oiIdTipoDocumento);
+        szAux[0]=0x00;
+        if(oiIdTipoDocumento != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdTipoDocumento);
+        }
+        pclXmlGen->addItem("idTipoInscricao", szAux);
+
+
+        ULOG("oszNrDocumento[%.*s](%d)",oszNrDocumento.len, oszNrDocumento.arr, oiNrDocumento);
+        szAux[0]=0x00;
+        if(oiNrDocumento != -1) {
+            STRCPY_FROM_ORA(szAux, oszNrDocumento);
+        }
+        pclXmlGen->addItem("nrInscricao", szAux);
+
+
+        if(bFlagStop == true) {
+            break;
+        }
+    }
+
+    EXEC SQL CLOSE cDadosPessoaJuridicaInscricao;
+
+    ULOG("Quantidade de elementos obtidos (%d)", iCount);
+
+    if(iCount == 0) {
+        ULOG_END("BuscaDadosPessoaJuridicaInscricao <NOT FOUND>");
+        return;
+    }
+
+    ULOG_END("BuscaDadosPessoaJuridicaInscricao <OK>");
+    return;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosPessoaJuridicaInscricao <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+
+/*******************************************************************************
+ * BuscaDadosPessoaJuridica
+ *******************************************************************************/
+void BuscaDadosPessoaJuridica(XMLGen *pclXmlGen, char *pszNrDocumento, char *pszSgTipoRelacionamento, char *pszIdPessoa, bool bFlagNotFoundError)
+{
+    ULOG_START("BuscaDadosPessoaJuridica");
+
+    struct sqlca sqlca;
+    int iCount;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+    bool bFlagStop=false;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszNrDocumento[LEN_NRDOCUMENTO];
+        VARCHAR oszSgTipoRelacionamento[LEN_SGTIPORELACIONAMENTO];
+
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+        VARCHAR oszNmFantasia[LEN_NMFANTASIA];
+        VARCHAR oszNmPessoa[LEN_NMPESSOA];
+        VARCHAR oszIdCFOP[LEN_IDCFOP];
+        VARCHAR oszIdTipoCarteira[LEN_IDTIPOCARTEIRA];
+        VARCHAR oszDtFundacao[LEN_DTFUNDACAO];
+
+        short oiIdPessoa=0;
+        short oiNmFantasia=0;
+        short oiNmPessoa=0;
+        short oiIdCFOP=0;
+        short oiIdTipoCarteira=0;
+        short oiDtFundacao=0;
+    EXEC SQL END DECLARE SECTION;
+
+    MEMSET_ORA(oszIdPessoa);
+    MEMSET_ORA(oszNmFantasia);
+    MEMSET_ORA(oszNmPessoa);
+    MEMSET_ORA(oszIdCFOP);
+    MEMSET_ORA(oszIdTipoCarteira);
+    MEMSET_ORA(oszDtFundacao);
+
+    ULOG("bFlagNotFoundError(%d)", bFlagNotFoundError);
+    STRCPY_TO_ORA(oszNrDocumento, pszNrDocumento);                   ULOG("oszNrDocumento[%.*s]", oszNrDocumento.len, oszNrDocumento.arr);
+    STRCPY_TO_ORA(oszSgTipoRelacionamento, pszSgTipoRelacionamento); ULOG("oszSgTipoRelacionamento[%.*s]", oszSgTipoRelacionamento.len, oszSgTipoRelacionamento.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    EXEC SQL DECLARE cDadosPessoaJuridica CURSOR FOR
+        SELECT DISTINCT
+            cpj.idpessoa as idpessoa,
+            cpj.nmfantasia as nmFantasia,
+            cp.nmpessoa as nmRazaoSocial,
+            cpj.idcfop as idClassTributaria,
+            cp.idtipocarteira as idClassEmpresa,
+            TO_CHAR(cpj.dtfundacao, 'DD/MM/YYYY') as dtFundacao
+        FROM
+            customer.pessoajuridica cpj,
+            customer.pessoa cp,
+            customer.pessoadocumento cpd,
+            customer.documento cd,
+            customer.pessoalinha cpl,
+            customer.pessoadepara cpdp,
+            customer.tiporelacionamento ctr
+        WHERE
+            cpj.idpessoa = cp.idpessoa
+        AND cp.idpessoa = cpd.idpessoa
+        AND cpd.iddocumento = cd.iddocumento
+        AND cpdp.idpessoa = cp.idpessoa
+        AND cpdp.idpessoadepara = cpl.idpessoadepara
+        AND cpl.idtiporelacionamento = ctr.idtiporelacionamento
+        AND ctr.sgtiporelacionamento = :oszSgTipoRelacionamento
+        AND cd.nrdocumento = :oszNrDocumento;
+
+    EXEC SQL OPEN cDadosPessoaJuridica;
+
+    for(iCount=0;;iCount++)
+    {
+
+        EXEC SQL FETCH cDadosPessoaJuridica INTO    :oszIdPessoa:oiIdPessoa,
+                                                    :oszNmFantasia:oiNmFantasia,
+                                                    :oszNmPessoa:oiNmPessoa,
+                                                    :oszIdCFOP:oiIdCFOP,
+                                                    :oszIdTipoCarteira:oiIdTipoCarteira,
+                                                    :oszDtFundacao:oiDtFundacao;
+
+
+        ULOG("sqlca.sqlcode(%d) iCount(%d)", sqlca.sqlcode, iCount);
+        if(sqlca.sqlcode == 1403) {
+            if(iCount == 0 && bFlagNotFoundError == true) {
+                EXEC SQL CLOSE cDadosPessoaJuridica;
+                throw PPExceptionTMA(ERRO_EXECUCAO, "Register Not Found...");
+            }
+            bFlagStop=true;
+            if(iCount > 0) {
+                break;
+            }
+        }
+
+        ULOG("oszIdPessoa[%.*s](%d)",oszIdPessoa.len, oszIdPessoa.arr, oiIdPessoa);
+        szAux[0]=0x00;
+        if(oiIdPessoa != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdPessoa);
+            STRCPY_FROM_ORA(pszIdPessoa, oszIdPessoa);
+        }
+        pclXmlGen->addItem("idPessoa", szAux);
+
+
+        ULOG("oszNmFantasia[%.*s](%d)",oszNmFantasia.len, oszNmFantasia.arr, oiNmFantasia);
+        szAux[0]=0x00;
+        if(oiNmFantasia != -1) {
+            STRCPY_FROM_ORA(szAux, oszNmFantasia);
+        }
+        pclXmlGen->addItem("nmFantasia", szAux);
+
+
+        ULOG("oszNmPessoa[%.*s](%d)",oszNmPessoa.len, oszNmPessoa.arr, oiNmPessoa);
+        szAux[0]=0x00;
+        if(oiNmPessoa != -1) {
+            STRCPY_FROM_ORA(szAux, oszNmPessoa);
+        }
+        pclXmlGen->addItem("nmRazaoSocial", szAux);
+
+
+        ULOG("oszIdCFOP[%.*s](%d)",oszIdCFOP.len, oszIdCFOP.arr, oiIdCFOP);
+        szAux[0]=0x00;
+        if(oiIdCFOP != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdCFOP);
+        }
+        pclXmlGen->addItem("idClassTributaria", szAux);
+
+
+        ULOG("oszIdTipoCarteira[%.*s](%d)",oszIdTipoCarteira.len, oszIdTipoCarteira.arr, oiIdTipoCarteira);
+        szAux[0]=0x00;
+        if(oiIdTipoCarteira != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdTipoCarteira);
+        }
+        pclXmlGen->addItem("idClassEmpresa", szAux);
+
+
+        ULOG("oszDtFundacao[%.*s](%d)",oszDtFundacao.len, oszDtFundacao.arr, oiDtFundacao);
+        szAux[0]=0x00;
+        if(oiDtFundacao != -1) {
+            STRCPY_FROM_ORA(szAux, oszDtFundacao);
+        }
+        pclXmlGen->addItem("dtFundacao", szAux);
+
+        if(bFlagStop == true) {
+            break;
+        }
+    }
+
+    EXEC SQL CLOSE cDadosPessoaJuridica;
+
+    ULOG("Quantidade de elementos obtidos (%d)", iCount);
+
+    if(iCount == 0) {
+        ULOG_END("BuscaDadosPessoaJuridica <NOT FOUND>");
+        return;
+    }
+
+    ULOG_END("BuscaDadosPessoaJuridica <OK>");
+    return;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosPessoaJuridica <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+
+/*******************************************************************************
+ * BuscaDadosEndereco
+ *******************************************************************************/
+void BuscaDadosEndereco(XMLGen *pclXmlGen, char *pszIdPessoa, char *pszSgTipoRelacionamento, bool bFlagNotFoundError, bool bFlagCriaXml, char *idLinhaTelefonica)
+{
+    ULOG_START("BuscaDadosEndereco");
+	
+	 ULOG("versao from hell!");
+    struct sqlca sqlca;
+    int iCount;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+    bool bFlagStop=false;
+    char szIdPessoaEnderecoAux[LEN_IDPESSOAENDERECO + LEN_EOS];
+    char szIdPessoaEndereco[LEN_IDPESSOAENDERECO + LEN_EOS];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+
+        VARCHAR oszIdPessoaEndereco[LEN_IDPESSOAENDERECO];
+        VARCHAR oszInEnderecoPreferencial[LEN_INENDERECOPREFERENCIAL];
+        VARCHAR oszIdTipoEndereco[LEN_IDTIPOENDERECO];
+        VARCHAR oszNmTipoLogradouro[LEN_NMTIPOLOGRADOURO];
+        VARCHAR oszNmTituloLogradouro[LEN_NMTITULOLOGRADOURO];
+        VARCHAR oszNrCEP[LEN_NRCEP];
+        VARCHAR oszNmLogradouro[LEN_NMLOGRADOURO];
+        VARCHAR oszNrEndereco[LEN_NRENDERECO];
+        VARCHAR oszDsEnderecoComplemento[LEN_DSENDERECOCOMPLEMENTO];
+        VARCHAR oszNmBairro[LEN_NMBAIRRO];
+        VARCHAR oszNmMunicipio[LEN_NMMUNICIPIO];
+        VARCHAR oszIdUF[LEN_IDUF];
+		VARCHAR oszIdLInhaTelefonica[LEN_IDLINHATELEFONICA+LEN_EOS];
+
+
+        short oiIdPessoaEndereco=0;
+        short oiInEnderecoPreferencial=0;
+        short oiIdTipoEndereco=0;
+        short oiNmTipoLogradouro=0;
+        short oiNmTituloLogradouro=0;
+        short oiNrCEP=0;
+        short oiNmLogradouro=0;
+        short oiNrEndereco=0;
+        short oiDsEnderecoComplemento=0;
+        short oiNmBairro=0;
+        short oiNmMunicipio=0;
+        short oiIdUF=0;
+		short oiIdLInhaTelefonica=0;
+    EXEC SQL END DECLARE SECTION;
+
+    MEMSET_ORA(oszIdPessoaEndereco);
+    MEMSET_ORA(oszInEnderecoPreferencial);
+    MEMSET_ORA(oszIdTipoEndereco);
+    MEMSET_ORA(oszNmTipoLogradouro);
+    MEMSET_ORA(oszNmTituloLogradouro);
+    MEMSET_ORA(oszNrCEP);
+    MEMSET_ORA(oszNmLogradouro);
+    MEMSET_ORA(oszNrEndereco);
+    MEMSET_ORA(oszDsEnderecoComplemento);
+    MEMSET_ORA(oszNmBairro);
+    MEMSET_ORA(oszNmMunicipio);
+    MEMSET_ORA(oszIdUF);
+	MEMSET_ORA(oszIdLInhaTelefonica);
+
+    ULOG("bFlagNotFoundError(%d)", bFlagNotFoundError);
+    ULOG("bFlagCriaXml(%d)", bFlagCriaXml);
+    STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa); ULOG("oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    EXEC SQL DECLARE cDadosEndereco CURSOR for
+           SELECT
+            cpe.idpessoaendereco,
+            1 as inenderecopreferencial, 
+            cpe.idtipoendereco,
+            cpe.nmtipologradouro,
+            cpe.nmtitulologradouro,
+            cpe.nrcep,
+            cpe.nmlogradouro,
+            cpe.nrendereco,
+            cpe.dsenderecocomplemento,
+            cpe.nmbairro,
+            cpe.nmmunicipio,
+            cpe.iduf
+        FROM
+            customer.pessoa cp,
+            customer.pessoaendereco cpe,
+            customer.contaendereco ce,
+            customer.linhaconta lc
+        WHERE
+            cp.idpessoa = cpe.idpessoa
+        AND cpe.dtexpiracao IS NULL        
+        AND cp.idpessoa = :oszIdPessoa
+        AND cpe.idpessoaendereco = ce.idpessoaendereco(+)
+        and lc.IDCONTA=ce.IDCONTA 
+        and lc.IDLINHATELEFONICA=:oszIdLInhaTelefonica
+        union
+        SELECT
+            cpe.idpessoaendereco,
+            0 as inenderecopreferencial, 
+            cpe.idtipoendereco,
+            cpe.nmtipologradouro,
+            cpe.nmtitulologradouro,
+            cpe.nrcep,
+            cpe.nmlogradouro,
+            cpe.nrendereco,
+            cpe.dsenderecocomplemento,
+            cpe.nmbairro,
+            cpe.nmmunicipio,
+            cpe.iduf
+        FROM
+            customer.pessoa cp,
+            customer.pessoaendereco cpe
+        WHERE
+            cp.idpessoa = cpe.idpessoa
+        AND cpe.dtexpiracao IS NULL        
+        AND cp.idpessoa = :oszIdPessoa
+        and idpessoaendereco not in (select idpessoaendereco 
+                                     from customer.contaendereco cce,
+                                          customer.linhaconta clc 
+                                     where clc.idconta=cce.idconta
+                                     and   clc.idlinhatelefonica=:oszIdLInhaTelefonica);
+
+    EXEC SQL OPEN cDadosEndereco;
+
+    for(iCount=0;;iCount++)
+    {
+
+        EXEC SQL FETCH cDadosEndereco INTO  :oszIdPessoaEndereco:oiIdPessoaEndereco,
+                                            :oszInEnderecoPreferencial:oiInEnderecoPreferencial,
+                                            :oszIdTipoEndereco:oiIdTipoEndereco,
+                                            :oszNmTipoLogradouro:oiNmTipoLogradouro,
+                                            :oszNmTituloLogradouro:oiNmTituloLogradouro,
+                                            :oszNrCEP:oiNrCEP,
+                                            :oszNmLogradouro:oiNmLogradouro,
+                                            :oszNrEndereco:oiNrEndereco,
+                                            :oszDsEnderecoComplemento:oiDsEnderecoComplemento,
+                                            :oszNmBairro:oiNmBairro,
+                                            :oszNmMunicipio:oiNmMunicipio,
+                                            :oszIdUF:oiIdUF;
+
+
+        ULOG("sqlca.sqlcode(%d) iCount(%d)", sqlca.sqlcode, iCount);
+        if(sqlca.sqlcode == 1403) {
+            if(iCount == 0 && bFlagNotFoundError == true) {
+                EXEC SQL CLOSE cDadosEndereco;
+                throw PPExceptionTMA(ERRO_EXECUCAO, "Register Not Found...");
+            }
+            bFlagStop=true;
+            if(iCount > 0 || bFlagCriaXml == false) {
+                break;
+            }
+        }
+
+        pclXmlGen->createTag("DadosEndereco");
+
+        ULOG("oszIdPessoaEndereco[%.*s](%d)",oszIdPessoaEndereco.len, oszIdPessoaEndereco.arr, oiIdPessoaEndereco);
+        szAux[0]=0x00;
+        if(oiIdPessoaEndereco != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdPessoaEndereco);
+            STRCPY_FROM_ORA(szIdPessoaEndereco, oszIdPessoaEndereco);
+        }
+        pclXmlGen->addItem("idEndereco", szAux);
+
+
+        ULOG("oszInEnderecoPreferencial[%.*s](%d)",oszInEnderecoPreferencial.len, oszInEnderecoPreferencial.arr, oiInEnderecoPreferencial);
+        szAux[0]=0x00;
+        if(oiInEnderecoPreferencial != -1) {
+            STRCPY_FROM_ORA(szAux, oszInEnderecoPreferencial);
+        }
+
+        ULOG("pszSgTipoRelacionamento[%s]", pszSgTipoRelacionamento);
+        if(!strcmp(pszSgTipoRelacionamento, "C"))
+        {
+            /* Verifica se o endereco eh o principal */
+            memset(szIdPessoaEnderecoAux, 0x00, sizeof(szIdPessoaEnderecoAux));
+            BuscaEnderecoPrincipal(pszIdPessoa, szIdPessoaEnderecoAux);
+    
+            ULOG("szIdPessoaEndereco[%s]szIdPessoaEnderecoAux[%s]", szIdPessoaEndereco, szIdPessoaEnderecoAux);
+            if(!strcmp(szIdPessoaEnderecoAux, szIdPessoaEndereco))
+                pclXmlGen->addItem("inEndPrincipal", "1");
+            else
+                pclXmlGen->addItem("inEndPrincipal", "0");
+        }
+        else
+        {
+            pclXmlGen->addItem("inEndPrincipal", "0");
+        }
+
+
+        ULOG("oszIdTipoEndereco[%.*s](%d)",oszIdTipoEndereco.len, oszIdTipoEndereco.arr, oiIdTipoEndereco);
+        szAux[0]=0x00;
+        if(oiIdTipoEndereco != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdTipoEndereco);
+        }
+        pclXmlGen->addItem("idTipoEndereco", szAux);
+
+
+        ULOG("oszNmTipoLogradouro[%.*s](%d)",oszNmTipoLogradouro.len, oszNmTipoLogradouro.arr, oiNmTipoLogradouro);
+        szAux[0]=0x00;
+        if(oiNmTipoLogradouro != -1) {
+            STRCPY_FROM_ORA(szAux, oszNmTipoLogradouro);
+        }
+        pclXmlGen->addItem("nmTipoLogradouro", szAux);
+
+
+        ULOG("oszNmTituloLogradouro[%.*s](%d)",oszNmTituloLogradouro.len, oszNmTituloLogradouro.arr, oiNmTituloLogradouro);
+        szAux[0]=0x00;
+        if(oiNmTituloLogradouro != -1) {
+            STRCPY_FROM_ORA(szAux, oszNmTituloLogradouro);
+        }
+        pclXmlGen->addItem("nmTitLogradouro", szAux);
+
+
+        ULOG("oszNrCEP[%.*s](%d)",oszNrCEP.len, oszNrCEP.arr, oiNrCEP);
+        szAux[0]=0x00;
+        if(oiNrCEP != -1) {
+            STRCPY_FROM_ORA(szAux, oszNrCEP);
+        }
+        pclXmlGen->addItem("nrCEP", szAux);
+
+
+        ULOG("oszNmLogradouro[%.*s](%d)",oszNmLogradouro.len, oszNmLogradouro.arr, oiNmLogradouro);
+        szAux[0]=0x00;
+        if(oiNmLogradouro != -1) {
+            STRCPY_FROM_ORA(szAux, oszNmLogradouro);
+        }
+        pclXmlGen->addItem("nmLogradouro", szAux);
+
+
+        ULOG("oszNrEndereco[%.*s](%d)",oszNrEndereco.len, oszNrEndereco.arr, oiNrEndereco);
+        szAux[0]=0x00;
+        if(oiNrEndereco != -1) {
+            STRCPY_FROM_ORA(szAux, oszNrEndereco);
+        }
+        pclXmlGen->addItem("nrLogradouro", szAux);
+
+
+        ULOG("oszDsEnderecoComplemento[%.*s](%d)",oszDsEnderecoComplemento.len, oszDsEnderecoComplemento.arr, oiDsEnderecoComplemento);
+        szAux[0]=0x00;
+        if(oiDsEnderecoComplemento != -1) {
+            STRCPY_FROM_ORA(szAux, oszDsEnderecoComplemento);
+        }
+        pclXmlGen->addItem("nmComplemento", szAux);
+
+
+        ULOG("oszNmBairro[%.*s](%d)",oszNmBairro.len, oszNmBairro.arr, oiNmBairro);
+        szAux[0]=0x00;
+        if(oiNmBairro != -1) {
+            STRCPY_FROM_ORA(szAux, oszNmBairro);
+        }
+        pclXmlGen->addItem("nmBairro", szAux);
+
+
+        ULOG("oszNmMunicipio[%.*s](%d)",oszNmMunicipio.len, oszNmMunicipio.arr, oiNmMunicipio);
+        szAux[0]=0x00;
+        if(oiNmMunicipio != -1) {
+            STRCPY_FROM_ORA(szAux, oszNmMunicipio);
+        }
+        pclXmlGen->addItem("nmMunicipio", szAux);
+
+
+        ULOG("oszIdUF[%.*s](%d)",oszIdUF.len, oszIdUF.arr, oiIdUF);
+        szAux[0]=0x00;
+        if(oiIdUF != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdUF);
+        }
+        pclXmlGen->addItem("idUF", szAux);
+
+        pclXmlGen->closeTag(); //DadosEndereco
+
+
+        if(bFlagStop == true) {
+            break;
+        }
+    }
+
+    EXEC SQL CLOSE cDadosEndereco;
+
+    ULOG("Quantidade de elementos obtidos (%d)", iCount);
+
+    if(iCount == 0) {
+        ULOG_END("BuscaDadosEndereco <NOT FOUND>");
+        return;
+    }
+
+    ULOG_END("BuscaDadosEndereco <OK>");
+    return;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosEndereco <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+
+/*******************************************************************************
+ * BuscaDadosTelefone
+ *******************************************************************************/
+void BuscaDadosTelefone(XMLGen *pclXmlGen, char *pszIdPessoa, bool bFlagNotFoundError, bool bFlagCriaXml, char *pszNrDocumento, char *pszIdTipoDocumento, char *pszIdTipoPessoa,bool buscarTelefone)
+{
+    ULOG_START("BuscaDadosTelefone");
+
+    struct sqlca sqlca;
+    int iCount;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+    bool bFlagStop=false;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *pInVarOraNrDocumento = pszNrDocumento;
+        char *pInVarOraIdTipoDocumento = pszIdTipoDocumento;
+
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+
+        VARCHAR oszIdPessoaComunicacao[LEN_IDPESSOACOMUNICACAO];
+        VARCHAR oszIdTipoComunicacao[LEN_IDTIPOCOMUNICACAO];
+        VARCHAR oszDsContato[LEN_DSCONTATO];
+        VARCHAR oszNmContato[LEN_NMCONTATO];
+
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA+LEN_EOS];
+
+        short oiIdPessoaComunicacao=0;
+        short oiIdTipoComunicacao=0;
+        short oiDsContato=0;
+        short oiNmContato=0;
+
+        VARCHAR varOraSgClassificacao[LEN_SGCLASSIFICACAO+1];
+        short statOraSgClassificacao;
+
+        VARCHAR varOraNrTelefone[LEN_NRLINHA+LEN_EOS];
+        VARCHAR varOraIdClassificacaoTipoLinha[LEN_IDCLASSIFICACAOTPLINHA+LEN_EOS];
+        VARCHAR varOraDsEstadoLinha[LEN_DSESTADOLINHA+LEN_EOS];
+        VARCHAR varOraIdLinhaTelefonica[LEN_IDLINHATELEFONICA+LEN_EOS];
+
+        short statOraNrTelefone;
+        short statOraIdClassificacaoTipoLinha;
+        short statOraDsEstadoLinha;
+        short statOraIdLinhaTelefonica;
+
+    EXEC SQL END DECLARE SECTION;
+
+    MEMSET_ORA(oszIdPessoaComunicacao);
+    MEMSET_ORA(oszIdTipoComunicacao);
+    MEMSET_ORA(oszDsContato);
+    MEMSET_ORA(oszNmContato);
+
+    ULOG("bFlagNotFoundError(%d)", bFlagNotFoundError);
+    ULOG("bFlagCriaXml(%d)", bFlagCriaXml);
+
+    STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa);                  ULOG("oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    
+    sqlca.sqlcode=0;
+
+    ULOG("buscarTelefone=[%d]", buscarTelefone);
+
+    if ( buscarTelefone )
+    {
+        //
+        //================
+        // Devolve dados da linha da pessoa
+        //
+        EXEC SQL WHENEVER NOTFOUND CONTINUE;
+
+        if ( strcmp(pszIdTipoPessoa,"2")==0 )
+        {
+            strcpy((char*)varOraSgClassificacao.arr,"CNPJ");
+            varOraSgClassificacao.len = 4;
+            statOraSgClassificacao=1;
+        }
+        else
+        {
+            EXEC SQL
+                SELECT
+                    sgclassificacao
+                INTO
+                    :varOraSgClassificacao:statOraSgClassificacao
+                FROM
+                    apoio.tipodocumento
+                WHERE
+                    idtipodocumento = :pInVarOraIdTipoDocumento;
+
+            CONVIND(varOraSgClassificacao,statOraSgClassificacao);
+        }
+        
+        ULOG("    nrDocumento=[%s]", pInVarOraNrDocumento);
+        ULOG("sgClassificacao=[%s]", (char*)varOraSgClassificacao.arr);
+
+        EXEC SQL
+            SELECT 
+                /*
+                '('||arearegistro.cdarearegistro||') '||
+                    SUBSTR(lpad(linhabase.nrlinha,8),1,4)||'-'||
+                        SUBSTR(lpad(linhabase.nrlinha,8),5) AS nrtelefone,
+                */
+                soa_ow.formata_nrlinha(SUBSTR(TO_CHAR(arearegistro.cdarearegistro),1,2)||SUBSTR(TO_CHAR(linhabase.nrlinha),3)) AS nrtelefone ,
+                tipolinha.idclassificacaotipolinha,
+                estadolinha.dsestadolinha,
+                linhatelefonica.idlinhatelefonica
+            INTO
+               :varOraNrTelefone:statOraNrTelefone,
+               :varOraIdClassificacaoTipoLinha:statOraIdClassificacaoTipoLinha,
+               :varOraDsEstadoLinha:statOraDsEstadoLinha,
+               :varOraIdLinhaTelefonica:statOraIdLinhaTelefonica
+            FROM
+                customer.pessoa pessoa,
+                customer.pessoadepara pessoadepara,
+                customer.pessoadocumento pessoadocumento,
+                customer.documento documento,
+                customer.pessoalinha pessoalinha,
+                linha.linhatelefonica linhatelefonica,
+                linha.linhabase linhabase,
+                apoio.arearegistro arearegistro,
+                apoio.tipolinha tipolinha,
+                apoio.estadolinha estadolinha
+            WHERE
+                documento.nrdocumento = :pInVarOraNrDocumento
+            AND documento.idtipodocumento in (SELECT idtipodocumento FROM apoio.tipodocumento WHERE sgclassificacao = :varOraSgClassificacao)
+            AND documento.iddocumento = pessoadocumento.iddocumento
+            AND pessoadocumento.dtexpiracao IS NULL
+            AND pessoadocumento.idpessoa = pessoa.idpessoa
+            AND pessoa.idpessoa = pessoadepara.idpessoa
+            AND pessoadepara.idpessoadepara = pessoalinha.idpessoadepara
+            AND pessoalinha.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+            AND linhatelefonica.idlinhabase = linhabase.idlinhabase
+            AND linhabase.idarearegistro = arearegistro.idarearegistro
+            AND linhatelefonica.idtipolinha = tipolinha.idtipolinha
+            AND linhabase.idestadolinha = estadolinha.idestadolinha
+            AND pessoalinha.idtiporelacionamento = 2
+            AND ROWNUM < 2;
+
+        if ( sqlca.sqlcode == 0 )
+        {
+            pclXmlGen->createTag("Telefone");
+                pclXmlGen->addItem("nrTelefone",(char*)varOraNrTelefone.arr);
+                pclXmlGen->addItem("idLinhaTelefonica",(char*)varOraIdLinhaTelefonica.arr);
+                pclXmlGen->addItem("idClassificacaoTipoLinha",(char*)varOraIdClassificacaoTipoLinha.arr);
+                pclXmlGen->addItem("dsEstadoLinha",(char*)varOraDsEstadoLinha.arr);
+            pclXmlGen->closeTag();
+        }
+    }
+
+    if ( false == buscarTelefone || sqlca.sqlcode )
+    {
+        EXEC SQL DECLARE cTelefone CURSOR FOR
+            SELECT
+                cpc.idpessoacomunicacao,
+                cpc.idtipocomunicacao,
+                cpc.dscontato,
+                cpc.nmcontato
+            FROM
+                customer.pessoacomunicacao cpc,
+                apoio.tipocomunicacao atc
+            WHERE
+                cpc.idtipocomunicacao = atc.idtipocomunicacao
+            AND
+                atc.sgclassificacao = 'TELEFONE'
+            AND
+                cpc.idpessoa = :oszIdPessoa;
+
+
+        EXEC SQL OPEN cTelefone;
+
+        for(iCount=0;;iCount++)
+        {
+
+            EXEC SQL FETCH cTelefone INTO :oszIdPessoaComunicacao:oiIdPessoaComunicacao,
+                                          :oszIdTipoComunicacao:oiIdTipoComunicacao,
+                                          :oszDsContato:oiDsContato,
+                                          :oszNmContato:oiNmContato;
+
+
+            ULOG("sqlca.sqlcode(%d) iCount(%d)", sqlca.sqlcode, iCount);
+            /*
+            if(sqlca.sqlcode == 1403) {
+                if(iCount == 0 && bFlagNotFoundError == true) {
+                    EXEC SQL CLOSE cTelefone;
+                    throw PPExceptionTMA(ERRO_EXECUCAO, "Register Not Found...");
+                }
+                bFlagStop=true;
+                if(iCount > 0 || bFlagCriaXml == false) {
+                    break;
+                }
+            }
+            */
+
+            if(sqlca.sqlcode != 1403) 
+            {
+                pclXmlGen->createTag("Telefone");
+
+                ULOG("oszIdPessoaComunicacao[%.*s](%d)",oszIdPessoaComunicacao.len, oszIdPessoaComunicacao.arr, oiIdPessoaComunicacao);
+                szAux[0]=0x00;
+                if(oiIdPessoaComunicacao != -1) {
+                    STRCPY_FROM_ORA(szAux, oszIdPessoaComunicacao);
+                }
+                pclXmlGen->addItem("idContato", szAux);
+
+
+                ULOG("oszIdTipoComunicacao[%.*s](%d)",oszIdTipoComunicacao.len, oszIdTipoComunicacao.arr, oiIdTipoComunicacao);
+                szAux[0]=0x00;
+                if(oiIdTipoComunicacao != -1) {
+                    STRCPY_FROM_ORA(szAux, oszIdTipoComunicacao);
+                }
+                pclXmlGen->addItem("idTipoTelefone", szAux);
+
+
+                ULOG("oszDsContato[%.*s](%d)", oszDsContato.len, oszDsContato.arr, oiDsContato);
+                szAux[0]=0x00;
+                if(oiDsContato != -1) {
+                    STRCPY_FROM_ORA(szAux, oszDsContato);
+                }
+                pclXmlGen->addItem("nrTelefone", szAux);
+
+
+                ULOG("oszNmContato[%.*s](%d)", oszNmContato.len, oszNmContato.arr, oiNmContato);
+                szAux[0]=0x00;
+                if(oiNmContato != -1) {
+                    STRCPY_FROM_ORA(szAux, oszNmContato);
+                }
+                pclXmlGen->addItem("nmContato", szAux);
+
+
+                pclXmlGen->closeTag(); //Telefone
+            }
+            else
+            {
+                break;
+            }
+            
+            if(bFlagStop == true) {
+                break;
+            }
+        }
+
+        EXEC SQL CLOSE cTelefone;
+
+        ULOG("Quantidade de elementos obtidos (%d)", iCount);
+
+        if(iCount == 0) {
+            ULOG_END("BuscaDadosTelefone <NOT FOUND>");
+            return;
+        }
+    }
+
+    ULOG_END("BuscaDadosTelefone <OK>");
+    return;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosTelefone <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaDadosPessoaFisicaComunicacao
+ *******************************************************************************/
+void BuscaDadosPessoaFisicaComunicacao(XMLGen *pclXmlGen, char *pszIdPessoa, char *pszSgTipoComunicacao, bool bFlagNotFoundError)
+{
+    ULOG_START("BuscaDadosPessoaFisicaComunicacao");
+
+    struct sqlca sqlca;
+    int iCount;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+    bool bFlagStop=false;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+        VARCHAR oszSgTipoComunicacao[LEN_SGTIPOCOMUNICACAO];
+
+        VARCHAR oszDsContato[LEN_DSCONTATO];
+
+        short oiDsContato=0;
+    EXEC SQL END DECLARE SECTION;
+
+
+    MEMSET_ORA(oszDsContato);
+
+    ULOG("bFlagNotFoundError(%d)", bFlagNotFoundError);
+    STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa); ULOG("oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+    STRCPY_TO_ORA(oszSgTipoComunicacao, pszSgTipoComunicacao); ULOG("oszSgTipoComunicacao[%.*s]", oszSgTipoComunicacao.len, oszSgTipoComunicacao.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    EXEC SQL DECLARE cComunicacao CURSOR FOR
+        SELECT
+            cpc.dscontato
+        FROM
+            customer.pessoacomunicacao cpc,
+            apoio.tipocomunicacao atc
+        WHERE
+            cpc.idtipocomunicacao = atc.idtipocomunicacao
+        AND
+            atc.sgtipocomunicacao = :oszSgTipoComunicacao
+        AND
+            cpc.idpessoa = :oszIdPessoa;
+
+
+    EXEC SQL OPEN cComunicacao;
+
+    for(iCount=0;;iCount++)
+    {
+
+        EXEC SQL FETCH cComunicacao INTO :oszDsContato:oiDsContato;
+
+
+        ULOG("sqlca.sqlcode(%d) iCount(%d)", sqlca.sqlcode, iCount);
+        if(sqlca.sqlcode == 1403) {
+            if(iCount == 0 && bFlagNotFoundError == true) {
+                EXEC SQL CLOSE cComunicacao;
+                throw PPExceptionTMA(ERRO_EXECUCAO, "Register Not Found...");
+            }
+            bFlagStop=true;
+            if(iCount > 0) {
+                break;
+            }
+        }
+
+        ULOG("oszDsContato[%.*s](%d)",oszDsContato.len, oszDsContato.arr, oiDsContato);
+        szAux[0]=0x00;
+        if(oiDsContato != -1) {
+            STRCPY_FROM_ORA(szAux, oszDsContato);
+        }
+
+        if(!strcmp(pszSgTipoComunicacao, "EM COM"))
+        {
+            pclXmlGen->addItem("nmEmailComercial", szAux);
+        }
+        else if(!strcmp(pszSgTipoComunicacao, "EM PART"))
+        {
+            pclXmlGen->addItem("nmEmailParticular", szAux);
+        }
+
+
+        if(bFlagStop == true) {
+            break;
+        }
+    }
+
+    EXEC SQL CLOSE cComunicacao;
+
+    ULOG("Quantidade de elementos obtidos (%d)", iCount);
+
+    if(iCount == 0) {
+        ULOG_END("BuscaDadosPessoaFisicaComunicacao <NOT FOUND>");
+        return;
+    }
+
+    ULOG_END("BuscaDadosPessoaFisicaComunicacao <OK>");
+    return;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosPessoaFisicaComunicacao <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaDadosPessoaFisicaValorPossivel
+ *******************************************************************************/
+void BuscaDadosPessoaFisicaValorPossivel(XMLGen *pclXmlGen, char *pszIdPessoa, char *pszIdAtributo, bool bFlagNotFoundError)
+{
+    ULOG_START("BuscaDadosPessoaFisicaValorPossivel");
+
+    struct sqlca sqlca;
+    int iCount;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+    bool bFlagStop=false;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+        VARCHAR oszIdAtributo[LEN_IDATRIBUTO];
+
+        VARCHAR oszIdValorPossivel[LEN_IDVALORPOSSIVEL];
+
+        short oiIdValorPossivel=0;
+    EXEC SQL END DECLARE SECTION;
+
+
+    MEMSET_ORA(oszIdValorPossivel);
+
+    ULOG("bFlagNotFoundError(%d)", bFlagNotFoundError);
+    STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa); ULOG("oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+    STRCPY_TO_ORA(oszIdAtributo, pszIdAtributo); ULOG("oszIdAtributo[%.*s]", oszIdAtributo.len, oszIdAtributo.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    EXEC SQL DECLARE cValorPossivel CURSOR FOR
+        SELECT
+            cvp.idvalorpossivel
+        FROM
+            customer.atributo              ca,
+            customer.valorpossivel         cvp,
+            customer.pessoavalorpossivel   cpvp
+        WHERE
+            ca.idatributo = cvp.idatributo
+        AND
+            ca.idatributo = :oszIdAtributo
+        AND
+            cpvp.idvalorpossivel = cvp.idvalorpossivel
+        AND
+            cpvp.idpessoa  = :oszIdPessoa;
+
+
+    EXEC SQL OPEN cValorPossivel;
+
+    for(iCount=0;;iCount++)
+    {
+
+        EXEC SQL FETCH cValorPossivel INTO :oszIdValorPossivel:oiIdValorPossivel;
+
+
+        ULOG("sqlca.sqlcode(%d) iCount(%d)", sqlca.sqlcode, iCount);
+        if(sqlca.sqlcode == 1403) {
+            if(iCount == 0 && bFlagNotFoundError == true) {
+                EXEC SQL CLOSE cValorPossivel;
+                throw PPExceptionTMA(ERRO_EXECUCAO, "Register Not Found...");
+            }
+            bFlagStop=true;
+            if(iCount > 0) {
+                break;
+            }
+        }
+
+
+        ULOG("oszIdValorPossivel[%.*s](%d)",oszIdValorPossivel.len, oszIdValorPossivel.arr, oiIdValorPossivel);
+        szAux[0]=0x00;
+        if(oiIdValorPossivel != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdValorPossivel);
+        }
+
+        if(!strcmp(pszIdAtributo, "90"))
+        {
+            pclXmlGen->addItem("idEscolaridade", szAux);
+        }
+        else if(!strcmp(pszIdAtributo, "107"))
+        {
+            pclXmlGen->addItem("idNatOcupacao", szAux);
+        }
+
+
+        if(bFlagStop == true) {
+            break;
+        }
+    }
+
+    EXEC SQL CLOSE cValorPossivel;
+
+    ULOG("Quantidade de elementos obtidos (%d)", iCount);
+
+    if(iCount == 0) {
+        ULOG_END("BuscaDadosPessoaFisicaValorPossivel <NOT FOUND>");
+        return;
+    }
+
+    ULOG_END("BuscaDadosPessoaFisicaValorPossivel <OK>");
+    return;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosPessoaFisicaValorPossivel <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaDadosPessoaFisicaDocumento
+ *******************************************************************************/
+void BuscaDadosPessoaFisicaDocumento(XMLGen *pclXmlGen, char *pszIdPessoa, char *pszIdTipoDocumento, bool bFlagNotFoundError)
+{
+    ULOG_START("BuscaDadosPessoaFisicaDocumento");
+
+    struct sqlca sqlca;
+    int iCount;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+    bool bFlagStop=false;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+        VARCHAR oszIdTipoDocumentoAux[LEN_IDTIPODOCUMENTO];
+
+        VARCHAR oszIdTipoDocumento[LEN_IDTIPODOCUMENTO];
+        VARCHAR oszIdDocumento[LEN_IDDOCUMENTO];
+        VARCHAR oszNrDocumento[LEN_NRDOCUMENTO];
+        VARCHAR oszDtEmissao[LEN_DTEMISSAO];
+        VARCHAR oszSgOrgaoExpeditor[LEN_SGORGAOEXPEDIDOR];
+        VARCHAR oszIdUF[LEN_IDUF];
+
+        short oiIdTipoDocumento=0;
+        short oiIdDocumento=0;
+        short oiNrDocumento=0;
+        short oiDtEmissao=0;
+        short oiSgOrgaoExpeditor=0;
+        short oiIdUF=0;
+    EXEC SQL END DECLARE SECTION;
+
+    MEMSET_ORA(oszIdDocumento);
+    MEMSET_ORA(oszIdTipoDocumento);
+    MEMSET_ORA(oszNrDocumento);
+    MEMSET_ORA(oszDtEmissao);
+    MEMSET_ORA(oszSgOrgaoExpeditor);
+    MEMSET_ORA(oszIdUF);
+
+    ULOG("bFlagNotFoundError(%d)", bFlagNotFoundError);
+    STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa); ULOG("oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+    STRCPY_TO_ORA(oszIdTipoDocumentoAux, pszIdTipoDocumento); ULOG("oszIdTipoDocumentoAux[%.*s]", oszIdTipoDocumentoAux.len, oszIdTipoDocumentoAux.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    EXEC SQL DECLARE cDocumento CURSOR FOR
+        SELECT
+            idtipodocumento,
+            iddocumento,
+            nrdocumento,
+            dtemissao,
+            sgorgaoexpedidor,
+            iduf,
+            ordem
+        FROM
+        (
+            SELECT
+                atdAux.idtipodocumento,
+                cd.iddocumento,
+                cd.nrdocumento,
+                TO_CHAR(cd.dtemissao, 'DD/MM/YYYY') as dtemissao,
+                cd.sgorgaoexpedidor,
+                cd.iduf,
+                1 as ordem
+            FROM
+                customer.documento cd,
+                customer.pessoadocumento cpd,
+                apoio.tipodocumento atd,
+                apoio.tipodocumento atdAux
+            WHERE
+                cpd.iddocumento = cd.iddocumento
+            AND
+                cd.idtipodocumento = atd.idtipodocumento
+            AND
+                cpd.idpessoa = :oszIdPessoa
+            AND
+                atd.sgclassificacao = atdAux.Sgclassificacao
+            AND
+                atdAux.idtipodocumento = :oszIdTipoDocumentoAux
+            AND
+                atdAux.invisualiza = 1
+
+            UNION
+
+            SELECT
+                atdAux.Idtipodocumento,
+                cd.iddocumento,
+                cd.nrdocumento,
+                TO_CHAR(cd.dtemissao, 'DD/MM/YYYY') as dtemissao,
+                cd.sgorgaoexpedidor,
+                cd.iduf,
+                2 as ordem
+            FROM
+                customer.documento cd,
+                customer.pessoadocumento cpd,
+                apoio.tipodocumento atd,
+                apoio.tipodocumento atdAux
+            WHERE
+                cpd.iddocumento = cd.iddocumento
+            AND
+                cd.idtipodocumento = atd.idtipodocumento
+            AND
+                cpd.idpessoa = :oszIdPessoa
+            AND
+                atd.sgclassificacao = atdAux.Sgclassificacao
+            AND
+                atdAux.idtipodocumento <> :oszIdTipoDocumentoAux
+            AND
+                atdAux.invisualiza = 1
+        )
+        ORDER BY
+            ordem;
+
+
+    EXEC SQL OPEN cDocumento;
+
+    for(iCount=0;;iCount++)
+    {
+        EXEC SQL FETCH cDocumento INTO :oszIdTipoDocumento:oiIdTipoDocumento,
+                                       :oszIdDocumento:oiIdDocumento,
+                                       :oszNrDocumento:oiNrDocumento,
+                                       :oszDtEmissao:oiDtEmissao,
+                                       :oszSgOrgaoExpeditor:oiSgOrgaoExpeditor,
+                                       :oszIdUF:oiIdUF;
+
+
+        ULOG("sqlca.sqlcode(%d) iCount(%d)", sqlca.sqlcode, iCount);
+        if(sqlca.sqlcode == 1403) {
+            if(iCount == 0 && bFlagNotFoundError == true) {
+                EXEC SQL CLOSE cDocumento;
+                throw PPExceptionTMA(ERRO_EXECUCAO, "Register Not Found...");
+            }
+            bFlagStop=true;
+            if(iCount > 0) {
+                break;
+            }
+        }
+
+        pclXmlGen->createTag("Documento");
+
+        ULOG("oszIdDocumento[%.*s](%d)",oszIdDocumento.len, oszIdDocumento.arr, oiIdDocumento);
+        szAux[0]=0x00;
+        if(oiIdDocumento != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdDocumento);
+        }
+        pclXmlGen->addItem("idDocumento", szAux);
+
+
+        ULOG("oszIdTipoDocumento[%.*s](%d)",oszIdTipoDocumento.len, oszIdTipoDocumento.arr, oiIdTipoDocumento);
+        szAux[0]=0x00;
+        if(oiIdTipoDocumento != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdTipoDocumento);
+        }
+        pclXmlGen->addItem("idTipoDocumento", szAux);
+
+
+        ULOG("oszNrDocumento[%.*s](%d)",oszNrDocumento.len, oszNrDocumento.arr, oiNrDocumento);
+        szAux[0]=0x00;
+        if(oiNrDocumento != -1) {
+            STRCPY_FROM_ORA(szAux, oszNrDocumento);
+        }
+        pclXmlGen->addItem("nrDocumento", szAux);
+
+
+        ULOG("oszDtEmissao[%.*s](%d)",oszDtEmissao.len, oszDtEmissao.arr, oiDtEmissao);
+        szAux[0]=0x00;
+        if(oiDtEmissao != -1) {
+            STRCPY_FROM_ORA(szAux, oszDtEmissao);
+        }
+        pclXmlGen->addItem("dtExpedicao", szAux);
+
+
+        ULOG("oszSgOrgaoExpeditor[%.*s](%d)",oszSgOrgaoExpeditor.len, oszSgOrgaoExpeditor.arr, oiSgOrgaoExpeditor);
+        szAux[0]=0x00;
+        if(oiSgOrgaoExpeditor != -1) {
+            STRCPY_FROM_ORA(szAux, oszSgOrgaoExpeditor);
+        }
+        pclXmlGen->addItem("dsOrgaoEmissor", szAux);
+
+
+        ULOG("oszIdUF[%.*s](%d)",oszIdUF.len, oszIdUF.arr, oiIdUF);
+        szAux[0]=0x00;
+        if(oiIdUF != -1) {
+            STRCPY_FROM_ORA(szAux, oszIdUF);
+        }
+        pclXmlGen->addItem("idUFDocumento", szAux);
+
+
+        pclXmlGen->closeTag(); //Documento
+
+        if(bFlagStop == true) {
+            break;
+        }
+    }
+
+    EXEC SQL CLOSE cDocumento;
+
+    ULOG("Quantidade de elementos obtidos (%d)", iCount);
+
+    if(iCount == 0) {
+        ULOG_END("BuscaDadosPessoaFisicaDocumento <NOT FOUND>");
+        return;
+    }
+
+    ULOG_END("BuscaDadosPessoaFisicaDocumento <OK>");
+    return;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosPessoaFisicaDocumento <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * ClienteEhUsuario
+ *******************************************************************************/
+bool ClienteEhUsuario(XMLGen *pclXmlGen, char *pszIdPessoa)
+{
+    ULOG_START("ClienteEhUsuario");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+
+        int oiCountCliente;
+        int oiCountUsuario;
+    EXEC SQL END DECLARE SECTION;
+
+    STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa); ULOG("oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+    oiCountCliente=0;
+    oiCountUsuario=0;
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    EXEC SQL WHENEVER NOTFOUND GOTO sqlError;
+
+    EXEC SQL
+        SELECT
+            COUNT(1)
+        INTO
+            :oiCountCliente
+        FROM
+            customer.pessoalinha cpl,
+            customer.pessoadepara cpdp,
+            customer.tiporelacionamento ctr
+        WHERE
+            ctr.idtiporelacionamento = cpl.idtiporelacionamento
+        AND
+            cpl.idpessoadepara = cpdp.idpessoadepara
+        AND
+            cpdp.idpessoa = :oszIdPessoa
+        AND
+            ctr.sgtiporelacionamento = 'C';
+
+    ULOG("oiCountCliente(%d)", oiCountCliente);
+
+
+    EXEC SQL
+        SELECT
+            COUNT(1)
+        INTO
+            :oiCountUsuario
+        FROM
+            customer.pessoalinha cpl,
+            customer.pessoadepara cpdp,
+            customer.tiporelacionamento ctr
+        WHERE
+            ctr.idtiporelacionamento = cpl.idtiporelacionamento
+        AND
+            cpl.idpessoadepara = cpdp.idpessoadepara
+        AND
+            cpdp.idpessoa = :oszIdPessoa
+        AND
+            ctr.sgtiporelacionamento = 'U';
+
+    ULOG("oiCountUsuario(%d)", oiCountUsuario);
+
+    ULOG_END("ClienteEhUsuario <OK>");
+    if(oiCountUsuario == oiCountCliente)
+        return true;
+    else
+        return false;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("ClienteEhUsuario <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaQuantidadeLinhasPorPagina
+ *******************************************************************************/
+int BuscaQuantidadeLinhasPorPagina(const char *cdParametro)
+{
+    ULOG_START("BuscaQuantidadeLinhasPorPagina");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char *varOraCdParametro = cdParametro;
+        int varOraDsValorParametro;
+        short statOraDsValorParametro=-1;
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("cdParametro=[%s]",cdParametro);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    EXEC SQL WHENEVER NOTFOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            DSVALORPARAMETRO
+        INTO
+            :varOraDsValorParametro:statOraDsValorParametro
+        FROM
+            APOIO.PARAMETRO
+        WHERE
+            CDPARAMETRO = :varOraCdParametro;
+
+    if ( sqlca.sqlcode )
+    {
+        varOraDsValorParametro = 50; // Quantidade default
+        ULOG_END("BuscaQuantidadeLinhasPorPagina <NOT FOUND>");
+    }
+    else
+    {
+        ULOG_END("BuscaQuantidadeLinhasPorPagina <OK>");
+    }
+
+    ULOG("dsValorParametro=%d",varOraDsValorParametro);
+
+    return varOraDsValorParametro;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaQuantidadeLinhasPorPagina <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaEnderecoPrincipal
+ *******************************************************************************/
+void BuscaEnderecoPrincipal(char *pszIdPessoa, char *pszIdPessoaEndereco)
+{
+    ULOG_START("BuscaEnderecoPrincipal");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+
+        VARCHAR oszIdPessoaEndereco[LEN_IDPESSOAENDERECO];
+        short oiIdPessoaEndereco=0;
+    EXEC SQL END DECLARE SECTION;
+
+    STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa); ULOG("oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+
+    MEMSET_ORA(oszIdPessoaEndereco);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    //EXEC SQL WHENEVER NOTFOUND GOTO sqlError;
+    EXEC SQL WHENEVER NOTFOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            idpessoaendereco
+        INTO
+            :oszIdPessoaEndereco:oiIdPessoaEndereco
+        FROM
+        (
+            SELECT
+                cpe.idpessoaendereco
+            FROM
+                customer.contaendereco cce,
+                customer.pessoaendereco cpe
+            WHERE
+                cce.idpessoaendereco = cpe.idpessoaendereco
+            AND cpe.idpessoa = :oszIdPessoa
+            AND NVL(cce.dtexpiracao,SYSDATE) >= SYSDATE
+            ORDER BY
+                cce.idtipoenderecocobranca DESC,cpe.dtultimaalteracao desc
+        )
+        WHERE
+            ROWNUM < 2;
+
+    if ( 0==sqlca.sqlcode )
+    {
+        ULOG("oszIdPessoaEndereco[%.*s](%d)",oszIdPessoaEndereco.len, oszIdPessoaEndereco.arr, oiIdPessoaEndereco);
+
+        if(oiIdPessoaEndereco != -1) {
+            STRCPY_FROM_ORA(pszIdPessoaEndereco, oszIdPessoaEndereco);
+        }
+        ULOG_END("BuscaEnderecoPrincipal <OK>");
+    }
+    else
+    {
+        *pszIdPessoaEndereco = 0;
+        ULOG_END("BuscaEnderecoPrincipal <NOT FOUND>");
+    }
+
+    return;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaEnderecoPrincipal <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaEnderecoPrincipalCompleto
+ *******************************************************************************/
+void BuscaEnderecoPrincipalCompleto(XMLGen *pclXmlGen, char *pszIdPessoa)
+{
+    ULOG_START("BuscaEnderecoPrincipalCompleto");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char *varOraIdPessoa = pszIdPessoa;
+
+        VARCHAR varOraIdpessoaendereco[LEN_IDPESSOAENDERECO+LEN_EOS];
+        VARCHAR varOraInenderecopreferencial[LEN_INENDERECOPREFERENCIAL + LEN_EOS];
+        VARCHAR varOraDsenderecocomplemento[LEN_DSENDERECOCOMPLEMENTO + LEN_EOS];
+        VARCHAR varOraIdtipoendereco[LEN_IDTIPOENDERECOCOBRANCA+LEN_EOS];
+        VARCHAR varOraNmtipologradouro[LEN_NMTIPOLOGRADOURO+LEN_EOS];
+        VARCHAR varOraNmtitulologradouro[LEN_NMTITULOLOGRADOURO+LEN_EOS];
+        VARCHAR varOraNrcep[LEN_NRCEP+LEN_EOS];
+        VARCHAR varOraNmlogradouro[LEN_NMLOGRADOURO+LEN_EOS];
+        VARCHAR varOraNrendereco[LEN_NRENDERECO+LEN_EOS];
+        VARCHAR varOraNmbairro[LEN_NMBAIRRO+LEN_EOS];
+        VARCHAR varOraNmmunicipio[LEN_NMMUNICIPIO+LEN_EOS];
+        VARCHAR varOraSguf[LEN_SGUF+LEN_EOS];
+        VARCHAR varOraNmpais[LEN_NMPAIS+LEN_EOS];
+        VARCHAR varOraDstipoendereco[LEN_DSTIPOENDERECO+LEN_EOS];
+
+        short statOraIdpessoaendereco=-1;
+        short statOraInenderecopreferencial=-1;
+        short statOraDsenderecocomplemento=-1;
+        short statOraIdtipoendereco=-1;
+        short statOraNmtipologradouro=-1;
+        short statOraNmtitulologradouro=-1;
+        short statOraNrcep=-1;
+        short statOraNmlogradouro=-1;
+        short statOraNrendereco=-1;
+        short statOraNmbairro=-1;
+        short statOraNmmunicipio=-1;
+        short statOraSguf=-1;
+        short statOraNmpais=-1;
+        short statOraDstipoendereco=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("idPessoa=[%s]",varOraIdPessoa);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    EXEC SQL WHENEVER NOTFOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            idpessoaendereco,
+            inenderecopreferencial,
+            dsenderecocomplemento,
+            idtipoendereco,
+            nmtipologradouro,
+            nmtitulologradouro,
+            nrcep,
+            nmlogradouro,
+            nrendereco,
+            nmbairro,
+            nmmunicipio,
+            sguf,
+            nmpais,
+            dstipoendereco
+        INTO
+            :varOraIdpessoaendereco:statOraIdpessoaendereco,
+            :varOraInenderecopreferencial:statOraInenderecopreferencial,
+            :varOraDsenderecocomplemento:statOraDsenderecocomplemento,
+            :varOraIdtipoendereco:statOraIdtipoendereco,
+            :varOraNmtipologradouro:statOraNmtipologradouro,
+            :varOraNmtitulologradouro:statOraNmtitulologradouro,
+            :varOraNrcep:statOraNrcep,
+            :varOraNmlogradouro:statOraNmlogradouro,
+            :varOraNrendereco:statOraNrendereco,
+            :varOraNmbairro:statOraNmbairro,
+            :varOraNmmunicipio:statOraNmmunicipio,
+            :varOraSguf:statOraSguf,
+            :varOraNmpais:statOraNmpais,
+            :varOraDstipoendereco:statOraDstipoendereco
+        FROM
+        (
+            SELECT
+                cpe.idpessoaendereco,
+                cpe.inenderecopreferencial,
+                cpe.dsenderecocomplemento,
+                cpe.idtipoendereco,
+                cpe.nmtipologradouro,
+                cpe.nmtitulologradouro,
+                cpe.nrcep,
+                cpe.nmlogradouro,
+                cpe.nrendereco,
+                cpe.nmbairro,
+                cpe.nmmunicipio,
+                uf.sguf,
+                pais.nmpais,
+                tipoendereco.dstipoendereco
+            FROM
+                customer.contaendereco cce,
+                customer.pessoaendereco cpe,
+                apoio.pais pais,
+                apoio.tipoendereco tipoendereco,
+                apoio.uf uf
+            WHERE
+                cce.idpessoaendereco = cpe.idpessoaendereco
+            AND cpe.idpessoa = :varOraIdPessoa
+            AND NVL(cce.dtexpiracao,SYSDATE) >= SYSDATE
+            AND cpe.idpais = pais.idpais
+            AND cpe.idtipoendereco = tipoendereco.idtipoendereco
+            AND cpe.iduf = uf.iduf
+            ORDER BY
+                cce.idtipoenderecocobranca DESC,cpe.dtultimaalteracao desc
+        )
+        WHERE
+            ROWNUM < 2;
+
+    if ( 0 == sqlca.sqlcode )
+    {
+        CONVIND(varOraIdpessoaendereco,statOraIdpessoaendereco);
+        CONVIND(varOraInenderecopreferencial,statOraInenderecopreferencial);
+        CONVIND(varOraDsenderecocomplemento,statOraDsenderecocomplemento);
+        CONVIND(varOraIdtipoendereco,statOraIdtipoendereco);
+        CONVIND(varOraNmtipologradouro,statOraNmtipologradouro);
+        CONVIND(varOraNmtitulologradouro,statOraNmtitulologradouro);
+        CONVIND(varOraNrcep,statOraNrcep);
+        CONVIND(varOraNmlogradouro,statOraNmlogradouro);
+        CONVIND(varOraNrendereco,statOraNrendereco);
+        CONVIND(varOraNmbairro,statOraNmbairro);
+        CONVIND(varOraNmmunicipio,statOraNmmunicipio);
+        CONVIND(varOraSguf,statOraSguf);
+        CONVIND(varOraNmpais,statOraNmpais);
+        CONVIND(varOraDstipoendereco,statOraDstipoendereco);
+
+        pclXmlGen->createTag("DadosEndereco");
+            pclXmlGen->addItem("idEndereco",(char*)varOraIdpessoaendereco.arr);
+            pclXmlGen->addItem("inEndPrincipal", "1");
+            pclXmlGen->addItem("idTipoEndereco",(char*)varOraIdtipoendereco.arr);
+            pclXmlGen->addItem("nmTipoLogradouro",(char*)varOraNmtipologradouro.arr);
+            pclXmlGen->addItem("nmTitLogradouro",(char*)varOraNmtitulologradouro.arr);
+            pclXmlGen->addItem("nrCEP",(char*)varOraNrcep.arr);
+            pclXmlGen->addItem("nmLogradouro",(char*)varOraNmlogradouro.arr);
+            pclXmlGen->addItem("nrLogradouro",(char*)varOraNrendereco.arr);
+            pclXmlGen->addItem("nmComplemento",(char*)varOraDsenderecocomplemento.arr);
+            pclXmlGen->addItem("nmBairro",(char*)varOraNmbairro.arr);
+            pclXmlGen->addItem("nmMunicipio",(char*)varOraNmmunicipio.arr);
+            pclXmlGen->addItem("sgUF",(char*)varOraSguf.arr);
+            pclXmlGen->addItem("nmPais",(char*)varOraNmpais.arr);
+            pclXmlGen->addItem("dsTipoEndereco",(char*)varOraDstipoendereco.arr);
+        pclXmlGen->closeTag(); //DadosEndereco
+
+        ULOG_END("BuscaEnderecoPrincipalCompleto <OK>");
+    }
+    else
+    {
+        ULOG_END("BuscaEnderecoPrincipalCompleto <NOT FOUND>");
+    }
+
+    return;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaEnderecoPrincipalCompleto <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaDadosPessoaFisica
+ *******************************************************************************/
+bool BuscaDadosPessoaFisica(XMLGen *pclXmlGen,char *pszNrDocumento,char *pszIdTipoDocumento,char *pszSgTipoRelacionamento,char *pszIdPessoa)
+{
+    ULOG_START("BuscaDadosPessoaFisica");
+
+    struct sqlca sqlca;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszNrDocumento[LEN_NRDOCUMENTO+LEN_EOS];
+        VARCHAR oszIdTipoDocumento[LEN_IDTIPODOCUMENTO+LEN_EOS];
+        VARCHAR oszSgTipoRelacionamento[LEN_SGTIPORELACIONAMENTO+LEN_EOS];
+
+        VARCHAR oszIdPessoa[LEN_IDPESSOA+LEN_EOS];
+        VARCHAR oszNmPessoa[LEN_NMPESSOA+LEN_EOS];
+        VARCHAR oszIdSexo[LEN_IDSEXO+LEN_EOS];
+        VARCHAR oszDtNascimento[LEN_DTNASCIMENTO+LEN_EOS];
+        VARCHAR oszIdEstadoCivil[LEN_IDESTADOCIVIL+LEN_EOS];
+        VARCHAR oszDsCargoContato[LEN_DSCARGOCONTATO+LEN_EOS];
+
+        short oiIdPessoa=0;
+        short oiNmPessoa=0;
+        short oiIdSexo=0;
+        short oiDtNascimento=0;
+        short oiIdEstadoCivil=0;
+        short oiDsCargoContato=0;
+    EXEC SQL END DECLARE SECTION;
+
+    MEMSET_ORA(oszIdPessoa);
+    MEMSET_ORA(oszNmPessoa);
+    MEMSET_ORA(oszIdSexo);
+    MEMSET_ORA(oszDtNascimento);
+    MEMSET_ORA(oszIdEstadoCivil);
+    MEMSET_ORA(oszDsCargoContato);
+
+    STRCPY_TO_ORA(oszNrDocumento, pszNrDocumento);                    ULOG("oszNrDocumento[%.*s]", oszNrDocumento.len, oszNrDocumento.arr);
+    STRCPY_TO_ORA(oszIdTipoDocumento, pszIdTipoDocumento);            ULOG("oszIdTipoDocumento[%.*s]", oszIdTipoDocumento.len, oszIdTipoDocumento.arr);
+    STRCPY_TO_ORA(oszSgTipoRelacionamento, pszSgTipoRelacionamento);  ULOG("oszSgTipoRelacionamento[%.*s]", oszSgTipoRelacionamento.len, oszSgTipoRelacionamento.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    EXEC SQL WHENEVER NOTFOUND GOTO sqlNotFound;
+
+    EXEC SQL
+        SELECT
+            cp.idpessoa,
+            cp.nmpessoa,
+            cpf.idsexo,
+            TO_CHAR(cpf.dtnascimento, 'DD/MM/YYYY') as dtnascimento,
+            cpf.idestadocivil,
+            cp.dscargocontato
+        INTO
+            :oszIdPessoa:oiIdPessoa,
+            :oszNmPessoa:oiNmPessoa,
+            :oszIdSexo:oiIdSexo,
+            :oszDtNascimento:oiDtNascimento,
+            :oszIdEstadoCivil:oiIdEstadoCivil,
+            :oszDsCargoContato:oiDsCargoContato
+        FROM
+            customer.documento cd,
+            customer.pessoadocumento cpd,
+            customer.pessoa cp,
+            customer.pessoadepara cpdp,
+            customer.pessoafisica cpf,
+            customer.pessoalinha cpl,
+            apoio.tipodocumento atd,
+            customer.tiporelacionamento ctr
+        WHERE
+            cpf.idpessoa = cp.idpessoa
+        AND cp.idpessoa = cpdp.idpessoa
+        AND cpl.idpessoadepara = cpdp.idpessoadepara
+        AND cp.idpessoa = cpd.idpessoa
+        AND cpd.iddocumento = cd.iddocumento
+        AND cd.idtipodocumento = atd.idtipodocumento
+        AND cd.nrdocumento = :oszNrDocumento
+        AND atd.sgclassificacao IN (SELECT atd2.sgclassificacao
+                                      FROM apoio.tipodocumento atd2 
+                                     WHERE atd2.idtipodocumento = :oszIdTipoDocumento)
+        AND cpl.idtiporelacionamento = ctr.idtiporelacionamento
+        AND ctr.sgtiporelacionamento = :oszSgTipoRelacionamento
+        AND ROWNUM < 2;
+
+    ULOG("oszIdPessoa[%.*s](%d)", oszIdPessoa.len, oszIdPessoa.arr, oiIdPessoa);
+    szAux[0]=0x00;
+    if(oiIdPessoa != -1) {
+        STRCPY_FROM_ORA(szAux, oszIdPessoa);
+        STRCPY_FROM_ORA(pszIdPessoa, oszIdPessoa);
+    }
+    pclXmlGen->addItem("idPessoa", szAux);
+
+
+    ULOG("oszNmPessoa[%.*s](%d)", oszNmPessoa.len, oszNmPessoa.arr, oiNmPessoa);
+    szAux[0]=0x00;
+    if(oiNmPessoa != -1) {
+        STRCPY_FROM_ORA(szAux, oszNmPessoa);
+    }
+    pclXmlGen->addItem("nmPessoa", szAux);
+
+
+    ULOG("oszIdSexo[%.*s](%d)", oszIdSexo.len, oszIdSexo.arr, oiIdSexo);
+    szAux[0]=0x00;
+    if(oiIdSexo != -1) {
+        STRCPY_FROM_ORA(szAux, oszIdSexo);
+    }
+    pclXmlGen->addItem("idSexo", szAux);
+
+
+    ULOG("oszDtNascimento[%.*s](%d)", oszDtNascimento.len, oszDtNascimento.arr, oiDtNascimento);
+    szAux[0]=0x00;
+    if(oiDtNascimento != -1) {
+        STRCPY_FROM_ORA(szAux, oszDtNascimento);
+    }
+    pclXmlGen->addItem("dtNascimento", szAux);
+
+
+    ULOG("oszIdEstadoCivil[%.*s](%d)", oszIdEstadoCivil.len, oszIdEstadoCivil.arr, oiIdEstadoCivil);
+    szAux[0]=0x00;
+    if(oiIdEstadoCivil != -1) {
+        STRCPY_FROM_ORA(szAux, oszIdEstadoCivil);
+    }
+    pclXmlGen->addItem("idEstadoCivil", szAux);
+
+
+    ULOG("oszDsCargoContato[%.*s](%d)", oszDsCargoContato.len, oszDsCargoContato.arr, oiDsCargoContato);
+    szAux[0]=0x00;
+    if(oiDsCargoContato != -1) {
+        STRCPY_FROM_ORA(szAux, oszDsCargoContato);
+    }
+    pclXmlGen->addItem("dsProfissao", szAux);
+
+    ULOG("pszIdPessoa[%s]", pszIdPessoa);
+    ULOG_END("BuscaDadosPessoaFisica <OK>");
+    return true;
+
+    sqlNotFound:
+        ULOG_END("BuscaDadosPessoaFisica <NOT FOUND>");
+        return false;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosPessoaFisica <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaListaPessoaDocumento
+ *******************************************************************************/
+bool BuscaListaPessoaDocumento( XMLGen * pclXmlGen,
+                                char * pszNrDocumento,
+                                char * pszNrLinha,
+                                char * pszNrConta,
+                                char * pszIdTipoDocumento,
+                                char * pszIdTipoPessoa,
+                                const char * pszNrPagina
+                              )
+{
+    ULOG_START("BuscaListaPessoaDocumento");
+
+    struct sqlca sqlca;
+    int recordCount=0;
+    int nrPagina = atoi(pszNrPagina);
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *pInVarOraNrDocumento = pszNrDocumento;
+        char *pInVarOraIdTipoDocumento = pszIdTipoDocumento;
+        
+        char  cdAreaRegistro[3];
+        short st_cdAreaRegistro = -1;
+        char nrLinhaTelefone[16];
+        short st_nrLinhaTelefone = -1;
+        
+        char *nrConta = pszNrConta;
+        short st_nrConta = -1;
+
+        int qtMaxLinhas;
+        int linInicial;
+        int linFinal;
+
+        VARCHAR varOraIdTipoDocumento[LEN_IDTIPODOCUMENTO+1];
+        VARCHAR varOraIdPessoa[LEN_IDPESSOA+1];
+        VARCHAR varOraNmPessoa[LEN_NMPESSOA+1];
+        VARCHAR varOraNrTelefone[LEN_NRLINHA+1];
+        VARCHAR varOraIdClassificacaoTipoLinha[LEN_IDCLASSIFICACAOTPLINHA+1];
+        VARCHAR varOraDsEstadoLinha[LEN_DSESTADOLINHA+1];
+        VARCHAR varOraSgClassificacao[LEN_SGCLASSIFICACAO+1];
+        VARCHAR varOraIdLinhaTelefonica[LEN_IDLINHATELEFONICA+1];
+        VARCHAR varOraCdConta[100+1];
+
+        short statOraIdTipoDocumento;
+        short statOraIdPessoa;
+        short statOraNmPessoa;
+        short statOraNrTelefone;
+        short statOraIdClassificacaoTipoLinha;
+        short statOraDsEstadoLinha;
+        short statOraSgClassificacao;
+        short statOraIdLinhaTelefonica;
+        short statOraCdConta = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    if ( pszNrLinha[0] != 0x0 )
+    {
+        sprintf( cdAreaRegistro, "%.2s", pszNrLinha );
+        st_cdAreaRegistro = 0;
+        sprintf( nrLinhaTelefone, "%s", (char*)&pszNrLinha[2] );
+        st_nrLinhaTelefone = 0;
+    }
+    else
+    {
+        strcpy(cdAreaRegistro,"00");
+        strcpy(nrLinhaTelefone,"00");
+    }
+    
+    if ( nrConta[0] != 0x0 )
+    {
+        st_nrConta = 0;
+    }
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    EXEC SQL WHENEVER NOTFOUND GOTO sqlNotFound;
+
+    if ( strcmp(pszIdTipoPessoa,"2")==0 )
+    {
+        strcpy((char*)varOraSgClassificacao.arr,"CNPJ");
+        varOraSgClassificacao.len = 4;
+    }
+    else
+    {
+        EXEC SQL
+            SELECT
+                sgclassificacao
+            INTO
+                :varOraSgClassificacao:statOraSgClassificacao
+            FROM
+                apoio.tipodocumento
+            WHERE
+                idtipodocumento = :pInVarOraIdTipoDocumento;
+
+        CONVIND(varOraSgClassificacao,statOraSgClassificacao);
+    }
+
+    qtMaxLinhas = BuscaQuantidadeLinhasPorPagina("PREPAGOTMA_LINHAS_POR_PAGINA");
+    linInicial = (nrPagina-1)*qtMaxLinhas+1;
+    linFinal = (nrPagina*qtMaxLinhas)+1;
+
+    ULOG("linInicial=%d",linInicial);
+    ULOG("  linFinal=%d",linFinal);
+
+    EXEC SQL DECLARE curListaPD CURSOR FOR
+        SELECT 
+            idtipodocumento,
+            idpessoa,
+            nmpessoa,
+            nrtelefone,
+            idclassificacaotipolinha,
+            dsestadolinha,
+            idlinhatelefonica,
+            cdConta
+        FROM
+        (
+            SELECT 
+                idtipodocumento,
+                idpessoa,
+                nmpessoa,
+                nrtelefone,
+                idclassificacaotipolinha,
+                dsestadolinha,
+                idlinhatelefonica,
+                cdConta,
+                ROWNUM AS nrlinha
+            FROM
+            (
+                SELECT 
+                    documento.idtipodocumento,
+                    pessoa.idpessoa,
+                    pessoa.nmpessoa,
+                    /*
+                    '('||arearegistro.cdarearegistro||') '||
+                        SUBSTR(lpad(linhabase.nrlinha,8),1,4)||'-'||
+                            SUBSTR(lpad(linhabase.nrlinha,8),5) AS nrtelefone,
+                    */
+                    soa_ow.formata_nrlinha(TO_CHAR(arearegistro.cdarearegistro)||TO_CHAR(linhabase.nrlinha)) AS nrtelefone ,
+                    tipolinha.idclassificacaotipolinha,
+                    estadolinha.dsestadolinha,
+                    linhatelefonica.idlinhatelefonica,
+                    conta.cdconta
+                FROM
+                    customer.pessoa pessoa,
+                    customer.pessoadepara pessoadepara,
+                    customer.pessoaconta pessoaconta,
+                    customer.conta conta,
+                    customer.pessoadocumento pessoadocumento,
+                    customer.documento documento,
+                    customer.pessoalinha pessoalinha,
+                    linha.linhatelefonica linhatelefonica,
+                    linha.linhabase linhabase,
+                    apoio.arearegistro arearegistro,
+                    apoio.tipolinha tipolinha,
+                    apoio.estadolinha estadolinha
+                WHERE
+                    documento.nrdocumento = :pInVarOraNrDocumento
+                AND documento.idtipodocumento in (SELECT idtipodocumento
+                                                    FROM apoio.tipodocumento 
+                                                   WHERE sgclassificacao = :varOraSgClassificacao)
+                AND documento.iddocumento = pessoadocumento.iddocumento
+                AND pessoadocumento.dtexpiracao IS NULL
+                AND pessoadocumento.idpessoa = pessoa.idpessoa
+                AND pessoa.idpessoa = pessoadepara.idpessoa
+                AND pessoadepara.idpessoadepara = pessoalinha.idpessoadepara
+                AND pessoalinha.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+                AND linhatelefonica.idlinhabase = linhabase.idlinhabase
+                AND linhabase.idarearegistro = arearegistro.idarearegistro
+                AND linhatelefonica.idtipolinha = tipolinha.idtipolinha
+                AND linhabase.idestadolinha = estadolinha.idestadolinha
+                AND pessoalinha.idtiporelacionamento = 2
+                AND arearegistro.cdAreaRegistro = DECODE(:st_cdAreaRegistro,-1,arearegistro.cdAreaRegistro,:cdAreaRegistro)
+                AND linhabase.nrlinha = DECODE(:st_nrLinhaTelefone,-1,linhabase.nrlinha,:nrLinhaTelefone)
+                AND pessoaconta.idpessoadepara = pessoadepara.idpessoadepara
+                AND pessoaconta.idconta = conta.idconta
+                AND conta.cdconta = DECODE(:st_nrConta,-1,conta.cdconta,:nrConta)
+            )
+        )
+        WHERE
+            nrlinha >= :linInicial AND nrlinha <= :linFinal;
+
+    EXEC SQL OPEN curListaPD;
+
+    EXEC SQL WHENEVER NOTFOUND DO BREAK;
+
+    while(true)
+    {
+        statOraIdTipoDocumento=statOraIdPessoa=statOraNmPessoa=
+        statOraNrTelefone=statOraIdClassificacaoTipoLinha=statOraDsEstadoLinha=statOraSgClassificacao=-1;
+
+        EXEC SQL FETCH curListaPD INTO :varOraIdTipoDocumento:statOraIdTipoDocumento,
+                                       :varOraIdPessoa:statOraIdPessoa,
+                                       :varOraNmPessoa:statOraNmPessoa,
+                                       :varOraNrTelefone:statOraNrTelefone,
+                                       :varOraIdClassificacaoTipoLinha:statOraIdClassificacaoTipoLinha,
+                                       :varOraDsEstadoLinha:statOraDsEstadoLinha,
+                                       :varOraIdLinhaTelefonica:statOraIdLinhaTelefonica,
+                                       :varOraCdConta:statOraCdConta;
+        recordCount++;
+
+        if ( recordCount <= qtMaxLinhas )
+        {
+            CONVIND(varOraIdTipoDocumento,statOraIdTipoDocumento);
+            CONVIND(varOraIdPessoa,statOraIdPessoa);
+            CONVIND(varOraNmPessoa,statOraNmPessoa);
+            CONVIND(varOraNrTelefone,statOraNrTelefone);
+            CONVIND(varOraIdClassificacaoTipoLinha,statOraIdClassificacaoTipoLinha);
+            CONVIND(varOraDsEstadoLinha,statOraDsEstadoLinha);
+            CONVIND(varOraIdLinhaTelefonica,statOraIdLinhaTelefonica);
+            CONVIND(varOraCdConta,statOraCdConta);
+
+            if ( strcmp(pszIdTipoPessoa,"2")==0 )
+            {
+                pclXmlGen->createTag("PJ");
+                    pclXmlGen->addItem("idPessoa",(char*)varOraIdPessoa.arr);
+                    pclXmlGen->addItem("nrCNPJ",pInVarOraNrDocumento);
+                    pclXmlGen->addItem("nmRazaoSocial",(char*)varOraNmPessoa.arr);
+            }
+            else
+            {
+                pclXmlGen->createTag("PF");
+
+                    pclXmlGen->addItem("idPessoa",(char*)varOraIdPessoa.arr);
+                    pclXmlGen->addItem("nmPessoa",(char*)varOraNmPessoa.arr);
+
+                    pclXmlGen->createTag("Documento");
+                        pclXmlGen->addItem("idTipoDocumento",(char*)varOraIdTipoDocumento.arr);
+                        pclXmlGen->addItem("nrDocumento",pInVarOraNrDocumento);
+                    pclXmlGen->closeTag();
+
+            }
+                pclXmlGen->createTag("Telefone");
+                    pclXmlGen->addItem("nrTelefone",(char*)varOraNrTelefone.arr);
+                    pclXmlGen->addItem("idLinhaTelefonica",(char*)varOraIdLinhaTelefonica.arr);
+                    pclXmlGen->addItem("idClassificacaoTipoLinha",(char*)varOraIdClassificacaoTipoLinha.arr);
+                    pclXmlGen->addItem("dsEstadoLinha",(char*)varOraDsEstadoLinha.arr);
+                    if ( strcmp(pszIdTipoPessoa,"2")==0 )
+                    {
+                        pclXmlGen->addItem("nrConta",(char*)varOraCdConta.arr);
+                    }
+                pclXmlGen->closeTag();
+
+                BuscaEnderecoPrincipalCompleto(pclXmlGen,(char*)varOraIdPessoa.arr);
+
+                pclXmlGen->closeTag(); // PF ou PJ
+        }
+    }
+
+    pclXmlGen->createTag("Paginacao");
+        pclXmlGen->addItem("hasNext",recordCount>qtMaxLinhas?"1":"0");
+        pclXmlGen->addItem("recordCount",recordCount);
+        pclXmlGen->addItem("pageNumber",nrPagina);
+    pclXmlGen->closeTag();
+
+    EXEC SQL CLOSE curListaPD;
+
+    ULOG_END("BuscaListaPessoaDocumento <OK>");
+    return true;
+
+    sqlNotFound:
+        ULOG_END("BuscaListaPessoaDocumento <NOT FOUND>");
+        return false;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaListaPessoaDocumento <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaListaPessoaDocumentoCount
+ *******************************************************************************/
+int BuscaListaPessoaDocumentoCount(char *pszNrDocumento, char *pszIdTipoDocumento, char *pszIdTipoPessoa)
+{
+    ULOG_START("BuscaListaPessoaDocumentoCount");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *pInVarOraNrDocumento = pszNrDocumento;
+        char *pInVarOraIdTipoDocumento = pszIdTipoDocumento;
+
+        VARCHAR varOraIdClassificacaoTipoLinha[LEN_IDCLASSIFICACAOTPLINHA+1];
+        VARCHAR varOraSgClassificacao[LEN_SGCLASSIFICACAO+1];
+
+        short statOraIdClassificacaoTipoLinha;
+        short statOraSgClassificacao;
+
+        int varOraCount;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    EXEC SQL WHENEVER NOTFOUND GOTO sqlNotFound;
+
+    ULOG("idTipoDocumento=[%s]",pInVarOraIdTipoDocumento);
+    ULOG("   idTipoPessoa=[%s]",pszIdTipoPessoa);
+
+    if ( strcmp(pszIdTipoPessoa,"2")==0 )
+    {
+        strcpy((char*)varOraSgClassificacao.arr,"CNPJ");
+        varOraSgClassificacao.len = 4;
+    }
+    else
+    {
+        EXEC SQL
+            SELECT
+                sgclassificacao
+            INTO
+                :varOraSgClassificacao:statOraSgClassificacao
+            FROM
+                apoio.tipodocumento
+            WHERE
+                idtipodocumento = :pInVarOraIdTipoDocumento;
+
+        CONVIND(varOraSgClassificacao,statOraSgClassificacao);
+    }
+
+    ULOG("sgClassificacao=[%s]",(char*)varOraSgClassificacao.arr);
+    ULOG("    nrDocumento=[%s]",pInVarOraNrDocumento);
+
+    EXEC SQL
+        SELECT 
+            COUNT(1)
+        INTO
+            :varOraCount
+        FROM
+            customer.pessoa pessoa,
+            customer.pessoadepara pessoadepara,
+            customer.pessoadocumento pessoadocumento,
+            customer.documento documento,
+            customer.pessoalinha pessoalinha,
+            linha.linhatelefonica linhatelefonica,
+            linha.linhabase linhabase,
+            apoio.arearegistro arearegistro,
+            apoio.tipolinha tipolinha,
+            apoio.estadolinha estadolinha
+        WHERE
+            documento.nrdocumento = :pInVarOraNrDocumento
+        AND documento.idtipodocumento in (SELECT idtipodocumento FROM apoio.tipodocumento WHERE sgclassificacao = :varOraSgClassificacao)
+        AND documento.iddocumento = pessoadocumento.iddocumento
+        AND pessoadocumento.dtexpiracao IS NULL
+        AND pessoadocumento.idpessoa = pessoa.idpessoa
+        AND pessoa.idpessoa = pessoadepara.idpessoa
+        AND pessoadepara.idpessoadepara = pessoalinha.idpessoadepara
+        AND pessoalinha.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+        AND linhatelefonica.idlinhabase = linhabase.idlinhabase
+        AND linhabase.idarearegistro = arearegistro.idarearegistro
+        AND linhatelefonica.idtipolinha = tipolinha.idtipolinha
+        AND linhabase.idestadolinha = estadolinha.idestadolinha
+        AND pessoalinha.idtiporelacionamento = 2
+        AND ROWNUM < 3;
+
+    ULOG("           qtde=[%d]",varOraCount);
+
+    ULOG_END("BuscaListaPessoaDocumentoCount <OK>");
+    return varOraCount;
+
+    sqlNotFound:
+        ULOG_END("BuscaListaPessoaDocumentoCount <NOT FOUND>");
+        return 0;
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaListaPessoaDocumentoCount <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaDadosAlteraTrocaTitularidadePF
+ *******************************************************************************/
+bool BuscaDadosAlteraTrocaTitularidadePF(XMLGen *pclXmlGen, char *pszSgTipoRelacionamento, char *pszIdPessoa, char *pszIdLinhaTelefonica)
+{
+    ULOG_START("BuscaDadosAlteraTrocaTitularidadePF");
+
+    struct sqlca sqlca;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoaIn[LEN_IDPESSOA];
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszSgTipoRelacionamento[LEN_SGTIPORELACIONAMENTO];
+
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+        VARCHAR oszNmPessoa[LEN_NMPESSOA];
+        VARCHAR oszIdSexo[LEN_IDSEXO];
+        VARCHAR oszDtNascimento[LEN_DTNASCIMENTO];
+        VARCHAR oszIdEstadoCivil[LEN_IDESTADOCIVIL];
+        VARCHAR oszDsCargoContato[LEN_DSCARGOCONTATO];
+
+        short oiIdPessoa=0;
+        short oiNmPessoa=0;
+        short oiIdSexo=0;
+        short oiDtNascimento=0;
+        short oiIdEstadoCivil=0;
+        short oiDsCargoContato=0;
+    EXEC SQL END DECLARE SECTION;
+
+
+    MEMSET_ORA(oszIdPessoa);
+    MEMSET_ORA(oszNmPessoa);
+    MEMSET_ORA(oszIdSexo);
+    MEMSET_ORA(oszDtNascimento);
+    MEMSET_ORA(oszIdEstadoCivil);
+    MEMSET_ORA(oszDsCargoContato);
+
+
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, pszIdLinhaTelefonica); ULOG("oszIdLinhaTelefonica[%.*s]", oszIdLinhaTelefonica.len, oszIdLinhaTelefonica.arr);
+    STRCPY_TO_ORA(oszSgTipoRelacionamento, pszSgTipoRelacionamento);  ULOG("oszSgTipoRelacionamento[%.*s]", oszSgTipoRelacionamento.len, oszSgTipoRelacionamento.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    EXEC SQL WHENEVER NOTFOUND GOTO sqlNotFound;
+
+    EXEC SQL
+        SELECT
+            cp.idpessoa,
+            cp.nmpessoa,
+            cpf.idsexo,
+            TO_CHAR(cpf.dtnascimento, 'DD/MM/YYYY') as dtnascimento,
+            cpf.idestadocivil,
+            cp.dscargocontato
+        INTO    
+            :oszIdPessoa:oiIdPessoa,
+            :oszNmPessoa:oiNmPessoa,
+            :oszIdSexo:oiIdSexo,
+            :oszDtNascimento:oiDtNascimento,
+            :oszIdEstadoCivil:oiIdEstadoCivil,
+            :oszDsCargoContato:oiDsCargoContato
+        FROM
+          customer.pessoa cp,
+          customer.pessoadepara cpdp,
+          customer.pessoalinha cpl,
+          customer.tiporelacionamento ctr,
+          customer.pessoafisica cpf
+        WHERE
+          cpdp.idpessoadepara = cpl.idpessoadepara
+        AND
+          cpl.idtiporelacionamento = ctr.idtiporelacionamento
+        AND
+          ctr.sgtiporelacionamento = :oszSgTipoRelacionamento
+        AND
+          cpf.idpessoa = cpdp.idpessoa
+        AND
+          cpl.idlinhatelefonica = :oszIdLinhaTelefonica
+        AND
+         cp.idpessoa = cpdp.idpessoa;
+
+
+    ULOG("oszIdPessoa[%.*s](%d)",oszIdPessoa.len, oszIdPessoa.arr, oiIdPessoa);
+    szAux[0]=0x00;
+    if(oiIdPessoa != -1) {
+        STRCPY_FROM_ORA(szAux, oszIdPessoa);
+        STRCPY_FROM_ORA(pszIdPessoa, oszIdPessoa);
+    }
+    pclXmlGen->addItem("idPessoa", szAux);
+
+
+    ULOG("oszNmPessoa[%.*s](%d)", oszNmPessoa.len, oszNmPessoa.arr, oiNmPessoa);
+    szAux[0]=0x00;
+    if(oiNmPessoa != -1) {
+        STRCPY_FROM_ORA(szAux, oszNmPessoa);
+    }
+    pclXmlGen->addItem("nmPessoa", szAux);
+
+
+    ULOG("oszIdSexo[%.*s](%d)", oszIdSexo.len, oszIdSexo.arr, oiIdSexo);
+    szAux[0]=0x00;
+    if(oiIdSexo != -1) {
+        STRCPY_FROM_ORA(szAux, oszIdSexo);
+    }
+    pclXmlGen->addItem("idSexo", szAux);
+
+
+    ULOG("oszDtNascimento[%.*s](%d)", oszDtNascimento.len, oszDtNascimento.arr, oiDtNascimento);
+    szAux[0]=0x00;
+    if(oiDtNascimento != -1) {
+        STRCPY_FROM_ORA(szAux, oszDtNascimento);
+    }
+    pclXmlGen->addItem("dtNascimento", szAux);
+
+
+    ULOG("oszIdEstadoCivil[%.*s](%d)", oszIdEstadoCivil.len, oszIdEstadoCivil.arr, oiIdEstadoCivil);
+    szAux[0]=0x00;
+    if(oiIdEstadoCivil != -1) {
+        STRCPY_FROM_ORA(szAux, oszIdEstadoCivil);
+    }
+    pclXmlGen->addItem("idEstadoCivil", szAux);
+
+
+    ULOG("oszDsCargoContato[%.*s](%d)", oszDsCargoContato.len, oszDsCargoContato.arr, oiDsCargoContato);
+    szAux[0]=0x00;
+    if(oiDsCargoContato != -1) {
+        STRCPY_FROM_ORA(szAux, oszDsCargoContato);
+    }
+    pclXmlGen->addItem("dsProfissao", szAux);
+
+
+    ULOG("pszIdPessoa[%s]", pszIdPessoa);
+    ULOG_END("BuscaDadosAlteraTrocaTitularidadePF <OK>");
+    return true;
+
+    sqlNotFound:
+        ULOG_END("BuscaDadosAlteraTrocaTitularidadePF <NOT FOUND>");
+        return false;
+
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosAlteraTrocaTitularidadePF <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************
+ * BuscaDadosAlteraTrocaTitularidadePJ
+ *******************************************************************************/
+bool BuscaDadosAlteraTrocaTitularidadePJ(XMLGen *pclXmlGen, char *pszSgTipoRelacionamento, char *pszIdPessoa, char *pszIdLinhaTelefonica)
+{
+    ULOG_START("BuscaDadosAlteraTrocaTitularidadePJ");
+
+    struct sqlca sqlca;
+    char szAux[LEN_AUX_ORA + LEN_EOS];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoaIn[LEN_IDPESSOA];
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszSgTipoRelacionamento[LEN_SGTIPORELACIONAMENTO];
+
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+        VARCHAR oszNmFantasia[LEN_NMFANTASIA];
+        VARCHAR oszNmPessoa[LEN_NMPESSOA];
+        VARCHAR oszIdCFOP[LEN_IDCFOP];
+        VARCHAR oszIdTipoCarteira[LEN_IDTIPOCARTEIRA];
+        VARCHAR oszDtFundacao[LEN_DTFUNDACAO];
+
+        short oiIdPessoa=0;
+        short oiNmFantasia=0;
+        short oiNmPessoa=0;
+        short oiIdCFOP=0;
+        short oiIdTipoCarteira=0;
+        short oiDtFundacao=0;
+    EXEC SQL END DECLARE SECTION;
+
+    MEMSET_ORA(oszIdPessoa);
+    MEMSET_ORA(oszNmFantasia);
+    MEMSET_ORA(oszNmPessoa);
+    MEMSET_ORA(oszIdCFOP);
+    MEMSET_ORA(oszIdTipoCarteira);
+    MEMSET_ORA(oszDtFundacao);
+
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, pszIdLinhaTelefonica); ULOG("oszIdLinhaTelefonica[%.*s]", oszIdLinhaTelefonica.len, oszIdLinhaTelefonica.arr);
+    STRCPY_TO_ORA(oszSgTipoRelacionamento, pszSgTipoRelacionamento);  ULOG("oszSgTipoRelacionamento[%.*s]", oszSgTipoRelacionamento.len, oszSgTipoRelacionamento.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    EXEC SQL WHENEVER NOTFOUND GOTO sqlNotFound;
+
+    EXEC SQL
+        SELECT
+            cp.idpessoa as idpessoa,
+            cpj.nmfantasia as nmFantasia,
+            cp.nmpessoa as nmRazaoSocial,
+            cpj.idcfop as idClassTributaria,
+            cp.idtipocarteira as idClassEmpresa,
+            TO_CHAR(cpj.dtfundacao, 'DD/MM/YYYY') as dtFundacao
+        INTO
+            :oszIdPessoa:oiIdPessoa,
+            :oszNmFantasia:oiNmFantasia,
+            :oszNmPessoa:oiNmPessoa,
+            :oszIdCFOP:oiIdCFOP,
+            :oszIdTipoCarteira:oiIdTipoCarteira,
+            :oszDtFundacao:oiDtFundacao
+        FROM
+            customer.pessoa cp,
+            customer.pessoajuridica cpj,
+            customer.pessoafisica cpf,
+            customer.pessoadepara cpdp,
+            customer.pessoalinha cpl,
+            customer.tiporelacionamento ctr
+        WHERE
+            cp.idpessoa = cpj.idpessoa (+)
+        AND
+            cp.idpessoa = cpf.idpessoa (+)
+        AND
+            cp.idpessoa = cpdp.idpessoa
+        AND
+            cpdp.idpessoadepara = cpl.idpessoadepara
+        AND
+            cpl.idtiporelacionamento = ctr.idtiporelacionamento
+        AND
+            ctr.sgtiporelacionamento = :oszSgTipoRelacionamento
+        AND
+            cpl.idlinhatelefonica = :oszIdLinhaTelefonica;
+
+
+    szAux[0]=0x00;
+    if(oiIdPessoa != -1) {
+        STRCPY_FROM_ORA(szAux, oszIdPessoa);
+        STRCPY_FROM_ORA(pszIdPessoa, oszIdPessoa);
+    }
+    pclXmlGen->addItem("idPessoa", szAux);
+
+
+    ULOG("oszNmFantasia[%.*s](%d)",oszNmFantasia.len, oszNmFantasia.arr, oiNmFantasia);
+    szAux[0]=0x00;
+    if(oiNmFantasia != -1) {
+        STRCPY_FROM_ORA(szAux, oszNmFantasia);
+    }
+    pclXmlGen->addItem("nmFantasia", szAux);
+
+
+    ULOG("oszNmPessoa[%.*s](%d)",oszNmPessoa.len, oszNmPessoa.arr, oiNmPessoa);
+    szAux[0]=0x00;
+    if(oiNmPessoa != -1) {
+        STRCPY_FROM_ORA(szAux, oszNmPessoa);
+    }
+    pclXmlGen->addItem("nmRazaoSocial", szAux);
+
+
+    ULOG("oszIdCFOP[%.*s](%d)",oszIdCFOP.len, oszIdCFOP.arr, oiIdCFOP);
+    szAux[0]=0x00;
+    if(oiIdCFOP != -1) {
+        STRCPY_FROM_ORA(szAux, oszIdCFOP);
+    }
+    pclXmlGen->addItem("idClassTributaria", szAux);
+
+
+    ULOG("oszIdTipoCarteira[%.*s](%d)",oszIdTipoCarteira.len, oszIdTipoCarteira.arr, oiIdTipoCarteira);
+    szAux[0]=0x00;
+    if(oiIdTipoCarteira != -1) {
+        STRCPY_FROM_ORA(szAux, oszIdTipoCarteira);
+    }
+    pclXmlGen->addItem("idClassEmpresa", szAux);
+
+
+    ULOG("oszDtFundacao[%.*s](%d)",oszDtFundacao.len, oszDtFundacao.arr, oiDtFundacao);
+    szAux[0]=0x00;
+    if(oiDtFundacao != -1) {
+        STRCPY_FROM_ORA(szAux, oszDtFundacao);
+    }
+    pclXmlGen->addItem("dtFundacao", szAux);
+
+
+
+    ULOG("pszIdPessoa[%s]", pszIdPessoa);
+    ULOG_END("BuscaDadosAlteraTrocaTitularidadePJ <OK>");
+    return true;
+
+    sqlNotFound:
+        ULOG_END("BuscaDadosAlteraTrocaTitularidadePJ <NOT FOUND>");
+        return false;
+
+
+    sqlError:
+        ULOGE("ERRO: sqlca.sqlcode(%d)[%.*s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("BuscaDadosAlteraTrocaTitularidadePJ <ERROR>");
+        throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

@@ -1,0 +1,172 @@
+// Endereco.cpp: implementation of the Endereco class.
+//
+//////////////////////////////////////////////////////////////////////
+
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include<tuxfw.h>
+
+#include "endereco.h"
+
+
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+endereco::endereco()
+{
+}
+
+endereco::~endereco()
+{
+}
+
+void endereco::getEndereco(char *pNrCEP, char *pQtdReg, XMLGen* xml_g, int *piCount)
+{
+    ULOG("endereco::getEndereco");
+    ULOG("pNrCEP[%s]", pNrCEP);
+    ULOG("pQtdReg[%s]", pQtdReg);
+    ULOG("2.xml_g(%p)", xml_g);
+
+    struct sqlca sqlca;
+    char szAux[512 + 1];
+    int iCount;
+    int quantidade = 0;
+    try{
+	quantidade = atoi(pQtdReg);
+    }catch(...){
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszNumCEP[10];
+        VARCHAR oszDscLocalidade[50];
+        VARCHAR oszEndereco[255];
+        VARCHAR oszNomBairro[50];
+        VARCHAR oszSglUF[2];
+
+        short oiNumCEP=0;
+        short oiDscLocalidade=0;
+        short oiEndereco=0;
+        short oiNomBairro=0;
+        short oiSglUF=0;
+
+        VARCHAR oszQtdReg[23];
+        VARCHAR oszNrCEP[255];
+    EXEC SQL END DECLARE SECTION;
+    sqlca.sqlcode = 0;
+
+    STRCPY_TO_ORA(oszNrCEP, pNrCEP);
+    ULOG("oszNrCEP[%.*s]", oszNrCEP.len, oszNrCEP.arr);
+
+    STRCPY_TO_ORA(oszQtdReg, pQtdReg);
+    ULOG("oszQtdReg[%.*s]", oszQtdReg.len, oszQtdReg.arr);
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    EXEC SQL DECLARE c_BuscaPorCep CURSOR FOR
+        SELECT DISTINCT
+            CEP.NUM_CEP,
+            LOCALIDADE.DSC_LOCALIDADE,
+            TIPOLOGRADOURO.DSC_TIPO_LOGRAD || ' ' || LOGRADOURO.NOM_LOGRADOURO as ENDERECO,
+            BAIRRO.NOM_BAIRRO,
+            UF.SGL_UF           
+        FROM
+            ENDERECO.LOGRADOURO LOGRADOURO,
+            ENDERECO.CEP CEP,
+            ENDERECO.REL_CEP_LOGRAD_BAIRRO REL,
+            ENDERECO.LOCALIDADE LOCALIDADE,
+            ENDERECO.TIPO_LOGRADOURO TIPOLOGRADOURO,
+            ENDERECO.TITULO_LOGRADOURO TITULOLOGRADOURO,
+            ENDERECO.BAIRRO BAIRRO,
+            ENDERECO.UNIDADE_FEDERACAO UF
+        WHERE
+            LOGRADOURO.COD_LOGRADOURO = REL.COD_LOGRADOURO AND
+            LOGRADOURO.COD_LOCALIDADE = LOCALIDADE.COD_LOCALIDADE AND
+            LOGRADOURO.COD_TIPO_LOGRAD = TIPOLOGRADOURO.COD_TIPO_LOGRAD AND
+            REL.COD_BAIRRO = BAIRRO.COD_BAIRRO AND
+            LOCALIDADE.COD_UF = UF.COD_UF AND
+            LOGRADOURO.COD_TITULO_LOGRAD = TITULOLOGRADOURO.COD_TITULO_LOGRAD(+) AND
+            CEP.COD_CEP = REL.COD_CEP AND
+            CEP.NUM_CEP = :oszNrCEP;
+
+
+    EXEC SQL OPEN c_BuscaPorCep;
+
+    for(iCount=0;;iCount++)
+    {
+        EXEC SQL FETCH c_BuscaPorCep INTO    :oszNumCEP:oiNumCEP,
+                                             :oszDscLocalidade:oiDscLocalidade,
+                                             :oszEndereco:oiEndereco,
+                                             :oszNomBairro:oiNomBairro,
+                                             :oszSglUF:oiSglUF;					   
+
+        ULOG("-------------------------------------------------");
+    	xml_g->createTag("EnderecoClienteVOItem");
+
+        ULOG("oszNumCEP[%.*s](%d)",oszNumCEP.len, oszNumCEP.arr, oiNumCEP);
+        if(oiNumCEP != -1) {
+            STRCPY_FROM_ORA(szAux, oszNumCEP);
+        }
+        else {
+            szAux[0]=0x00;
+        }
+        xml_g->addItem("cep", szAux);
+
+
+        ULOG("oszDscLocalidade[%.*s](%d)",oszDscLocalidade.len, oszDscLocalidade.arr, oiDscLocalidade);
+        if(oiDscLocalidade != 1) {
+            STRCPY_FROM_ORA(szAux, oszDscLocalidade);
+        }
+        else {
+            szAux[0]=0x00;
+        }
+        xml_g->addItem("cidade", szAux);
+
+
+        ULOG("oszEndereco[%.*s](%d)",oszEndereco.len, oszEndereco.arr, oiEndereco);
+        if(oiEndereco != -1) {
+            STRCPY_FROM_ORA(szAux, oszEndereco);
+        }
+        else {
+            szAux[0]=0x00;
+        }
+        xml_g->addItem("rua", szAux);
+
+
+        ULOG("oszNomBairro[%.*s](%d)",oszNomBairro.len, oszNomBairro.arr, oiNomBairro);
+        if(oiNomBairro != -1) {
+            STRCPY_FROM_ORA(szAux, oszNomBairro);
+        }
+        else {
+            szAux[0]=0x00;
+        }
+        xml_g->addItem("bairro", szAux);
+
+        ULOG("oszSglUF[%.*s](%d)",oszSglUF.len, oszSglUF.arr, oiSglUF);
+        if(oiSglUF != -1) {
+            STRCPY_FROM_ORA(szAux, oszSglUF);
+        }
+        else {
+            szAux[0]=0x00;
+        }
+        xml_g->addItem("uf", szAux);
+
+    	xml_g->closeTag(); //EnderecoClienteVOItem
+
+	if(iCount+1 >= quantidade)
+		break;
+
+    }
+
+    EXEC SQL CLOSE c_BuscaPorCep;
+
+    *piCount=iCount;
+    return;
+
+Error:
+    ULOG("ERRO: sqlca.sqlcode(%d)[%.*s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

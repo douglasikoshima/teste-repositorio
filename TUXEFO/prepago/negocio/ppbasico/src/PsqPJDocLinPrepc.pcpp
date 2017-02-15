@@ -1,0 +1,150 @@
+///////////////////////////////////////////////////////////////////////////////
+/**
+ * @modulo  PrePago
+ * @usecase Pesquisa Dados de Pessoa Juridica Por Documento
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:23 $
+ **/
+///////////////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include <Global.h>
+#include "../include/PsqPJDocDdsCttpc.h"
+EXEC SQL END DECLARE SECTION;
+
+/************************************************************************************/
+bool proCBuscarPJPorDocLinPre(const char *ptszNrDocumento,
+                              const char *ptszDsDocumento,
+                              DadosPessoaJuridicaPorDoc *ptDadosPessoaJuridicaPorDoc,
+                              XMLGen *xml_g)
+{
+    ULOG_START("proCBuscarPJPorDocLinPre");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char *pszNrDocumento = ptszNrDocumento;
+        char *pszDsDocumento = (char*)ptszDsDocumento;
+
+        struct
+        {
+            VARCHAR oszIDPESSOA[LEN_IDPESSOA+LEN_EOS];
+            VARCHAR oszIDLINHATELEFONICA[LEN_IDLINHATELEFONICA+LEN_EOS];
+        } sqlDadosPessoaJuridicaPorDoc;
+
+        struct
+        {
+            short iIDPESSOA;
+            short iIDLINHATELEFONICA;
+        } sqlStatusPessoaJuridicaPorDoc;
+
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    memset(&sqlDadosPessoaJuridicaPorDoc,0,sizeof(sqlDadosPessoaJuridicaPorDoc));
+    memset(&sqlStatusPessoaJuridicaPorDoc,-1,sizeof(sqlStatusPessoaJuridicaPorDoc));
+
+    if ( !strcmp(pszDsDocumento,"PAS") )
+    { // a pesquisa é feita no campo DSTIPODOCUMENTO e deve ser enviado o valor correto
+        pszDsDocumento = "PASSAPORTE";
+    }
+
+    ULOG("Vai buscar a pessoa para o documento %s-%s",pszDsDocumento,pszNrDocumento);
+
+    EXEC SQL
+        SELECT
+            IDPESSOA,
+            IDLINHATELEFONICA
+        INTO
+            :sqlDadosPessoaJuridicaPorDoc:sqlStatusPessoaJuridicaPorDoc
+        FROM
+        (
+            SELECT
+                PESSOA.IDPESSOA,
+                PESSOALINHA.IDLINHATELEFONICA
+            FROM
+                APOIO.ESTADOLINHA ESTADOLINHA,
+                CUSTOMER.DOCUMENTO DOCUMENTO,
+                CUSTOMER.LINHACONTA LINHACONTA,
+                CUSTOMER.PESSOA PESSOA,
+                CUSTOMER.PESSOADEPARA PESSOADEPARA,
+                CUSTOMER.PESSOADOCUMENTO PESSOADOCUMENTO,
+                CUSTOMER.PESSOAJURIDICA PESSOAJURIDICA,
+                CUSTOMER.PESSOALINHA PESSOALINHA,
+                CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+                CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTOPESSOA,
+                LINHA.LINHABASE LINHABASE,
+                LINHA.LINHATELEFONICA LINHATELEFONICA
+            WHERE
+                PESSOA.IDPESSOA = PESSOADOCUMENTO.IDPESSOA
+            AND PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO
+            AND DOCUMENTO.IDTIPODOCUMENTO IN (SELECT TIPODOCUMENTO.IDTIPODOCUMENTO 
+                                                FROM APOIO.TIPODOCUMENTO TIPODOCUMENTO
+                                               WHERE TIPODOCUMENTO.DSTIPODOCUMENTO = :pszDsDocumento)
+            AND DOCUMENTO.NRDOCUMENTO = :pszNrDocumento
+            AND LINHABASE.IDESTADOLINHA = ESTADOLINHA.IDESTADOLINHA
+            AND LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+            AND LINHATELEFONICA.IDTIPOLINHA IN (SELECT TL.IDTIPOLINHA 
+                                                  FROM APOIO.TIPOLINHA TL 
+                                                 WHERE UPPER(SUBSTR(TL.SGTIPOLINHA,1,3)) = 'PRÉ')
+            AND NVL(ESTADOLINHA.INLINHACANCELADA,0) = 0
+            AND NVL(LINHACONTA.DTEXPIRACAO,SYSDATE) >= SYSDATE
+            AND NVL(LINHATELEFONICA.DTEXPIRACAO,SYSDATE) >= SYSDATE
+            AND NVL(PESSOADOCUMENTO.DTEXPIRACAO,SYSDATE) >= SYSDATE
+            AND NVL(TIPORELACIONAMENTOPESSOA.SGTIPORELACIONAMENTO,'C') = 'C'
+            AND PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+            AND PESSOA.IDPESSOA = PESSOAJURIDICA.IDPESSOA
+            AND PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA
+            AND PESSOALINHA.IDLINHATELEFONICA = LINHACONTA.IDLINHATELEFONICA
+            AND PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA
+            AND PESSOALINHA.IDTIPORELACIONAMENTO = TIPORELACIONAMENTOPESSOA.IDTIPORELACIONAMENTO
+            AND TIPORELACIONAMENTO.SGTIPORELACIONAMENTO = 'C'
+            AND (UPPER(SUBSTR(ESTADOLINHA.DSESTADOLINHA,1,4)) = 'ATIV' 
+            OR   UPPER(SUBSTR(ESTADOLINHA.DSESTADOLINHA,1,4)) = 'BARR')
+            ORDER BY 
+                NVL(PESSOA.DTULTIMAALTERACAO,PESSOA.DTCADASTRO) DESC,PESSOALINHA.IDLINHATELEFONICA DESC
+        )
+        WHERE
+            ROWNUM < 2;
+
+    if( -1 != sqlStatusPessoaJuridicaPorDoc.iIDPESSOA )
+    {
+        STRCPY_FROM_ORA(ptDadosPessoaJuridicaPorDoc->oszIDPESSOA,sqlDadosPessoaJuridicaPorDoc.oszIDPESSOA);
+    }
+    else
+    {
+        *ptDadosPessoaJuridicaPorDoc->oszIDPESSOA = 0;
+    }
+
+    if( -1 != sqlStatusPessoaJuridicaPorDoc.iIDLINHATELEFONICA )
+    {
+        STRCPY_FROM_ORA(ptDadosPessoaJuridicaPorDoc->oszIDLINHATELEFONICA,sqlDadosPessoaJuridicaPorDoc.oszIDLINHATELEFONICA);
+    }
+    else
+    {
+        *ptDadosPessoaJuridicaPorDoc->oszIDLINHATELEFONICA = 0;
+    }
+
+    ULOGI("Finalizando proCBuscarPJPorDocLinPre <FOUND>");
+    ULOG_END("proCBuscarPJPorDocLinPre");
+    return true;
+
+    naoexiste:
+        ULOGI("Finalizando proCBuscarPJPorDocLinPre <NOT FOUND>");
+        ULOG_END("proCBuscarPJPorDocLinPre");
+        return false;
+
+    erro:
+        ULOGE("Finalizando proCBuscarPJPorDocLinPre <ERROR>");
+        ULOGE("sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

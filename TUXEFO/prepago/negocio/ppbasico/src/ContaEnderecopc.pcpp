@@ -1,0 +1,287 @@
+///////////////////////////////////////////////////////////////////////////////
+/**
+ * @modulo  Sincronismo
+ * @usecase ContaEndereco
+ * @author  Renato Striitzel Russo
+ * @author  Carlos Eduardo Barbosa Braga
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:22 $
+ **/
+///////////////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "tuxfw.h"
+#include "ContaEnderecopc.h"
+#include "PrePagoException.h"
+#include <memory.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+/****************************************************************************************/
+void CContaEnderecopc::proCAtualizaContaEndereco(TContaEndereco tContaEndereco)
+{
+    ULOG_START("CContaEnderecopc::proCAtualizaContaEndereco");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdContaEndereco[LEN_IDCONTAENDERECO];
+        VARCHAR oszIdPessoaEndereco[LEN_IDPESSOAENDERECO];
+        VARCHAR oszIdConta[LEN_IDCONTA];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+        VARCHAR oszIdTipoEnderecoCobranca[LEN_IDTIPOENDERECOCOBRANCA];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdContaEndereco, tContaEndereco.szIdContaEndereco);
+    STRCPY_TO_ORA(oszIdPessoaEndereco, tContaEndereco.szIdPessoaEndereco);
+    STRCPY_TO_ORA(oszIdConta, tContaEndereco.szIdConta);
+    STRCPY_TO_ORA(oszIdUsuarioAlteracao, tContaEndereco.szIdUsuarioAlteracao);
+    STRCPY_TO_ORA(oszIdTipoEnderecoCobranca, tContaEndereco.szIdTipoEnderecoCobranca);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+    EXEC SQL 
+    UPDATE CUSTOMER.CONTAENDERECO
+	SET 
+		IDCONTAENDERECO         = TO_NUMBER(:oszIdContaEndereco)
+      , IDPESSOAENDERECO        = TO_NUMBER(:oszIdPessoaEndereco)
+	  , IDUSUARIOALTERACAO      = TO_NUMBER(:oszIdUsuarioAlteracao)
+	  , IDTIPOENDERECOCOBRANCA  = TO_NUMBER(:oszIdTipoEnderecoCobranca)
+	  , DTULTIMAALTERACAO       = SYSDATE
+	WHERE IDCONTA               = TO_NUMBER(:oszIdConta)
+	AND IDTIPOENDERECOCOBRANCA  = TO_NUMBER(:oszIdTipoEnderecoCobranca);
+
+    ULOGI("Finalizando proCAtualizaContaEndereco <OK>");
+    ULOG_END("CContaEnderecopc::proCAtualizaContaEndereco");
+    return;
+
+    erro:
+        ULOGE("Finalizando proCAtualizaContaEndereco <ERROR>");
+        ULOG_END("CContaEnderecopc::proCAtualizaContaEndereco");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+/****************************************************************************************/
+void CContaEnderecopc::proCInsereContaEndereco(TContaEndereco *ptContaEndereco)
+{
+    ULOG_START("CContaEnderecopc::proCInsereContaEndereco");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdContaEndereco[LEN_IDCONTAENDERECO];
+        VARCHAR oszIdPessoaEndereco[LEN_IDPESSOAENDERECO];
+        VARCHAR oszIdConta[LEN_IDCONTA];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+        VARCHAR oszIdTipoEnderecoCobranca[LEN_IDTIPOENDERECOCOBRANCA];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdPessoaEndereco, ptContaEndereco->szIdPessoaEndereco);
+    STRCPY_TO_ORA(oszIdConta, ptContaEndereco->szIdConta);
+    STRCPY_TO_ORA(oszIdUsuarioAlteracao, ptContaEndereco->szIdUsuarioAlteracao);
+    STRCPY_TO_ORA(oszIdTipoEnderecoCobranca, ptContaEndereco->szIdTipoEnderecoCobranca);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+
+    EXEC SQL 
+    INSERT INTO CUSTOMER.CONTAENDERECO
+	( 
+		  IDCONTAENDERECO
+		, IDPESSOAENDERECO
+		, IDCONTA
+		, IDTIPOENDERECOCOBRANCA
+		, IDUSUARIOALTERACAO
+		, DTULTIMAALTERACAO 
+	)
+	VALUES 
+	( 
+		  CUSTOMER.CONTAENDERECOSQ.NEXTVAL
+		, TO_NUMBER(:oszIdPessoaEndereco)
+		, TO_NUMBER(:oszIdConta)
+		, TO_NUMBER(:oszIdTipoEnderecoCobranca)
+		, TO_NUMBER(:oszIdUsuarioAlteracao)
+		, SYSDATE 
+	)
+	RETURNING 
+		IDCONTAENDERECO
+	INTO
+		:oszIdContaEndereco;
+
+    STRCPY_FROM_ORA(ptContaEndereco->szIdContaEndereco, oszIdContaEndereco);
+
+    ULOGI("Finalizando proCInsereContaEndereco <OK>");
+    ULOG_END("CContaEnderecopc::proCInsereContaEndereco");
+    return;
+
+    erro:
+        ULOGE("Finalizando proCInsereContaEndereco <ERROR>");
+        ULOG_END("CContaEnderecopc::proCInsereContaEndereco");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/****************************************************************************************/
+void CContaEnderecopc::proCApagaContaEndereco(TContaEndereco tContaEndereco)
+{
+    ULOG_START("CContaEnderecopc::proCApagaContaEndereco");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdConta[LEN_IDCONTA];
+        VARCHAR oszIdTipoEnderecoCobranca[LEN_IDTIPOENDERECOCOBRANCA];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdConta, tContaEndereco.szIdConta);
+    STRCPY_TO_ORA(oszIdTipoEnderecoCobranca, tContaEndereco.szIdTipoEnderecoCobranca);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+    EXEC SQL 
+    DELETE FROM CUSTOMER.CONTAENDERECO
+    WHERE 
+    	IDCONTA = TO_NUMBER(:oszIdConta)
+    AND
+    	IDTIPOENDERECOCOBRANCA = TO_NUMBER(:oszIdTipoEnderecoCobranca);
+
+    ULOGI("Finalizando proCApagaContaEndereco <OK>");
+    ULOG_END("CContaEnderecopc::proCApagaContaEndereco");
+    return;
+
+    erro:
+        ULOGE("Finalizando proCApagaContaEndereco <ERROR>");
+        ULOG_END("CContaEnderecopc::proCApagaContaEndereco");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/****************************************************************************************/
+bool CContaEnderecopc::proCBuscaContaEnderecoAntigo(TContaEndereco *ptContaEndereco)
+{
+    ULOG_START("CContaEnderecopc::proCBuscaContaEnderecoAntigo");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoaEndereco[LEN_IDPESSOAENDERECO];
+        VARCHAR oszIdConta[LEN_IDCONTA];
+        VARCHAR oszIdTipoEnderecoCobranca[LEN_IDTIPOENDERECOCOBRANCA];
+        long olCount;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdConta, ptContaEndereco->szIdConta);
+    STRCPY_TO_ORA(oszIdPessoaEndereco, ptContaEndereco->szIdPessoaEndereco);
+    STRCPY_TO_ORA(oszIdTipoEnderecoCobranca, ptContaEndereco->szIdTipoEnderecoCobranca);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+    EXEC SQL 
+    SELECT 
+		COUNT(1)
+	INTO
+		:olCount
+	FROM 
+		CUSTOMER.CONTAENDERECO
+	WHERE
+		IDCONTA <> TO_NUMBER(:oszIdConta)
+	AND 
+		IDPESSOAENDERECO = TO_NUMBER(:oszIdPessoaEndereco)
+	AND 
+		IDTIPOENDERECOCOBRANCA = TO_NUMBER(:oszIdTipoEnderecoCobranca);
+
+    ULOGI("Quantidade de registros (%ld)", olCount);
+    ULOG_END("CContaEnderecopc::proCBuscaContaEnderecoAntigo");
+
+    if(olCount > 0)
+        return true;
+    else
+        return false;
+    
+    erro:
+        ULOGE("Finalizando proCBuscaContaEnderecoAntigo <ERROR>");
+        ULOG_END("CContaEnderecopc::proCBuscaContaEnderecoAntigo");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/****************************************************************************************/
+bool CContaEnderecopc::proCBuscaContaEndereco(TContaEndereco *ptContaEndereco)
+{
+    ULOG_START("CContaEnderecopc::proCBuscaContaEndereco");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdContaEndereco[LEN_IDCONTAENDERECO];
+        VARCHAR oszIdPessoaEndereco[LEN_IDPESSOAENDERECO];
+        VARCHAR oszIdConta[LEN_IDCONTA];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+        VARCHAR oszDtUltimaAlteracao[LEN_DTULTIMAALTERACAO];
+        VARCHAR oszIdTipoEnderecoCobranca[LEN_IDTIPOENDERECOCOBRANCA];
+
+        short iIdContaEndereco      = 0;
+        short iIdPessoaEndereco     = 0;
+        short iIdConta              = 0;
+        short iIdUsuarioAlteracao   = 0;
+        short iDtUltimaAlteracao    = 0;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdConta, ptContaEndereco->szIdConta);
+    STRCPY_TO_ORA(oszIdTipoEnderecoCobranca, ptContaEndereco->szIdTipoEnderecoCobranca);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    EXEC SQL 
+	SELECT
+		 TO_CHAR(IDCONTAENDERECO)
+		, TO_CHAR(IDPESSOAENDERECO)
+		, TO_CHAR(IDCONTA)
+		, TO_CHAR(IDUSUARIOALTERACAO)
+		, TO_CHAR(DTULTIMAALTERACAO, 'YYYYMMDDHH24MISS')
+	INTO 
+	      :oszIdContaEndereco:iIdContaEndereco
+		, :oszIdPessoaEndereco:iIdPessoaEndereco
+		, :oszIdConta:iIdConta
+		, :oszIdUsuarioAlteracao:iIdUsuarioAlteracao
+		, :oszDtUltimaAlteracao:iDtUltimaAlteracao
+	FROM 
+		CUSTOMER.CONTAENDERECO
+	WHERE
+		IDCONTA = TO_NUMBER(:oszIdConta)
+	AND 
+		IDTIPOENDERECOCOBRANCA = TO_NUMBER(:oszIdTipoEnderecoCobranca);
+
+    if(iIdContaEndereco != -1) {
+        STRCPY_FROM_ORA(ptContaEndereco->szIdContaEndereco, oszIdContaEndereco);
+    }
+    if(iIdPessoaEndereco != -1) {
+        STRCPY_FROM_ORA(ptContaEndereco->szIdPessoaEndereco, oszIdPessoaEndereco);
+    }
+    if(iIdConta != -1) {
+        STRCPY_FROM_ORA(ptContaEndereco->szIdConta, oszIdConta);
+    }
+    if(iIdUsuarioAlteracao != -1) {
+        STRCPY_FROM_ORA(ptContaEndereco->szIdUsuarioAlteracao, oszIdUsuarioAlteracao);
+    }
+    if(iDtUltimaAlteracao != -1) {
+        STRCPY_FROM_ORA(ptContaEndereco->szDtUltimaAlteracao, oszDtUltimaAlteracao);
+    }
+
+    ULOGI("Finalizando proCBuscaContaEndereco <FOUND>");
+    ULOG_END("CContaEnderecopc::proCBuscaContaEndereco");
+	return true;
+
+    naoexiste:
+        ULOGI("Finalizando proCBuscaContaEndereco <NOT FOUND>");
+        ULOG_END("CContaEnderecopc::proCBuscaContaEndereco");
+        return false;
+
+    erro:
+        ULOGE("Finalizando proCBuscaContaEndereco <ERROR>");
+        ULOG_END("CContaEnderecopc::proCBuscaContaEndereco");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}

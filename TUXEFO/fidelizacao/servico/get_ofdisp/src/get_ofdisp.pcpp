@@ -1,0 +1,240 @@
+//
+// $Id: get_ofdisp.pcpp,v 1.1.118.1 2011/12/23 17:17:53 a5116174 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+int get_ofdisp( int usuario, DOMNode* dnode, XMLGen* xml )
+{
+    ULOG_START( "get_ofdisp()" );
+    
+    char parm[255];
+    char bf[32000];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int     idUfOperadora;
+        int     idUF;
+        int     idSegmentacao;
+        int     idTipoPessoa;
+        VARCHAR sgTipoPessoa[255];
+        int     idRespostaIntencao;
+        int     idRespostaDestino;
+        int     idMatrizOferta;
+        int     idGrupo;
+        int     idTipoLinha=0;
+        VARCHAR sgOferta[255];
+        int     idUsuario=usuario;
+        VARCHAR nmOferta[255];
+        VARCHAR nmUnidade[255];
+    EXEC SQL END DECLARE SECTION;
+    
+    parm[0] = 0x0;
+    memset( &sgTipoPessoa, 0x0, sizeof(sgTipoPessoa) );
+    memset( &sgOferta    , 0x0, sizeof(sgOferta) );
+    memset( &nmOferta    , 0x0, sizeof(nmOferta) );
+    memset( &nmUnidade   , 0x0, sizeof(nmUnidade) );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error( NULL );
+
+    try
+    {
+        get_tag(parm,dnode,"idUfOperadora",0,0);
+        idUfOperadora = atoi(parm);
+
+        get_tag(parm,dnode,"idSegmentacao",0,0);
+        idSegmentacao = atoi(parm);
+
+        get_tag(parm,dnode,"idTipoPessoa",0,0);
+        if ( parm[0] == '1' )
+           strcpy(parm,"PF");
+        if ( parm[0] == '2' )
+           strcpy(parm,"PJ");
+        if ( parm[0] == '0' )
+           strcpy(parm,"NC");
+        strToOra(sgTipoPessoa,parm);
+
+        get_tag(parm,dnode,"idTipoLinha",0,0);
+        idTipoLinha=atoi(parm);
+
+        get_tag(parm,dnode,"idRespostaIntencao",0,0);
+        idRespostaIntencao = atoi(parm);
+
+        get_tag(parm,dnode,"idRespostaDestino",0,0);
+        idRespostaDestino = atoi(parm);
+
+        get_tag(parm,dnode,"idGrupo",0,-1);
+        idGrupo = atoi(parm);
+
+		ULOG_VAR(sgTipoPessoa);
+
+
+        EXEC SQL	
+        SELECT idtipopessoa
+          INTO :idTipoPessoa
+          FROM apoio.tipopessoa
+         WHERE sgtipopessoa = :sgTipoPessoa 
+         AND ROWNUM < 2;
+
+		ULOG_INT(idTipoPessoa);
+
+		/*
+		
+        EXEC SQL DECLARE crsOfrt CURSOR FOR
+        SELECT DISTINCT o.idunidadeoferta, o.nmoferta, o.sgclassificacao,
+                        scrgrupo.idgrupo
+                   FROM retencao.oferta o,
+                        retencao.script script,
+                        retencao.scriptoferta scroferta,
+                        retencao.scripttipolinha scrtipolinha,
+                        retencao.scriptufoperadora scrufoperadora,
+                        retencao.scripttipopessoa scrtipopessoa,
+                        retencao.scriptsegmentacao scrsegmentacao,
+                        retencao.scriptgrupo scrgrupo,
+                        retencao.scriptrespostaintencao scrintencao,
+                        retencao.scriptrespostadestino scrdestino
+                  WHERE o.idunidadeoferta = scroferta.idoferta
+                    AND scroferta.idscript = scrgrupo.idscript
+                    AND scrufoperadora.idscript = scrgrupo.idscript
+                    AND scrsegmentacao.idscript = scrgrupo.idscript
+                    AND scrintencao.idscript = scrdestino.idscript
+                    AND scrintencao.idscript = scrgrupo.idscript
+                    AND scrdestino.idscript = scrgrupo.idscript
+                    AND script.idscript = scrgrupo.idscript
+                    AND scroferta.idscript = scrgrupo.idscript
+                    AND scrtipopessoa.idscript = scrgrupo.idscript
+                    AND scrtipolinha.idscript = scrgrupo.idscript
+                    AND script.inativo = 1
+                    AND 1 = o.inativo
+                    AND scrufoperadora.idufoperadora = :idUfOperadora
+                    AND scrsegmentacao.idsegmentacao = :idSegmentacao
+                    AND scrtipopessoa.idtipopessoa = :idTipoPessoa
+                    AND scrintencao.idrespostaintencao = :idRespostaIntencao
+                    AND scrdestino.idrespostadestino = :idRespostaDestino
+                    AND scrgrupo.idgrupo = :idGrupo
+                    AND scrtipolinha.idtipolinha = :idTipoLinha
+                    AND o.sgclassificacao NOT IN (
+                                             SELECT sgclassificacao
+                                               FROM retencao.bloqueioaparelhocontrolev01
+                                              WHERE idtipolinha = :idTipoLinha)
+               ORDER BY UPPER (TRIM (o.nmoferta)); 
+			   
+			   */
+			   
+		// alteração na query de consulta para trazer tambem linhas controle - OS 25094 - Controle PJ (Movel)
+        EXEC SQL DECLARE crsOfrt CURSOR FOR
+        SELECT DISTINCT o.idunidadeoferta, o.nmoferta, o.sgclassificacao,
+                        scrgrupo.idgrupo
+                   FROM retencao.oferta o,
+                        retencao.script script,
+                        retencao.scriptoferta scroferta,
+                        retencao.scripttipolinha scrtipolinha,
+                        retencao.scriptufoperadora scrufoperadora,
+                        retencao.scripttipopessoa scrtipopessoa,
+                        retencao.scriptsegmentacao scrsegmentacao,
+                        retencao.scriptgrupo scrgrupo,
+                        retencao.scriptrespostaintencao scrintencao,
+                        retencao.scriptrespostadestino scrdestino
+                  WHERE o.idunidadeoferta = scroferta.idoferta
+                    AND scroferta.idscript = scrgrupo.idscript
+                    AND scrufoperadora.idscript = scrgrupo.idscript
+                    AND scrsegmentacao.idscript = scrgrupo.idscript
+                    AND scrintencao.idscript = scrdestino.idscript
+                    AND scrintencao.idscript = scrgrupo.idscript
+                    AND scrdestino.idscript = scrgrupo.idscript
+                    AND script.idscript = scrgrupo.idscript
+                    AND scroferta.idscript = scrgrupo.idscript
+                    AND scrtipopessoa.idscript = scrgrupo.idscript
+                    AND scrtipolinha.idscript = scrgrupo.idscript
+                    AND script.inativo = 1
+                    AND 1 = o.inativo
+                    AND scrufoperadora.idufoperadora = :idUfOperadora
+                    AND scrsegmentacao.idsegmentacao = :idSegmentacao
+                    AND scrtipopessoa.idtipopessoa = :idTipoPessoa
+                    AND scrintencao.idrespostaintencao = :idRespostaIntencao
+                    AND scrdestino.idrespostadestino = :idRespostaDestino
+                    AND scrgrupo.idgrupo = :idGrupo
+                    AND scrtipolinha.idtipolinha = :idTipoLinha
+               ORDER BY UPPER (TRIM (o.nmoferta)); 
+             
+        sprintf(bf,
+        " SELECT DISTINCT o.idunidadeoferta, o.nmoferta, o.sgclassificacao, "
+                        " scrgrupo.idgrupo "
+                   " FROM retencao.oferta o, "
+                        " retencao.script script, "
+                        " retencao.scriptoferta scroferta, "
+                        " retencao.scripttipolinha scrtipolinha, "
+                        " retencao.scriptufoperadora scrufoperadora, "
+                        " retencao.scripttipopessoa scrtipopessoa, "
+                        " retencao.scriptsegmentacao scrsegmentacao, "
+                        " retencao.scriptgrupo scrgrupo, "
+                        " retencao.scriptrespostaintencao scrintencao, "
+                        " retencao.scriptrespostadestino scrdestino "
+                  " WHERE o.idunidadeoferta = scroferta.idoferta "
+                    " AND scroferta.idscript = scrgrupo.idscript "
+                    " AND scrufoperadora.idscript = scrgrupo.idscript "
+                    " AND scrsegmentacao.idscript = scrgrupo.idscript "
+                    " AND scrintencao.idscript = scrdestino.idscript "
+                    " AND scrintencao.idscript = scrgrupo.idscript "
+                    " AND scrdestino.idscript = scrgrupo.idscript "
+                    " AND script.idscript = scrgrupo.idscript "
+                    " AND scroferta.idscript = scrgrupo.idscript "
+                    " AND scrtipopessoa.idscript = scrgrupo.idscript "
+                    " AND scrtipolinha.idscript = scrgrupo.idscript "
+                    " AND script.inativo = 1 "
+                    " AND 1 = o.inativo "
+                    " AND scrufoperadora.idufoperadora = %d "
+                    " AND scrsegmentacao.idsegmentacao = %d "
+                    " AND scrtipopessoa.idtipopessoa = %d "
+                    " AND scrintencao.idrespostaintencao = %d "
+                    " AND scrdestino.idrespostadestino = %d "
+                    " AND scrgrupo.idgrupo = %d "
+                    " AND scrtipolinha.idtipolinha = %d "
+                    " AND o.sgclassificacao NOT IN ( "
+                                             " SELECT sgclassificacao "
+                                              " FROM retencao.bloqueioaparelhocontrolev01 "
+                                              " WHERE idtipolinha = %d ) "
+               " ORDER BY UPPER (TRIM (o.nmoferta))", idUfOperadora, idSegmentacao, idTipoPessoa, 
+                                                      idRespostaIntencao, idRespostaDestino, idGrupo,
+                                                      idTipoLinha, idTipoLinha );
+                                                      
+        ULOG( bf );
+        
+        EXEC SQL WHENEVER NOT FOUND DO break;
+        EXEC SQL OPEN crsOfrt;
+        ULOG( "OPEN crsOfrt" );
+        for( ;; ) 
+        {
+        ULOG( "FETCH crsOfrt" );
+            EXEC SQL FETCH crsOfrt INTO :idMatrizOferta,
+                                        :nmOferta, 
+                                        :sgOferta,
+                                        :nmUnidade;
+
+            endOraStr(nmOferta);
+            endOraStr(nmUnidade);
+            endOraStr(sgOferta);
+
+            ULOG_INT(idMatrizOferta);
+            ULOG_VAR(nmOferta);
+            ULOG_VAR(nmUnidade);
+            ULOG_VAR(sgOferta);
+
+            xml->createTag("tns:itemListaDescricaoVO");
+                xml->addItem("id",idMatrizOferta);
+                xml->addItem("descricao1",(char *)nmOferta.arr);
+                xml->addItem("descricao2",(char *)nmUnidade.arr);
+                xml->addItem("sigla",(char *)sgOferta.arr);
+            xml->closeTag();
+        }
+        EXEC SQL CLOSE crsOfrt;
+        ULOG( "CLOSE crsOfrt" );
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    ULOG_END( "get_ofdisp()" );
+    return 1;
+}
+

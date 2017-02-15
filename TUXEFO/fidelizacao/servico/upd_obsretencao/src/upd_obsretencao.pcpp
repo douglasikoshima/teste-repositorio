@@ -1,0 +1,122 @@
+//
+// $Id: upd_obsretencao.pcpp,v 1.1.118.1 2013/03/08 18:42:13 a5114878 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+#include "../../negocio/CRetencaoDao/include/CApoioRet.h"
+
+int upd_obsretencao(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+	char parm[512];
+	CApoioRet				oCApoioRet;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int     idRetencao;
+		long     idPessoa=0;
+		VARCHAR dsObservacao[512];
+		VARCHAR nrTelefoneContato[16];
+		VARCHAR dsValorParametro[256];
+		int     idPessoaUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+
+    char cdParametro[256];
+    char vlParametro[256];
+
+    memset( &dsValorParametro,0x0,sizeof(dsValorParametro));
+    memset( cdParametro,0x0,sizeof(cdParametro) );
+    memset( vlParametro,0x0,sizeof(vlParametro) );
+  
+  
+  
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+  try{
+  //  Obtendo dados do xml
+  get_tag(parm,dnode,"idRetencao",0,0);
+  idRetencao = atoi(parm);
+
+  get_tag(parm,dnode,"dsObservacao",0,0);
+  strToOra(dsObservacao,parm);
+
+  get_tag(parm,dnode,"dsContato",0,-1);
+  strToOra(nrTelefoneContato,parm);
+
+  parm[0] = 0x0;
+  get_tag(parm,dnode,"idPessoa",0,-1);
+  if ( parm[0] != 0x0 ) idPessoa = atol(parm);
+
+  // Pegando id do usuario
+  idPessoaUsuarioAlteracao = usuario;
+
+	if ( idPessoa > 0 )
+	{
+		strcpy( cdParametro, "COMUNICACAO_FID" );
+		oCApoioRet.ObtemVlrParametro( cdParametro, vlParametro );
+		strToOra( dsValorParametro, vlParametro );
+
+		EXEC SQL 
+		UPDATE
+		   CUSTOMER.PESSOACOMUNICACAO PESSOACOMUNICACAO
+		SET
+		   PESSOACOMUNICACAO.DSCONTATO = :nrTelefoneContato,
+           PESSOACOMUNICACAO.IDUSUARIOALTERACAO = :idPessoaUsuarioAlteracao,
+		   PESSOACOMUNICACAO.DTULTIMAALTERACAO = SYSDATE
+		WHERE
+		    PESSOACOMUNICACAO.IDTIPOCOMUNICACAO = :dsValorParametro
+		AND
+		    PESSOACOMUNICACAO.IDPESSOA = :idPessoa;
+
+		if (sqlca.sqlerrd[2] == 0)
+		{ // 0 - nao existe linha -> inserir
+			ULOG( ">>> Inserindo novo contato fidelizacao..." );
+			
+			EXEC SQL 
+			INSERT INTO
+			CUSTOMER.PESSOACOMUNICACAO
+			(
+				 IDPESSOACOMUNICACAO
+				,IDPESSOA
+				,IDTIPOCOMUNICACAO
+				,DSCONTATO
+				,IDSISTEMAORIGEM
+				,IDUSUARIOALTERACAO
+				,DTULTIMAALTERACAO
+			)
+			VALUES
+			(
+			     CUSTOMER.PESSOACOMUNICACAOSQ.NEXTVAL
+			    ,:idPessoa
+			    ,:dsValorParametro
+			    ,:nrTelefoneContato
+			    ,7
+			    ,:idPessoaUsuarioAlteracao
+			    ,SYSDATE
+			);
+		}		
+
+		EXEC SQL 
+		UPDATE  
+		   retencao.retencaoconsolidada
+		SET     
+		   nrtelefonecontato = :nrTelefoneContato
+		WHERE   
+		   idRetencao = :idRetencao;
+	}
+
+  // Update 
+  EXEC SQL 
+    update  retencao.retencao
+    set     dsObservacao = :dsObservacao,
+            idPessoaUsuarioAlteracao = :idPessoaUsuarioAlteracao,
+            dtAlteracao = sysdate,
+            idUsuarioAlteracao = :idPessoaUsuarioAlteracao,
+            dtUltimaAlteracao = sysdate
+    where   idRetencao = :idRetencao;
+
+  // Update OK
+    xml->addItem("descricao","MODIFICADO");
+    xml->addItem("valor",sqlca.sqlerrd[2]);
+  }catch(...){throw;}
+
+  return 1;
+}

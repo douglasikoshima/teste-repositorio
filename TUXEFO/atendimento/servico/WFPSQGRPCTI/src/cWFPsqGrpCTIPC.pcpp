@@ -1,0 +1,457 @@
+
+
+#include "../include/cWFPsqGrpCTIPC.h"
+
+EXEC SQL WHENEVER SQLERROR DO sql_error_PesquisaGrupos(&sqlca);
+
+void cWFPsqGrpCTIPC::SelectGroupsByRetWFCTI( stVariaveisPsqGrpCTI * _dadosEntradaPC, Collection * _ResultadoPC )
+{
+    ULOG_START("cWFPsqGrpCTIPC::SelectGroupsByRetWFCTI()");
+    struct sqlca sqlca;
+
+    int inpadraoWrk = _dadosEntradaPC->inpadrao?atoi(_dadosEntradaPC->inpadrao):0;
+    stVariaveisPsqGrpCTI *pCTI;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        int idretornowfcti = _dadosEntradaPC->idretornowfcti?
+                                    atoi(_dadosEntradaPC->idretornowfcti):0;
+        int     idgrupo;
+        VARCHAR nmgrupo[256];
+
+        short i_nmgrupo=-1;
+
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	if ( idretornowfcti >= 0 )
+	{
+		if ( inpadraoWrk == 1 )
+		{
+			SelectGroupsPdrCam( _dadosEntradaPC,_ResultadoPC );
+		}
+		else
+		{
+			SelectGroupsNPdCam( _dadosEntradaPC,_ResultadoPC );
+		}
+		
+		EXEC SQL DECLARE 
+			crSelectRGrpU 
+		CURSOR FOR
+			SELECT 
+				a.idgrupo,
+				a.nmgrupo
+			FROM 
+				acesso.grupo a,
+				workflow.gruporetornowfcti b
+			WHERE 
+				a.idgrupo = b.idgrupo AND 
+				b.idretornowfcti = :idretornowfcti
+			GROUP BY 
+				a.idgrupo,
+				nmgrupo;
+
+		EXEC SQL OPEN crSelectRGrpU;
+		
+		for(;;)
+		{
+            EXEC SQL FETCH crSelectRGrpU INTO :idgrupo,
+                                              :nmgrupo:i_nmgrupo;
+
+            CONVIND( nmgrupo,i_nmgrupo );
+
+            pCTI = new stVariaveisPsqGrpCTI;
+            if ( pCTI )
+            {
+                memset( pCTI,0x0,sizeof(pCTI) );
+
+                sprintf( pCTI->idGrupo,"%d",idgrupo );
+                strcpy( pCTI->flagSelecionado,"1" );
+
+                if ( i_nmgrupo >= 0 )
+                {
+                    strcpy( pCTI->nmgrupo,(char*)nmgrupo.arr );
+                }
+
+                _ResultadoPC->AddItem( (void*) pCTI );
+            }
+            else
+            {
+                ULOG(erroFalhaAlocacaoMemoria());
+            }
+		}
+
+		EXEC SQL CLOSE crSelectRGrpU;
+
+	}
+	else
+	{
+		if ( inpadraoWrk > 0 )
+		{
+			SelectGroupsPdrTodos( _dadosEntradaPC,_ResultadoPC );
+		}
+		else
+		{
+			SelectGroupsNPdTodos( _dadosEntradaPC,_ResultadoPC );
+		}
+	}
+	
+   ULOG_END("cWFPsqGrpCTIPC::SelectGroupsByRetWFCTI()");
+   
+	return;
+
+}
+
+/**
+	Obtem os grupos disponiveis da para a campanha indicada.
+	Esse processo não leva em conta a ligação do grupo em outras campanhas.
+*/
+void cWFPsqGrpCTIPC::SelectGroupsPdrCam( stVariaveisPsqGrpCTI * _dadosEntradaPC, Collection * _ResultadoPC )
+{
+   
+   ULOG_START("cWFPsqGrpCTIPC::SelectGroupsPdrCam()");
+
+    struct sqlca sqlca;
+
+    stVariaveisPsqGrpCTI *pCTI;
+
+    ULOG("Pesquisa InBox - Retorno CTI -> Obtendo Grupos disponiveis para campanha indicada inpadrao = 1 -> idretornowfcti >= 0.");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idretornowfcti = _dadosEntradaPC->idretornowfcti ?
+                                atoi(_dadosEntradaPC->idretornowfcti) : 0;
+
+        int idgrupo;
+        VARCHAR nmgrupo[256];
+
+        short i_nmgrupo=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL DECLARE 
+		crSelectRGrp 
+	CURSOR FOR
+		SELECT 
+			idgrupo,
+			nmgrupo 
+		FROM 
+			acesso.grupo
+		WHERE 
+			idGrupo NOT IN (
+						SELECT 
+							a.idgrupo
+						FROM 
+							acesso.grupo a,
+							workflow.gruporetornowfcti b
+						WHERE 
+							a.idgrupo=b.idgrupo AND 
+							a.idgrupo=acesso.grupo.idgrupo AND 
+							b.idretornowfcti = :idretornowfcti
+					)
+		GROUP BY 
+			idgrupo,
+			nmgrupo
+		ORDER BY
+			nmGrupo;
+
+		EXEC SQL OPEN crSelectRGrp;
+
+   ULOG("sqlca.sqlcode = '%d'",sqlca.sqlcode);
+
+		for(;;)
+		{
+			EXEC SQL FETCH crSelectRGrp INTO :idgrupo,
+                                          :nmgrupo:i_nmgrupo;
+
+			CONVIND( nmgrupo,i_nmgrupo );
+
+         pCTI = new stVariaveisPsqGrpCTI;
+
+         if ( pCTI )
+         {
+            memset( pCTI,0x0,sizeof(pCTI) );
+
+            sprintf( pCTI->idGrupo,"%d",idgrupo );
+            strcpy( pCTI->flagSelecionado,"0" );
+            
+            if ( i_nmgrupo >= 0 )
+            {
+               strcpy( pCTI->nmgrupo,(char*)nmgrupo.arr );
+            }
+
+            _ResultadoPC->AddItem( (void*) pCTI );
+         }
+         else
+         {
+            ULOG(erroFalhaAlocacaoMemoria());
+         }
+
+		}
+
+		EXEC SQL CLOSE crSelectRGrp;
+
+	ULOG_END("cWFPsqGrpCTIPC::SelectGroupsPdrCam()");
+
+}
+
+
+/**
+	Obtem os grupos disponiveis da para a campanha indicada.
+	Esse processo leva em conta a ligação do grupo em outras campanhas.
+*/
+void cWFPsqGrpCTIPC::SelectGroupsNPdCam( stVariaveisPsqGrpCTI * _dadosEntradaPC, Collection * _ResultadoPC )
+{
+    ULOG_START("cWFPsqGrpCTIPC::SelectGroupsNPdCam()");
+    struct sqlca sqlca;
+
+    stVariaveisPsqGrpCTI *pCTI;
+
+    ULOG("Pesquisa InBox - Retorno CTI -> Obtendo Grupos disponiveis para campanha indicada inpadrao = 0 -> idretornowfcti >= 0.");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idretornowfcti = _dadosEntradaPC->idretornowfcti ? 
+                                atoi(_dadosEntradaPC->idretornowfcti) : 0;
+
+        int     idgrupo;
+        VARCHAR nmgrupo[256];
+
+        short i_nmgrupo=-1;
+
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL DECLARE 
+		crSelectRGrpNP
+	CURSOR FOR
+		SELECT 
+			idgrupo,
+			nmgrupo 
+		FROM 
+			acesso.grupo
+		WHERE 
+			idGrupo NOT IN
+					(
+						SELECT 
+							a.idgrupo
+						FROM 
+							acesso.grupo a,
+							workflow.gruporetornowfcti b,
+							workflow.RetornoWFCTI c
+						WHERE 
+							a.idgrupo = b.idgrupo AND 
+							a.idgrupo = a.idgrupo AND 
+							c.idRetornoWFCTI = b.idRetornoWFCTI AND 
+							c.inPadrao = 0
+					)
+		GROUP BY 
+			idgrupo,
+			nmgrupo;
+
+		EXEC SQL OPEN crSelectRGrpNP;
+
+        ULOG("sqlca.sqlcode = '%d'",sqlca.sqlcode);
+
+		for(;;)
+		{
+            EXEC SQL FETCH crSelectRGrpNP INTO :idgrupo,
+                                          :nmgrupo:i_nmgrupo;
+
+            CONVIND( nmgrupo,i_nmgrupo );
+
+            pCTI = new stVariaveisPsqGrpCTI;
+
+            if ( pCTI )
+            {
+                memset( pCTI,0x0,sizeof(pCTI) );
+
+                sprintf( pCTI->idGrupo,"%d",idgrupo );
+                strcpy( pCTI->flagSelecionado,"0" );
+            
+                if ( i_nmgrupo >= 0 )
+                {
+                   strcpy( pCTI->nmgrupo,(char*)nmgrupo.arr );
+                }
+
+                _ResultadoPC->AddItem( (void*) pCTI );
+            }
+            else
+            {
+                ULOG(erroFalhaAlocacaoMemoria());
+            }
+        }
+
+		EXEC SQL CLOSE crSelectRGrpNP;
+
+	ULOG_END("cWFPsqGrpCTIPC::SelectGroupsNPdCam()");
+
+}
+
+/**
+	Seleciona todos os grupos do sistema.
+*/
+void cWFPsqGrpCTIPC::SelectGroupsPdrTodos( stVariaveisPsqGrpCTI * _dadosEntradaPC, Collection * _ResultadoPC )
+{
+    ULOG_START("cWFPsqGrpCTIPC::SelectGroupsPdrTodos()");
+    
+    struct sqlca sqlca;
+
+    stVariaveisPsqGrpCTI *pCTI;
+
+    ULOG("Pesquisa InBox - Retorno CTI -> Obtendo todos os grupos do sistema.");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int     idgrupo;
+        VARCHAR nmgrupo[256];
+
+        short i_nmgrupo=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL DECLARE 
+		crTodosGrupos1
+	CURSOR FOR
+		SELECT 
+			a.idgrupo,
+			a.nmgrupo
+		FROM 
+			acesso.grupo a
+		ORDER BY
+			nmgrupo;
+
+		EXEC SQL OPEN crTodosGrupos1;
+
+
+        ULOG("sqlca.sqlcode = '%d'",sqlca.sqlcode);
+
+		for(;;)
+		{
+            EXEC SQL FETCH crTodosGrupos1 INTO :idgrupo,
+                                               :nmgrupo:i_nmgrupo;
+
+            CONVIND( nmgrupo,i_nmgrupo );
+
+            pCTI = new stVariaveisPsqGrpCTI;
+
+            if ( pCTI )
+            {
+                memset( pCTI,0x0,sizeof(pCTI) );
+                sprintf( pCTI->idGrupo,"%d",idgrupo );
+                strcpy( pCTI->flagSelecionado,"0" );
+
+                if ( i_nmgrupo >= 0 )
+                {
+                    strcpy( pCTI->nmgrupo,(char*)nmgrupo.arr );
+                }
+
+                _ResultadoPC->AddItem( (void*) pCTI );
+            }
+            else
+            {
+                ULOG(erroFalhaAlocacaoMemoria());
+            }
+        }
+
+		EXEC SQL CLOSE crTodosGrupos1;
+
+	 ULOG_END("cWFPsqGrpCTIPC::SelectGroupsPdrTodos()");
+
+}
+
+/**
+	Seleciona todos os grupos que não possuem nenhum tipo de ligação com campanhas não padrão.
+*/
+void cWFPsqGrpCTIPC::SelectGroupsNPdTodos( stVariaveisPsqGrpCTI * _dadosEntradaPC, Collection * _ResultadoPC )
+{
+    ULOG_START("cWFPsqGrpCTIPC::SelectGroupsNPdTodos()");
+    
+    struct sqlca sqlca;
+
+    stVariaveisPsqGrpCTI *pCTI;
+
+    ULOG("Pesquisa InBox - Retorno CTI -> Obtendo Grupos que nao possuem ligacao com campanhas.");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+      int idgrupo=-1;
+      VARCHAR nmgrupo[256];
+
+      short i_nmgrupo=-1;
+
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL DECLARE 
+		crTodosGrupos0
+	CURSOR FOR
+		SELECT 
+			idGrupo, 
+			nmGrupo 
+		FROM  
+			acesso.Grupo
+		WHERE
+			idGrupo NOT IN (
+							SELECT 
+					 			a.idgrupo
+							FROM 
+					 	  		acesso.grupo a,
+								workflow.gruporetornowfcti b,
+								workflow.RetornoWFCTI c
+							WHERE 
+					 			a.idgrupo = b.idgrupo AND 
+								c.idRetornoWFCTI = b.idRetornoWFCTI AND 
+								c.inPadrao = 0
+							GROUP BY 
+					  			a.idgrupo,
+								nmgrupo
+						   )
+		ORDER BY
+			nmGrupo;
+
+      EXEC SQL OPEN crTodosGrupos0;
+
+
+   ULOG("sqlca.sqlcode = '%d'",sqlca.sqlcode);
+
+		for(;;)
+		{
+            EXEC SQL FETCH crTodosGrupos0 INTO :idgrupo,
+                                               :nmgrupo:i_nmgrupo;
+
+            CONVIND( nmgrupo,i_nmgrupo );
+
+            pCTI = new stVariaveisPsqGrpCTI;
+
+            if ( pCTI != NULL )
+            {
+                memset( pCTI,0x0,sizeof(pCTI) );
+                ULOG("idgrupo = '%d'",idgrupo);
+                ULOG("nmgrupo = '%s'",(char*)nmgrupo.arr);
+
+                sprintf( pCTI->idGrupo,"%d",idgrupo );
+                strcpy( pCTI->flagSelecionado,"0" );
+
+                if ( i_nmgrupo >= 0 )
+                {
+                    strcpy( pCTI->nmgrupo,(char*)nmgrupo.arr );
+                }
+                _ResultadoPC->AddItem( (void*) pCTI );
+            }
+            else
+            {
+                ULOG(erroFalhaAlocacaoMemoria());
+            }
+        }
+
+	EXEC SQL CLOSE crTodosGrupos0;
+
+	ULOG_END("cWFPsqGrpCTIPC::SelectGroupsNPdTodos()");
+
+}
+
+void cWFPsqGrpCTIPC::sql_error_PesquisaGrupos( sqlca * sqlca )
+{
+	ULOGE("Ocorreu um erro na consulta de Retorno CTI.");
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

@@ -1,0 +1,54 @@
+#include "Util.h"
+#include <tuxfw.h>
+#include <sqlca.h>
+
+Util::Util()
+{
+
+}
+
+Util::~Util()
+{
+
+}
+
+int Util::verificaLinha(char*ddd,char*fone)
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		char *cddd = ddd;
+		char *cfone = fone;
+		VARCHAR sgClassificacao[256];
+	EXEC SQL END DECLARE SECTION;	
+
+	memset(sgClassificacao.arr,0,256);
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;		
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	EXEC SQL
+	SELECT 
+		 ESTADOLINHA.SGCLASSIFICACAO
+	INTO
+		:sgClassificacao
+	FROM 
+		 LINHA.LINHABASE  LINHABASE,
+		 LINHA.LINHATELEFONICA  LINHATELEFONICA,
+		 APOIO.ESTADOLINHA  ESTADOLINHA,
+		 APOIO.AREAREGISTRO  AREAREGISTRO
+	WHERE
+		 LINHABASE.NRLINHA = :cfone AND
+		 LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+		 AREAREGISTRO.CDAREAREGISTRO = :cddd AND
+		 LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE AND
+		 LINHATELEFONICA.IDSISTEMAORIGEM IN (SELECT IDSISTEMAORIGEM FROM APOIO.SISTEMAORIGEM  WHERE SGSISTEMAORIGEM='ATY') AND
+		 LINHABASE.IDESTADOLINHA = ESTADOLINHA.IDESTADOLINHA AND
+		 ROWNUM = 1;
+
+	if(strcmp((char*)sgClassificacao.arr,"A")!=0)
+		return 0;
+	return 1;
+		
+	OraNoDataFound:
+		throw new TuxBasicSvcException("00W0501","Linha não cadastrada");
+	OraException:
+		throw new TuxBasicSvcException("00W0502","Erro de acesso a base");
+
+}

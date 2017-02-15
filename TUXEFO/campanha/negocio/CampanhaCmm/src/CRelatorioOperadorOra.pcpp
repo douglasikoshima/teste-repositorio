@@ -1,0 +1,502 @@
+///////////////////////////////////////////////////////////////////////////////////////////
+// CRelatorioOperador.cpp: CRelatorioOperador class.
+///////////////////////////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+#include <CTipoMotivoCampanha.h>
+#include <SRelatorioCampanha.h>
+#include <CRelatorioCampanha.h>
+#include <CRelatorioOperador.h>
+#include <CGetHeader.h>
+
+
+// Util
+#define endOraStr(varstr)      varstr.arr[varstr.len]= '\0'
+
+
+// Monta o relatório
+void CRelatorioOperador::montaRelatorio(struct SRelatorioCampanha* sRelatorioCampanha, XMLGen* xml_g) 
+{ 
+	int iQtdReg = 0;
+	
+	struct	sqlca sqlca;
+
+	char szDesc[256];
+	char szValor[256];
+
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR oszIdTipoMotivoCampanha	   [255+1];
+		VARCHAR oszSgTipoMotivoCampanha    [300+1];//Esta variavel esta maior porque eh concatenada com caracteres a mais
+		VARCHAR oszValor				   [255+1];
+		VARCHAR oszIdPessoa				   [255+1];
+		VARCHAR oszIdCanalCampanha		   [255+1];
+		VARCHAR oszDtInicio				   [255+1];
+		VARCHAR oszDtFim				   [255+1];
+		VARCHAR oszIdSubCampanhaHistorico  [255+1];
+		VARCHAR oszIdUfOperadora		   [255+1];
+		VARCHAR oszSgTipoSubMotivoCampanha [255+1];
+		VARCHAR oszIdGrupo				   [255+1];
+
+		VARCHAR oszNmOperador			   [255+1];
+		
+		int iIdMotivo = 0;
+		int iQtde = 0;
+
+		int iQtdeSubMotivo = 0;
+		int	iIdPessoaUsuario = -1;
+		int	iPublicoTotal = 0;
+		int	iMetaDiaria = 0;
+
+		int iQtdeEfetivos = 0;
+		float fTMO = 0.0;
+
+		int iQtdeMotivo = 0;
+		int iAderiram = 0;
+		int iNAderiram = 0;
+		int iReagendaram = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	
+	//------------------------------------------------------------------------------------------------------				
+	// Monta o xml de saida
+
+	CGetHeader Header(sRelatorioCampanha, xml_g);
+
+	xml_g->createTag("CampanhaRelatorioOperadorVO");
+	xml_g->addProp("xmlns","campanha.fo.vivo.com.br/vo");
+
+	if( Header.Executar() > 0 )
+	{
+
+		// Carrega as variaveis para filtro	
+
+		STRCPY_TO_ORA( oszIdPessoa,					sRelatorioCampanha->pcsgOperador		); 
+		STRCPY_TO_ORA( oszIdCanalCampanha,			sRelatorioCampanha->pcidCanalCampanha	); 
+		STRCPY_TO_ORA( oszDtInicio,					sRelatorioCampanha->pcdtInicio			); 
+		STRCPY_TO_ORA( oszDtFim,					sRelatorioCampanha->pcdtFim				); 
+		STRCPY_TO_ORA( oszIdSubCampanhaHistorico,	sRelatorioCampanha->pcidSubCampanha		); 
+		STRCPY_TO_ORA( oszIdUfOperadora,			sRelatorioCampanha->pcidRegional		);
+		STRCPY_TO_ORA( oszNmOperador,				sRelatorioCampanha->pcnmOperador		);
+		STRCPY_TO_ORA( oszIdGrupo,					sRelatorioCampanha->pcidGrupo			);
+
+		
+//		endOraStr(oszIdPessoa);
+
+		ULOGI("  --->login sRelatorioCampanha->pcnmOperador [%s]", sRelatorioCampanha->pcnmOperador); 
+		ULOGI("  --->login oszNmOperador.arr [%s]", oszNmOperador.arr); 
+		ULOGI("  --->login oszIdPessoa.arr [%s]", oszIdPessoa.arr); 
+		
+		
+		//------------------------------------------------------------------------------------------------------				
+		// Obtem o id do operador através do nome, caso tenha sido passado
+		EXEC SQL WHENEVER SQLERROR GOTO endRelatorio;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+
+		// Verifica se o idgrupo foi passado e se esta na lista de grupos para esta campanha
+		if( atoi(sRelatorioCampanha->pcidGrupo) > -1 ) 
+		{
+			EXEC SQL 
+			SELECT
+				COUNT(CG.IDGRUPO)
+			INTO
+				:iQtde
+			FROM 
+				CONTATOADM.SUBCAMPANHAGRUPOUSUARIO CG,
+				CAMPANHA.SUBCAMPANHAHISTORICO		SUB
+			WHERE
+				SUB.IDSUBCAMPANHAHISTORICO = :oszIdSubCampanhaHistorico
+				AND SUB.IDSUBCAMPANHAFIXA = CG.IDSUBCAMPANHAFIXA
+				AND CG.IDGRUPO = :oszIdGrupo
+				AND CG.INATIVO = 1;
+
+			// Se este grupo não está na lista, então retorne como nenhum registro encontrado
+			if( iQtde == 0 )
+			{
+				xml_g->addItem("total", iQtde); 
+				xml_g->closeTag();	
+				return;
+			}
+		}
+
+
+		// Caso não exista um operador utilizaremos -1 para retornar todos os operadores
+		if( strlen(sRelatorioCampanha->pcnmOperador) > 0 )
+		{
+			
+			EXEC SQL
+			SELECT
+				USUARIO.IDPESSOAUSUARIO  
+			INTO	
+				:iIdPessoaUsuario
+			FROM
+				ACESSO.USUARIO USUARIO
+			WHERE	
+				USUARIO.NMLOGINUSUARIO = :oszNmOperador
+				AND ROWNUM <= 1;
+
+			// Se não encontramos um operador, retorna 0 em total
+			if( iIdPessoaUsuario == -1 )
+			{
+				xml_g->addItem("total", 0); 
+				xml_g->closeTag();	
+				return;
+			}
+
+		}
+		else
+			iIdPessoaUsuario = -1;
+
+
+		ULOGI("  ---> idUsuario %d", iIdPessoaUsuario); 
+
+
+
+		//------------------------------------------------------------------------------------------------------				
+		// PUBLICO TOTAL, META DIARIA, Contatos Efetivos, TMO por Usuário
+		//
+		EXEC SQL WHENEVER NOT FOUND do break;
+		EXEC SQL DECLARE RelEfe1 CURSOR for
+		SELECT
+		  		USUARIO.NMLOGINUSUARIO OPERADOR,
+				USUARIO.IDPESSOAUSUARIO IDPESSOAUSUARIO,
+				PARAM.NRPUBLICOTOTAL "PUBLICO TOTAL",
+				PARAM.NRMETADIARIAOPERADOR "META DIARIA", 
+				COUNT(DISTINCT(ATENCAMP.IDATENDIMENTOCAMPANHA)) "QTDE EFETIVOS",
+				AVG(ATENCAMP.QTTEMPOATENDIMENTO) "TMO"
+		FROM   
+				CAMPANHA.ATENDIMENTOCAMPANHA	ATENCAMP,
+				CAMPANHA.MOTIVOCAMPANHA			MOT,
+				CAMPANHA.CANALCAMPANHA 			CANALCAMP,
+				CAMPANHA.CANALUFOPERADORA		CANALUFOP,
+				ACESSO.USUARIO					USUARIO,
+				ACESSO.USUARIOGRUPO				USUARIOGRUPO,
+				ACESSO.GRUPO					GRUPO,
+				CAMPANHA.PARAMETRIZACAOCAMPANHA PARAM
+		WHERE  
+				ATENCAMP.IDMOTIVOCAMPANHA = MOT.IDMOTIVOCAMPANHA
+				AND	MOT.IDSUBCAMPANHAHISTORICO = :oszIdSubCampanhaHistorico
+				AND CANALCAMP.IDSUBCAMPANHAHISTORICO = MOT.IDSUBCAMPANHAHISTORICO
+				AND CANALCAMP.IDCANALCAMPANHA    = :oszIdCanalCampanha
+				AND CANALUFOP.IDCANALUFOPERADORA = CANALCAMP.IDCANALUFOPERADORA
+				AND ( CANALUFOP.IDUFOPERADORA    = :oszIdUfOperadora OR -1 = :oszIdUfOperadora )
+				AND ATENCAMP.IDCANALCAMPANHA     = CANALCAMP.IDCANALCAMPANHA
+				AND ATENCAMP.IDMOTIVOCAMPANHA    = MOT.IDMOTIVOCAMPANHA
+				AND USUARIO.IDPESSOAUSUARIO		 = ATENCAMP.IDUSUARIOALTERACAO
+				AND ( USUARIO.IDPESSOAUSUARIO	 = :iIdPessoaUsuario OR -1 = :iIdPessoaUsuario )
+				AND USUARIO.IDPESSOAUSUARIO		 = USUARIOGRUPO.IDPESSOAUSUARIO
+				AND USUARIOGRUPO.IDGRUPO 		 = GRUPO.IDGRUPO
+ 				AND ( GRUPO.IDGRUPO 			 = :oszIdGrupo OR -1 = :oszIdGrupo )
+				AND PARAM.IDCANALCAMPANHA		 = CANALCAMP.IDCANALCAMPANHA 
+				AND TRUNC( ATENCAMP.DTATENDIMENTO	) BETWEEN TO_DATE(:oszDtInicio, 'DD/MM/YYYY' ) AND TO_DATE(:oszDtFim, 'DD/MM/YYYY' )
+		GROUP BY
+		  		USUARIO.NMLOGINUSUARIO,
+				USUARIO.IDPESSOAUSUARIO,
+				PARAM.NRPUBLICOTOTAL,
+				PARAM.NRMETADIARIAOPERADOR 
+		ORDER BY 
+			  	UPPER(TRIM(OPERADOR));
+
+		EXEC SQL OPEN RelEfe1;
+
+		for(;;)
+		{
+			EXEC SQL FETCH RelEfe1 INTO
+				:oszIdPessoa,
+				:iIdPessoaUsuario,
+				:iPublicoTotal,
+				:iMetaDiaria, 
+				:iQtdeEfetivos,
+				:fTMO;
+
+			// Lista de numericos
+			xml_g->createTag("numerico");
+
+			// Operador
+			STRCPY_FROM_ORA(szDesc, oszIdPessoa );
+			xml_g->addItem("operador", szDesc);
+
+			// Publico Total
+			sprintf(szValor, "%d", iPublicoTotal);
+			xml_g->addItem("publicoTotal", szValor);
+
+			// Meta diaria
+			sprintf(szValor, "%d", iMetaDiaria);
+			xml_g->addItem("metaDiaria", szValor);
+
+			// Qtde Efetivos
+			sprintf(szValor, "%d", iQtdeEfetivos);
+			xml_g->addItem("contatosEfetivos", szValor);
+			
+			// TMO
+			// Extrai os segundos
+			float fSegundos = (fTMO/(float)60) - ( (int)(fTMO/(float)60) );
+			fSegundos = fSegundos * 60;
+			sprintf(szValor, "%d:%02d", ( (int)(fTMO/(float)60) ), (int)fSegundos);
+			xml_g->addItem("tmo", szValor); 
+
+			// Não Adesões
+			EXEC SQL
+			SELECT 
+				   COUNT(ATENCAMP.IDMOTIVOCAMPANHA)
+			INTO	
+				  :iNAderiram
+			FROM   
+				   CAMPANHA.ATENDIMENTOCAMPANHA	ATENCAMP,
+				   CAMPANHA.MOTIVOCAMPANHA		MOT,
+				   CAMPANHA.CANALCAMPANHA 		CANALCAMP,
+				   CAMPANHA.CANALUFOPERADORA	CANALUFOP,
+				   APOIO.TIPOSTATUSCAMPANHA		TPSTATUSCAMP,
+				   APOIO.TIPOMOTIVOCAMPANHA 	TIP
+			WHERE  
+					ATENCAMP.IDMOTIVOCAMPANHA = MOT.IDMOTIVOCAMPANHA
+					AND	MOT.IDSUBCAMPANHAHISTORICO =:oszIdSubCampanhaHistorico
+					AND TIP.IDTIPOMOTIVOCAMPANHA   = MOT.IDTIPOMOTIVOCAMPANHA 
+					AND MOT.IDTIPOSTATUSCAMPANHA   = TPSTATUSCAMP.IDTIPOSTATUSCAMPANHA
+					AND TPSTATUSCAMP.IDTIPOSTATUSCAMPANHA = 2
+					AND TIP.INADERIU = 0
+					AND CANALCAMP.IDSUBCAMPANHAHISTORICO = MOT.IDSUBCAMPANHAHISTORICO
+					AND CANALCAMP.IDCANALCAMPANHA    = :oszIdCanalCampanha
+					AND CANALUFOP.IDCANALUFOPERADORA = CANALCAMP.IDCANALUFOPERADORA
+					AND ( CANALUFOP.IDUFOPERADORA    = :oszIdUfOperadora OR -1 = :oszIdUfOperadora )
+					AND ATENCAMP.IDCANALCAMPANHA     = CANALCAMP.IDCANALCAMPANHA
+					AND ATENCAMP.IDMOTIVOCAMPANHA    = MOT.IDMOTIVOCAMPANHA
+					AND ATENCAMP.IDUSUARIOALTERACAO	 = :iIdPessoaUsuario
+					AND TRUNC( ATENCAMP.DTATENDIMENTO	) BETWEEN TO_DATE(:oszDtInicio, 'DD/MM/YYYY' ) AND TO_DATE(:oszDtFim, 'DD/MM/YYYY' );
+			
+			sprintf(szValor, "%d", iNAderiram);
+			xml_g->addItem("naoAdesoes", szValor); 
+
+				
+
+			// Reagendados	
+			EXEC SQL
+			SELECT	COUNT(ATENCAMP.IDMOTIVOCAMPANHA)
+			INTO
+				  :iReagendaram
+			FROM	
+				   CAMPANHA.ATENDIMENTOCAMPANHA	ATENCAMP,
+				   CAMPANHA.MOTIVOCAMPANHA		MOT,
+				   CAMPANHA.CANALCAMPANHA 		CANALCAMP,
+				   CAMPANHA.CANALUFOPERADORA	CANALUFOP,
+				   APOIO.TIPOSTATUSCAMPANHA		TPSTATUSCAMP
+			WHERE	
+					ATENCAMP.IDMOTIVOCAMPANHA = MOT.IDMOTIVOCAMPANHA
+					AND	MOT.IDSUBCAMPANHAHISTORICO        =:oszIdSubCampanhaHistorico
+					AND MOT.IDTIPOSTATUSCAMPANHA          = TPSTATUSCAMP.IDTIPOSTATUSCAMPANHA
+					AND TPSTATUSCAMP.IDTIPOSTATUSCAMPANHA = 1
+					AND CANALCAMP.IDSUBCAMPANHAHISTORICO  = MOT.IDSUBCAMPANHAHISTORICO
+					AND CANALCAMP.IDCANALCAMPANHA    = :oszIdCanalCampanha
+					AND CANALUFOP.IDCANALUFOPERADORA = CANALCAMP.IDCANALUFOPERADORA
+					AND ( CANALUFOP.IDUFOPERADORA    = :oszIdUfOperadora OR -1 = :oszIdUfOperadora )
+					AND ATENCAMP.IDCANALCAMPANHA     = CANALCAMP.IDCANALCAMPANHA
+					AND ATENCAMP.IDMOTIVOCAMPANHA    = MOT.IDMOTIVOCAMPANHA
+					AND ATENCAMP.IDUSUARIOALTERACAO	 = :iIdPessoaUsuario
+					AND TRUNC( ATENCAMP.DTATENDIMENTO	) BETWEEN TO_DATE(:oszDtInicio, 'DD/MM/YYYY' ) AND TO_DATE(:oszDtFim, 'DD/MM/YYYY' );
+
+			sprintf(szValor, "%d", iReagendaram);
+			xml_g->addItem("reagendados", szValor); 
+				
+			
+			// Adesões
+			EXEC SQL
+			SELECT 
+				   COUNT(ATENCAMP.IDMOTIVOCAMPANHA)
+			INTO	
+				  :iAderiram
+			FROM   
+				   CAMPANHA.ATENDIMENTOCAMPANHA	ATENCAMP,
+				   CAMPANHA.MOTIVOCAMPANHA		MOT,
+				   CAMPANHA.CANALCAMPANHA 		CANALCAMP,
+				   CAMPANHA.CANALUFOPERADORA	CANALUFOP,
+				   APOIO.TIPOSTATUSCAMPANHA		TPSTATUSCAMP,
+				   APOIO.TIPOMOTIVOCAMPANHA 	TIP
+			WHERE  
+					ATENCAMP.IDMOTIVOCAMPANHA = MOT.IDMOTIVOCAMPANHA
+					AND	MOT.IDSUBCAMPANHAHISTORICO =:oszIdSubCampanhaHistorico
+					AND MOT.IDTIPOSTATUSCAMPANHA   = TPSTATUSCAMP.IDTIPOSTATUSCAMPANHA
+					AND TPSTATUSCAMP.IDTIPOSTATUSCAMPANHA = 2
+					AND TIP.IDTIPOMOTIVOCAMPANHA   = MOT.IDTIPOMOTIVOCAMPANHA 
+					AND TIP.INADERIU = 1
+					AND CANALCAMP.IDSUBCAMPANHAHISTORICO = MOT.IDSUBCAMPANHAHISTORICO
+					AND CANALCAMP.IDCANALCAMPANHA    = :oszIdCanalCampanha
+					AND CANALUFOP.IDCANALUFOPERADORA = CANALCAMP.IDCANALUFOPERADORA
+					AND ( CANALUFOP.IDUFOPERADORA    = :oszIdUfOperadora OR -1 = :oszIdUfOperadora )
+					AND ATENCAMP.IDCANALCAMPANHA     = CANALCAMP.IDCANALCAMPANHA
+					AND ATENCAMP.IDMOTIVOCAMPANHA    = MOT.IDMOTIVOCAMPANHA
+					AND ATENCAMP.IDUSUARIOALTERACAO	 = :iIdPessoaUsuario
+					AND TRUNC( ATENCAMP.DTATENDIMENTO	) BETWEEN TO_DATE(:oszDtInicio, 'DD/MM/YYYY' ) AND TO_DATE(:oszDtFim, 'DD/MM/YYYY' );
+
+			sprintf(szValor, "%d", iAderiram);
+			xml_g->addItem("adesoes", szValor); 
+			
+			
+			// Motivos
+			EXEC SQL DECLARE RelEfe2 CURSOR for
+			SELECT
+				   TIP.SGTIPOMOTIVOCAMPANHA as MOTIVO,
+				   TIP.IDTIPOMOTIVOCAMPANHA as IDMOTIVO,
+				   COUNT(TIP.IDTIPOMOTIVOCAMPANHA) as QTDE
+			FROM 
+					CAMPANHA.MOTIVOCAMPANHA 	   	  MOT,
+					CAMPANHA.SUBCAMPANHAHISTORICO 	  SUB,
+					APOIO.TIPOMOTIVOCAMPANHA 		  TIP,
+					CAMPANHA.CANALCAMPANHA 			  CANALCAMP,
+					CAMPANHA.CANALUFOPERADORA		  CANALUFOP,
+					CAMPANHA.ATENDIMENTOCAMPANHA	  ATENCAMP
+			WHERE 
+				  SUB.IDSUBCAMPANHAHISTORICO     = :oszIdSubCampanhaHistorico
+				  AND SUB.IDSUBCAMPANHAHISTORICO = MOT.IDSUBCAMPANHAHISTORICO
+        		  AND TIP.IDTIPOMOTIVOCAMPANHA   = MOT.IDTIPOMOTIVOCAMPANHA
+				  AND CANALCAMP.IDSUBCAMPANHAHISTORICO = SUB.IDSUBCAMPANHAHISTORICO
+				  AND CANALCAMP.IDCANALCAMPANHA    = :oszIdCanalCampanha
+				  AND CANALUFOP.IDCANALUFOPERADORA = CANALCAMP.IDCANALUFOPERADORA
+				  AND ( CANALUFOP.IDUFOPERADORA    = :oszIdUfOperadora OR -1 = :oszIdUfOperadora )
+				  AND ATENCAMP.IDCANALCAMPANHA     = CANALCAMP.IDCANALCAMPANHA
+				  AND ATENCAMP.IDMOTIVOCAMPANHA    = MOT.IDMOTIVOCAMPANHA
+				  AND ATENCAMP.IDUSUARIOALTERACAO  = :iIdPessoaUsuario
+				  AND TRUNC( ATENCAMP.DTATENDIMENTO	) BETWEEN TO_DATE(:oszDtInicio, 'DD/MM/YYYY' ) AND TO_DATE(:oszDtFim, 'DD/MM/YYYY' )
+			GROUP BY 
+				  TIP.SGTIPOMOTIVOCAMPANHA, TIP.IDTIPOMOTIVOCAMPANHA
+			ORDER BY 
+				  UPPER(TRIM(MOTIVO));
+
+			EXEC SQL OPEN RelEfe2;
+			EXEC SQL WHENEVER NOT FOUND do break;
+
+			xml_g->createTag("motivos");
+			for(;;)
+			{
+				EXEC SQL FETCH RelEfe2 INTO
+					:oszSgTipoMotivoCampanha,
+					:iIdMotivo,
+					:iQtdeMotivo;
+
+				STRCPY_FROM_ORA(szDesc, oszSgTipoMotivoCampanha );
+				sprintf(szValor, "%d", iQtdeMotivo);
+
+				xml_g->addItem("dsMotivo", szDesc);
+				xml_g->addItem("qtdMotivo", szValor);
+				
+				//Conta a qtde de submotivos
+				EXEC SQL
+				SELECT
+						COUNT( DISTINCT(SUBMOTIVO.DSTIPOSUBMOTIVOCAMPANHA) ) AS QTDE
+				INTO
+						:iQtdeSubMotivo
+				FROM 
+						CAMPANHA.MOTIVOCAMPANHA 	   	  MOT,
+						CAMPANHA.SUBCAMPANHAHISTORICO 	  SUB,
+						APOIO.TIPOMOTIVOCAMPANHA 		  TIP,
+						CAMPANHA.CANALCAMPANHA 			  CANALCAMP,
+						CAMPANHA.CANALUFOPERADORA		  CANALUFOP,
+						CAMPANHA.ATENDIMENTOCAMPANHA	  ATENCAMP,
+						APOIO.TIPOSUBMOTIVOCAMPANHA		  SUBMOTIVO					
+				WHERE 
+					  SUB.IDSUBCAMPANHAHISTORICO     = :oszIdSubCampanhaHistorico
+					  AND SUB.IDSUBCAMPANHAHISTORICO = MOT.IDSUBCAMPANHAHISTORICO
+        			  AND TIP.IDTIPOMOTIVOCAMPANHA   = MOT.IDTIPOMOTIVOCAMPANHA
+					  AND TIP.IDTIPOMOTIVOCAMPANHA 	 = :iIdMotivo
+					  AND CANALCAMP.IDSUBCAMPANHAHISTORICO = SUB.IDSUBCAMPANHAHISTORICO
+					  AND CANALCAMP.IDCANALCAMPANHA    = :oszIdCanalCampanha
+					  AND CANALUFOP.IDCANALUFOPERADORA = CANALCAMP.IDCANALUFOPERADORA
+					  AND ( CANALUFOP.IDUFOPERADORA    = :oszIdUfOperadora OR -1 = :oszIdUfOperadora )
+					  AND ATENCAMP.IDCANALCAMPANHA     = CANALCAMP.IDCANALCAMPANHA
+					  AND ATENCAMP.IDMOTIVOCAMPANHA    = MOT.IDMOTIVOCAMPANHA
+					  AND ATENCAMP.IDUSUARIOALTERACAO  = :iIdPessoaUsuario
+					  AND SUBMOTIVO.IDTIPOSUBMOTIVOCAMPANHA = MOT.IDTIPOSUBMOTIVOCAMPANHA
+					  AND TRUNC( ATENCAMP.DTATENDIMENTO	) BETWEEN TO_DATE(:oszDtInicio, 'DD/MM/YYYY' ) AND TO_DATE(:oszDtFim, 'DD/MM/YYYY' );
+				
+				
+				// Insere tags vazias para alinhar com os submotivos
+				for(int i = 1; i < iQtdeSubMotivo; i++) {
+					xml_g->addItem("dsMotivo", "");
+					xml_g->addItem("qtdMotivo", "");
+				}
+
+			} // for fetch RelEfe2
+			xml_g->closeTag(); //motivos
+			EXEC SQL CLOSE RelEfe2;
+					
+			
+			// Ofertas
+			EXEC SQL DECLARE RelEfe3 CURSOR for
+			SELECT
+					TIP.SGTIPOMOTIVOCAMPANHA as MOTIVO,
+					SUBMOTIVO.DSTIPOSUBMOTIVOCAMPANHA as OFERTA,
+					COUNT(ATENCAMP.IDATENDIMENTOCAMPANHA) as QTDE
+			FROM 
+					CAMPANHA.MOTIVOCAMPANHA 	   	  MOT,
+					CAMPANHA.SUBCAMPANHAHISTORICO 	  SUB,
+					APOIO.TIPOMOTIVOCAMPANHA 		  TIP,
+					CAMPANHA.CANALCAMPANHA 			  CANALCAMP,
+					CAMPANHA.CANALUFOPERADORA		  CANALUFOP,
+					CAMPANHA.ATENDIMENTOCAMPANHA	  ATENCAMP,
+					APOIO.TIPOSUBMOTIVOCAMPANHA		  SUBMOTIVO					
+			WHERE 
+				  SUB.IDSUBCAMPANHAHISTORICO     = :oszIdSubCampanhaHistorico
+				  AND SUB.IDSUBCAMPANHAHISTORICO = MOT.IDSUBCAMPANHAHISTORICO
+        		  AND TIP.IDTIPOMOTIVOCAMPANHA   = MOT.IDTIPOMOTIVOCAMPANHA
+				  AND CANALCAMP.IDSUBCAMPANHAHISTORICO = SUB.IDSUBCAMPANHAHISTORICO
+				  AND CANALCAMP.IDCANALCAMPANHA    = :oszIdCanalCampanha
+				  AND CANALUFOP.IDCANALUFOPERADORA = CANALCAMP.IDCANALUFOPERADORA
+				  AND ( CANALUFOP.IDUFOPERADORA    = :oszIdUfOperadora OR -1 = :oszIdUfOperadora )
+				  AND ATENCAMP.IDCANALCAMPANHA     = CANALCAMP.IDCANALCAMPANHA
+				  AND ATENCAMP.IDMOTIVOCAMPANHA    = MOT.IDMOTIVOCAMPANHA
+				  AND ATENCAMP.IDUSUARIOALTERACAO  = :iIdPessoaUsuario
+				  AND SUBMOTIVO.IDTIPOSUBMOTIVOCAMPANHA = MOT.IDTIPOSUBMOTIVOCAMPANHA
+				  AND TRUNC( ATENCAMP.DTATENDIMENTO	) BETWEEN TO_DATE(:oszDtInicio, 'DD/MM/YYYY' ) AND TO_DATE(:oszDtFim, 'DD/MM/YYYY' )
+			GROUP BY 
+  				  TIP.SGTIPOMOTIVOCAMPANHA, SUBMOTIVO.DSTIPOSUBMOTIVOCAMPANHA
+			ORDER BY 
+				  UPPER(TRIM(MOTIVO)), UPPER(TRIM(OFERTA));
+
+			EXEC SQL OPEN RelEfe3;
+			EXEC SQL WHENEVER NOT FOUND do break;
+
+			xml_g->createTag("ofertas");
+			for(;;)
+			{
+				EXEC SQL FETCH RelEfe3 INTO
+					:oszSgTipoMotivoCampanha,
+					:oszSgTipoSubMotivoCampanha,
+					:iQtdeSubMotivo;
+
+				STRCPY_FROM_ORA(szDesc, oszSgTipoSubMotivoCampanha );
+				sprintf(szValor, "%d", iQtdeSubMotivo);
+
+				xml_g->addItem("dsOferta", szDesc);
+				xml_g->addItem("qtdOferta", szValor);
+			} // for fetch RelEfe3
+			xml_g->closeTag(); // Ofertas
+			EXEC SQL CLOSE RelEfe3;
+					
+					
+			xml_g->closeTag();
+			iQtdReg++;
+
+		} // for fetch RelEfe1
+		EXEC SQL CLOSE RelEfe1;
+
+	}//if( Header.Executar() > 0 )
+	else
+	{
+		iQtdReg = 0;
+	}//else if( Header.Executar() > 0 )
+				
+	xml_g->addItem("total", iQtdReg); 
+	xml_g->closeTag();	
+	return;
+
+endRelatorio:
+	//throw TuxBasicOraException(sqlca.sqlcode);
+	ULOGI("  ---> erro %s - ", "Erro proveniente do Pro*C/C++!!!") ;
+
+}

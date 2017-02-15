@@ -1,0 +1,2875 @@
+/**
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:27 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include<ctype.h>
+
+#include "../include/cWFAtdInBox.h"
+#include "../../../commons/SmallString.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+#define STRCPY_TO_ORA(dest, source){ \
+        dest.len = (unsigned short) strlen(source); \
+        strcpy((char *) dest.arr, (const char *) source);}
+
+
+void sql_error_WFAtdInBoxAdq(sqlca*sqlca);
+
+bool proCConsultaTotalWFAdq(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida);
+bool proCConsultaTotalWFAdqDocumento(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida);
+bool proCConsultaTotalWFAdqLinha(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida);
+bool proCConsultaTotalWFAdqConta(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida);
+bool proCConsultaTotalWFAdqNome(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida);
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+    #include "../include/stWFAtdInBox.h"
+        struct st_BuscaPorNome
+        {
+            VARCHAR oszIdPessoa[256];          // customer.pessoa
+            VARCHAR oszIdTipoPessoa[256];      // customer.pessoa
+            VARCHAR oszDsTipoPessoa[256];      // apoio.tipopessoa
+            VARCHAR oszNmPessoa[256];          // customer.pessoa
+            VARCHAR oszIdTipoDocumento[256];   // customer.documento
+            VARCHAR oszDsTipoDocumento[256];   // apoio.tipodocumento
+            VARCHAR oszSgClassificacao[256];   // apoio.tipodocumento
+            VARCHAR oszNrDocumento[256];       // customer.documento
+        } ;
+        struct st_BuscaPorNomeIndicator
+        {
+            short iIdPessoa;
+            short iIdTipoPessoa;
+            short iDsTipoPessoa;
+            short iNmPessoa;
+            short iIdTipoDocumento;
+            short iDsTipoDocumento;
+            short iSgClassificacao;
+            short iNrDocumento;
+        } ;
+    
+    
+EXEC SQL END DECLARE SECTION;
+
+bool proCConsultaTotalWFAdq(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaTotalWFAdq()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+        int  numRegistros;
+        short i_numRegistros;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    ULOG("Filtro por numero de linha =  [%s]", dados->documento);
+    ULOG("Filtro por usuario =  [%d]", dados->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", dados->idAtendimento);
+
+    ULOG("Filtro por numero de linha =  [%d]", status->documento);
+    ULOG("Filtro por usuario =  [%d]", status->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", status->idAtendimento);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBoxAdq(&sqlca);
+
+    EXEC SQL 
+            SELECT 
+            COUNT(1)
+        INTO
+            :numRegistros:i_numRegistros
+             FROM 
+                Atendimento.AtdAdqCriWFV01
+             WHERE 
+                idPessoaUsuarioGrupo = :oDados.idPessoaUsuario
+                AND idPessoaUsuarioCri IS NULL
+                AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento);
+
+    saida->addItem("totalRegistros", numRegistros);
+
+    ULOG_END( "proCConsultaTotalWFAdq()" );
+
+    return true;
+}
+
+bool proCConsultaTotalWFAdqDocumento(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaTotalWFAdqDocumento()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+        int  numRegistros;
+        short i_numRegistros;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    ULOG("Filtro por numero de linha =  [%s]", dados->documento);
+    ULOG("Filtro por usuario =  [%d]", dados->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", dados->idAtendimento);
+
+    ULOG("Filtro por numero de linha =  [%d]", status->documento);
+    ULOG("Filtro por usuario =  [%d]", status->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", status->idAtendimento);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBoxAdq(&sqlca);
+
+    EXEC SQL 
+            SELECT 
+            COUNT(1)
+        INTO
+            :numRegistros:i_numRegistros
+             FROM 
+                ATENDIMENTO.ATDADQCRIWFV01
+             WHERE 
+                IDPESSOAUSUARIOGRUPO = :oDados.idPessoaUsuario
+                AND IDPESSOAUSUARIOCRI IS NULL
+                AND (IDATENDIMENTO = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+                AND IDPESSOADEPARA IN
+                        (SELECT 
+                            PDP.IDPESSOADEPARA
+                        FROM
+                            CUSTOMER.PESSOADEPARA PDP,
+                            CUSTOMER.PESSOADOCUMENTO PD,
+                            CUSTOMER.DOCUMENTO D,
+                            APOIO.TIPODOCUMENTO TD
+                        WHERE
+                            PDP.IDPESSOA = PD.IDPESSOA
+                            AND D.IDDOCUMENTO = PD.IDDOCUMENTO
+                            AND D.IDTIPODOCUMENTO = TD.IDTIPODOCUMENTO
+                            AND TD.SGCLASSIFICACAO = :oDados.tipoDocumento
+                            AND D.NRDOCUMENTO = :oDados.documento
+                        );
+
+    saida->addItem("totalRegistros", numRegistros);
+
+    ULOG_END( "proCConsultaTotalWFAdqDocumento()" );
+    
+    return true;
+}
+
+
+bool proCConsultaTotalWFAdqLinha(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaTotalWFAdqLinha()" );
+
+    struct sqlca sqlca;
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->documento[0]=='0' ) 
+    {
+        strncpy(cConv,dados->documento+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->documento+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->documento,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->documento+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   oprefixo         = prefixo;
+        int   otelefone        = numero;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+        int  numRegistros;
+        short i_numRegistros;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    ULOG("Filtro por numero de linha =  [%s]", dados->documento);
+    ULOG("Filtro por usuario =  [%d]", dados->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", dados->idAtendimento);
+
+    ULOG("Filtro por numero de linha =  [%d]", status->documento);
+    ULOG("Filtro por usuario =  [%d]", status->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", status->idAtendimento);
+    
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBoxAdq(&sqlca);
+
+    EXEC SQL 
+            SELECT 
+            COUNT(1)
+        INTO
+            :numRegistros:i_numRegistros
+             FROM 
+                Atendimento.AtdAdqCriWFV01
+             WHERE 
+                idPessoaUsuarioGrupo = :oDados.idPessoaUsuario
+                AND idPessoaUsuarioCri IS NULL
+                AND cdAreaRegistro = :oprefixo
+                AND nrLinha = :otelefone
+                AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento);
+
+    saida->addItem("totalRegistros", numRegistros);
+
+    ULOG_END( "proCConsultaTotalWFAdqLinha()" );
+    
+    return true;
+}
+
+bool proCConsultaTotalWFAdqConta(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaTotalWFAdqConta()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+        int  numRegistros;
+        short i_numRegistros;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    ULOG("Filtro por numero de linha =  [%s]", dados->documento);
+    ULOG("Filtro por usuario =  [%d]", dados->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", dados->idAtendimento);
+
+    ULOG("Filtro por numero de linha =  [%d]", status->documento);
+    ULOG("Filtro por usuario =  [%d]", status->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", status->idAtendimento);
+    
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBoxAdq(&sqlca);
+
+    EXEC SQL 
+        SELECT 
+            COUNT(1)
+        INTO
+            :numRegistros:i_numRegistros
+         FROM 
+            atendimento.AtdAdqCriWFV01,
+            Atendimento.AtendimentoConta AtendimentoConta
+         WHERE 
+            AtdAdqCriWFV01.idPessoaUsuarioGrupo = :oDados.idPessoaUsuario
+            AND AtendimentoConta.IDATENDIMENTO = AtdAdqCriWFV01.IDATENDIMENTO
+            AND AtdAdqCriWFV01.idPessoaUsuarioCri IS NULL
+            AND AtendimentoConta.cdConta = :oDados.documento
+            AND (AtdAdqCriWFV01.idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento);
+
+    saida->addItem("totalRegistros", numRegistros);
+
+    ULOG_END( "proCConsultaTotalWFAdqConta()" );
+
+    return true;
+}
+
+bool proCConsultaTotalWFAdqNome(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+
+    ULOG_START( "proCConsultaTotalWFAdqNome()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+        int  numRegistros;
+        short i_numRegistros;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    ULOG("Filtro por numero de linha =  [%s]", dados->documento);
+    ULOG("Filtro por usuario =  [%d]", dados->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", dados->idAtendimento);
+
+    ULOG("Filtro por numero de linha =  [%d]", status->documento);
+    ULOG("Filtro por usuario =  [%d]", status->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", status->idAtendimento);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBoxAdq(&sqlca);
+
+    EXEC SQL 
+            SELECT 
+            COUNT(1)
+        INTO
+            :numRegistros:i_numRegistros
+             FROM 
+                Atendimento.AtdAdqCriWFV01
+             WHERE 
+                idPessoaUsuarioGrupo = :oDados.idPessoaUsuario
+                AND idPessoaUsuarioCri IS NULL
+                AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+                AND idPessoaDePara IN
+                        (SELECT 
+                    PDP.IDPESSOADEPARA
+                FROM
+                    CUSTOMER.PESSOADEPARA PDP
+                WHERE
+                    PDP.IDPESSOA = :oDados.documento);
+
+    saida->addItem("totalRegistros", numRegistros);
+
+    ULOG_END( "proCConsultaTotalWFAdqNome()" );
+
+    return true;
+}
+
+bool proCConsultaWFAdq(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFAdq()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+    char sbuffer[1025];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[800];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+        }oDadosSaida;
+        
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+        }oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+    ULOG("Filtro por numero de linha =  [%s]", dados->documento);
+    ULOG("Filtro por usuario =  [%d]", dados->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", dados->idAtendimento);
+
+    ULOG("Filtro por numero de linha =  [%d]", status->documento);
+    ULOG("Filtro por usuario =  [%d]", status->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", status->idAtendimento);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBoxAdq(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+    EXEC SQL DECLARE consultaWFAdqUsuario2 CURSOR FOR
+            SELECT 
+                idAtendimento, 
+                idAtendimentoProtocolo,
+                nmCor, 
+                idContato, 
+                TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+                qtInsistencia, 
+                TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+                TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+                idPessoaDePara, 
+                idEstado, 
+                dsEstado, 
+                idSubEstado, 
+                dsSubEstado, 
+                '', 
+                0 as inCri, 
+                path,
+                nmRegional,
+                nrTelefone,
+                nmPessoaBko,
+                nmGrupoBko,
+                nmPessoaCri,
+                nmGrupoCri,
+                TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+                TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+                nmPessoa, 
+                nrDocumento, 
+                '' dtFechamento,
+                idTipoPessoa 
+             FROM 
+                Atendimento.AtdAdqCriWFV01
+             WHERE 
+                idPessoaUsuarioGrupo = :oDados.idPessoaUsuario
+                AND idPessoaUsuarioCri IS NULL
+                AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+        ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN consultaWFAdqUsuario2;
+    while (true)
+    {
+        EXEC SQL FETCH consultaWFAdqUsuario2 INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+        numeroRegistros++;
+
+        CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+        CONVIND(oDadosSaida.idAtendimentoProtocolo, oStatusSaida.idAtendimentoProtocolo);
+        CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+        CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+        CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+        CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+        CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+        CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+        CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+        CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+        CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+        CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+        CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+        CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+        CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+        CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+        CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+        CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+        CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+        CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+        CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+
+        if (numeroRegistros <= 100)
+        {
+            /*
+            saida->createTag("RWFAtendimentoVO");
+        
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char*)oDadosSaida.idAtendimento.arr);
+                saida->addItem("dtAbertura", (char*)oDadosSaida.dtAbertura.arr);
+                saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)oDadosSaida.dtFimPausa.arr);
+                saida->addItem("dtParaFechamento", (char*)oDadosSaida.dtPrazoFinalInterno.arr);
+                saida->addItem("dtFechamentoAnatel", (char*)oDadosSaida.dtPrazoFinalAnatel.arr);
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char*)oDadosSaida.nmCor.arr);
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char*)oDadosSaida.nrTelefone.arr);
+                saida->addItem("descricaoCompleta", (char*)oDadosSaida.arvore.arr);
+                saida->addItem("dsEstado", (char*)oDadosSaida.dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)oDadosSaida.dsSubEstado.arr);
+                saida->addItem("nmCliente", (char*)oDadosSaida.nmPessoa.arr);
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+                saida->addItem("analistaBKO", (char*)oDadosSaida.nmPessoaBko.arr);
+                saida->addItem("grupoBKO", (char*)oDadosSaida.nmGrupoBko.arr);
+                saida->addItem("analistaCRI", (char*)oDadosSaida.nmPessoaCri.arr);
+                saida->addItem("grupoCRI", (char*)oDadosSaida.nmGrupoCri.arr);
+                saida->addItem("regional", (char*)oDadosSaida.nmRegional.arr);
+                saida->addItem("dtEncaminhamento", (char*)oDadosSaida.dtEntrada.arr);
+                saida->addItem("dtDevolucao", (char*)oDadosSaida.dtSaida.arr);
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+                saida->addItem("documento", (char*)oDadosSaida.nrDocumento.arr);
+            saida->closeTag();
+            */
+            
+            saida->createTag("RWFAtendimentoVO");
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.idAtendimento.len,(char *)&oDadosSaida.idAtendimento.arr );
+                saida->addItem("idAtendimento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.idAtendimentoProtocolo.len,(char *)&oDadosSaida.idAtendimentoProtocolo.arr );
+                saida->addItem("nrProtocolo", sbuffer );
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtAbertura.len,(char *)&oDadosSaida.dtAbertura.arr );
+                saida->addItem("dtAbertura", sbuffer );
+    
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalInterno.len,(char *)&oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtFechamento", sbuffer );
+                
+                /* Correção Homologacao
+                saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                */
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtFimPausa.len,(char *)&oDadosSaida.dtFimPausa.arr );
+                saida->addItem("dtFimPausaAtendimento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalInterno.len,(char *)&oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtParaFechamento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalAnatel.len,(char *)&oDadosSaida.dtPrazoFinalAnatel.arr );
+                saida->addItem("dtFechamentoAnatel", sbuffer );
+                
+                saida->addItem("tpOperacao", "");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmCor.len,(char *)&oDadosSaida.nmCor.arr );
+                saida->addItem("nmCor", sbuffer );
+                
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.nrTelefone.len,(char *)&oDadosSaida.nrTelefone.arr );
+                saida->addItem("nrTelefone", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.arvore.len,(char *)&oDadosSaida.arvore.arr );
+                saida->addItem("descricaoCompleta", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dsEstado.len,(char *)&oDadosSaida.dsEstado.arr );
+                saida->addItem("dsEstado", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dsSubEstado.len,(char *)&oDadosSaida.dsSubEstado.arr );
+                saida->addItem("dsSubEstado", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoa.len,(char *)&oDadosSaida.nmPessoa.arr );
+                saida->addItem("nmCliente", sbuffer );
+
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoaBko.len,(char *)&oDadosSaida.nmPessoaBko.arr );
+                saida->addItem("analistaBKO", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmGrupoBko.len,(char *)&oDadosSaida.nmGrupoBko.arr );
+                saida->addItem("grupoBKO", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoaCri.len,(char *)&oDadosSaida.nmPessoaCri.arr );
+                saida->addItem("analistaCRI", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmGrupoCri.len,(char *)&oDadosSaida.nmGrupoCri.arr );
+                saida->addItem("grupoCRI", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmRegional.len,(char *)&oDadosSaida.nmRegional.arr );
+                saida->addItem("regional", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtEntrada.len,(char *)&oDadosSaida.dtEntrada.arr );
+                saida->addItem("dtEncaminhamento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtSaida.len,(char *)&oDadosSaida.dtSaida.arr );
+                saida->addItem("dtDevolucao", sbuffer );
+
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nrDocumento.len,(char *)&oDadosSaida.nrDocumento.arr );
+                saida->addItem("documento", sbuffer );
+            saida->closeTag();
+        }
+        else
+            break;
+    }
+
+    if (numeroRegistros > 100)
+    {
+        numeroRegistros = 100;
+        proCConsultaTotalWFAdq(dados, status, saida);
+    }
+    else
+        saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE consultaWFAdqUsuario2;
+
+    ULOG_END( "proCConsultaWFAdq()" );
+
+    return true;
+}
+
+bool proCConsultaWFAdqDocumento(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+
+    ULOG_START( "proCConsultaWFAdqDocumento()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+    char sbuffer[1025];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[800];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+        }oDadosSaida;
+        
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+        }oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+    ULOG("Filtro por numero de linha =  [%s]", dados->documento);
+    ULOG("Filtro por usuario =  [%d]", dados->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", dados->idAtendimento);
+
+    ULOG("Filtro por numero de linha =  [%d]", status->documento);
+    ULOG("Filtro por usuario =  [%d]", status->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", status->idAtendimento);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBoxAdq(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+    EXEC SQL 
+    DECLARE consultaWFAdqDocumento CURSOR FOR
+            SELECT 
+                idAtendimento, 
+                idAtendimentoProtocolo,
+                nmCor, 
+                idContato, 
+                TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+                qtInsistencia, 
+                TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+                TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+                idPessoaDePara, 
+                idEstado, 
+                dsEstado, 
+                idSubEstado, 
+                dsSubEstado, 
+                '', 
+                0 as inCri, 
+                path,
+                nmRegional,
+                nrTelefone,
+                nmPessoaBko,
+                nmGrupoBko,
+                nmPessoaCri,
+                nmGrupoCri,
+                TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+                TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+                nmPessoa, 
+                nrDocumento, 
+                '' dtFechamento,
+                idTipoPessoa
+             FROM 
+                Atendimento.AtdAdqCriWFV01
+             WHERE 
+                idPessoaUsuarioGrupo = :oDados.idPessoaUsuario
+                AND idPessoaUsuarioCri IS NULL
+                AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+                AND idPessoaDePara IN
+                        (SELECT 
+                            PDP.IDPESSOADEPARA
+                        FROM
+                            CUSTOMER.PESSOADEPARA PDP,
+                            CUSTOMER.PESSOADOCUMENTO PD,
+                            CUSTOMER.DOCUMENTO D,
+                            APOIO.TIPODOCUMENTO TD
+                        WHERE
+                            PDP.IDPESSOA = PD.IDPESSOA
+                            AND D.IDDOCUMENTO = PD.IDDOCUMENTO
+                            AND D.IDTIPODOCUMENTO = TD.IDTIPODOCUMENTO
+                            AND TD.SGCLASSIFICACAO = :oDados.tipoDocumento
+                            AND D.NRDOCUMENTO = :oDados.documento
+                        )
+        ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN consultaWFAdqDocumento;
+
+    while (true)
+    {
+        EXEC SQL FETCH consultaWFAdqDocumento INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+        numeroRegistros++;
+
+/*
+        CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+        CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+        CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+        CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+        CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+        CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+        CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+        CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+        CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+        CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+        CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+        CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+        CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+        CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+        CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+        CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+        CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+        CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+        CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+        CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+*/
+
+        if (numeroRegistros <= 100)
+        {
+/*
+            saida->createTag("RWFAtendimentoVO");
+        
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char*)oDadosSaida.idAtendimento.arr);
+                saida->addItem("dtAbertura", (char*)oDadosSaida.dtAbertura.arr);
+                saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)oDadosSaida.dtFimPausa.arr);
+                saida->addItem("dtParaFechamento", (char*)oDadosSaida.dtPrazoFinalInterno.arr);
+                saida->addItem("dtFechamentoAnatel", (char*)oDadosSaida.dtPrazoFinalAnatel.arr);
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char*)oDadosSaida.nmCor.arr);
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char*)oDadosSaida.nrTelefone.arr);
+                saida->addItem("descricaoCompleta", (char*)oDadosSaida.arvore.arr);
+                saida->addItem("dsEstado", (char*)oDadosSaida.dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)oDadosSaida.dsSubEstado.arr);
+                saida->addItem("nmCliente", (char*)oDadosSaida.nmPessoa.arr);
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+                saida->addItem("analistaBKO", (char*)oDadosSaida.nmPessoaBko.arr);
+                saida->addItem("grupoBKO", (char*)oDadosSaida.nmGrupoBko.arr);
+                saida->addItem("analistaCRI", (char*)oDadosSaida.nmPessoaCri.arr);
+                saida->addItem("grupoCRI", (char*)oDadosSaida.nmGrupoCri.arr);
+                saida->addItem("regional", (char*)oDadosSaida.nmRegional.arr);
+                saida->addItem("dtEncaminhamento", (char*)oDadosSaida.dtEntrada.arr);
+                saida->addItem("dtDevolucao", (char*)oDadosSaida.dtSaida.arr);
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+                saida->addItem("documento", (char*)oDadosSaida.nrDocumento.arr);
+            saida->closeTag();
+*/
+
+            saida->createTag("RWFAtendimentoVO");
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.idAtendimento.len,(char *)&oDadosSaida.idAtendimento.arr );
+                saida->addItem("idAtendimento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.idAtendimentoProtocolo.len,(char *)&oDadosSaida.idAtendimentoProtocolo.arr );
+                saida->addItem("nrProtocolo", sbuffer );
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtAbertura.len,(char *)&oDadosSaida.dtAbertura.arr );
+                saida->addItem("dtAbertura", sbuffer );
+    
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalInterno.len,(char *)&oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtFechamento", sbuffer );
+                
+                /* Correção Homologacao
+                saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                */
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtFimPausa.len,(char *)&oDadosSaida.dtFimPausa.arr );
+                saida->addItem("dtFimPausaAtendimento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalInterno.len,(char *)&oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtParaFechamento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalAnatel.len,(char *)&oDadosSaida.dtPrazoFinalAnatel.arr );
+                saida->addItem("dtFechamentoAnatel", sbuffer );
+                
+                saida->addItem("tpOperacao", "");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmCor.len,(char *)&oDadosSaida.nmCor.arr );
+                saida->addItem("nmCor", sbuffer );
+                
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.nrTelefone.len,(char *)&oDadosSaida.nrTelefone.arr );
+                saida->addItem("nrTelefone", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.arvore.len,(char *)&oDadosSaida.arvore.arr );
+                saida->addItem("descricaoCompleta", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dsEstado.len,(char *)&oDadosSaida.dsEstado.arr );
+                saida->addItem("dsEstado", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dsSubEstado.len,(char *)&oDadosSaida.dsSubEstado.arr );
+                saida->addItem("dsSubEstado", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoa.len,(char *)&oDadosSaida.nmPessoa.arr );
+                saida->addItem("nmCliente", sbuffer );
+
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoaBko.len,(char *)&oDadosSaida.nmPessoaBko.arr );
+                saida->addItem("analistaBKO", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmGrupoBko.len,(char *)&oDadosSaida.nmGrupoBko.arr );
+                saida->addItem("grupoBKO", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoaCri.len,(char *)&oDadosSaida.nmPessoaCri.arr );
+                saida->addItem("analistaCRI", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmGrupoCri.len,(char *)&oDadosSaida.nmGrupoCri.arr );
+                saida->addItem("grupoCRI", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmRegional.len,(char *)&oDadosSaida.nmRegional.arr );
+                saida->addItem("regional", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtEntrada.len,(char *)&oDadosSaida.dtEntrada.arr );
+                saida->addItem("dtEncaminhamento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtSaida.len,(char *)&oDadosSaida.dtSaida.arr );
+                saida->addItem("dtDevolucao", sbuffer );
+
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nrDocumento.len,(char *)&oDadosSaida.nrDocumento.arr );
+                saida->addItem("documento", sbuffer );
+            saida->closeTag();
+        }
+        else
+            break;
+    }
+
+    if (numeroRegistros > 100)
+    {
+        numeroRegistros = 100;
+        proCConsultaTotalWFAdqDocumento(dados, status, saida);
+    }
+    else
+        saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE consultaWFAdqDocumento;
+
+    ULOG_END( "proCConsultaWFAdqDocumento()" );
+
+    return true;
+}
+
+bool proCConsultaWFAdqLinha(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFAdqLinha()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+    char sbuffer[1025];
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->documento[0]=='0' ) 
+    {
+        strncpy(cConv,dados->documento+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->documento+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->documento,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->documento+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   oprefixo         = prefixo;
+        int   otelefone        = numero;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[800];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+        }oDadosSaida;
+        
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+        }oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+    ULOG("Filtro por numero de linha =  [%s]", dados->documento);
+    ULOG("Filtro por usuario =  [%d]", dados->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", dados->idAtendimento);
+
+    ULOG("Filtro por numero de linha =  [%d]", status->documento);
+    ULOG("Filtro por usuario =  [%d]", status->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", status->idAtendimento);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBoxAdq(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+    EXEC SQL DECLARE consultaWFAdqLinha CURSOR FOR
+        SELECT 
+            idAtendimento, 
+            idAtendimentoProtocolo,
+            nmCor, 
+            idContato, 
+            TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+            qtInsistencia, 
+            TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+            TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+            idPessoaDePara, 
+            idEstado, 
+            dsEstado, 
+            idSubEstado, 
+            dsSubEstado, 
+            '', 
+            0 as inCri, 
+            path,
+            nmRegional,
+            nrTelefone,
+            nmPessoaBko,
+            nmGrupoBko,
+            nmPessoaCri,
+            nmGrupoCri,
+            TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+            TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+            nmPessoa, 
+            nrDocumento, 
+            '' dtFechamento,
+            idTipoPessoa 
+         FROM 
+            Atendimento.AtdAdqCriWFV01
+         WHERE 
+            idPessoaUsuarioGrupo = :oDados.idPessoaUsuario
+            AND idPessoaUsuarioCri IS NULL
+            AND cdAreaRegistro = :oprefixo
+            AND nrLinha = :otelefone
+            AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+    ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN consultaWFAdqLinha;
+
+    while (true)
+    {
+        EXEC SQL FETCH consultaWFAdqLinha INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+        numeroRegistros++;
+
+        /*
+        CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+        CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+        CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+        CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+        CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+        CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+        CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+        CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+        CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+        CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+        CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+        CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+        CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+        CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+        CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+        CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+        CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+        CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+        CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+        CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+        */
+
+        if (numeroRegistros <= 100)
+        {
+        /*
+            saida->createTag("RWFAtendimentoVO");
+        
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char*)oDadosSaida.idAtendimento.arr);
+                saida->addItem("dtAbertura", (char*)oDadosSaida.dtAbertura.arr);
+                saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)oDadosSaida.dtFimPausa.arr);
+                saida->addItem("dtParaFechamento", (char*)oDadosSaida.dtPrazoFinalInterno.arr);
+                saida->addItem("dtFechamentoAnatel", (char*)oDadosSaida.dtPrazoFinalAnatel.arr);
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char*)oDadosSaida.nmCor.arr);
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char*)oDadosSaida.nrTelefone.arr);
+                saida->addItem("descricaoCompleta", (char*)oDadosSaida.arvore.arr);
+                saida->addItem("dsEstado", (char*)oDadosSaida.dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)oDadosSaida.dsSubEstado.arr);
+                saida->addItem("nmCliente", (char*)oDadosSaida.nmPessoa.arr);
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+                saida->addItem("analistaBKO", (char*)oDadosSaida.nmPessoaBko.arr);
+                saida->addItem("grupoBKO", (char*)oDadosSaida.nmGrupoBko.arr);
+                saida->addItem("analistaCRI", (char*)oDadosSaida.nmPessoaCri.arr);
+                saida->addItem("grupoCRI", (char*)oDadosSaida.nmGrupoCri.arr);
+                saida->addItem("regional", (char*)oDadosSaida.nmRegional.arr);
+                saida->addItem("dtEncaminhamento", (char*)oDadosSaida.dtEntrada.arr);
+                saida->addItem("dtDevolucao", (char*)oDadosSaida.dtSaida.arr);
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+                saida->addItem("documento", (char*)oDadosSaida.nrDocumento.arr);
+            saida->closeTag();
+*/
+            saida->createTag("RWFAtendimentoVO");
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.idAtendimento.len,(char *)&oDadosSaida.idAtendimento.arr );
+                saida->addItem("idAtendimento", sbuffer );
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.idAtendimentoProtocolo.len,(char *)&oDadosSaida.idAtendimentoProtocolo.arr );
+                saida->addItem("nrProtocolo", sbuffer );
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtAbertura.len,(char *)&oDadosSaida.dtAbertura.arr );
+                saida->addItem("dtAbertura", sbuffer );
+    
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalInterno.len,(char *)&oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtFechamento", sbuffer );
+                
+                /* Correção Homologacao
+                saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                */
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtFimPausa.len,(char *)&oDadosSaida.dtFimPausa.arr );
+                saida->addItem("dtFimPausaAtendimento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalInterno.len,(char *)&oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtParaFechamento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalAnatel.len,(char *)&oDadosSaida.dtPrazoFinalAnatel.arr );
+                saida->addItem("dtFechamentoAnatel", sbuffer );
+                
+                saida->addItem("tpOperacao", "");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmCor.len,(char *)&oDadosSaida.nmCor.arr );
+                saida->addItem("nmCor", sbuffer );
+                
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.nrTelefone.len,(char *)&oDadosSaida.nrTelefone.arr );
+                saida->addItem("nrTelefone", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.arvore.len,(char *)&oDadosSaida.arvore.arr );
+                saida->addItem("descricaoCompleta", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dsEstado.len,(char *)&oDadosSaida.dsEstado.arr );
+                saida->addItem("dsEstado", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dsSubEstado.len,(char *)&oDadosSaida.dsSubEstado.arr );
+                saida->addItem("dsSubEstado", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoa.len,(char *)&oDadosSaida.nmPessoa.arr );
+                saida->addItem("nmCliente", sbuffer );
+
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoaBko.len,(char *)&oDadosSaida.nmPessoaBko.arr );
+                saida->addItem("analistaBKO", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmGrupoBko.len,(char *)&oDadosSaida.nmGrupoBko.arr );
+                saida->addItem("grupoBKO", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoaCri.len,(char *)&oDadosSaida.nmPessoaCri.arr );
+                saida->addItem("analistaCRI", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmGrupoCri.len,(char *)&oDadosSaida.nmGrupoCri.arr );
+                saida->addItem("grupoCRI", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmRegional.len,(char *)&oDadosSaida.nmRegional.arr );
+                saida->addItem("regional", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtEntrada.len,(char *)&oDadosSaida.dtEntrada.arr );
+                saida->addItem("dtEncaminhamento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtSaida.len,(char *)&oDadosSaida.dtSaida.arr );
+                saida->addItem("dtDevolucao", sbuffer );
+
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nrDocumento.len,(char *)&oDadosSaida.nrDocumento.arr );
+                saida->addItem("documento", sbuffer );
+            saida->closeTag();
+        }
+        else
+            break;
+    }
+
+    if (numeroRegistros > 100)
+    {
+        numeroRegistros = 100;
+        proCConsultaTotalWFAdqLinha(dados, status, saida);
+    }
+    else
+    {
+        saida->addItem("totalRegistros", totalRegistros);
+    }
+
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE consultaWFAdqLinha;
+
+    ULOG_END( "proCConsultaWFAdqLinha()" );
+
+    return true;
+
+
+}
+
+bool proCConsultaWFAdqConta(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFAdqConta()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+    char sbuffer[1025];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[800];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+        }oDadosSaida;
+        
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+        }oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+    ULOG("Filtro por numero de linha =  [%s]", dados->documento);
+    ULOG("Filtro por usuario =  [%d]", dados->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", dados->idAtendimento);
+
+    ULOG("Filtro por numero de linha =  [%d]", status->documento);
+    ULOG("Filtro por usuario =  [%d]", status->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", status->idAtendimento);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBoxAdq(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    // Esta consulta foi alterada para utilizar a view AtdAdqCriWFV01 genérica ao invés de AtdAdqContaCriWFV01
+        EXEC SQL DECLARE consultaWFAdqConta CURSOR FOR
+            SELECT 
+                AtdAdqCriWFV01.idAtendimento, 
+                AtdAdqCriWFV01.idAtendimentoProtocolo, 
+                AtdAdqCriWFV01.nmCor, 
+                AtdAdqCriWFV01.idContato, 
+                TO_CHAR(AtdAdqCriWFV01.dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+                AtdAdqCriWFV01.qtInsistencia, 
+                TO_CHAR(AtdAdqCriWFV01.dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+                TO_CHAR(AtdAdqCriWFV01.dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+                AtdAdqCriWFV01.idPessoaDePara, 
+                AtdAdqCriWFV01.idEstado, 
+                AtdAdqCriWFV01.dsEstado, 
+                AtdAdqCriWFV01.idSubEstado, 
+                AtdAdqCriWFV01.dsSubEstado, 
+                '', 
+                0 as inCri, 
+                AtdAdqCriWFV01.path,
+                AtdAdqCriWFV01.nmRegional,
+                AtdAdqCriWFV01.nrTelefone,
+                AtdAdqCriWFV01.nmPessoaBko,
+                AtdAdqCriWFV01.nmGrupoBko,
+                AtdAdqCriWFV01.nmPessoaCri,
+                AtdAdqCriWFV01.nmGrupoCri,
+                TO_CHAR(AtdAdqCriWFV01.dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+                TO_CHAR(AtdAdqCriWFV01.dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+                AtdAdqCriWFV01.nmPessoa, 
+                AtdAdqCriWFV01.nrDocumento, 
+                '' dtFechamento,
+                AtdAdqCriWFV01.idTipoPessoa 
+             FROM 
+                atendimento.AtdAdqCriWFV01,
+                Atendimento.AtendimentoConta AtendimentoConta
+             WHERE 
+                AtdAdqCriWFV01.idPessoaUsuarioGrupo = :oDados.idPessoaUsuario
+                AND ATENDIMENTOCONTA.IDATENDIMENTO = ATDADQCRIWFV01.IDATENDIMENTO
+                AND AtdAdqCriWFV01.idPessoaUsuarioCri IS NULL
+                AND AtendimentoConta.cdConta = :oDados.documento
+                AND (AtdAdqCriWFV01.idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+        ORDER BY nrCriticidade DESC, idAtendimento;
+
+        EXEC SQL OPEN consultaWFAdqConta;
+
+    while (true)
+    {
+        EXEC SQL FETCH consultaWFAdqConta INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+        numeroRegistros++;
+
+        CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+        CONVIND(oDadosSaida.idAtendimentoProtocolo, oStatusSaida.idAtendimentoProtocolo);
+        CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+        CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+        CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+        CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+        CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+        CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+        CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+        CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+        CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+        CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+        CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+        CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+        CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+        CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+        CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+        CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+        CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+        CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+        CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+
+        if (numeroRegistros <= 100)
+        {
+/*
+            saida->createTag("RWFAtendimentoVO");
+        
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char*)oDadosSaida.idAtendimento.arr);
+                saida->addItem("dtAbertura", (char*)oDadosSaida.dtAbertura.arr);
+                saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)oDadosSaida.dtFimPausa.arr);
+                saida->addItem("dtParaFechamento", (char*)oDadosSaida.dtPrazoFinalInterno.arr);
+                saida->addItem("dtFechamentoAnatel", (char*)oDadosSaida.dtPrazoFinalAnatel.arr);
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char*)oDadosSaida.nmCor.arr);
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char*)oDadosSaida.nrTelefone.arr);
+                saida->addItem("descricaoCompleta", (char*)oDadosSaida.arvore.arr);
+                saida->addItem("dsEstado", (char*)oDadosSaida.dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)oDadosSaida.dsSubEstado.arr);
+                saida->addItem("nmCliente", (char*)oDadosSaida.nmPessoa.arr);
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+                saida->addItem("analistaBKO", (char*)oDadosSaida.nmPessoaBko.arr);
+                saida->addItem("grupoBKO", (char*)oDadosSaida.nmGrupoBko.arr);
+                saida->addItem("analistaCRI", (char*)oDadosSaida.nmPessoaCri.arr);
+                saida->addItem("grupoCRI", (char*)oDadosSaida.nmGrupoCri.arr);
+                saida->addItem("regional", (char*)oDadosSaida.nmRegional.arr);
+                saida->addItem("dtEncaminhamento", (char*)oDadosSaida.dtEntrada.arr);
+                saida->addItem("dtDevolucao", (char*)oDadosSaida.dtSaida.arr);
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+                saida->addItem("documento", (char*)oDadosSaida.nrDocumento.arr);
+            saida->closeTag();
+*/
+
+            saida->createTag("RWFAtendimentoVO");
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.idAtendimento.len,(char *)&oDadosSaida.idAtendimento.arr );
+                saida->addItem("idAtendimento", sbuffer );
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.idAtendimentoProtocolo.len,(char *)&oDadosSaida.idAtendimentoProtocolo.arr );
+                saida->addItem("nrProtocolo", sbuffer );
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtAbertura.len,(char *)&oDadosSaida.dtAbertura.arr );
+                saida->addItem("dtAbertura", sbuffer );
+    
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalInterno.len,(char *)&oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtFechamento", sbuffer );
+                
+                /* Correção Homologacao
+                saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                */
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtFimPausa.len,(char *)&oDadosSaida.dtFimPausa.arr );
+                saida->addItem("dtFimPausaAtendimento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalInterno.len,(char *)&oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtParaFechamento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalAnatel.len,(char *)&oDadosSaida.dtPrazoFinalAnatel.arr );
+                saida->addItem("dtFechamentoAnatel", sbuffer );
+                
+                saida->addItem("tpOperacao", "");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmCor.len,(char *)&oDadosSaida.nmCor.arr );
+                saida->addItem("nmCor", sbuffer );
+                
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.nrTelefone.len,(char *)&oDadosSaida.nrTelefone.arr );
+                saida->addItem("nrTelefone", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.arvore.len,(char *)&oDadosSaida.arvore.arr );
+                saida->addItem("descricaoCompleta", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dsEstado.len,(char *)&oDadosSaida.dsEstado.arr );
+                saida->addItem("dsEstado", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dsSubEstado.len,(char *)&oDadosSaida.dsSubEstado.arr );
+                saida->addItem("dsSubEstado", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoa.len,(char *)&oDadosSaida.nmPessoa.arr );
+                saida->addItem("nmCliente", sbuffer );
+
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoaBko.len,(char *)&oDadosSaida.nmPessoaBko.arr );
+                saida->addItem("analistaBKO", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmGrupoBko.len,(char *)&oDadosSaida.nmGrupoBko.arr );
+                saida->addItem("grupoBKO", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoaCri.len,(char *)&oDadosSaida.nmPessoaCri.arr );
+                saida->addItem("analistaCRI", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmGrupoCri.len,(char *)&oDadosSaida.nmGrupoCri.arr );
+                saida->addItem("grupoCRI", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmRegional.len,(char *)&oDadosSaida.nmRegional.arr );
+                saida->addItem("regional", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtEntrada.len,(char *)&oDadosSaida.dtEntrada.arr );
+                saida->addItem("dtEncaminhamento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtSaida.len,(char *)&oDadosSaida.dtSaida.arr );
+                saida->addItem("dtDevolucao", sbuffer );
+
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nrDocumento.len,(char *)&oDadosSaida.nrDocumento.arr );
+                saida->addItem("documento", sbuffer );
+            saida->closeTag();
+        }
+
+        else
+            break;
+    }
+
+    if (numeroRegistros > 100)
+    {
+        numeroRegistros = 100;
+        proCConsultaTotalWFAdqConta(dados, status, saida);
+    }
+    else
+        saida->addItem("totalRegistros", totalRegistros);
+
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE consultaWFAdqConta;
+
+    ULOG_END( "proCConsultaWFAdqConta()" );
+
+    return true;
+}
+
+bool proCConsultaWFAdqNome(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFAdqNome()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+    char sbuffer[1025];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[800];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+        } oDadosSaida;
+        
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+        } oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+    ULOG("Filtro por numero de linha =  [%s]", dados->documento);
+    ULOG("Filtro por usuario =  [%d]", dados->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", dados->idAtendimento);
+
+    ULOG("Filtro por numero de linha =  [%d]", status->documento);
+    ULOG("Filtro por usuario =  [%d]", status->idPessoaUsuario);
+    ULOG("Filtro por Atendimento =  [%d]", status->idAtendimento);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBoxAdq(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    
+    EXEC SQL DECLARE consultaWFAdqNome CURSOR FOR
+            SELECT 
+                idAtendimento, 
+                idAtendimentoProtocolo,
+                nmCor, 
+                idContato, 
+                TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+                qtInsistencia, 
+                TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+                TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+                idPessoaDePara, 
+                idEstado, 
+                dsEstado, 
+                idSubEstado, 
+                dsSubEstado, 
+                '', 
+                0 as inCri, 
+                path,
+                nmRegional,
+                nrTelefone,
+                nmPessoaBko,
+                nmGrupoBko,
+                nmPessoaCri,
+                nmGrupoCri,
+                TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+                TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+                nmPessoa, 
+                nrDocumento, 
+                '' dtFechamento,
+                idTipoPessoa 
+             FROM 
+                Atendimento.AtdAdqCriWFV01
+             WHERE 
+                idPessoaUsuarioGrupo = :oDados.idPessoaUsuario
+                AND idPessoaUsuarioCri IS NULL
+                AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+                AND idPessoaDePara IN
+                        (SELECT 
+                    PDP.IDPESSOADEPARA
+                FROM
+                    CUSTOMER.PESSOADEPARA PDP
+                WHERE
+                    PDP.IDPESSOA = :oDados.documento)
+        ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN consultaWFAdqNome;
+    while (true)
+    {
+        EXEC SQL FETCH consultaWFAdqNome INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+        numeroRegistros++;
+
+        CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+        CONVIND(oDadosSaida.idAtendimentoProtocolo, oStatusSaida.idAtendimentoProtocolo);
+        CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+        CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+        CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+        CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+        CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+        CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+        CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+        CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+        CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+        CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+        CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+        CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+        CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+        CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+        CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+        CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+        CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+        CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+        CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+
+        if (numeroRegistros <= 100)
+        {
+/*
+            saida->createTag("RWFAtendimentoVO");
+        
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char*)oDadosSaida.idAtendimento.arr);
+                saida->addItem("dtAbertura", (char*)oDadosSaida.dtAbertura.arr);
+                saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)oDadosSaida.dtFimPausa.arr);
+                saida->addItem("dtParaFechamento", (char*)oDadosSaida.dtPrazoFinalInterno.arr);
+                saida->addItem("dtFechamentoAnatel", (char*)oDadosSaida.dtPrazoFinalAnatel.arr);
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char*)oDadosSaida.nmCor.arr);
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char*)oDadosSaida.nrTelefone.arr);
+                saida->addItem("descricaoCompleta", (char*)oDadosSaida.arvore.arr);
+                saida->addItem("dsEstado", (char*)oDadosSaida.dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)oDadosSaida.dsSubEstado.arr);
+                saida->addItem("nmCliente", (char*)oDadosSaida.nmPessoa.arr);
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+                saida->addItem("analistaBKO", (char*)oDadosSaida.nmPessoaBko.arr);
+                saida->addItem("grupoBKO", (char*)oDadosSaida.nmGrupoBko.arr);
+                saida->addItem("analistaCRI", (char*)oDadosSaida.nmPessoaCri.arr);
+                saida->addItem("grupoCRI", (char*)oDadosSaida.nmGrupoCri.arr);
+                saida->addItem("regional", (char*)oDadosSaida.nmRegional.arr);
+                saida->addItem("dtEncaminhamento", (char*)oDadosSaida.dtEntrada.arr);
+                saida->addItem("dtDevolucao", (char*)oDadosSaida.dtSaida.arr);
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+                saida->addItem("documento", (char*)oDadosSaida.nrDocumento.arr);
+            saida->closeTag();
+*/
+
+            saida->createTag("RWFAtendimentoVO");
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.idAtendimento.len,(char *)&oDadosSaida.idAtendimento.arr );
+                saida->addItem("idAtendimento", sbuffer );
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.idAtendimentoProtocolo.len,(char *)&oDadosSaida.idAtendimentoProtocolo.arr );
+                saida->addItem("nrProtocolo", sbuffer );
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtAbertura.len,(char *)&oDadosSaida.dtAbertura.arr );
+                saida->addItem("dtAbertura", sbuffer );
+    
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalInterno.len,(char *)&oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtFechamento", sbuffer );
+                
+                /* Correção Homologacao
+                saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                */
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtFimPausa.len,(char *)&oDadosSaida.dtFimPausa.arr );
+                saida->addItem("dtFimPausaAtendimento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalInterno.len,(char *)&oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtParaFechamento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtPrazoFinalAnatel.len,(char *)&oDadosSaida.dtPrazoFinalAnatel.arr );
+                saida->addItem("dtFechamentoAnatel", sbuffer );
+                
+                saida->addItem("tpOperacao", "");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmCor.len,(char *)&oDadosSaida.nmCor.arr );
+                saida->addItem("nmCor", sbuffer );
+                
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                
+                sprintf( sbuffer,"%.*s",oDadosSaida.nrTelefone.len,(char *)&oDadosSaida.nrTelefone.arr );
+                saida->addItem("nrTelefone", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.arvore.len,(char *)&oDadosSaida.arvore.arr );
+                saida->addItem("descricaoCompleta", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dsEstado.len,(char *)&oDadosSaida.dsEstado.arr );
+                saida->addItem("dsEstado", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dsSubEstado.len,(char *)&oDadosSaida.dsSubEstado.arr );
+                saida->addItem("dsSubEstado", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoa.len,(char *)&oDadosSaida.nmPessoa.arr );
+                saida->addItem("nmCliente", sbuffer );
+
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoaBko.len,(char *)&oDadosSaida.nmPessoaBko.arr );
+                saida->addItem("analistaBKO", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmGrupoBko.len,(char *)&oDadosSaida.nmGrupoBko.arr );
+                saida->addItem("grupoBKO", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmPessoaCri.len,(char *)&oDadosSaida.nmPessoaCri.arr );
+                saida->addItem("analistaCRI", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmGrupoCri.len,(char *)&oDadosSaida.nmGrupoCri.arr );
+                saida->addItem("grupoCRI", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nmRegional.len,(char *)&oDadosSaida.nmRegional.arr );
+                saida->addItem("regional", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtEntrada.len,(char *)&oDadosSaida.dtEntrada.arr );
+                saida->addItem("dtEncaminhamento", sbuffer );
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.dtSaida.len,(char *)&oDadosSaida.dtSaida.arr );
+                saida->addItem("dtDevolucao", sbuffer );
+
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+
+                sprintf( sbuffer,"%.*s",oDadosSaida.nrDocumento.len,(char *)&oDadosSaida.nrDocumento.arr );
+                saida->addItem("documento", sbuffer );
+            saida->closeTag();
+        }
+        else
+            break;
+    }
+
+    if (numeroRegistros > 100)
+    {
+        numeroRegistros = 100;
+        proCConsultaTotalWFAdqNome(dados, status, saida);
+    }
+    else
+        saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE consultaWFAdqNome;
+
+    ULOG_END( "proCConsultaWFAdqNome()" );
+
+    return true;
+}
+
+
+/*******************************************************************************************************/
+// Esta função é uma adaptação da função de clientes que pesquisa nomes
+// especializada para trazer apenas nomes relacionados a processos no inbox cri
+// Atendimento da incidência 3220
+/*******************************************************************************************************/
+void proCConsultaWFAdqClientePorNome(char *pszNmNome, char *pszNmNomeMeio, char *pszNmSobreNome, XMLGen *xml_g)
+{
+    ULOG_START( "proCConsultaWFAdqClientePorNome()" );
+
+    unsigned int iCont;
+    bool bFlagRegFound = false;
+    struct sqlca sqlca;
+
+    char szNmNome[256];
+    char szNmNomeMeio[256];
+    char szNmSobreNome[256];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszNmNome[256];
+        VARCHAR oszNmNomeMeio[256];
+        VARCHAR oszNmSobreNome[256];
+        struct
+        {
+            VARCHAR oszIdPessoa[256];        // customer.pessoa
+            VARCHAR oszIdTipoPessoa[256];    // customer.pessoa
+            VARCHAR oszDsTipoPessoa[256];    // apoio.tipopessoa
+            VARCHAR oszNmPessoa[256];        // customer.pessoa
+            VARCHAR oszIdTipoDocumento[256]; // customer.documento
+            VARCHAR oszDsTipoDocumento[256]; // apoio.tipodocumento
+            VARCHAR oszSgClassificacao[256]; // apoio.tipodocumento
+            VARCHAR oszNrDocumento[256];     // customer.documento
+        } stBuscaPorNome;
+
+        struct
+        {
+            short iIdPessoa;
+            short iIdTipoPessoa;
+            short iDsTipoPessoa;
+            short iNmPessoa;
+            short iIdTipoDocumento;
+            short iDsTipoDocumento;
+            short iSgClassificacao;
+            short iNrDocumento;
+        } stBuscaPorNomeIndicator;
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+        ULOG("Iniciando proCConsultaWFAdqClientePorNome");
+
+        ULOG("pszNmNome[%s]", pszNmNome);
+        sprintf(szNmNome, "%s%c", pszNmNome, '%');
+        ULOG("szNmNome[%s]", szNmNome);
+        STRCPY_TO_ORA(oszNmNome, szNmNome);
+
+        ULOG("pszNmNomeMeio[%s]", pszNmNomeMeio);
+        sprintf(szNmNomeMeio, "%s%c", pszNmNomeMeio, '%');
+        ULOG("szNmNomeMeio[%s]", szNmNomeMeio);
+        STRCPY_TO_ORA(oszNmNomeMeio, szNmNomeMeio);
+
+        ULOG("pszNmSobreNome[%s]", pszNmSobreNome);
+        sprintf(szNmSobreNome, "%s%c", pszNmSobreNome, '%');
+        ULOG("szNmSobreNome[%s]", szNmSobreNome);
+        STRCPY_TO_ORA(oszNmSobreNome, szNmSobreNome);
+
+        EXEC SQL WHENEVER SQLERROR GOTO GotoError;
+    
+        EXEC SQL 
+            DECLARE 
+                CursorBuscaPorNome CURSOR FOR
+                    SELECT DISTINCT
+                        PESSOANOME.idpessoa,
+                        tipopessoa.idtipopessoa,
+                        tipopessoa.dstipopessoa,
+                        PESSOANOME.nmpessoa,
+                        tipodocumento.idtipodocumento,
+                        tipodocumento.dstipodocumento,
+                        tipodocumento.sgclassificacao,
+                        documento.nrdocumento
+                    FROM    
+                        customer.pessoadocumento pessoadocumento,
+                        customer.documento documento,
+                        apoio.tipodocumento tipodocumento,
+                        apoio.tipopessoa tipopessoa,
+                        customer.pessoadepara pessoadepara,
+                        customer.pessoalinha pessoalinha,
+                        customer.tiporelacionamento tiporelacionamento,
+                        linha.linhatelefonica linhatelefonica,
+                        Atendimento.AtdAdqCriWFV01 AtdAdqCriWFV01,
+                        (
+                            SELECT /* INDEX (PESSOA, PESSOAIE1)*/
+                                IDPESSOA,
+                                idtipopessoa,
+                                nmpessoa
+                            FROM
+                                CUSTOMER.PESSOA
+                            WHERE    
+                                    upper(pessoa.nmnome) LIKE upper(:oszNmNome)
+                            AND     (upper(pessoa.nmnomemeio) LIKE upper(:oszNmNomeMeio) OR pessoa.nmnomemeio is NULL)
+                            AND     upper(pessoa.nmsobrenome) LIKE upper(:oszNmSobreNome)
+                        ) PESSOANOME
+                    WHERE   
+                            PESSOANOME.idpessoa = pessoadocumento.idpessoa
+                    AND     pessoadocumento.iddocumento = documento.iddocumento
+                    AND     documento.idtipodocumento = tipodocumento.idtipodocumento
+                    AND     PESSOANOME.idtipopessoa = tipopessoa.idtipopessoa
+                    AND     PESSOANOME.idpessoa = pessoadepara.idpessoa
+                    AND     pessoadepara.idpessoadepara = pessoalinha.idpessoadepara
+                    AND     pessoalinha.idtiporelacionamento = tiporelacionamento.idtiporelacionamento
+                    AND     tiporelacionamento.sgtiporelacionamento = 'C'
+                    AND     tipodocumento.invisualiza = '1'
+                    AND     pessoalinha.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+                    AND     linhatelefonica.idlinhatelefonica IN 
+                            ( 
+                                SELECT
+                                    idlinhatelefonica
+                                FROM
+                                    customer.pessoalinhahistorico pessoalinhahistorico
+                                WHERE
+                                    pessoalinhahistorico.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+                            )
+                    AND tipodocumento.nrprioridade = (   SELECT MIN(tipodocumento.nrprioridade)
+                                                           FROM customer.pessoadocumento pessoadocumento
+                                                              , customer.documento       documento
+                                                              , apoio.tipodocumento      tipodocumento
+                                                          WHERE PESSOANOME.idpessoa = pessoadocumento.idpessoa
+                                                            AND documento.iddocumento = pessoadocumento.iddocumento
+                                                            AND documento.idtipodocumento = tipodocumento.idtipodocumento )
+                AND AtdAdqCriWFV01.idPessoaUsuarioCri IS NULL
+                AND AtdAdqCriWFV01.idPessoaDePara IN
+                        (SELECT 
+                            PDP.IDPESSOADEPARA
+                        FROM
+                            CUSTOMER.PESSOADEPARA PDP
+                        WHERE
+                            PDP.IDPESSOA = PESSOANOME.idpessoa);
+
+
+        EXEC SQL OPEN CursorBuscaPorNome;
+    
+        ULOG("1.sqlca.sqlcode(%d)", sqlca.sqlcode);
+    
+        EXEC SQL WHENEVER NOT FOUND DO break;
+    
+        for(iCont=0; iCont<50; iCont++)
+        {
+            //ULOG("iCont(%u)", iCont);
+
+            memset(&stBuscaPorNome, 0x00, sizeof(stBuscaPorNome));
+    
+            EXEC SQL FETCH CursorBuscaPorNome INTO :stBuscaPorNome:stBuscaPorNomeIndicator;
+            
+            //ULOG("2.sqlca.sqlcode(%d)", sqlca.sqlcode);
+
+            //ULOG("(char *)&stBuscaPorNome.oszIdPessoa.arr[%s] stBuscaPorNomeIndicator.iIdPessoa(%d)", (char *)&stBuscaPorNome.oszIdPessoa.arr, stBuscaPorNomeIndicator.iIdPessoa);
+            //ULOG("(char *)&stBuscaPorNome.oszIdTipoPessoa.arr[%s] stBuscaPorNomeIndicator.iIdTipoPessoa(%d)", (char *)&stBuscaPorNome.oszIdTipoPessoa.arr, stBuscaPorNomeIndicator.iIdTipoPessoa);
+            //ULOG("(char *)&stBuscaPorNome.oszDsTipoPessoa.arr[%s] stBuscaPorNomeIndicator.iDsTipoPessoa(%d)", (char *)&stBuscaPorNome.oszDsTipoPessoa.arr, stBuscaPorNomeIndicator.iDsTipoPessoa);
+            //ULOG("(char *)&stBuscaPorNome.oszNmPessoa.arr[%s] stBuscaPorNomeIndicator.iNmPessoa(%d)", (char *)&stBuscaPorNome.oszNmPessoa.arr, stBuscaPorNomeIndicator.iNmPessoa);
+            //ULOG("(char *)&stBuscaPorNome.oszIdTipoDocumento.arr[%s] stBuscaPorNomeIndicator.iIdTipoDocumento(%d)", (char *)&stBuscaPorNome.oszIdTipoDocumento.arr, stBuscaPorNomeIndicator.iIdTipoDocumento);
+            //ULOG("(char *)&stBuscaPorNome.oszDsTipoDocumento.arr[%s] stBuscaPorNomeIndicator.iDsTipoDocumento(%d)", (char *)&stBuscaPorNome.oszDsTipoDocumento.arr, stBuscaPorNomeIndicator.iDsTipoDocumento);
+            //ULOG("(char *)&stBuscaPorNome.oszSgClassificacao.arr[%s] stBuscaPorNomeIndicator.iSgClassificacao(%d)", (char *)&stBuscaPorNome.oszSgClassificacao.arr, stBuscaPorNomeIndicator.iSgClassificacao);
+            //ULOG("(char *)&stBuscaPorNome.oszNrDocumento.arr[%s] stBuscaPorNomeIndicator.iNrDocumento(%d)", (char *)&stBuscaPorNome.oszNrDocumento.arr, stBuscaPorNomeIndicator.iNrDocumento);
+    
+            if(bFlagRegFound == false)
+            {
+                xml_g->createTag("GrupoCRIVO");
+                xml_g->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+                xml_g->createTag("Pesquisa");
+                bFlagRegFound = true;
+            }
+
+            xml_g->createTag("Pessoas");
+                xml_g->addItem("idPessoa", (char *)&stBuscaPorNome.oszIdPessoa.arr);
+                xml_g->addItem("idTipoPessoa", (char *)&stBuscaPorNome.oszIdTipoPessoa.arr);
+                xml_g->addItem("dsTipoPessoa", (char *)&stBuscaPorNome.oszDsTipoPessoa.arr);
+                xml_g->addItem("nmPessoa", (char *)&stBuscaPorNome.oszNmPessoa.arr);
+                xml_g->addItem("idTipoDocumento", (char *)&stBuscaPorNome.oszIdTipoDocumento.arr);
+                xml_g->addItem("dsTipoDocumento", (char *)&stBuscaPorNome.oszDsTipoDocumento.arr);
+                xml_g->addItem("sgClassificacaoDocumento", (char *)&stBuscaPorNome.oszSgClassificacao.arr);
+                xml_g->addItem("nrDocumento", (char *)&stBuscaPorNome.oszNrDocumento.arr);
+            xml_g->closeTag();
+         }
+
+        //ULOG("2.iCont(%u)", iCont);
+
+        // Muitas ocorrências
+        if(iCont == 50)
+        {
+            //ULOG("Inserindo tag inErro - Muitas ocorrencias!");
+            xml_g->addItem("inErro", "1");
+        }
+
+        if(bFlagRegFound == true)
+        {
+            xml_g->closeTag();
+            xml_g->closeTag();
+            bFlagRegFound = false;
+        }
+        else
+        { // Retorno Vazio
+            ULOG("Iniciando retornoVazio");
+
+            xml_g->createTag("GrupoCRIVO");
+                xml_g->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+
+                xml_g->createTag("Pesquisa");
+                    xml_g->createTag("Filtro");
+                    xml_g->closeTag();
+                xml_g->closeTag();
+
+            xml_g->closeTag();
+
+            ULOG("Finalizando retornoVazio");
+        }
+            
+    
+        EXEC SQL CLOSE CursorBuscaPorNome;
+        ULOG("3.sqlca.sqlcode(%d)", sqlca.sqlcode);
+
+        ULOG_END( "proCConsultaWFAdqClientePorNome()" );
+        return;
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+GotoError:
+    ULOGE("ERROR sqlca.sqlcode(%d)", sqlca.sqlcode);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+/*********************************************************************************************************************/
+void proCConsultaWFAdqClientePorRazaoSocial(char *pszNmNome, XMLGen *xml_g)
+{
+   ULOG_START( "proCConsultaWFAdqClientePorRazaoSocial()");
+
+    unsigned int iCont;
+    bool bFlagRegFound = false;
+    struct sqlca sqlca;
+
+    char szNmNome[256];
+    //char szNmNomeMeio[256];
+    //char szNmSobreNome[256];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszNmNome[256];
+        //VARCHAR oszNmNomeMeio[256];
+        //VARCHAR oszNmSobreNome[256];
+        struct
+        {
+            VARCHAR oszIdPessoa[256];          // customer.pessoa
+            VARCHAR oszIdTipoPessoa[256];      // customer.pessoa
+            VARCHAR oszDsTipoPessoa[256];      // apoio.tipopessoa
+            VARCHAR oszNmPessoa[256];          // customer.pessoa
+            VARCHAR oszIdTipoDocumento[256];   // customer.documento
+            VARCHAR oszDsTipoDocumento[256];   // apoio.tipodocumento
+            VARCHAR oszSgClassificacao[256];   // apoio.tipodocumento
+            VARCHAR oszNrDocumento[256];       // customer.documento
+        } stBuscaPorNome;
+
+        struct
+        {
+            short iIdPessoa;
+            short iIdTipoPessoa;
+            short iDsTipoPessoa;
+            short iNmPessoa;
+            short iIdTipoDocumento;
+            short iDsTipoDocumento;
+            short iSgClassificacao;
+            short iNrDocumento;
+        } stBuscaPorNomeIndicator;
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+        ULOG("pszNmNome[%s]", pszNmNome);
+        sprintf(szNmNome, "%s%c", pszNmNome, '%');
+        ULOG("szNmNome[%s]", szNmNome);
+        STRCPY_TO_ORA(oszNmNome, szNmNome);
+
+        EXEC SQL WHENEVER SQLERROR GOTO GotoError;
+    
+        EXEC SQL 
+            DECLARE 
+                CursorBuscaPorRazaoSocial CURSOR FOR
+            SELECT DISTINCT
+                        PESSOANOME.idpessoa,
+                        tipopessoa.idtipopessoa,
+                        tipopessoa.dstipopessoa,
+                        PESSOANOME.nmpessoa,
+                        tipodocumento.idtipodocumento,
+                        tipodocumento.dstipodocumento,
+                        tipodocumento.sgclassificacao,
+                        documento.nrdocumento
+                    
+                    FROM    
+                        customer.pessoadocumento    pessoadocumento,
+                        customer.documento          documento,
+                        apoio.tipodocumento         tipodocumento,
+                        apoio.tipopessoa            tipopessoa,
+                        customer.pessoadepara       pessoadepara,
+                        customer.pessoalinha        pessoalinha,
+                        customer.tiporelacionamento tiporelacionamento,
+                        linha.linhatelefonica       linhatelefonica,
+                    Atendimento.AtdAdqCriWFV01  AtdAdqCriWFV01,
+                        (
+                              SELECT /* INDEX (PESSOA, PESSOAIE1)*/
+                                     IDPESSOA,
+                                     idtipopessoa,
+                                     nmpessoa
+                              FROM
+                                     CUSTOMER.PESSOA
+                              WHERE    
+                                     upper(pessoa.NMPESSOA) LIKE upper(:oszNmNome)||'%'
+                              AND
+                                     idtipopessoa=2
+                        
+                        ) PESSOANOME
+                    
+                    WHERE   
+
+                            PESSOANOME.idpessoa = pessoadocumento.idpessoa
+                    AND     pessoadocumento.iddocumento = documento.iddocumento
+                    AND     documento.idtipodocumento = tipodocumento.idtipodocumento
+                    AND     PESSOANOME.idtipopessoa = tipopessoa.idtipopessoa
+                    AND     PESSOANOME.idpessoa = pessoadepara.idpessoa
+                    AND     pessoadepara.idpessoadepara = pessoalinha.idpessoadepara
+                    AND     pessoalinha.idtiporelacionamento = tiporelacionamento.idtiporelacionamento
+                    AND     tiporelacionamento.sgtiporelacionamento = 'C'
+                    AND     tipodocumento.invisualiza = '1'
+                    AND     pessoalinha.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+                    AND     linhatelefonica.idlinhatelefonica IN 
+                            ( 
+                                SELECT
+                                      idlinhatelefonica
+                                FROM
+                                      customer.pessoalinhahistorico pessoalinhahistorico
+                                WHERE
+                                      pessoalinhahistorico.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+                            )
+                    AND     tipodocumento.nrprioridade = ( SELECT 
+                                              MIN(tipodocumento.nrprioridade)
+                                                           FROM     
+                                                                  customer.pessoadocumento pessoadocumento
+                                                                , customer.documento       documento
+                                                                , apoio.tipodocumento      tipodocumento
+                                                           WHERE 
+                                                                  PESSOANOME.idpessoa = pessoadocumento.idpessoa
+                                                                  AND documento.iddocumento = pessoadocumento.iddocumento
+                                                                  AND documento.idtipodocumento = tipodocumento.idtipodocumento )
+                    AND AtdAdqCriWFV01.idPessoaUsuarioCri IS NULL
+                
+                AND AtdAdqCriWFV01.idPessoaDePara IN
+                                                    (SELECT 
+                                     PDP.IDPESSOADEPARA
+                                 FROM
+                                     CUSTOMER.PESSOADEPARA PDP
+                                 WHERE
+                                     PDP.IDPESSOA = PESSOANOME.idpessoa);
+
+        EXEC SQL OPEN CursorBuscaPorRazaoSocial;
+    
+        ULOG( "1.sqlca.sqlcode(%d)", sqlca.sqlcode );
+    
+        EXEC SQL WHENEVER NOT FOUND DO break;
+    
+        for(iCont=0; iCont<50; iCont++)
+        {
+            //ULOG( "iCont(%u)",iCont );
+
+            memset(&stBuscaPorNome, 0x00, sizeof(stBuscaPorNome));
+    
+            EXEC SQL FETCH CursorBuscaPorRazaoSocial INTO :stBuscaPorNome:stBuscaPorNomeIndicator;
+            //ULOG( "2.sqlca.sqlcode(%d)", sqlca.sqlcode );
+
+            //ULOG("(char *)&stBuscaPorNome.oszIdPessoa.arr[%s] stBuscaPorNomeIndicator.iIdPessoa(%d)", (char *)&stBuscaPorNome.oszIdPessoa.arr, stBuscaPorNomeIndicator.iIdPessoa);
+            //ULOG("(char *)&stBuscaPorNome.oszIdTipoPessoa.arr[%s] stBuscaPorNomeIndicator.iIdTipoPessoa(%d)", (char *)&stBuscaPorNome.oszIdTipoPessoa.arr, stBuscaPorNomeIndicator.iIdTipoPessoa);
+            //ULOG("(char *)&stBuscaPorNome.oszDsTipoPessoa.arr[%s] stBuscaPorNomeIndicator.iDsTipoPessoa(%d)", (char *)&stBuscaPorNome.oszDsTipoPessoa.arr, stBuscaPorNomeIndicator.iDsTipoPessoa);
+            //ULOG("(char *)&stBuscaPorNome.oszNmPessoa.arr[%s] stBuscaPorNomeIndicator.iNmPessoa(%d)", (char *)&stBuscaPorNome.oszNmPessoa.arr, stBuscaPorNomeIndicator.iNmPessoa);
+            //ULOG("(char *)&stBuscaPorNome.oszIdTipoDocumento.arr[%s] stBuscaPorNomeIndicator.iIdTipoDocumento(%d)", (char *)&stBuscaPorNome.oszIdTipoDocumento.arr, stBuscaPorNomeIndicator.iIdTipoDocumento);
+            //ULOG("(char *)&stBuscaPorNome.oszDsTipoDocumento.arr[%s] stBuscaPorNomeIndicator.iDsTipoDocumento(%d)", (char *)&stBuscaPorNome.oszDsTipoDocumento.arr, stBuscaPorNomeIndicator.iDsTipoDocumento);
+            //ULOG("(char *)&stBuscaPorNome.oszSgClassificacao.arr[%s] stBuscaPorNomeIndicator.iSgClassificacao(%d)", (char *)&stBuscaPorNome.oszSgClassificacao.arr, stBuscaPorNomeIndicator.iSgClassificacao);
+            //ULOG("(char *)&stBuscaPorNome.oszNrDocumento.arr[%s] stBuscaPorNomeIndicator.iNrDocumento(%d)", (char *)&stBuscaPorNome.oszNrDocumento.arr, stBuscaPorNomeIndicator.iNrDocumento);
+    
+            if(bFlagRegFound == false)
+            {
+                xml_g->createTag("GrupoCRIVO");
+                xml_g->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+                xml_g->createTag("Pesquisa");
+                bFlagRegFound = true;
+            }
+
+            xml_g->createTag("Pessoas");
+                xml_g->addItem("idPessoa", (char *)&stBuscaPorNome.oszIdPessoa.arr);
+                xml_g->addItem("idTipoPessoa", (char *)&stBuscaPorNome.oszIdTipoPessoa.arr);
+                xml_g->addItem("dsTipoPessoa", (char *)&stBuscaPorNome.oszDsTipoPessoa.arr);
+                xml_g->addItem("nmPessoa", (char *)&stBuscaPorNome.oszNmPessoa.arr);
+                xml_g->addItem("idTipoDocumento", (char *)&stBuscaPorNome.oszIdTipoDocumento.arr);
+                xml_g->addItem("dsTipoDocumento", (char *)&stBuscaPorNome.oszDsTipoDocumento.arr);
+                xml_g->addItem("sgClassificacaoDocumento", (char *)&stBuscaPorNome.oszSgClassificacao.arr);
+                xml_g->addItem("nrDocumento", (char *)&stBuscaPorNome.oszNrDocumento.arr);
+            xml_g->closeTag();
+         }
+
+        //ULOG( "2.iCont(%u)",iCont );
+
+        // Muitas ocorrências
+        if(iCont == 50) {
+            //ULOG("Inserindo tag inErro - Muitas ocorrencias!");
+            xml_g->addItem("inErro", "1");
+        }
+
+        if(bFlagRegFound == true)
+        {
+            xml_g->closeTag();
+            xml_g->closeTag();
+            bFlagRegFound = false;
+        }else
+        { // Retorno Vazio
+            //ULOG( "Iniciando retornoVazio" );
+
+            xml_g->createTag("GrupoCRIVO");
+                                xml_g->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+                xml_g->createTag("Pesquisa");
+                    xml_g->createTag("Filtro");
+                    xml_g->closeTag();
+                xml_g->closeTag();
+            xml_g->closeTag();
+
+            //ULOG( "Finalizando retornoVazio" );
+        }
+            
+    
+        EXEC SQL CLOSE CursorBuscaPorRazaoSocial;
+        //ULOG("3.sqlca.sqlcode(%d)", sqlca.sqlcode);
+        
+        ULOG_END( "proCConsultaWFAdqClientePorRazaoSocial()" );
+        return;
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+GotoError:
+    ULOGE( "ERROR sqlca.sqlcode(%d)", sqlca.sqlcode );
+    throw TuxBasicOraException( sqlca.sqlcode );
+}
+
+/*******************************************************************************************************/
+/************************ CONTATO PREVIO ***************************************************************/
+/*******************************************************************************************************/
+void proCConsultaWFAdqClientePorNomeRC(char *pszNmNome, char *pszNmNomeMeio, char *pszNmSobreNome, XMLGen *xml_g)
+{
+    ULOG_START( "proCConsultaWFAdqClientePorNomeRC()" );    
+
+    unsigned int iCont;
+    bool bFlagRegFound = false;
+    struct sqlca sqlca;
+
+    char szNmNome[256];
+    char szNmNomeMeio[256];
+    char szNmSobreNome[256];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszNmNome[256];
+        VARCHAR oszNmNomeMeio[256];
+        VARCHAR oszNmSobreNome[256];
+        struct st_BuscaPorNome stBuscaPorNome;
+        struct st_BuscaPorNomeIndicator stBuscaPorNomeIndicator;
+/*
+        struct {
+            VARCHAR oszIdPessoa[256];                 // customer.pessoa
+            VARCHAR oszIdTipoPessoa[256];         // customer.pessoa
+            VARCHAR oszDsTipoPessoa[256];         // apoio.tipopessoa
+            VARCHAR oszNmPessoa[256];                 // customer.pessoa
+            VARCHAR oszIdTipoDocumento[256];   // customer.documento
+            VARCHAR oszDsTipoDocumento[256];   // apoio.tipodocumento
+            VARCHAR oszSgClassificacao[256];   // apoio.tipodocumento
+            VARCHAR oszNrDocumento[256];           // customer.documento
+        } stBuscaPorNome;
+        struct {
+            short iIdPessoa;
+            short iIdTipoPessoa;
+            short iDsTipoPessoa;
+            short iNmPessoa;
+            short iIdTipoDocumento;
+            short iDsTipoDocumento;
+            short iSgClassificacao;
+            short iNrDocumento;
+        } stBuscaPorNomeIndicator;
+*/        
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+
+        ULOG("pszNmNome[%s]", pszNmNome);
+        sprintf(szNmNome, "%s%c", pszNmNome, '%');
+        ULOG("szNmNome[%s]", szNmNome);
+        STRCPY_TO_ORA(oszNmNome, szNmNome);
+
+        ULOG("pszNmNomeMeio[%s]", pszNmNomeMeio);
+        sprintf(szNmNomeMeio, "%s%c", pszNmNomeMeio, '%');
+        ULOG("szNmNomeMeio[%s]", szNmNomeMeio);
+        STRCPY_TO_ORA(oszNmNomeMeio, szNmNomeMeio);
+
+        ULOG("pszNmSobreNome[%s]", pszNmSobreNome);
+        sprintf(szNmSobreNome, "%s%c", pszNmSobreNome, '%');
+        ULOG("szNmSobreNome[%s]", szNmSobreNome);
+        STRCPY_TO_ORA(oszNmSobreNome, szNmSobreNome);
+
+        EXEC SQL WHENEVER SQLERROR GOTO GotoError;
+    
+        EXEC SQL 
+            DECLARE 
+                CursorBuscaPorNomeRC CURSOR FOR
+                    SELECT DISTINCT
+                        PESSOANOME.idpessoa,
+                        tipopessoa.idtipopessoa,
+                        tipopessoa.dstipopessoa,
+                        PESSOANOME.nmpessoa,
+                        tipodocumento.idtipodocumento,
+                        tipodocumento.dstipodocumento,
+                        tipodocumento.sgclassificacao,
+                        documento.nrdocumento
+                    FROM    
+                        customer.pessoadocumento pessoadocumento,
+                        customer.documento documento,
+                        apoio.tipodocumento tipodocumento,
+                        apoio.tipopessoa tipopessoa,
+                        customer.pessoadepara pessoadepara,
+                        customer.pessoalinha pessoalinha,
+                        customer.tiporelacionamento tiporelacionamento,
+                        linha.linhatelefonica linhatelefonica,
+                              Atendimento.AtdAdpProcWFRCV01 AtdAdpProcWFRCV01,
+                        (
+                            SELECT /* INDEX (PESSOA, PESSOAIE1)*/
+                                IDPESSOA,
+                                idtipopessoa,
+                                nmpessoa
+                            FROM
+                                CUSTOMER.PESSOA
+                            WHERE    
+                                upper(pessoa.nmnome) LIKE upper(:oszNmNome)
+                            AND     
+                                (upper(pessoa.nmnomemeio) LIKE upper(:oszNmNomeMeio) OR pessoa.nmnomemeio is NULL)
+                            AND 
+                                upper(pessoa.nmsobrenome) LIKE upper(:oszNmSobreNome)
+                        ) PESSOANOME
+                    WHERE   
+                        PESSOANOME.idpessoa = pessoadocumento.idpessoa
+                    AND     
+                        pessoadocumento.iddocumento = documento.iddocumento
+                    AND     
+                        documento.idtipodocumento = tipodocumento.idtipodocumento
+                    AND     
+                        PESSOANOME.idtipopessoa = tipopessoa.idtipopessoa
+                    AND     
+                        PESSOANOME.idpessoa = pessoadepara.idpessoa
+                    AND     
+                        pessoadepara.idpessoadepara = pessoalinha.idpessoadepara
+                    AND     
+                        pessoalinha.idtiporelacionamento = tiporelacionamento.idtiporelacionamento
+                    AND     
+                        tiporelacionamento.sgtiporelacionamento = 'C'
+                    AND     
+                        tipodocumento.invisualiza = '1'
+                    AND     
+                        pessoalinha.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+                    AND     
+                        linhatelefonica.idlinhatelefonica IN 
+                            ( 
+                                SELECT
+                                    idlinhatelefonica
+                                FROM
+                                    customer.pessoalinhahistorico pessoalinhahistorico
+                                WHERE
+                                    pessoalinhahistorico.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+                            )
+                    AND tipodocumento.nrprioridade = (   SELECT MIN(tipodocumento.nrprioridade)
+                                                           FROM customer.pessoadocumento pessoadocumento
+                                                              , customer.documento       documento
+                                                              , apoio.tipodocumento      tipodocumento
+                                                          WHERE PESSOANOME.idpessoa = pessoadocumento.idpessoa
+                                                            AND documento.iddocumento = pessoadocumento.iddocumento
+                                                            AND documento.idtipodocumento = tipodocumento.idtipodocumento )
+//              AND AtdAdpProcWFRCV01.idPessoaUsuarioCri IS NULL
+                AND AtdAdpProcWFRCV01.idPessoaDePara IN
+                        (SELECT 
+                            PDP.IDPESSOADEPARA
+                        FROM
+                            CUSTOMER.PESSOADEPARA PDP
+                        WHERE
+                            PDP.IDPESSOA = PESSOANOME.idpessoa);
+
+
+        EXEC SQL OPEN CursorBuscaPorNomeRC;
+    
+        ULOG("1.sqlca.sqlcode(%d)", sqlca.sqlcode);
+    
+        EXEC SQL WHENEVER NOT FOUND DO break;
+    
+        for(iCont=0; iCont<50; iCont++)
+        {
+            ULOG("iCont(%u)", iCont);
+
+            memset(&stBuscaPorNome, 0x00, sizeof(stBuscaPorNome));
+    
+            EXEC SQL FETCH CursorBuscaPorNomeRC INTO :stBuscaPorNome:stBuscaPorNomeIndicator;
+            ULOG("2.sqlca.sqlcode(%d)", sqlca.sqlcode);
+
+            ULOG("(char *)&stBuscaPorNome.oszIdPessoa.arr[%s] stBuscaPorNomeIndicator.iIdPessoa(%d)", (char *)&stBuscaPorNome.oszIdPessoa.arr, stBuscaPorNomeIndicator.iIdPessoa);
+            ULOG("(char *)&stBuscaPorNome.oszIdTipoPessoa.arr[%s] stBuscaPorNomeIndicator.iIdTipoPessoa(%d)", (char *)&stBuscaPorNome.oszIdTipoPessoa.arr, stBuscaPorNomeIndicator.iIdTipoPessoa);
+            ULOG("(char *)&stBuscaPorNome.oszDsTipoPessoa.arr[%s] stBuscaPorNomeIndicator.iDsTipoPessoa(%d)", (char *)&stBuscaPorNome.oszDsTipoPessoa.arr, stBuscaPorNomeIndicator.iDsTipoPessoa);
+            ULOG("(char *)&stBuscaPorNome.oszNmPessoa.arr[%s] stBuscaPorNomeIndicator.iNmPessoa(%d)", (char *)&stBuscaPorNome.oszNmPessoa.arr, stBuscaPorNomeIndicator.iNmPessoa);
+            ULOG("(char *)&stBuscaPorNome.oszIdTipoDocumento.arr[%s] stBuscaPorNomeIndicator.iIdTipoDocumento(%d)", (char *)&stBuscaPorNome.oszIdTipoDocumento.arr, stBuscaPorNomeIndicator.iIdTipoDocumento);
+            ULOG("(char *)&stBuscaPorNome.oszDsTipoDocumento.arr[%s] stBuscaPorNomeIndicator.iDsTipoDocumento(%d)", (char *)&stBuscaPorNome.oszDsTipoDocumento.arr, stBuscaPorNomeIndicator.iDsTipoDocumento);
+            ULOG("(char *)&stBuscaPorNome.oszSgClassificacao.arr[%s] stBuscaPorNomeIndicator.iSgClassificacao(%d)", (char *)&stBuscaPorNome.oszSgClassificacao.arr, stBuscaPorNomeIndicator.iSgClassificacao);
+            ULOG("(char *)&stBuscaPorNome.oszNrDocumento.arr[%s] stBuscaPorNomeIndicator.iNrDocumento(%d)", (char *)&stBuscaPorNome.oszNrDocumento.arr, stBuscaPorNomeIndicator.iNrDocumento);
+    
+            if(bFlagRegFound == false) {
+                xml_g->createTag("GrupoCRIVO");
+                xml_g->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+                xml_g->createTag("Pesquisa");
+                bFlagRegFound = true;
+            }
+
+            xml_g->createTag("Pessoas");
+                xml_g->addItem("idPessoa", (char *)&stBuscaPorNome.oszIdPessoa.arr);
+                xml_g->addItem("idTipoPessoa", (char *)&stBuscaPorNome.oszIdTipoPessoa.arr);
+                xml_g->addItem("dsTipoPessoa", (char *)&stBuscaPorNome.oszDsTipoPessoa.arr);
+                xml_g->addItem("nmPessoa", (char *)&stBuscaPorNome.oszNmPessoa.arr);
+                xml_g->addItem("idTipoDocumento", (char *)&stBuscaPorNome.oszIdTipoDocumento.arr);
+                xml_g->addItem("dsTipoDocumento", (char *)&stBuscaPorNome.oszDsTipoDocumento.arr);
+                xml_g->addItem("sgClassificacaoDocumento", (char *)&stBuscaPorNome.oszSgClassificacao.arr);
+                xml_g->addItem("nrDocumento", (char *)&stBuscaPorNome.oszNrDocumento.arr);
+            xml_g->closeTag();
+         }
+
+        ULOG("2.iCont(%u)", iCont);
+
+        // Muitas ocorrências
+        if(iCont == 50) {
+            ULOG("Inserindo tag inErro - Muitas ocorrencias!");
+            xml_g->addItem("inErro", "1");
+        }
+
+        if(bFlagRegFound == true) {
+            xml_g->closeTag();
+            xml_g->closeTag();
+            bFlagRegFound = false;
+        }else
+        { // Retorno Vazio
+            ULOG("Iniciando retornoVazio");
+
+            xml_g->createTag("GrupoCRIVO");
+                xml_g->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+
+                xml_g->createTag("Pesquisa");
+                    xml_g->createTag("Filtro");
+                    xml_g->closeTag();
+                xml_g->closeTag();
+
+            xml_g->closeTag();
+
+            ULOG("Finalizando retornoVazio");
+        }
+            
+    
+        EXEC SQL CLOSE CursorBuscaPorNomeRC;
+        ULOG("3.sqlca.sqlcode(%d)", sqlca.sqlcode);
+        ULOG("Finalizando proCConsultaWFAdqClientePorNome");
+        ULOG_END( "proCConsultaWFAdqClientePorNomeRC()" );    
+        return;
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+GotoError:
+    ULOG("ERROR sqlca.sqlcode(%d)", sqlca.sqlcode);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+/*********************************************************************************************************************/
+void proCConsultaWFAdqClientePorRazaoSocialRC(char *pszNmNome, XMLGen *xml_g)
+{
+   ULOG_START( "proCConsultaWFAdqClientePorRazaoSocialRC()" ); 
+
+    unsigned int iCont;
+    bool bFlagRegFound = false;
+    struct sqlca sqlca;
+
+    char szNmNome[256];
+    //char szNmNomeMeio[256];
+    //char szNmSobreNome[256];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszNmNome[256];
+        //VARCHAR oszNmNomeMeio[256];
+        //VARCHAR oszNmSobreNome[256];
+/*        
+        struct {
+            VARCHAR oszIdPessoa[256];          // customer.pessoa
+            VARCHAR oszIdTipoPessoa[256];      // customer.pessoa
+            VARCHAR oszDsTipoPessoa[256];      // apoio.tipopessoa
+            VARCHAR oszNmPessoa[256];          // customer.pessoa
+            VARCHAR oszIdTipoDocumento[256];   // customer.documento
+            VARCHAR oszDsTipoDocumento[256];   // apoio.tipodocumento
+            VARCHAR oszSgClassificacao[256];   // apoio.tipodocumento
+            VARCHAR oszNrDocumento[256];       // customer.documento
+        } stBuscaPorNome;
+        struct {
+            short iIdPessoa;
+            short iIdTipoPessoa;
+            short iDsTipoPessoa;
+            short iNmPessoa;
+            short iIdTipoDocumento;
+            short iDsTipoDocumento;
+            short iSgClassificacao;
+            short iNrDocumento;
+        } stBuscaPorNomeIndicator;
+        
+*/
+
+        struct st_BuscaPorNome stBuscaPorNome;
+        struct st_BuscaPorNomeIndicator stBuscaPorNomeIndicator;
+
+        
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+        ULOG("pszNmNome[%s]", pszNmNome);
+        sprintf(szNmNome, "%s%c", pszNmNome, '%');
+        ULOG("szNmNome[%s]", szNmNome);
+        STRCPY_TO_ORA(oszNmNome, szNmNome);
+
+        EXEC SQL WHENEVER SQLERROR GOTO GotoError;
+    
+        EXEC SQL 
+            DECLARE 
+                CursorBuscaPorRazaoSocialRC CURSOR FOR
+            SELECT DISTINCT
+                        PESSOANOME.idpessoa,
+                        tipopessoa.idtipopessoa,
+                        tipopessoa.dstipopessoa,
+                        PESSOANOME.nmpessoa,
+                        tipodocumento.idtipodocumento,
+                        tipodocumento.dstipodocumento,
+                        tipodocumento.sgclassificacao,
+                        documento.nrdocumento
+                    
+                    FROM    
+                        customer.pessoadocumento    pessoadocumento,
+                        customer.documento          documento,
+                        apoio.tipodocumento         tipodocumento,
+                        apoio.tipopessoa            tipopessoa,
+                        customer.pessoadepara       pessoadepara,
+                        customer.pessoalinha        pessoalinha,
+                        customer.tiporelacionamento tiporelacionamento,
+                        linha.linhatelefonica       linhatelefonica,
+                           Atendimento.AtdAdpProcWFRCV01  AtdAdpProcWFRCV01,
+                        (
+                              SELECT /* INDEX (PESSOA, PESSOAIE1)*/
+                                     IDPESSOA,
+                                     idtipopessoa,
+                                     nmpessoa
+                              FROM
+                                     CUSTOMER.PESSOA
+                              WHERE    
+                                     upper(pessoa.NMPESSOA) LIKE upper(:oszNmNome)||'%'
+                                     AND
+                     idtipopessoa=2
+                        
+                        ) PESSOANOME
+                    
+                    WHERE   
+
+                            PESSOANOME.idpessoa = pessoadocumento.idpessoa
+                    AND     pessoadocumento.iddocumento = documento.iddocumento
+                    AND     documento.idtipodocumento = tipodocumento.idtipodocumento
+                    AND     PESSOANOME.idtipopessoa = tipopessoa.idtipopessoa
+                    AND     PESSOANOME.idpessoa = pessoadepara.idpessoa
+                    AND     pessoadepara.idpessoadepara = pessoalinha.idpessoadepara
+                    AND     pessoalinha.idtiporelacionamento = tiporelacionamento.idtiporelacionamento
+                    AND     tiporelacionamento.sgtiporelacionamento = 'C'
+                    AND     tipodocumento.invisualiza = '1'
+                    AND     pessoalinha.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+                    AND     linhatelefonica.idlinhatelefonica IN 
+                            ( 
+                                SELECT
+                                      idlinhatelefonica
+                                FROM
+                                      customer.pessoalinhahistorico pessoalinhahistorico
+                                WHERE
+                                      pessoalinhahistorico.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+                            )
+                    AND     tipodocumento.nrprioridade = ( SELECT 
+                                              MIN(tipodocumento.nrprioridade)
+                                                           FROM     
+                                                                  customer.pessoadocumento pessoadocumento
+                                                                , customer.documento       documento
+                                                                , apoio.tipodocumento      tipodocumento
+                                                           WHERE 
+                                                                  PESSOANOME.idpessoa = pessoadocumento.idpessoa
+                                                                  AND documento.iddocumento = pessoadocumento.iddocumento
+                                                                  AND documento.idtipodocumento = tipodocumento.idtipodocumento )
+//                    AND AtdAdpProcWFRCV01.idPessoaUsuarioCRI IS NULL
+                
+                AND AtdAdpProcWFRCV01.idPessoaDePara IN
+                                                    (SELECT 
+                                     PDP.IDPESSOADEPARA
+                                 FROM
+                                     CUSTOMER.PESSOADEPARA PDP
+                                 WHERE
+                                     PDP.IDPESSOA = PESSOANOME.idpessoa);
+
+        EXEC SQL OPEN CursorBuscaPorRazaoSocialRC;
+    
+        ULOG("1.sqlca.sqlcode(%d)", sqlca.sqlcode);
+    
+        EXEC SQL WHENEVER NOT FOUND DO break;
+    
+        for(iCont=0; iCont<50; iCont++)
+        {
+            ULOG("iCont(%u)", iCont);
+
+            memset(&stBuscaPorNome, 0x00, sizeof(stBuscaPorNome));
+    
+            EXEC SQL FETCH CursorBuscaPorRazaoSocialRC INTO :stBuscaPorNome:stBuscaPorNomeIndicator;
+            ULOG("2.sqlca.sqlcode(%d)", sqlca.sqlcode);
+
+            ULOG("(char *)&stBuscaPorNome.oszIdPessoa.arr[%s] stBuscaPorNomeIndicator.iIdPessoa(%d)", (char *)&stBuscaPorNome.oszIdPessoa.arr, stBuscaPorNomeIndicator.iIdPessoa);
+            ULOG("(char *)&stBuscaPorNome.oszIdTipoPessoa.arr[%s] stBuscaPorNomeIndicator.iIdTipoPessoa(%d)", (char *)&stBuscaPorNome.oszIdTipoPessoa.arr, stBuscaPorNomeIndicator.iIdTipoPessoa);
+            ULOG("(char *)&stBuscaPorNome.oszDsTipoPessoa.arr[%s] stBuscaPorNomeIndicator.iDsTipoPessoa(%d)", (char *)&stBuscaPorNome.oszDsTipoPessoa.arr, stBuscaPorNomeIndicator.iDsTipoPessoa);
+            ULOG("(char *)&stBuscaPorNome.oszNmPessoa.arr[%s] stBuscaPorNomeIndicator.iNmPessoa(%d)", (char *)&stBuscaPorNome.oszNmPessoa.arr, stBuscaPorNomeIndicator.iNmPessoa);
+            ULOG("(char *)&stBuscaPorNome.oszIdTipoDocumento.arr[%s] stBuscaPorNomeIndicator.iIdTipoDocumento(%d)", (char *)&stBuscaPorNome.oszIdTipoDocumento.arr, stBuscaPorNomeIndicator.iIdTipoDocumento);
+            ULOG("(char *)&stBuscaPorNome.oszDsTipoDocumento.arr[%s] stBuscaPorNomeIndicator.iDsTipoDocumento(%d)", (char *)&stBuscaPorNome.oszDsTipoDocumento.arr, stBuscaPorNomeIndicator.iDsTipoDocumento);
+            ULOG("(char *)&stBuscaPorNome.oszSgClassificacao.arr[%s] stBuscaPorNomeIndicator.iSgClassificacao(%d)", (char *)&stBuscaPorNome.oszSgClassificacao.arr, stBuscaPorNomeIndicator.iSgClassificacao);
+            ULOG("(char *)&stBuscaPorNome.oszNrDocumento.arr[%s] stBuscaPorNomeIndicator.iNrDocumento(%d)", (char *)&stBuscaPorNome.oszNrDocumento.arr, stBuscaPorNomeIndicator.iNrDocumento);
+    
+            if(bFlagRegFound == false) {
+                xml_g->createTag("GrupoCRIVO");
+                xml_g->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+                xml_g->createTag("Pesquisa");
+                bFlagRegFound = true;
+            }
+
+            xml_g->createTag("Pessoas");
+                xml_g->addItem("idPessoa", (char *)&stBuscaPorNome.oszIdPessoa.arr);
+                xml_g->addItem("idTipoPessoa", (char *)&stBuscaPorNome.oszIdTipoPessoa.arr);
+                xml_g->addItem("dsTipoPessoa", (char *)&stBuscaPorNome.oszDsTipoPessoa.arr);
+                xml_g->addItem("nmPessoa", (char *)&stBuscaPorNome.oszNmPessoa.arr);
+                xml_g->addItem("idTipoDocumento", (char *)&stBuscaPorNome.oszIdTipoDocumento.arr);
+                xml_g->addItem("dsTipoDocumento", (char *)&stBuscaPorNome.oszDsTipoDocumento.arr);
+                xml_g->addItem("sgClassificacaoDocumento", (char *)&stBuscaPorNome.oszSgClassificacao.arr);
+                xml_g->addItem("nrDocumento", (char *)&stBuscaPorNome.oszNrDocumento.arr);
+            xml_g->closeTag();
+         }
+
+        ULOG("2.iCont(%u)", iCont);
+
+        // Muitas ocorrências
+        if(iCont == 50) {
+            ULOG("Inserindo tag inErro - Muitas ocorrencias!");
+            xml_g->addItem("inErro", "1");
+        }
+
+        if(bFlagRegFound == true) {
+            xml_g->closeTag();
+            xml_g->closeTag();
+            bFlagRegFound = false;
+        }else
+        { // Retorno Vazio
+            ULOG("Iniciando retornoVazio");
+
+            xml_g->createTag("GrupoCRIVO");
+                                xml_g->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+                xml_g->createTag("Pesquisa");
+                    xml_g->createTag("Filtro");
+                    xml_g->closeTag();
+                xml_g->closeTag();
+            xml_g->closeTag();
+
+            ULOG("Finalizando retornoVazio");
+        }
+            
+    
+        EXEC SQL CLOSE CursorBuscaPorRazaoSocialRC;
+        ULOG("3.sqlca.sqlcode(%d)", sqlca.sqlcode);
+    
+        ULOG_END( "proCConsultaWFAdqClientePorRazaoSocialRC()" ); 
+        return;
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+GotoError:
+    ULOGE( "ERROR sqlca.sqlcode(%d)", sqlca.sqlcode );
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+/*********************************************************************************************************************/
+
+
+void sql_error_WFAtdInBoxAdq( sqlca * sqlca )
+{
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOGE("sql_error_WFAtdInBoxAdq:sqlcode=%d,sqlerrmc=%.70s"
+                            ,sqlca->sqlcode
+                            ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}
+   

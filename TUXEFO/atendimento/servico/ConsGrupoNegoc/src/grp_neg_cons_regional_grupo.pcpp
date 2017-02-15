@@ -1,0 +1,108 @@
+///////////////////////////////////////////////////////////////////////////////
+/**
+ * @modulo  workflow
+ * @usecase readRegEnc
+ * @author  Eder Jani Martins
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:52 $
+ **/
+///////////////////////////////////////////////////////////////////////////////
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <tuxfw.h>
+
+int ConsultaRegionalGrupo( const char *whereClause , XMLGen *Saida )
+{
+   ULOG_START("ConsultaRegionalGrupo()");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR ORA_dsRegionalGrupo[280];
+		VARCHAR ORA_idRegionalGrupo[21];
+		const char*   pzcORA_where;
+	EXEC SQL END DECLARE SECTION;
+
+    ULOGI( "==================================================================");
+    ULOGI( "Inicio do processamento de readRegEnc::ConsultaRegionalGrupo");
+    ULOGI( "$Revision: 1.1 $");
+    ULOGI( "$Date: 2009/07/31 15:33:52 $");
+    ULOGI( "==================================================================");
+
+	sqlca.sqlcode=0;
+	memset( &ORA_dsRegionalGrupo, 0, sizeof(ORA_dsRegionalGrupo) );
+	memset( &ORA_idRegionalGrupo, 0, sizeof(ORA_idRegionalGrupo) );
+	pzcORA_where = whereClause;
+
+	EXEC SQL 
+	DECLARE 
+		ReadRegionalGrupo CURSOR FOR 
+	SELECT 
+        UF.SGUF || ' - ' || PESSOA.NMPESSOA,
+        UFOPERADORA.IDUFOPERADORA
+    FROM 
+        CUSTOMER.UFOPERADORA UFOPERADORA,
+        CUSTOMER.OPERADORA OPERADORA,
+        CUSTOMER.PESSOADEPARA PESSOADEPARA,
+        CUSTOMER.PESSOA PESSOA,
+        APOIO.UF UF
+    WHERE 
+        UFOPERADORA.IDUFOPERADORA
+    NOT IN(
+              SELECT 
+                 IDUFOPERADORA 
+              FROM 
+                 CONTATOADM.UFOPERADORAGRUPO 
+              WHERE 
+                 IDGRUPO = :pzcORA_where
+          )
+    AND
+        UFOPERADORA.IDUFOPERADORA > 0
+    AND
+        UFOPERADORA.IDPESSOADEPARAOPERADORA = OPERADORA.IDPESSOADEPARAOPERADORA
+    AND
+        OPERADORA.IDPESSOADEPARAOPERADORA = PESSOADEPARA.IDPESSOADEPARA
+    AND
+        PESSOADEPARA.IDPESSOA = PESSOA.IDPESSOA
+    AND
+        UFOPERADORA.IDUF = UF.IDUF
+    ORDER BY
+        UF.SGUF, PESSOA.NMPESSOA;
+
+	EXEC SQL OPEN ReadRegionalGrupo;
+
+	EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+   
+	for( ;; )
+	{
+		EXEC SQL 
+		FETCH 
+			ReadRegionalGrupo 
+		INTO 
+			:ORA_dsRegionalGrupo, 
+			:ORA_idRegionalGrupo;
+
+		Saida->createTag( "RegionalVO" );
+		Saida->addItem( "idRegional",(char*)ORA_idRegionalGrupo.arr );
+		Saida->addItem( "descricao" ,(char*)ORA_dsRegionalGrupo.arr );
+		Saida->closeTag();
+
+		memset( &ORA_dsRegionalGrupo, 0, sizeof(ORA_dsRegionalGrupo) );
+		memset( &ORA_idRegionalGrupo, 0, sizeof(ORA_idRegionalGrupo) );
+	}
+	EXEC SQL CLOSE ReadRegionalGrupo;
+	
+	ULOG_END("ConsultaRegionalGrupo()");
+	
+	return 1;
+
+UndefinedError:
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+

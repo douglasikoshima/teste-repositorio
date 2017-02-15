@@ -1,0 +1,136 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:34:44 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+#include "../../AtendimentoCommonsRel/include/cWFComunsRelatorios.h"
+#include "../include/cWFAtendimentoRelIndResumo.h"
+
+bool proCExecutarRelatorioRes( XMLGen *saida, DOMNode *dnode )
+{
+    bool primeiraVez = true;
+    struct sqlca sqlca;
+    string idColunas;
+    string strDiaAtual;
+    string strDtDiaAnterior;
+    string strDtSemanaAnterior;
+
+    int ordem = 0;
+    int linha=0;
+
+    if ( !saida )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !dnode )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    idColunas ="SELECT horario,semanaAnterior"
+                     ",to_char(dtSemanaAnterior,'DD/MM/YYYY') as dtSemanaAnterior"
+                     ",diaAnterior"
+                     ",to_char(dtDiaAnterior,'DD/MM/YYYY') as dtDiaAnterior"
+                     ",diaAtual"
+                     ",to_char(dtAtual,'DD/MM/YYYY') as dtAtual "
+                 "FROM atendimento.AtendimentoIndicadorResV01 ";
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *query;
+
+        VARCHAR horario[7];
+        VARCHAR semanaAnterior[48];
+        VARCHAR dtSemanaAnterior[48];
+        VARCHAR diaAnterior[48];
+        VARCHAR dtDiaAnterior[48];
+        VARCHAR diaAtual[48];
+        VARCHAR dtAtual[48];
+
+        short i_horario;
+        short i_semanaAnterior;
+        short i_dtSemanaAnterior;
+        short i_diaAnterior;
+        short i_dtDiaAnterior;
+        short i_diaAtual;
+        short i_dtAtual;
+
+    EXEC SQL END DECLARE SECTION;
+
+    query = (char*)idColunas.c_str();
+
+    ULOG( "WFATDRELINDRAC=%s",query );
+
+    saida->createTag("WFIndicadoresVO");
+    saida->addProp("xmlns","workflow.fo.vivo.com.br/vo");
+    //saida->addItem("dsTituloIndicadores","Resumo Acompanhamento");
+    //saida->addItem("dsTipoIndicadores","Resumo Acompanhamento");
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdRelSqlErro(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL PREPARE recebeQuery FROM :query;
+    EXEC SQL DECLARE consulta CURSOR FOR recebeQuery;
+
+    EXEC SQL OPEN consulta;
+
+    while (true)
+    {
+        EXEC SQL FETCH consulta INTO :horario:i_horario,
+                                     :semanaAnterior:i_semanaAnterior,
+                                     :dtSemanaAnterior:i_dtSemanaAnterior,
+                                     :diaAnterior:i_diaAnterior,
+                                     :dtDiaAnterior:i_dtDiaAnterior,
+                                     :diaAtual:i_diaAtual,
+                                     :dtAtual:i_dtAtual;
+
+        CONVIND (horario,i_horario);
+        CONVIND (semanaAnterior,i_semanaAnterior);
+        CONVIND (dtSemanaAnterior,i_dtSemanaAnterior);
+        CONVIND (diaAnterior,i_diaAnterior);
+        CONVIND (dtDiaAnterior,i_dtDiaAnterior);
+        CONVIND (diaAtual,i_diaAtual);
+        CONVIND (dtAtual,i_dtAtual);
+
+        saida->createTag("ResumoAcompanhamento");
+        saida->addItem("ordem",++ordem);
+        saida->addItem("horario",(char*)horario.arr);
+        saida->addItem("semanaAnterior",(char*)semanaAnterior.arr);
+        saida->addItem("diaAnterior",(char*)diaAnterior.arr);
+        saida->addItem("dataAtual",(char*)diaAtual.arr);
+        saida->closeTag();
+
+        if ( primeiraVez )
+        {
+            primeiraVez = false;
+
+            strDiaAtual = (string)((char*)dtAtual.arr);
+            strDtDiaAnterior = (string)((char*)dtDiaAnterior.arr);
+            strDtSemanaAnterior = (string)((char*)dtSemanaAnterior.arr);
+        }
+    }
+
+    saida->addItem("dtAtual",(char*)strDiaAtual.c_str());
+    saida->addItem("dtDiaAnterior",(char*)strDtDiaAnterior.c_str());
+    saida->addItem("dtSemanaAnterior",(char*)strDtSemanaAnterior.c_str());
+
+    saida->closeTag(); // WFIndicadoresVO
+
+    EXEC SQL CLOSE consulta;
+
+    return true;
+}

@@ -1,0 +1,422 @@
+///////////////////////////////////////////////////////////////////////////////
+/**
+ * @modulo  Sincronismo
+ * @usecase PessoaLinha
+ * @author  Renato Striitzel Russo
+ * @author  Carlos Eduardo Barbosa Braga
+ * @author  Eder Martins
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:22 $
+ **/
+///////////////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "tuxfw.h"
+#include "PessoaLinhapc.h"
+#include "PrePagoException.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+/********************************************************************************/
+void CPessoaLinhapc::proCAtualizaPessoaLinhaPorIdConta(char *pszIdPessoaDePara, char *pszIdConta)
+{
+    ULOG_START("CPessoaLinhapc::proCAtualizaPessoaLinhaPorIdConta");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoaDePara[LEN_IDPESSOADEPARA];
+        VARCHAR oszIdTipoRelacionamento[LEN_IDTIPORELACIONAMENTO];
+        VARCHAR oszIdConta[LEN_IDCONTA];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+    STRCPY_TO_ORA(oszIdPessoaDePara, pszIdPessoaDePara);
+    STRCPY_TO_ORA(oszIdTipoRelacionamento, ID_TIPO_RELACIONAMENTO_C);
+    STRCPY_TO_ORA(oszIdConta, pszIdConta);
+
+    EXEC SQL UPDATE customer.pessoalinha
+                SET idpessoadepara = :oszIdPessoaDePara
+              WHERE idtiporelacionamento = :oszIdTipoRelacionamento
+                AND idlinhatelefonica IN (SELECT idlinhatelefonica
+                                            FROM customer.linhaconta linhaconta
+                                           WHERE linhaconta.idconta = :oszIdConta
+                                             AND linhaconta.idtiporelacionamento = :oszIdTipoRelacionamento);
+
+    ULOGI("Finalizando proCAtualizaPessoaLinhaPorIdConta <OK>");
+    ULOG_END("CPessoaLinhapc::proCAtualizaPessoaLinhaPorIdConta");
+    return;
+
+    erro:
+        ULOGE("Finalizando proCAtualizaPessoaLinhaPorIdConta <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/********************************************************************************/
+void CPessoaLinhapc::proCInserePessoaLinha(TPessoaLinha *ptPessoaLinha)
+{
+    ULOG_START("CPessoaLinhapc::proCInserePessoaLinha");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoaLinha[LEN_IDPESSOALINHA];
+        VARCHAR oszIdTipoRelacionamento[LEN_IDTIPORELACIONAMENTO];
+        VARCHAR oszIdPessoaDePara[LEN_IDPESSOADEPARA];
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+    STRCPY_TO_ORA(oszIdTipoRelacionamento, ptPessoaLinha->szIdTipoRelacionamento);
+    STRCPY_TO_ORA(oszIdPessoaDePara, ptPessoaLinha->szIdPessoaDePara);
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, ptPessoaLinha->szIdLinhaTelefonica);
+    STRCPY_TO_ORA(oszIdUsuarioAlteracao, ptPessoaLinha->szIdUsuarioAlteracao);
+
+    EXEC SQL INSERT INTO Customer.PessoaLinha
+                       ( idpessoalinha
+                       , dtpessoalinha
+                       , idtiporelacionamento
+                       , idpessoadepara
+                       , idlinhatelefonica
+                       , idusuarioalteracao
+                       , dtultimaalteracao )
+                VALUES ( Customer.PessoaLinhaSq.nextval
+                       , SYSDATE
+                       , :oszIdTipoRelacionamento
+                       , :oszIdPessoaDePara
+                       , :oszIdLinhaTelefonica
+                       , :oszIdUsuarioAlteracao
+                       , SYSDATE )
+             RETURNING idpessoalinha
+                  INTO :oszIdPessoaLinha;
+
+    STRCPY_FROM_ORA(ptPessoaLinha->szIdPessoaLinha, oszIdPessoaLinha);
+
+    ULOGI("Finalizando proCInserePessoaLinha <OK>");
+    ULOG_END("CPessoaLinhapc::proCInserePessoaLinha");
+    return;
+
+    erro:
+        ULOGE("Finalizando proCInserePessoaLinha <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+ 
+/********************************************************************************/
+bool CPessoaLinhapc::proCBuscaPessoaLinha(TPessoaLinha *ptPessoaLinha)
+{
+    ULOG_START("CPessoaLinhapc::proCBuscaPessoaLinha");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoaLinha[LEN_IDPESSOALINHA];
+        VARCHAR oszDtPessoaLinha[LEN_DTPESSOALINHA];
+        VARCHAR oszIdTipoRelacionamento[LEN_IDTIPORELACIONAMENTO];
+        VARCHAR oszIdPessoaDePara[LEN_IDPESSOADEPARA];
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+        VARCHAR oszDtUltimaAlteracao[LEN_DTULTIMAALTERACAO];
+
+        short iIdPessoaLinha = 0;
+        short iDtPessoaLinha = 0;
+        short iIdTipoRelacionamento = 0;
+        short iIdPessoaDePara = 0;
+        short iIdLinhaTelefonica = 0;
+        short iIdUsuarioAlteracao = 0;
+        short iDtUltimaAlteracao = 0;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdTipoRelacionamento, ptPessoaLinha->szIdTipoRelacionamento);
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, ptPessoaLinha->szIdLinhaTelefonica);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    EXEC SQL SELECT TO_CHAR( idpessoalinha        )
+                  , TO_CHAR( dtpessoalinha        , 'DD/MM/YYYY' )
+                  , TO_CHAR( idtiporelacionamento )
+                  , TO_CHAR( idpessoadepara       )
+                  , TO_CHAR( idlinhatelefonica    )
+                  , TO_CHAR( idusuarioalteracao   )
+                  , TO_CHAR( dtultimaalteracao    , 'DD/MM/YYYY' )
+               INTO :oszIdPessoaLinha:iIdPessoaLinha
+                  , :oszDtPessoaLinha:iDtPessoaLinha
+                  , :oszIdTipoRelacionamento:iIdTipoRelacionamento
+                  , :oszIdPessoaDePara:iIdPessoaDePara
+                  , :oszIdLinhaTelefonica:iIdLinhaTelefonica
+                  , :oszIdUsuarioAlteracao:iIdUsuarioAlteracao
+                  , :oszDtUltimaAlteracao:iDtUltimaAlteracao
+               FROM Customer.PessoaLinha
+              WHERE idtiporelacionamento    = TO_NUMBER( :oszIdTipoRelacionamento )
+                AND idlinhatelefonica       = TO_NUMBER( :oszIdLinhaTelefonica );
+
+
+    if( iIdPessoaLinha != -1 ) {
+        STRCPY_FROM_ORA(ptPessoaLinha->szIdPessoaLinha, oszIdPessoaLinha);
+    }
+    if( iDtPessoaLinha != -1 ) {
+        STRCPY_FROM_ORA(ptPessoaLinha->szDtPessoaLinha, oszDtPessoaLinha);
+    }
+    if( iIdTipoRelacionamento != -1 ) {
+        STRCPY_FROM_ORA(ptPessoaLinha->szIdTipoRelacionamento, oszIdTipoRelacionamento);
+    }
+    if( iIdPessoaDePara != -1 ) {
+        STRCPY_FROM_ORA(ptPessoaLinha->szIdPessoaDePara, oszIdPessoaDePara);
+    }
+    if( iIdLinhaTelefonica != -1 ) {
+        STRCPY_FROM_ORA(ptPessoaLinha->szIdLinhaTelefonica, oszIdLinhaTelefonica);
+    }
+    if( iIdUsuarioAlteracao != -1 ) {
+        STRCPY_FROM_ORA(ptPessoaLinha->szIdUsuarioAlteracao, oszIdUsuarioAlteracao);
+    }
+    if( iDtUltimaAlteracao != -1 ) {
+        STRCPY_FROM_ORA(ptPessoaLinha->szDtUltimaAlteracao, oszDtUltimaAlteracao);
+    }
+
+    ULOGI("Finalizando proCBuscaPessoaLinha <FOUND>");
+    ULOG_END("CPessoaLinhapc::proCBuscaPessoaLinha");
+    return true;
+
+    naoexiste:
+        ULOGI("Finalizando proCBuscaPessoaLinha <NOT FOUND>");
+        ULOG_END("CPessoaLinhapc::proCBuscaPessoaLinha");
+        return false;
+
+    erro:
+        ULOGE("Finalizando proCBuscaPessoaLinha <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/********************************************************************************
+* OBSERVACAO: Este metodo retorna o IDPESSOA no lugar do campo IDUSUARIOALTERACAO
+*********************************************************************************/
+bool CPessoaLinhapc::proCBuscaIdClienteUsuario(TPessoaLinhaArr *ptPessoaLinhaArr, TPessoaLinha *ptPessoaLinha)
+{
+    ULOG_START("CPessoaLinhapc::proCBuscaIdClienteUsuario");
+
+    bool blRet;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+		struct
+		{
+			VARCHAR oszIdPessoaLinha[LEN_IDPESSOALINHA];
+			VARCHAR oszDtPessoaLinha[LEN_DTPESSOALINHA];
+			VARCHAR oszIdTipoRelacionamento[LEN_IDTIPORELACIONAMENTO];
+			VARCHAR oszSgTipoRelacionamento[LEN_IDTIPORELACIONAMENTO];
+			VARCHAR oszIdPessoaDePara[LEN_IDPESSOADEPARA];
+			VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+			VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+			VARCHAR oszDtUltimaAlteracao[LEN_DTULTIMAALTERACAO];
+		}stRegistro;
+        struct
+		{
+			short iIdPessoaLinha;
+			short iDtPessoaLinha;
+			short iIdTipoRelacionamento;
+			short iSgTipoRelacionamento;
+			short iIdPessoaDePara;
+			short iIdLinhaTelefonica;
+			short iIdUsuarioAlteracao;
+			short iDtUltimaAlteracao;
+		}stRegistroInd;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+	//Antes de qualquer pesquisa, zera a estrutura
+	desaloca( ptPessoaLinhaArr );
+
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, ptPessoaLinha->szIdLinhaTelefonica);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    EXEC SQL 
+		DECLARE 
+			CursorBuscaIdClienteUsuario CURSOR FOR
+		 SELECT PESSOALINHA.IDPESSOALINHA,
+        TO_CHAR( DTPESSOALINHA    , 'DD/MM/YYYY' ),
+        TIPORELACIONAMENTO.IDTIPORELACIONAMENTO,
+         SGTIPORELACIONAMENTO,
+        PESSOALINHA.IDPESSOADEPARA,
+        LINHATELEFONICA.IDLINHATELEFONICA,
+        PESSOADEPARA.IDPESSOA,
+        TO_CHAR( PESSOALINHA.DTULTIMAALTERACAO, 'DD/MM/YYYY' )
+   FROM CUSTOMER.PESSOADEPARA PESSOADEPARA,
+   		CUSTOMER.PESSOALINHA PESSOALINHA,
+   		LINHA.LINHATELEFONICA LINHATELEFONICA,
+		CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO//--,CUSTOMER.PESSOALINHAB01
+  WHERE PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA
+  	AND	LINHATELEFONICA.IDLINHATELEFONICA = :oszIdLinhaTelefonica
+    AND PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA
+	AND TIPORELACIONAMENTO.IDTIPORELACIONAMENTO = PESSOALINHA.IDTIPORELACIONAMENTO
+    AND PESSOALINHA.IDTIPORELACIONAMENTO IN (
+        SELECT IDTIPORELACIONAMENTO
+		  FROM CUSTOMER.TIPORELACIONAMENTO
+		 WHERE SGTIPORELACIONAMENTO IN ( 'U','C' )
+	  	 )
+       ORDER BY TIPORELACIONAMENTO.SGTIPORELACIONAMENTO;
+
+	EXEC SQL OPEN CursorBuscaIdClienteUsuario;
+
+	for(;;)
+	{
+		//Antes de pesquisar, zeta a estrutura
+		memset( &stRegistro, 0, sizeof( stRegistro ) );
+		EXEC SQL FETCH CursorBuscaIdClienteUsuario INTO :stRegistro:stRegistroInd;
+
+		//Antes de salvar os dados na estrutura, aloca um registro
+		aloca( ptPessoaLinhaArr );
+
+		if( stRegistroInd.iIdPessoaLinha != -1 ) {
+			STRCPY_FROM_ORA(ptPessoaLinhaArr->pztPessoaLinha[ptPessoaLinhaArr->iQuantidade-1].szIdPessoaLinha
+        					, stRegistro.oszIdPessoaLinha);
+		}
+		if( stRegistroInd.iDtPessoaLinha != -1 ) {
+			STRCPY_FROM_ORA(ptPessoaLinhaArr->pztPessoaLinha[ptPessoaLinhaArr->iQuantidade-1].szDtPessoaLinha
+        					, stRegistro.oszDtPessoaLinha);
+		}
+		if( stRegistroInd.iIdTipoRelacionamento != -1 ) {
+			STRCPY_FROM_ORA(ptPessoaLinhaArr->pztPessoaLinha[ptPessoaLinhaArr->iQuantidade-1].szIdTipoRelacionamento
+        					, stRegistro.oszIdTipoRelacionamento);
+		}
+		if( stRegistroInd.iSgTipoRelacionamento != -1 ) {
+			STRCPY_FROM_ORA(ptPessoaLinhaArr->pztPessoaLinha[ptPessoaLinhaArr->iQuantidade-1].szSgTipoRelacionamento
+        					, stRegistro.oszSgTipoRelacionamento);
+		}
+		if( stRegistroInd.iIdPessoaDePara != -1 ) {
+			STRCPY_FROM_ORA(ptPessoaLinhaArr->pztPessoaLinha[ptPessoaLinhaArr->iQuantidade-1].szIdPessoaDePara
+							, stRegistro.oszIdPessoaDePara);
+		}
+		if( stRegistroInd.iIdLinhaTelefonica != -1 ) {
+			STRCPY_FROM_ORA(ptPessoaLinhaArr->pztPessoaLinha[ptPessoaLinhaArr->iQuantidade-1].szIdLinhaTelefonica
+        					, stRegistro.oszIdLinhaTelefonica);
+		}
+		if( stRegistroInd.iIdUsuarioAlteracao != -1 ) {
+			STRCPY_FROM_ORA(ptPessoaLinhaArr->pztPessoaLinha[ptPessoaLinhaArr->iQuantidade-1].szIdUsuarioAlteracao
+        					, stRegistro.oszIdUsuarioAlteracao);
+		}
+		if( stRegistroInd.iDtUltimaAlteracao != -1 ) {
+			STRCPY_FROM_ORA(ptPessoaLinhaArr->pztPessoaLinha[ptPessoaLinhaArr->iQuantidade-1].szDtUltimaAlteracao
+        					, stRegistro.oszDtUltimaAlteracao);
+		}
+	}//for(;;)
+
+	EXEC SQL CLOSE CursorBuscaIdClienteUsuario;
+
+	if( ( blRet = ( ptPessoaLinhaArr->iQuantidade > 0 ? 1 : 0 ) ) == 1 ) {
+		ULOGI("Finalizando proCBuscaIdClienteUsuario <FOUND>");
+    }
+	else {
+        ULOGI("Finalizando proCBuscaIdClienteUsuario <NOT FOUND>");
+    }
+
+    ULOG_END("CPessoaLinhapc::proCBuscaIdClienteUsuario");
+
+    return blRet;
+
+    erro:
+        ULOGE("Finalizando proCBuscaIdClienteUsuario <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/********************************************************************************/
+void CPessoaLinhapc::proCAtualizaPessoaLinha(TPessoaLinha tPessoaLinha)
+{
+    ULOG_START("CPessoaLinhapc::proCAtualizaPessoaLinha");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoaLinha[LEN_IDPESSOALINHA];
+        VARCHAR oszIdPessoaDePara[LEN_IDPESSOADEPARA];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdPessoaLinha, tPessoaLinha.szIdPessoaLinha);
+    STRCPY_TO_ORA(oszIdPessoaDePara, tPessoaLinha.szIdPessoaDePara);
+    STRCPY_TO_ORA(oszIdUsuarioAlteracao, tPessoaLinha.szIdUsuarioAlteracao);
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto erro;
+
+    EXEC SQL UPDATE Customer.PessoaLinha
+                SET
+                   idpessoadepara       = TO_NUMBER(:oszIdPessoaDePara)
+                  , idusuarioalteracao   = TO_NUMBER(:oszIdUsuarioAlteracao)
+                  , dtultimaalteracao    = SYSDATE
+              WHERE idpessoalinha        = TO_NUMBER(:oszIdPessoaLinha);
+
+    ULOGI("Finalizando proCAtualizaPessoaLinha <OK>");
+    ULOG_END("CPessoaLinhapc::proCAtualizaPessoaLinha");
+    return;
+
+    erro:
+        ULOGE("Finalizando proCAtualizaPessoaLinha <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/********************************************************************************/
+void CPessoaLinhapc::proCApagaPessoaLinha(TPessoaLinha tPessoaLinha)
+{
+    ULOG_START("CPessoaLinhapc::proCApagaPessoaLinha");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdTipoRelacionamento[LEN_IDTIPORELACIONAMENTO];
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto erro;
+
+    STRCPY_TO_ORA(oszIdTipoRelacionamento, tPessoaLinha.szIdTipoRelacionamento);
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, tPessoaLinha.szIdLinhaTelefonica);
+
+    EXEC SQL DELETE FROM Customer.PessoaLinha
+                   WHERE idtiporelacionamento = TO_NUMBER(:oszIdTipoRelacionamento)
+                     AND idlinhatelefonica = TO_NUMBER(:oszIdLinhaTelefonica);
+
+    ULOGI("Finalizando proCApagaPessoaLinha <OK>");
+    ULOG_END("CPessoaLinhapc::proCApagaPessoaLinha");
+    return;
+
+    erro:
+        ULOGE("Finalizando proCApagaPessoaLinha <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Métodos para manipular o tipo TPessoaComunicacaoArr
+///////////////////////////////////////////////////////////////////////////////
+void CPessoaLinhapc::desaloca( TPessoaLinhaArr* pztPessoaLinhaArrAux )
+{
+	if( pztPessoaLinhaArrAux != NULL )
+	{
+		if( pztPessoaLinhaArrAux->iQuantidade > 0 )
+		{
+			free( pztPessoaLinhaArrAux->pztPessoaLinha );
+			pztPessoaLinhaArrAux->pztPessoaLinha = 0;
+		}
+
+		pztPessoaLinhaArrAux->iQuantidade = 0;
+	}
+}
+
+void CPessoaLinhapc::aloca( TPessoaLinhaArr* pztPessoaLinhaArrAux )
+{
+	pztPessoaLinhaArrAux->iQuantidade++;
+	pztPessoaLinhaArrAux->pztPessoaLinha = (TPessoaLinha*) realloc( pztPessoaLinhaArrAux->pztPessoaLinha, sizeof(TPessoaLinha)*pztPessoaLinhaArrAux->iQuantidade );
+	memset( &pztPessoaLinhaArrAux->pztPessoaLinha[pztPessoaLinhaArrAux->iQuantidade-1], 0, sizeof(TPessoaLinha) );
+}

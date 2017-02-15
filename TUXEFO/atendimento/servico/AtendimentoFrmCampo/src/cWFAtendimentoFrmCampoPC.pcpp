@@ -1,0 +1,277 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Renato Teixeira
+ * @version $Revision: 1.1.2.1.6.2 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/06 12:36:18 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include"../../../commons/queryMacro.h"
+#include"../../../commons/msgPadrao.h"
+
+#include "../include/cWFAtendimentoFrmCampo.h"
+#include "../include/stWFAtendimentoFrmCampo.h"
+
+void sql_error_WFAtendimentoFrmCampo(sqlca*sqlca);
+
+	// Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+		#include "../include/stWFAtendimentoFrmCampo.h"
+    EXEC SQL END DECLARE SECTION;
+
+int proCIncluirWFAtendimentoFrmCampo(st_AtendimentoFrmCampo* dados, st_vlAtendimentoFrmCampo* status, XMLDPR *xmlDpr)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AtendimentoFrmCampo   oDados;
+		struct st_vlAtendimentoFrmCampo oStatus;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoFrmCampo(&sqlca);
+
+	EXEC SQL SELECT atendimento.AtendimentoFrmCampoSQ.NEXTVAL INTO :oDados.idAtendimentoFrmCampo FROM DUAL;
+
+	EXEC SQL 
+		INSERT INTO
+			atendimento.AtendimentoFrmCampo
+			(
+				idAtendimentoFrmCampo,
+				idAtendimentoFrm,
+				dsValor,
+				idDominio,
+				idUsuarioAlteracao,
+				dtUltimaAlteracao
+			)
+			VALUES
+			(
+				:oDados.idAtendimentoFrmCampo,
+				:oDados.idAtendimentoFrm,
+				DECODE(:oStatus.dsValor, -1, NULL, :oDados.dsValor),
+				DECODE(:oStatus.idDominio, -1, NULL, :oDados.idDominio),
+				DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+                TO_DATE(DECODE(:oStatus.dtUltimaAlteracao, -1, NULL, :oDados.dtUltimaAlteracao),'DD/MM/YYYY HH24:MI:SS')
+			);
+
+    
+    // ==> SM324--DPR--DEZ/2006--Cassio
+    if ( xmlDpr )
+    {
+        AtendimentoFRMCampoDPR atendimentofrmcampodpr;
+
+        atendimentofrmcampodpr.setIdAtendimentoFrmCampo(oDados.idAtendimentoFrmCampo);
+        atendimentofrmcampodpr.setIdAtendimentoFrm(oDados.idAtendimentoFrm);
+        atendimentofrmcampodpr.setIdAtendimento(oDados.idAtendimento);
+        atendimentofrmcampodpr.setIdCampo(oDados.idCampo);
+        atendimentofrmcampodpr.setIdDominio(oDados.idDominio);
+        atendimentofrmcampodpr.setDsValor(oDados.dsValor);
+        atendimentofrmcampodpr.setOpCode(OPCODE_INSERT);
+
+        xmlDpr->atendimentofrmcampovo.inserir(&atendimentofrmcampodpr);
+    }
+    // <== SM324--DPR--DEZ/2006--Cassio
+
+    return true;
+}
+
+bool proCAlterarWFAtendimentoFrmCampo(st_AtendimentoFrmCampo* dados, st_vlAtendimentoFrmCampo* status, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AtendimentoFrmCampo   oDados;
+		struct st_vlAtendimentoFrmCampo oStatus;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoFrmCampo(&sqlca);
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+	sprintf(query,"%s", "UPDATE atendimento.AtendimentoFrmCampo SET ");
+
+	bool separa = false;
+
+	if (status->idAtendimentoFrm != -1) 
+		montaUpdate("idAtendimentoFrm", oDados.idAtendimentoFrm, 1);
+
+	if (status->idCampo != -1) 
+		montaUpdate("idCampo", oDados.idCampo, 1);
+
+	if (status->idUsuarioAlteracao != -1) 
+		montaUpdate("idUsuarioAlteracao", oDados.idUsuarioAlteracao, TIPO_INT);
+
+	if (status->dtUltimaAlteracao != -1) 
+		montaUpdate("dtUltimaAlteracao", oDados.dtUltimaAlteracao, TIPO_DATAHORA);
+
+	sprintf(query, "%s WHERE idAtendimentoFrmCampo = %ld", query, dados->idAtendimentoFrmCampo);
+
+	EXEC SQL EXECUTE IMMEDIATE :query;
+
+	return true;
+}
+
+bool proCExcluirWFAtendimentoFrmCampo(st_AtendimentoFrmCampo* dados, st_vlAtendimentoFrmCampo* status, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAtendimentoFrmCampo = dados->idAtendimentoFrmCampo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoFrmCampo(&sqlca);
+
+	EXEC SQL 
+		DELETE
+			atendimento.AtendimentoFrmCampo
+		WHERE
+			idAtendimentoFrmCampo = :idAtendimentoFrmCampo;
+
+	return true;
+}
+
+bool proCConsultaWFAtendimentoFrmCampo(st_AtendimentoFrmCampo* dados, st_vlAtendimentoFrmCampo* status, char* order, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAtendimentoFrmCampo;
+		long idAtendimentoFrm;
+		int	idCampo;
+		int idUsuarioAlteracao;
+		VARCHAR	dtUltimaAlteracao[256];
+
+		short i_idUsuarioAlteracao;
+		short i_dtUltimaAlteracao;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	sprintf(query,"SELECT idAtendimentoFrmCampo, idAtendimentoFrm, idCampo FROM atendimento.AtendimentoFrmCampo ");
+
+	bool separa = false;
+
+	if (status->idAtendimentoFrmCampo != -1) 
+		montaWhere("idAtendimentoFrmCampo", dados->idAtendimentoFrmCampo, 1);
+
+	if (status->idAtendimentoFrm != -1) 
+		montaWhere("idAtendimentoFrm", dados->idAtendimentoFrm, 1);
+
+	if (status->idCampo != -1) 
+		montaWhere("idCampo", dados->idCampo, 1);
+
+	if (status->idUsuarioAlteracao != -1) 
+		montaWhere("idUsuarioAlteracao", dados->idUsuarioAlteracao, TIPO_INT);
+
+	if (status->dtUltimaAlteracao != -1) 
+		montaWhere("dtUltimaAlteracao", dados->dtUltimaAlteracao, TIPO_DATAHORA);
+
+	if (strlen(order) > 0) 
+		sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoFrmCampo(&sqlca);
+
+	EXEC SQL PREPARE consultaAtendimentoFrmCampo FROM :query;
+	EXEC SQL DECLARE consulta CURSOR FOR consultaAtendimentoFrmCampo;
+
+	EXEC SQL OPEN consulta;
+
+	while (true)
+	{
+		EXEC SQL FETCH consulta INTO 
+									:idAtendimentoFrmCampo, 
+									:idAtendimentoFrm, 
+									:idCampo,
+									:idUsuarioAlteracao:i_idUsuarioAlteracao,
+									:dtUltimaAlteracao:i_dtUltimaAlteracao;
+
+		CONVIND(dtUltimaAlteracao, i_dtUltimaAlteracao);
+
+		saida->createTag("WFAtendimentoFrmCampoVO");
+			saida->addItem("idAtendimentoFrmCampo", idAtendimentoFrmCampo);
+			saida->addItem("idAtendimentoFrm", idAtendimentoFrm);
+			saida->addItem("idCampo", idCampo);
+			saida->addItem("idUsuarioAlteracao", idUsuarioAlteracao);
+			saida->addItem("dtUltimaAlteracao", (char*)dtUltimaAlteracao.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE consulta;
+
+	return true;
+
+}
+
+bool proCObtemWFDominioCampo(int sIdCampo, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int	idCampo = sIdCampo;
+		int	idTabelaDominio;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoFrmCampo(&sqlca);
+
+	EXEC SQL DECLARE consultaAtendimentoFrmCampo CURSOR FOR 
+		select 
+			idTabelaDominio 
+		from 
+			contatoadm.campodominio 
+		where 
+			idCampo = :idCampo;
+
+	EXEC SQL OPEN consultaAtendimentoFrmCampo;
+
+	while (true)
+	{
+		EXEC SQL FETCH consultaAtendimentoFrmCampo INTO :idTabelaDominio;
+
+		saida->createTag("WFCampoDominioVO");
+			saida->addItem("idTabelaDominio", idTabelaDominio);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE consultaAtendimentoFrmCampo;
+
+	return true;
+
+}
+
+
+void sql_error_WFAtendimentoFrmCampo(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

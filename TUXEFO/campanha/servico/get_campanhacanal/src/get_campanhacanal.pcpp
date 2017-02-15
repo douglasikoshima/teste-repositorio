@@ -1,0 +1,88 @@
+//
+// $Id: get_campanhacanal.pcpp,v 1.1 2009/07/31 15:33:50 a5110702 Exp $
+//
+
+#include "../../negocio/cmputil/include/campanha.hpp"
+
+int get_listacampanhacanal(char * usuario,DOMNode*dnode,XMLGen*xml)
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR cdCanal[255+1];
+			VARCHAR nmCanal[255+1];
+			VARCHAR idCanalCampanha[21+1];
+			VARCHAR sqApresentacao[21+1];
+		}stGeral;
+		char idSubCampanhaHistorico[255+1];
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	
+  	get_tag(idSubCampanhaHistorico, dnode, "idSubCampanha", 0, 0);
+
+	EXEC SQL 
+		DECLARE CursorCanalCampanha CURSOR FOR
+	SELECT 
+		CANALCAMPANHA.IDCANALCAMPANHA,
+		CANALCAMPANHA.SQAPRESENTACAO,
+		CANAL.CDCANAL||'-'||UF.SGUF ,
+		CANAL.NMCANAL||'-'||UF.SGUF 
+	FROM 
+		CAMPANHA.CANALCAMPANHA CANALCAMPANHA,
+		CAMPANHA.CANALUFOPERADORA CANALUFOPERADORA,
+		APOIO.CANAL CANAL,
+		APOIO.UF UF,
+		CUSTOMER.UFOPERADORA UFOPERADORA
+	WHERE
+		CANALCAMPANHA.IDCANALUFOPERADORA = CANALUFOPERADORA.IDCANALUFOPERADORA
+	AND
+		CANALUFOPERADORA.IDCANAL = CANAL.IDCANAL
+	AND
+		CANALUFOPERADORA.IDUFOPERADORA = UFOPERADORA.IDUFOPERADORA
+	AND
+		UFOPERADORA.IDUF = UF.IDUF
+	AND
+		CANALCAMPANHA.IDSUBCAMPANHAHISTORICO = :idSubCampanhaHistorico
+	AND 
+		CANALCAMPANHA.IDCANALCAMPANHA NOT IN 
+		(
+		    SELECT 
+		        IDCANALCAMPANHA
+			FROM
+		        CAMPANHA.CANALCAMPANHA
+			WHERE 
+		        INATIVO = 0
+		)
+	ORDER BY 4;
+	
+	EXEC SQL OPEN CursorCanalCampanha;
+	
+	xml->addItem("nome","CANALCAMPANHA");
+	
+	for(;;) 
+	{
+	  	memset( &stGeral, 0, sizeof( stGeral ) );
+	  	EXEC SQL 
+	  	FETCH 
+	  		CursorCanalCampanha 
+	  	INTO 
+	  		:stGeral.idCanalCampanha, 
+	  		:stGeral.sqApresentacao, 
+	  		:stGeral.cdCanal, 
+	  		:stGeral.nmCanal;
+	
+	   xml->createTag("tns:ApoioVO");
+	       xml->addItem("codigo",(char *)stGeral.idCanalCampanha.arr);
+	       xml->addItem("sigla",(char *)stGeral.cdCanal.arr);
+	       xml->addItem("descricao",(char *)stGeral.nmCanal.arr);
+	       xml->addItem("peso","null");
+	       xml->addItem("variante","null");
+	   xml->closeTag();
+	
+	}
+	EXEC SQL CLOSE CursorCanalCampanha;
+  
+  return 1;
+}

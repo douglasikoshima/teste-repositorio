@@ -1,0 +1,214 @@
+/**
+ * @modulo  Clientes
+ * @usecase Aba Tracking
+ * @remark  Rotinas básicas DAO para a tabela OrdemNotaFiscal
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:17 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../include/OrdemNotaFiscalpc.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+
+    #include "../include/GlobalPedido.h"
+
+    struct TOrdemNotaFiscalOra
+    {
+        VARCHAR cdCpfCnpj[LEN_CDCPFCNPJ+LEN_EOS];
+        VARCHAR idNotaFiscal[LEN_IDNOTAFISCAL+LEN_EOS];
+        VARCHAR idOrdemVenda[LEN_IDORDEMVENDA+LEN_EOS];
+        VARCHAR serieNotaFiscal[LEN_SERIENOTAFISCAL+LEN_EOS];
+        VARCHAR vlParcela[LEN_VLPARCELA+LEN_EOS];
+        VARCHAR vlTotalNotaFiscal[LEN_VLTOTALNOTAFISCAL+LEN_EOS];
+    };
+
+    struct TOrdemNotaFiscalStatusOra
+    {
+        short cdCpfCnpj;
+        short idNotaFiscal;
+        short idOrdemVenda;
+        short serieNotaFiscal;
+        short vlParcela;
+        short vlTotalNotaFiscal;
+    };
+
+EXEC SQL END DECLARE SECTION;
+
+//==============================================================================
+int COrdemNotaFiscalpc::procBuscarLstOrdemNotaFiscal(struct DadosParametros *pDadosParametros
+                                                    ,VEC_TORDEMNOTAFISCAL &vecTOrdemNotaFiscal)
+{
+    ULOG_START("COrdemNotaFiscalpc::procBuscarLstOrdemNotaFiscal()");
+
+    if ( 0 == *pDadosParametros->nrDoc )
+    {
+        throw new TuxException("24E9999","Número do documento não fornecido para busca de nf de ordem de venda.");
+    }
+
+    if ( 0 == *pDadosParametros->idOrdemVenda )
+    {
+        throw new TuxException("24E9999","ID da ordem de venda não fornecido para busca de nf de ordem de venda.");
+    }
+
+    if ( 0 == *pDadosParametros->nrNotaFiscal )
+    {
+        throw new TuxException("24E9999","Número da nota fiscal não fornecido para busca de nf de ordem de venda.");
+    }
+
+    int retorno = RET_SUCESSO;
+    int nLinhas = 0;
+    struct sqlca sqlca;
+    TOrdemNotaFiscal tOrdemNotaFiscal;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct TOrdemNotaFiscalOra tOrdemNotaFiscalOra;
+        struct TOrdemNotaFiscalStatusOra tOrdemNotaFiscalStatusOra;
+
+        const char *pOraCdCpfCnpj    = pDadosParametros->nrDoc;
+        const char *pOraIdOrdemVenda = pDadosParametros->idOrdemVenda;
+        const char *pOraIdNotaFiscal = pDadosParametros->nrNotaFiscal;
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("         nrDoc = '%s'",pDadosParametros->nrDoc);
+    ULOG("  idOrdemVenda = '%s'",pDadosParametros->idOrdemVenda);
+    ULOG("  nrNotaFiscal = '%s'",pDadosParametros->nrNotaFiscal);
+
+    memset( &tOrdemNotaFiscalOra, 0, sizeof(tOrdemNotaFiscalOra) );
+    memset( &tOrdemNotaFiscalStatusOra,-1, sizeof(tOrdemNotaFiscalStatusOra) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO erro;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            ORDEMNOTAFISCAL.CDCPFCNPJ,
+            ORDEMNOTAFISCAL.IDNOTAFISCAL,
+            ORDEMNOTAFISCAL.IDORDEMVENDA,
+            ORDEMNOTAFISCAL.SERIENOTAFISCAL,
+            RTRIM(LTRIM(TO_CHAR(ORDEMNOTAFISCAL.VLPARCELA,'9999,999,999,990.00MI'))) AS VLPARCELA,
+            RTRIM(LTRIM(TO_CHAR(ORDEMNOTAFISCAL.VLTOTALNOTAFISCAL,'9999,999,999,990.00MI'))) AS VLTOTALNOTAFISCAL
+        INTO
+            :tOrdemNotaFiscalOra:tOrdemNotaFiscalStatusOra
+        FROM
+            RETENCAO.ORDEMNOTAFISCAL ORDEMNOTAFISCAL
+        WHERE
+            ORDEMNOTAFISCAL.IDORDEMVENDA = :pOraIdOrdemVenda
+        AND ORDEMNOTAFISCAL.IDNOTAFISCAL = :pOraIdNotaFiscal
+        AND ORDEMNOTAFISCAL.CDCPFCNPJ = :pOraCdCpfCnpj;
+
+    if ( 0 == sqlca.sqlcode )
+    {
+        CONVIND(tOrdemNotaFiscalOra.cdCpfCnpj,tOrdemNotaFiscalStatusOra.cdCpfCnpj);
+        CONVIND(tOrdemNotaFiscalOra.idNotaFiscal,tOrdemNotaFiscalStatusOra.idNotaFiscal);
+        CONVIND(tOrdemNotaFiscalOra.idOrdemVenda,tOrdemNotaFiscalStatusOra.idOrdemVenda);
+        CONVIND(tOrdemNotaFiscalOra.serieNotaFiscal,tOrdemNotaFiscalStatusOra.serieNotaFiscal);
+        CONVIND(tOrdemNotaFiscalOra.vlParcela,tOrdemNotaFiscalStatusOra.vlParcela);
+        CONVIND(tOrdemNotaFiscalOra.vlTotalNotaFiscal,tOrdemNotaFiscalStatusOra.vlTotalNotaFiscal);
+
+        tOrdemNotaFiscal.setCdCpfCnpj(tOrdemNotaFiscalOra.cdCpfCnpj.arr);
+        tOrdemNotaFiscal.setIdNotaFiscal(tOrdemNotaFiscalOra.idNotaFiscal.arr);
+        tOrdemNotaFiscal.setIdOrdemVenda(tOrdemNotaFiscalOra.idOrdemVenda.arr);
+        tOrdemNotaFiscal.setSerieNotaFiscal(tOrdemNotaFiscalOra.serieNotaFiscal.arr);
+        tOrdemNotaFiscal.setVlParcela(tOrdemNotaFiscalOra.vlParcela.arr);
+        tOrdemNotaFiscal.setVlTotalNotaFiscal(tOrdemNotaFiscalOra.vlTotalNotaFiscal.arr);
+
+        vecTOrdemNotaFiscal.push_back(tOrdemNotaFiscal);
+    }
+    else
+    {
+        //tOrdemNotaFiscal.setIdNotaFiscal((unsigned char*)pDadosParametros->nrNotaFiscal);
+
+        retorno = RET_NAO_EXISTEM_DADOS;
+    }
+
+    ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+    ULOG("retorno=%d",retorno);
+
+    ULOG_END("COrdemNotaFiscalpc::procBuscarLstOrdemNotaFiscal()");
+
+    return retorno;
+
+    erro:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("COrdemNotaFiscalpc::procBuscarLstOrdemNotaFiscal()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+//==============================================================================
+int COrdemNotaFiscalpc::procBuscarValorTotalParcelas(struct DadosParametros *pDadosParametros
+                                                    ,VEC_TORDEMNOTAFISCAL &vecTOrdemNotaFiscal)
+{
+    ULOG_START("COrdemNotaFiscalpc::procBuscarValorTotalParcelas()");
+
+    if ( 0 == *pDadosParametros->nrDoc )
+    {
+        throw new TuxException("24E9999","Número do documento não fornecido para busca de nf de ordem de venda.");
+    }
+
+    if ( 0 == *pDadosParametros->idOrdemVenda )
+    {
+        throw new TuxException("24E9999","ID da ordem de venda não fornecido para busca de nf de ordem de venda.");
+    }
+
+    int retorno = RET_SUCESSO;
+    int nLinhas = 0;
+    struct sqlca sqlca;
+    TOrdemNotaFiscal tOrdemNotaFiscal;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR vlTotalParcelas[LEN_VLPARCELA+LEN_EOS];
+        short i_vlTotalParcelas = -1;
+
+        const char *pOraCdCpfCnpj    = pDadosParametros->nrDoc;
+        const char *pOraIdOrdemVenda = pDadosParametros->idOrdemVenda;
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("         nrDoc = '%s'",pDadosParametros->nrDoc);
+    ULOG("  idOrdemVenda = '%s'",pDadosParametros->idOrdemVenda);
+
+    EXEC SQL WHENEVER SQLERROR GOTO erro;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            TRIM(TO_CHAR(SUM(ORDEMNOTAFISCAL.VLPARCELA),'9999,999,999,990.00MI')) AS TOTALPARCELAS
+        INTO
+            :vlTotalParcelas:i_vlTotalParcelas
+        FROM
+            RETENCAO.ORDEMNOTAFISCAL ORDEMNOTAFISCAL
+        WHERE
+            ORDEMNOTAFISCAL.IDORDEMVENDA = :pOraIdOrdemVenda
+        AND ORDEMNOTAFISCAL.CDCPFCNPJ = :pOraCdCpfCnpj;
+
+    if ( 0 == sqlca.sqlcode )
+    {
+        CONVIND(vlTotalParcelas,i_vlTotalParcelas);
+
+        tOrdemNotaFiscal.setVlTotalNotaFiscal(vlTotalParcelas.arr);
+    }
+    else
+    {
+        retorno = RET_NAO_EXISTEM_DADOS;
+    }
+
+    vecTOrdemNotaFiscal.push_back(tOrdemNotaFiscal);
+
+    ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+    ULOG("retorno=%d",retorno);
+
+    ULOG_END("COrdemNotaFiscalpc::procBuscarValorTotalParcelas()");
+
+    return retorno;
+
+    erro:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("COrdemNotaFiscalpc::procBuscarValorTotalParcelas()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

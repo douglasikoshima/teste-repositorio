@@ -1,0 +1,201 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+#include <string>
+
+using namespace std;
+
+#include"../../../commons/queryMacro.h"
+
+void sql_error_WFOperadoras(sqlca*sqlca);
+
+bool proCPesquisaTabelaUFRegional(DOMNode*entrada,XMLGen* saida)
+{
+	TuxHelper tx;
+    char *p = entrada ? tx.walkTree( entrada, "idOperadora", 0 ) : 0;
+	struct sqlca sqlca;
+    string strQuery;
+    char strTemp[256];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idGrupoOperadora = 0;
+		
+		int idufoperadora;
+		VARCHAR dsregional[256];
+
+		short i_idufoperadora;
+		short i_dsregional;
+		
+		const char *query;
+
+    EXEC SQL END DECLARE SECTION;
+
+   if ( p )
+   {
+      idGrupoOperadora = atoi(p);
+      XMLString::release(&p);
+   }
+
+    // @Marcelo Retirar bzero1
+   strQuery = "SELECT"
+              "   UFOPERADORA.IDUFOPERADORA,"
+              "   UF.SGUF || ' - ' || GRUPOOPERADORA.NMGRUPOOPERADORA DSREGIONAL"
+              " FROM "
+              "   CUSTOMER.GRUPOOPERADORA GRUPOOPERADORA,"
+              "   CUSTOMER.OPERADORA OPERADORA,"
+              "   APOIO.UF UF,"
+              "   CUSTOMER.UFOPERADORA UFOPERADORA,"
+              "   CUSTOMER.PESSOADEPARA PESSOADEPARA,"
+              "("
+              "     SELECT"
+              "        PESSOAB0.IDPESSOA"
+              "     FROM"
+              "        APOIO.PROBABILIDADE PROBABILIDADEB0,"
+              "        APOIO.PROBABILIDADE PROBABILIDADEB02,"
+              "        APOIO.SISTEMAORIGEM SISTEMAORIGEMB0,"
+              "        APOIO.TIPOCARTEIRA TIPOCARTEIRAB0,"
+              "        APOIO.TIPOPESSOA TIPOPESSOAB0,"
+              "        APOIO.UF UFB0,"
+              "        CUSTOMER.PESSOA PESSOAB0"
+              "        WHERE PESSOAB0.IDCHURNPROBABILIDADE = PROBABILIDADEB0.IDPROBABILIDADE "
+              "        AND PESSOAB0.IDPROBINADIMPLENCIA = PROBABILIDADEB02.IDPROBABILIDADE "
+              "        AND PESSOAB0.IDSISTEMAORIGEM = SISTEMAORIGEMB0.IDSISTEMAORIGEM "
+              "        AND PESSOAB0.IDTIPOCARTEIRA = TIPOCARTEIRAB0.IDTIPOCARTEIRA "
+              "        AND PESSOAB0.IDTIPOPESSOA = TIPOPESSOAB0.IDTIPOPESSOA "
+              "        AND PESSOAB0.IDUF = UFB0.IDUF "
+              ") PESSOAB1, "
+              "( "
+              "SELECT"
+              "   PESSOAB0.IDPESSOA "
+              "FROM"
+              "   APOIO.PROBABILIDADE PROBABILIDADEB0,"
+              "   APOIO.PROBABILIDADE PROBABILIDADEB02,"
+              "   APOIO.SISTEMAORIGEM SISTEMAORIGEMB0,"
+              "   APOIO.TIPOCARTEIRA TIPOCARTEIRAB0,"
+              "   APOIO.TIPOPESSOA TIPOPESSOAB0,"
+              "   APOIO.UF UFB0,"
+              "   CUSTOMER.PESSOA PESSOAB0 "
+              "WHERE PESSOAB0.IDCHURNPROBABILIDADE = PROBABILIDADEB0.IDPROBABILIDADE "
+              "AND PESSOAB0.IDPROBINADIMPLENCIA = PROBABILIDADEB02.IDPROBABILIDADE "
+              "AND PESSOAB0.IDSISTEMAORIGEM = SISTEMAORIGEMB0.IDSISTEMAORIGEM "
+              "AND PESSOAB0.IDTIPOCARTEIRA = TIPOCARTEIRAB0.IDTIPOCARTEIRA "
+              "AND PESSOAB0.IDTIPOPESSOA = TIPOPESSOAB0.IDTIPOPESSOA "
+              "AND PESSOAB0.IDUF = UFB0.IDUF "
+              ") PESSOAB2 "
+              "WHERE "
+              "   UFOPERADORA.IDUF = UF.IDUF "
+              "AND "
+              "   UFOPERADORA.IDPESSOADEPARAOPERADORA = OPERADORA.IDPESSOADEPARAOPERADORA "
+              "AND "
+              "   OPERADORA.IDGRUPOOPERADORA = GRUPOOPERADORA.IDGRUPOOPERADORA "
+              "AND "
+              "   OPERADORA.IDPESSOADEPARAOPERADORA = PESSOADEPARA.IDPESSOADEPARA "
+              "AND "
+              "   PESSOADEPARA.IDPESSOA = PESSOAB1.IDPESSOA "
+              "AND "
+              "   PESSOADEPARA.IDPESSOAORIGEM = PESSOAB2.IDPESSOA "
+              "AND "
+              "   GRUPOOPERADORA.IDGRUPOOPERADORA";
+
+    if ( idGrupoOperadora > 0 )
+    {
+        // sprintf(  query, "SELECT IDUFOPERADORA, SGUF || ' - ' || NMGRUPOOPERADORA DSREGIONAL FROM CUSTOMER.UFOPERADORAB01 WHERE idGrupoOperadora = %d", idGrupoOperadora );
+        // sprintf( query, "%s = %d", strQuery.c_str(), idGrupoOperadora );
+
+        sprintf(strTemp," = %d",idGrupoOperadora);
+        strQuery += strTemp;
+    }
+    else   
+    {
+        // sprintf( query, "%s > 0 ORDER BY DSREGIONAL", strQuery.c_str() );
+        strQuery += " > 0 ";
+    }
+
+    strQuery += " ORDER BY DSREGIONAL";
+
+    query = strQuery.c_str();
+
+    ULOG("query=%s",strQuery.c_str());
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFOperadoras(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL PREPARE consultaUFOperadora FROM :query;
+    EXEC SQL DECLARE ReadRegionais CURSOR FOR consultaUFOperadora;
+
+    EXEC SQL OPEN ReadRegionais;
+    for ( ;; )
+
+	{
+		EXEC SQL FETCH ReadRegionais INTO :idufoperadora:i_idufoperadora, 
+		                                  :dsregional:i_dsregional;
+
+      CONVIND( dsregional,i_dsregional );
+      
+      saida->createTag("WFRelatoriosFiltroRegionalVO");
+      	saida->addItem( "idRegional",idufoperadora );
+      	saida->addItem( "dsRegional",(char *)dsregional.arr );
+      saida->closeTag();
+   }
+   EXEC SQL CLOSE ReadRegionais;
+		
+	return true;
+
+}
+
+bool proCPesquisaOperadoras(DOMNode*entrada,XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idufoperadora;
+		VARCHAR dsOperadora[256];
+
+		short i_idufoperadora;
+		short i_dsOperadora;
+		
+		char query[2049];
+
+    EXEC SQL END DECLARE SECTION;
+
+   sprintf( query, "SELECT idGrupoOperadora, nmGrupoOperadora FROM Customer.GrupoOperadora WHERE idGrupoOperadora > 0" );
+
+   EXEC SQL WHENEVER SQLERROR  DO sql_error_WFOperadoras(&sqlca);
+   EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+   EXEC SQL PREPARE ConsultaOperadoras FROM :query;
+   EXEC SQL DECLARE ReadOperadoras CURSOR FOR ConsultaOperadoras;
+   
+   EXEC SQL OPEN ReadOperadoras;
+   for ( ;; )
+	{
+		EXEC SQL FETCH ReadOperadoras INTO :idufoperadora:i_idufoperadora, 
+		                                   :dsOperadora:i_dsOperadora;
+
+      CONVIND( dsOperadora,i_dsOperadora );
+      
+      saida->createTag("WFRelatoriosFiltroOperadoraVO");
+      	saida->addItem( "idOperadora",idufoperadora );
+      	saida->addItem( "dsOperadora",(char *)dsOperadora.arr );
+      saida->closeTag();
+   }
+   EXEC SQL CLOSE ReadOperadoras;
+		
+	return true;
+
+}
+
+void sql_error_WFOperadoras(sqlca*sqlca)
+{
+        ULOGE("sql_error_WFAtdInBoxAdq:sqlcode=%d,sqlerrmc=%.70s"
+                            ,sqlca->sqlcode
+                            ,sqlca->sqlerrm.sqlerrmc);
+
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

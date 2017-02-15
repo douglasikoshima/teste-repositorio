@@ -1,0 +1,74 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1.118.1 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/06 12:36:43 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+#include "../include/cWFAtdDetAcaoEx.h"
+
+void sql_error_WFDetAcao(sqlca*sqlca);
+
+// Esta operação devolve true se o usuário informado participar de ao menos
+// um dos grupos de abertura configurados na fase TRATAMENTO da árvore de 
+// contato ou false em caso contrário.
+bool proCUsuarioPossuiPerfilAbertura(int _idPessoaUsuario,int _idContato)
+{
+    ULOG_START("proCUsuarioPossuiPerfilAbertura()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int count;
+        int idPessoaUsuario = _idPessoaUsuario;
+        int idContato = _idContato;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFDetAcao(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT /*+ NO_CPU_COSTING */
+             COUNT(1)
+        INTO
+            :count
+        FROM 
+             ACESSO.USUARIOGRUPO USUARIOGRUPO
+            ,CONTATOADM.CONTATOGRUPO CONTATOGRUPO
+            ,CONTATOADM.SEQUENCIA SEQUENCIA
+        WHERE 
+            USUARIOGRUPO.IDPESSOAUSUARIO = :idPessoaUsuario
+        AND USUARIOGRUPO.IDGRUPO = CONTATOGRUPO.IDGRUPO
+        AND CONTATOGRUPO.IDCONTATOGRUPO = SEQUENCIA.IDCONTATOGRUPO
+        AND CONTATOGRUPO.IDCONTATO = :idContato
+        AND SEQUENCIA.IDTIPOSEQUENCIA = 1 // 1 = FASE ABERTURA
+        AND ROWNUM < 2;
+
+    ULOG_END("proCUsuarioPossuiPerfilAbertura()"); 
+
+    return count == 0 ? false : true;
+}
+
+void sql_error_WFDetAcao(sqlca*sqlca)
+{
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOGE("sql_error_WFDetAcao:sqlcode=%d,sqlerrmc=%.70s"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

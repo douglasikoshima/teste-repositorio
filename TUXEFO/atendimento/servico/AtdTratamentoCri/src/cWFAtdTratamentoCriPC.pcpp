@@ -1,0 +1,1187 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+
+#include "../include/cWFAtdTratamentoCri.h"
+#include "../include/stWFAtdTratamentoCri.h"
+
+void sql_error_WFAtdTratamentoCri(sqlca*sqlca);
+
+    // Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+        #include "../include/stWFAtdTratamentoCri.h"
+    EXEC SQL END DECLARE SECTION;
+
+long proCIncluirWFAtendimentoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status)
+{
+
+    ULOG_START( "proCIncluirWFAtendimentoCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG("IdAtendimento=%ld",oDados.idAtendimento);
+    ULOG("idPessoaUsuario=%ld",oDados.idPessoaUsuario);
+    ULOG("idPessoaLinhaHistorico=%ld",oDados.idPessoaLinhaHistorico);
+    ULOG("idUsuarioAlteracao=%d",oDados.idUsuarioAlteracao);
+    ULOG("DataAbertura=%s",oDados.dtAbertura);
+    ULOG("dtPrazoCri=%s",oDados.dtPrazoCri);
+    ULOG("DataAlteracao=%s",oDados.dtUltimaAlteracao);
+
+    EXEC SQL 
+        INSERT INTO
+            atendimento.AtendimentoCri
+            (
+                idAtendimento,
+                idPessoaUsuario,
+                idPessoaLinhaHistorico,
+                dtAbertura,
+                dtPrazoCri,
+                idUsuarioAlteracao,
+                dtUltimaAlteracao,
+                qtEnvioBko
+            )
+            VALUES
+            (
+                :oDados.idAtendimento,
+                :oDados.idPessoaUsuario,
+                :oDados.idPessoaLinhaHistorico,
+                TO_DATE(:oDados.dtAbertura,'DD/MM/YYYY HH24:MI:SS'),
+                TO_DATE(:oDados.dtPrazoCri,'DD/MM/YYYY HH24:MI:SS'),
+                DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+                TO_DATE(:oDados.dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS'),
+                0
+            );
+
+    ULOG_END( "proCIncluirWFAtendimentoCri()" );
+
+    return oDados.idAtendimento;
+}
+
+void proCAtualizarDataPrazoCRI(long _idAtendimento)
+{
+    ULOG_START( "proCAtualizarDataPrazoCRI()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = _idAtendimento;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG( "idAtendimento=%lu",idAtendimento );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtdTratamentoCri(&sqlca);
+    //
+    // A partir da correção da incidência 3221, o encaminhamento estará
+    // usando a coluna DTABERTURA de GRUPOCRI para verificar a regra de
+    // encaminhamento para inbox de CRI dentro do prazo parametrizado.
+    // Marco, 2006 - Cassio
+    //
+    //EXEC SQL
+    //  UPDATE
+    //        ATENDIMENTO.ATENDIMENTOCRI
+    //    SET
+    //        DTPRAZOCRI=SYSDATE
+    //   WHERE
+    //        IDATENDIMENTO = :idAtendimento;
+
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.GRUPOCRI
+        SET
+            DTABERTURA = SYSDATE,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE
+            IDATENDIMENTO = :idAtendimento;
+
+    ULOG_END( "proCAtualizarDataPrazoCRI()" );
+}
+
+int proCIncrementarQtEnvioBKO(long _idAtendimento)
+{
+    ULOG_START( "proCIncrementarQtEnvioBKO()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = _idAtendimento;
+        int qtEnvioBKO=0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    EXEC SQL
+       SELECT
+            QTENVIOBKO
+       INTO
+            :qtEnvioBKO
+       FROM
+            ATENDIMENTO.ATENDIMENTOCRI
+       WHERE
+            IDATENDIMENTO = :idAtendimento;
+
+    if ( sqlca.sqlcode == 0 )
+    {
+        qtEnvioBKO++;
+
+        EXEC SQL
+           UPDATE
+                ATENDIMENTO.ATENDIMENTOCRI
+           SET
+                QTENVIOBKO = :qtEnvioBKO,
+                DTULTIMAALTERACAO = SYSDATE
+           WHERE
+                IDATENDIMENTO = :idAtendimento;
+    }
+
+    ULOG_END( "proCIncrementarQtEnvioBKO()" );
+
+    return sqlca.sqlcode == 0 ? qtEnvioBKO : -1;
+}
+
+bool proCProcessoDentroPrazoRetornoInbox(long _idAtendimento)
+{
+    ULOG_START( "proCProcessoDentroPrazoRetornoInbox()" );
+
+    bool retorno = false;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = _idAtendimento;
+        int nrRegistros=0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    EXEC SQL
+       SELECT
+            COUNT(1)
+       INTO
+            :nrRegistros
+       FROM
+            ATENDIMENTO.GRUPOCRI GRUPOCRI
+       WHERE
+            GRUPOCRI.IDATENDIMENTO = :idAtendimento;
+    
+    if ( nrRegistros > 0 )
+    {
+        EXEC SQL
+           SELECT
+                COUNT(1)
+           INTO
+                :nrRegistros
+           FROM
+                ATENDIMENTO.GRUPOCRI GRUPOCRI
+           WHERE
+                GRUPOCRI.IDATENDIMENTO = :idAtendimento
+           AND 
+                ((TRUNC (SYSDATE - GRUPOCRI.DTABERTURA))) <=
+                                               (SELECT QTDIAS
+                                                  FROM ATENDIMENTO.PRAZOATENDIMENTOCRI);
+        if ( !sqlca.sqlcode && nrRegistros > 0 )
+        {
+            ULOG( "processo dentro do prazo para retornar para inbox de CRI" );
+            retorno = true;
+        }
+        else
+        {
+            ULOG( "processo FORA do prazo para retornar para inbox de CRI" );
+        }
+    }
+    else
+    {
+        ULOG( "processo nao eh CRI" );
+        retorno = false;
+    }
+
+    ULOG_END( "proCProcessoDentroPrazoRetornoInbox()" );
+
+    return retorno;
+}
+
+long proCIncluirWFAtendimentoTratamentoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status)
+{
+    ULOG_START( "proCIncluirWFAtendimentoTratamentoCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "DataAbertura=%s",oDados.dtAbertura );
+    ULOG( "DataAlteracao=%s",oDados.dtUltimaAlteracao );
+
+    EXEC SQL 
+        INSERT INTO
+            atendimento.TratamentoCri
+            (
+                idAtendimento,
+                idPessoaUsuario,
+                idUsuarioAlteracao,
+                dtUltimaAlteracao
+            )
+            VALUES
+            (
+                :oDados.idAtendimento,
+                :oDados.idPessoaUsuario,
+                DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+                TO_DATE(:oDados.dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS')
+            );
+
+    ULOG_END( "proCIncluirWFAtendimentoTratamentoCri()" );
+
+    return oDados.idAtendimento;
+}
+
+
+long proCIncluirWFAtendimentoTratamentoGrupoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status)
+{
+    ULOG_START( "proCIncluirWFAtendimentoTratamentoGrupoCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "DataAlteracao=%s",oDados.dtUltimaAlteracao );
+
+    EXEC SQL 
+        INSERT INTO
+            atendimento.TratamentoGrupoCri
+            (
+                idAtendimento,
+                idGrupo,
+                idUsuarioAlteracao,
+                dtUltimaAlteracao
+            )
+            VALUES
+            (
+                :oDados.idAtendimento,
+                :oDados.idGrupo,
+                DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+                TO_DATE(:oDados.dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS')
+            );
+
+    ULOG_END( "proCIncluirWFAtendimentoTratamentoGrupoCri()" );
+
+    return oDados.idAtendimento;
+}
+
+long proCAlterarWFAtendimentoGrupoAtualCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status)
+{
+    ULOG_START( "proCAlterarWFAtendimentoGrupoAtualCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idGrupo [%d],idUsuarioAlteracao [%d],dtUltimaAlteracao[%s]"
+            ,oDados.idGrupo, oDados.idUsuarioAlteracao, (char *)oDados.dtUltimaAlteracao );
+    ULOG( "idAtendimento [%d]", oDados.idAtendimento );
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL 
+    //     UPDATE
+    //         atendimento.AtendimentoGrupoAtual
+    //     SET
+    //         IDGRUPO = :oDados.idGrupo,
+    //         IDUSUARIOALTERACAO = DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+    //         DTULTIMAALTERACAO = TO_DATE(:oDados.dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS'),
+    //         INCRI = :oDados.inCri
+    //     WHERE 
+    //         idAtendimento = :oDados.idAtendimento;
+
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTO
+        SET
+            IDGRUPOATUAL = :oDados.idGrupo,
+            IDUSUARIOALTERACAO = DECODE(:oStatus.idUsuarioAlteracao,-1,NULL,:oDados.idUsuarioAlteracao),
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE 
+            IDATENDIMENTO = :oDados.idAtendimento;
+
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+        SET
+            IDGRUPOATUAL = :oDados.idGrupo,
+            IDUSUARIOALTERACAO = DECODE(:oStatus.idUsuarioAlteracao,-1,NULL,:oDados.idUsuarioAlteracao),
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE 
+            IDATENDIMENTO = :oDados.idAtendimento;
+
+
+    ULOG_END( "proCAlterarWFAtendimentoGrupoAtualCri()" );
+
+    return oDados.idAtendimento;
+}
+
+
+long proCAlterarWFTratamentoGrupoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status)
+{
+    ULOG_START( "proCAlterarWFTratamentoGrupoCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idGrupo [%d], idUsuarioAlteracao [%d], dtUltimaAlteracao [%s]"
+            , oDados.idGrupo, oDados.idUsuarioAlteracao, oDados.dtUltimaAlteracao );
+    ULOG( "idAtendimento [%d]", oDados.idAtendimento );
+
+    EXEC SQL 
+        UPDATE
+            atendimento.TratamentoGrupoCri
+        SET
+            idGrupo = :oDados.idGrupo,
+            idUsuarioAlteracao = DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+            dtUltimaAlteracao = TO_DATE(:oDados.dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS')
+        WHERE 
+            idAtendimento = :oDados.idAtendimento;
+
+    ULOG_END( "proCAlterarWFTratamentoGrupoCri()" );
+
+    return oDados.idAtendimento;
+}
+
+
+long proCAlterarWFGrupoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status)
+{
+    ULOG_START( "proCAlterarWFGrupoCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idGrupo [%d], idUsuarioAlteracao [%d], dtUltimaAlteracao [%s]"
+        , oDados.idGrupo, oDados.idUsuarioAlteracao, oDados.dtUltimaAlteracao );
+    ULOG( "idAtendimento [%d]", oDados.idAtendimento );
+
+    EXEC SQL 
+        UPDATE
+            atendimento.GrupoCri
+        SET
+            idGrupo = :oDados.idGrupo,
+            idUsuarioAlteracao = DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+            dtUltimaAlteracao = TO_DATE(:oDados.dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS')
+        WHERE 
+            idAtendimento = :oDados.idAtendimento;
+
+    ULOG_END( "proCAlterarWFGrupoCri()" );
+
+    return oDados.idAtendimento;
+}
+
+
+long proCAlterarWFAtendimentoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status)
+{
+    ULOG_START( "proCAlterarWFAtendimentoCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idPessoaUsuario [%d], idUsuarioAlteracao [%d], dtUltimaAlteracao [%s]"
+        , oDados.idPessoaUsuario, oDados.idUsuarioAlteracao, oDados.dtUltimaAlteracao );
+    ULOG( "idAtendimento [%d]", oDados.idAtendimento );
+
+    EXEC SQL 
+        UPDATE
+            atendimento.AtendimentoCri
+        SET
+            idPessoaUsuario = :oDados.idPessoaUsuario,
+            idUsuarioAlteracao = DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+            dtUltimaAlteracao = TO_DATE(:oDados.dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS'),
+            qtEnvioBko = :oDados.qtEnvioBko
+        WHERE 
+            idAtendimento = :oDados.idAtendimento;
+
+    ULOG_END( "proCAlterarWFAtendimentoCri()" );
+
+    return oDados.idAtendimento;
+}
+
+
+long proCAlterarWFTratamentoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status)
+{
+    ULOG_START( "proCAlterarWFTratamentoCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "UPDATE ATENDIMENTO.TRATAMENTOCRI "
+             "SET IDPESSOAUSUARIO=%d,"
+                 "IDUSUARIOALTERACAO=%d,"
+                 "DTULTIMAALTERACAO=%s "
+            "WHERE IDATENDIMENTO=%d"
+        ,oDados.idPessoaUsuario,oDados.idUsuarioAlteracao
+        ,oDados.dtUltimaAlteracao,oDados.idAtendimento );
+
+    EXEC SQL 
+        UPDATE
+            atendimento.TratamentoCri
+        SET
+            idPessoaUsuario = :oDados.idPessoaUsuario,
+            idUsuarioAlteracao = DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+            dtUltimaAlteracao = DECODE(:oStatus.dtUltimaAlteracao,-1,SYSDATE,TO_DATE(:oDados.dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS'))
+        WHERE 
+            idAtendimento = :oDados.idAtendimento;
+
+    ULOG_END( "proCAlterarWFTratamentoCri()" );
+
+    return oDados.idAtendimento;
+}
+
+
+long proCAlterarWFUsuarioDevolucaoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status)
+{
+    ULOG_START( "proCAlterarWFUsuarioDevolucaoCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idPessoaUsuario=[%d], idUsuarioAlteracao=[%d], dtUltimaAlteracao=[%s]", oDados.idPessoaUsuario, oDados.idUsuarioAlteracao, oDados.dtUltimaAlteracao );
+    ULOG( "idAtendimento [%d]", oDados.idAtendimento );
+    ULOG( "idPessoaUsuarioAtual [%ld]", oDados.idPessoaUsuarioAtual );
+
+    EXEC SQL 
+        UPDATE
+            atendimento.AtendimentoUsuarioDevolucao
+        SET
+            idPessoaUsuario = :oDados.idPessoaUsuario,
+            idUsuarioAlteracao = DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+            dtUltimaAlteracao = TO_DATE(:oDados.dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS')
+        WHERE 
+            idAtendimento = :oDados.idAtendimento
+            AND idPessoaUsuario = :oDados.idPessoaUsuarioAtual;
+
+    ULOG_END( "proCAlterarWFUsuarioDevolucaoCri()" );
+
+    return oDados.idAtendimento;
+}
+
+
+long proCAlterarWFGrupoDevolucaoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status)
+{
+    ULOG_START( "proCAlterarWFGrupoDevolucaoCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "Atualizando atendimento.AtendimentoGrupoDevolucao para idGrupo [%d], idUsuarioAlteracao [%d], dtUltimaAlteracao [%s]", oDados.idGrupo, oStatus.idUsuarioAlteracao, oDados.dtUltimaAlteracao );
+    ULOG( "idAtendimento recebido [%d]", oDados.idAtendimento );
+    ULOG( "idPessoaUsuarioAtual recebido [%ld]", oDados.idPessoaUsuarioAtual );
+
+    EXEC SQL 
+        UPDATE
+            atendimento.AtendimentoGrupoDevolucao
+        SET
+            idGrupo = :oDados.idGrupo,
+            idUsuarioAlteracao = DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+            dtUltimaAlteracao = TO_DATE(:oDados.dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS')
+        WHERE 
+            idAtendimento = :oDados.idAtendimento
+            AND idGrupo = :oDados.idGrupoAtual;
+
+    ULOG_END( "proCAlterarWFGrupoDevolucaoCri()" );
+
+    return oDados.idAtendimento;
+}
+
+
+long proCExcluirWFTratamentoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status)
+{
+    ULOG_START( "proCExcluirWFTratamentoCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtdTratamentoCri   *oDados = dados;
+        //struct st_vlAtdTratamentoCri *oStatus = status
+
+    EXEC SQL END DECLARE SECTION;
+
+	// memcpy(&oDados,  dados,  sizeof(oDados));
+	// memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG("DELETE ATENDIMENTO.TRATAMENTOCRI WHERE IDATENDIMENTO = %d", oDados->idAtendimento);
+
+    EXEC SQL 
+		DELETE FROM
+            atendimento.TratamentoCri
+        WHERE 
+            idAtendimento = :oDados->idAtendimento;
+
+    ULOG("DELETE ATENDIMENTO.TRATAMENTOGRUPOCRI WHERE IDATENDIMENTO = %d", oDados->idAtendimento);
+
+    EXEC SQL 
+		DELETE FROM
+            atendimento.TratamentoGrupoCri
+        WHERE 
+            idAtendimento = :oDados->idAtendimento;
+
+    ULOG_END( "proCExcluirWFTratamentoCri()" );
+
+    return oDados->idAtendimento;
+}
+
+
+long proCExcluirWFAtendimentoCri(long _idAtendimento)
+{
+    ULOG_START( "proCExcluirWFAtendimentoCri()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = _idAtendimento;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG("DELETE ATENDIMENTO.ATENDIMENTOCRI WHERE IDATENDIMENTO = %ld", idAtendimento);
+
+    EXEC SQL 
+		DELETE FROM
+            ATENDIMENTO.ATENDIMENTOCRI
+        WHERE 
+            IDATENDIMENTO = :idAtendimento;
+
+    ULOG_END( "proCExcluirWFAtendimentoCri()" );
+
+    return idAtendimento;
+}
+
+
+bool proCObtemWFGrupoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFGrupoCri()" );
+
+    bool retorno=false;
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION; 
+
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+        int  idGrupo = 0;
+        long  idPessoaLinhaHistorico = 0;
+        
+        short i_idGrupo = -1;
+        short i_idPessoaLinhaHistorico = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idAtendimento = [%ld]", oDados.idAtendimento );
+
+    EXEC SQL
+    SELECT 
+        idGrupo, 
+        idPessoaLinhaHistorico 
+    INTO
+        :idGrupo:i_idGrupo,
+        :idPessoaLinhaHistorico:i_idPessoaLinhaHistorico
+    FROM 
+        Atendimento.GrupoCri
+    WHERE 
+        idAtendimento = :oDados.idAtendimento;
+    
+    if (i_idGrupo != -1)
+    {
+        if ( saida )
+        {
+            saida->createTag("AtdGrupoVO");
+                saida->addItem("idGrupo", idGrupo);
+                saida->addItem("idPessoaLinhaHistorico", idPessoaLinhaHistorico);
+            saida->closeTag();
+        }
+
+        ULOG( "idGrupo=%d",idGrupo );
+        ULOG( "idPessoaLinhaHistorico=%ld",idPessoaLinhaHistorico );
+
+        dados->idGrupo = idGrupo;
+        dados->idPessoaLinhaHistorico = idPessoaLinhaHistorico;
+
+        status->idGrupo = 1;
+        status->idPessoaLinhaHistorico = 1;
+
+        retorno = true;
+    }
+    else
+    {
+        ULOG( "** resultado nao encontrado **" );
+    }
+
+    ULOG_END( "proCObtemWFGrupoCri()" );
+
+    return retorno;
+}
+
+
+bool proCObtemWFGrupoCriEx(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFGrupoCriEx()" );
+
+    bool retorno=false;
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION; 
+
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+        int  idGrupo = 0;
+        long  idPessoaLinhaHistorico = 0;
+        
+        short i_idGrupo = -1;
+        short i_idPessoaLinhaHistorico = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idAtendimento = [%d]", oDados.idAtendimento );
+
+    EXEC SQL
+    SELECT 
+        idGrupo, 
+        idPessoaLinhaHistorico 
+    INTO
+        :idGrupo:i_idGrupo,
+        :idPessoaLinhaHistorico:i_idPessoaLinhaHistorico
+    FROM 
+        FOHIST_OW.GrupoCri
+    WHERE 
+        idAtendimento = :oDados.idAtendimento;
+    
+    if (i_idGrupo != -1)
+    {
+        if ( saida )
+        {
+            saida->createTag("AtdGrupoVO");
+                saida->addItem("idGrupo", idGrupo);
+                saida->addItem("idPessoaLinhaHistorico", idPessoaLinhaHistorico);
+            saida->closeTag();
+        }
+
+        ULOG( "idGrupo=%d",idGrupo );
+        ULOG( "idPessoaLinhaHistorico=%ld",idPessoaLinhaHistorico );
+
+        dados->idGrupo = idGrupo;
+        dados->idPessoaLinhaHistorico = idPessoaLinhaHistorico;
+
+        status->idGrupo = 1;
+        status->idPessoaLinhaHistorico = 1;
+
+        retorno = true;
+    }
+    else
+    {
+        ULOG( "** resultado nao encontrado **" );
+    }
+
+    ULOG_END( "proCObtemWFGrupoCriEx()" );
+
+    return retorno;
+}
+
+
+
+bool proCObtemWFTratamentoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFTratamentoCri()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION; 
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+        int  idPessoaUsuario = 0;
+        short i_idPessoaUsuario = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idAtendimento = %d",oDados.idAtendimento );
+
+    EXEC SQL
+        SELECT 
+            idPessoaUsuario 
+        INTO
+            :idPessoaUsuario:i_idPessoaUsuario
+        FROM 
+            Atendimento.TratamentoCri
+        WHERE 
+            idAtendimento = :oDados.idAtendimento;
+    
+    ULOG( "idPessoaUsuario [%d], i_idPessoaUsuario [%d]", idPessoaUsuario, i_idPessoaUsuario );
+
+    if (i_idPessoaUsuario != -1)
+    {
+        saida->createTag("AtdUsuarioCriVO");
+            saida->addItem("idPessoaUsuario", idPessoaUsuario);
+        saida->closeTag();
+    }
+
+    ULOG_END( "proCObtemWFTratamentoCri()" );
+
+    return true;
+}
+
+
+bool proCObtemWFTratamentoGrupoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFTratamentoGrupoCri()" );
+
+    bool retorno = true;
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION; 
+
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+
+        int idGrupo;
+        short i_idGrupo = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idAtendimento = %d",oDados.idAtendimento );
+
+    EXEC SQL
+        SELECT 
+            idGrupo
+        INTO
+            :idGrupo:i_idGrupo
+        FROM 
+            Atendimento.TratamentoGrupoCri
+        WHERE 
+            idAtendimento = :oDados.idAtendimento;
+    
+    ULOG( "idGrupo=%d, i_idGrupo=%d",idGrupo, i_idGrupo );
+
+    if ( !sqlca.sqlcode )
+    {
+        saida->createTag("TratamentoGrupoCriVO");
+            saida->addItem("idGrupo", idGrupo);
+        saida->closeTag();
+    }
+    else
+    {
+        retorno = false;
+    }
+
+    ULOG_END( "proCObtemWFTratamentoGrupoCri()" );
+
+    return retorno;
+}
+
+
+bool proCObtemWFAtendimentoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFAtendimentoCri()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION; 
+
+        struct st_AtdTratamentoCri   *oDados = dados;
+        struct st_vlAtdTratamentoCri *oStatus = status;
+
+        int  idPessoaUsuario=0;
+        short i_idPessoaUsuario = -1;
+
+        long  idPessoaLinhaHistorico = 0;
+        short i_idPessoaLinhaHistorico = -1;
+
+        int  qtEnvioBko = 0;
+        short i_qtEnvioBko = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idAtendimento = %i",oDados->idAtendimento );
+
+    EXEC SQL
+        SELECT 
+            IDPESSOAUSUARIO
+           ,IDPESSOALINHAHISTORICO
+           ,QTENVIOBKO
+        INTO
+            :idPessoaUsuario:i_idPessoaUsuario
+           ,:idPessoaLinhaHistorico:i_idPessoaLinhaHistorico
+           ,:qtEnvioBko:i_qtEnvioBko
+        FROM 
+            ATENDIMENTO.ATENDIMENTOCRI
+        WHERE 
+            IDATENDIMENTO = :oDados->idAtendimento;
+    
+    bool retorno;
+
+    if (i_idPessoaUsuario != -1)
+    {
+        ULOG( "idPessoaUsuario=%d",idPessoaUsuario );
+
+        if ( saida )
+        {
+            saida->createTag("AtdUsuarioCriVO");
+                saida->addItem("idPessoaUsuario", idPessoaUsuario);
+                saida->addItem("idPessoaLinhaHistorico", idPessoaLinhaHistorico);
+                saida->addItem("qtEnvioBko", qtEnvioBko);
+            saida->closeTag();
+        }
+
+        dados->idPessoaUsuario = idPessoaUsuario;
+        status->idPessoaUsuario = 1;
+
+        dados->idPessoaLinhaHistorico = idPessoaLinhaHistorico;
+        status->idPessoaLinhaHistorico = 1;
+
+        dados->qtEnvioBko = qtEnvioBko;
+        status->qtEnvioBko = 1;
+
+        retorno = true;
+    }
+    else
+    {
+        ULOG( "atendimento nao relacionado a cri ***" );
+
+        dados->idPessoaUsuario = 0;
+        status->idPessoaUsuario = -1;
+
+        dados->idPessoaLinhaHistorico = 0;
+        status->idPessoaLinhaHistorico = -1;
+
+        dados->qtEnvioBko = 0;
+        status->qtEnvioBko = -1;
+
+        retorno = false;
+    }
+
+    ULOG_END( "proCObtemWFAtendimentoCri()" );
+
+    return retorno;
+}
+
+
+bool proCObtemWFAtendimentoCriEx(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFAtendimentoCriEx()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION; 
+
+        struct st_AtdTratamentoCri   *oDados = dados;
+        struct st_vlAtdTratamentoCri *oStatus = status;
+
+        int  idPessoaUsuario=0;
+        short i_idPessoaUsuario = -1;
+
+        long  idPessoaLinhaHistorico = 0;
+        short i_idPessoaLinhaHistorico = -1;
+
+        int  qtEnvioBko = 0;
+        short i_qtEnvioBko = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idAtendimento = %i",oDados->idAtendimento );
+
+    EXEC SQL
+        SELECT 
+            IDPESSOAUSUARIO
+           ,IDPESSOALINHAHISTORICO
+           ,QTENVIOBKO
+        INTO
+            :idPessoaUsuario:i_idPessoaUsuario
+           ,:idPessoaLinhaHistorico:i_idPessoaLinhaHistorico
+           ,:qtEnvioBko:i_qtEnvioBko
+        FROM 
+            FOHIST_OW.ATENDIMENTOCRI
+        WHERE 
+            IDATENDIMENTO = :oDados->idAtendimento;
+    
+    bool retorno;
+
+    if (i_idPessoaUsuario != -1)
+    {
+        ULOG( "idPessoaUsuario=%d",idPessoaUsuario );
+
+        if ( saida )
+        {
+            saida->createTag("AtdUsuarioCriVO");
+                saida->addItem("idPessoaUsuario", idPessoaUsuario);
+                saida->addItem("idPessoaLinhaHistorico", idPessoaLinhaHistorico);
+                saida->addItem("qtEnvioBko", qtEnvioBko);
+            saida->closeTag();
+        }
+
+        dados->idPessoaUsuario = idPessoaUsuario;
+        status->idPessoaUsuario = 1;
+
+        dados->idPessoaLinhaHistorico = idPessoaLinhaHistorico;
+        status->idPessoaLinhaHistorico = 1;
+
+        dados->qtEnvioBko = qtEnvioBko;
+        status->qtEnvioBko = 1;
+
+        retorno = true;
+    }
+    else
+    {
+        ULOG( "atendimento nao relacionado a cri ***" );
+
+        dados->idPessoaUsuario = 0;
+        status->idPessoaUsuario = -1;
+
+        dados->idPessoaLinhaHistorico = 0;
+        status->idPessoaLinhaHistorico = -1;
+
+        dados->qtEnvioBko = 0;
+        status->qtEnvioBko = -1;
+
+        retorno = false;
+    }
+
+    ULOG_END( "proCObtemWFAtendimentoCriEx()" );
+
+    return retorno;
+}
+
+
+
+int proCObtemWFUsuarioAtualCri(long sIdAtendimento)
+{
+    ULOG_START( "proCObtemWFUsuarioAtualCri()" );
+
+    int idPessoaUsuarioRetorno = 0;
+    
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION; 
+
+        long idAtendimento = sIdAtendimento;
+
+        int  idPessoaUsuario = 0;
+        short i_idPessoaUsuario = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+
+    ULOG( "idAtendimento = [%ld]",sIdAtendimento );
+
+    EXEC SQL
+    SELECT 
+        idPessoaUsuario 
+    INTO
+        :idPessoaUsuario:i_idPessoaUsuario
+    FROM 
+        Atendimento.AtendimentoCRI
+    WHERE 
+        idAtendimento = :idAtendimento;
+    
+    ULOG( "Obtido idPessoaUsuario [%d], i_idPessoaUsuario [%d]"
+           ,idPessoaUsuario,i_idPessoaUsuario );
+
+    if (i_idPessoaUsuario != -1)
+    {
+        idPessoaUsuarioRetorno = idPessoaUsuario;
+    }
+    else
+    {
+        idPessoaUsuarioRetorno = 0;
+    }
+
+    ULOG_END( "proCObtemWFUsuarioAtualCri()" );
+
+    return idPessoaUsuarioRetorno;
+}
+
+bool proCObtemWFExisteProcessoCri(st_AtdTratamentoCri* dados, st_vlAtdTratamentoCri* status )
+{
+    ULOG_START( "proCObtemWFExisteProcessoCri()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION; 
+        struct st_AtdTratamentoCri   oDados;
+        struct st_vlAtdTratamentoCri oStatus;
+        int  idExisteAtendimento = 0 ;
+        short i_idExisteAtendimento = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdTratamentoCri(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL 
+    SELECT 
+        COUNT(1)
+    INTO
+        :idExisteAtendimento:i_idExisteAtendimento
+    FROM 
+        Atendimento.GrupoCri
+    WHERE 
+        idAtendimento = :oDados.idAtendimento;
+
+    ULOG_END( "proCObtemWFExisteProcessoCri()" );
+
+    return idExisteAtendimento > 0?true:false;
+}
+
+
+void sql_error_WFAtdTratamentoCri(sqlca*sqlca)
+{
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}
+

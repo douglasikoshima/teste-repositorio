@@ -1,0 +1,141 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <CSubCampanhaGrupoUsuario.h>
+
+CSubCampanhaGrupoUsuario::CSubCampanhaGrupoUsuario()
+{
+}
+
+CSubCampanhaGrupoUsuario::~CSubCampanhaGrupoUsuario()
+{
+}
+
+int CSubCampanhaGrupoUsuario::Insert( char* cidSubCampanhaFixa,
+			                          char* cidGrupo,
+			                          char* cinAtivo,
+			                          char* cidUser )
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stidSubCampanhaGrupoUsuario[21+1];
+		char* cAuxidSubCampanhaFixa  = cidSubCampanhaFixa;
+		char* cAuxidGrupo  = cidGrupo;
+		char* cAuxinAtivo  = cinAtivo;
+		char* cAuxidUser  = cidUser;
+	EXEC SQL END DECLARE SECTION;
+	
+	memset( &stidSubCampanhaGrupoUsuario, 0, sizeof(stidSubCampanhaGrupoUsuario) );
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+	sqlca.sqlcode=0;
+	
+	//Pega um id unico e sequencia para a insercao
+	EXEC SQL
+		SELECT 
+			CONTATOADM.SubCampanhaGrupoUsuarioSQ.NEXTVAL
+		INTO 
+			:stidSubCampanhaGrupoUsuario
+		FROM DUAL;
+
+	EXEC SQL 
+		INSERT INTO CONTATOADM.SUBCAMPANHAGRUPOUSUARIO
+		(   
+			IDSUBCAMPANHAGRUPOUSUARIO,
+			IDSUBCAMPANHAFIXA,
+			IDGRUPO,
+			INATIVO,
+			IDUSUARIOALTERACAO,
+			DTULTIMAALTERACAO
+		)
+		VALUES
+		(
+			:stidSubCampanhaGrupoUsuario, 
+		   	:cAuxidSubCampanhaFixa, 
+		   	:cAuxidGrupo, 
+		   	:cAuxinAtivo, 
+		   	:cAuxidUser,
+		   	SYSDATE
+		);
+		
+	//Apos a insercao salva os dados na estrutura interna
+	Add( (char*)stidSubCampanhaGrupoUsuario.arr,
+	     cAuxidSubCampanhaFixa,
+	     cAuxidGrupo,
+	     cAuxinAtivo 
+	);		
+	
+	return 1;
+
+GotoInsert:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CSubCampanhaGrupoUsuario::ListId( char* cidSubCampanhaFixa )
+{
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidSubCampanhaFixa = cidSubCampanhaFixa;
+		struct
+		{
+			VARCHAR stidSubCampanhaGrupoUsuario[21+1];
+			VARCHAR stidSubCampanhaFixa[21+1];
+			VARCHAR stidGrupo[21+1];
+			VARCHAR stinAtivo[21+1];
+		} stRegistro;
+		struct
+		{
+			short iidSubCampanhaGrupoUsuario;
+			short iidSubCampanhaFixa;
+			short iidGrupo;
+			short iinAtivo;
+		} stIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraSubCampanhaGrupoUsuario();
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+	sqlca.sqlcode=0;
+
+   	EXEC SQL 
+   		DECLARE 
+   			CursorListId CURSOR FOR
+		SELECT 
+			IDSUBCAMPANHAGRUPOUSUARIO,
+			IDSUBCAMPANHAFIXA,
+			IDGRUPO,
+			INATIVO
+		FROM 
+			CONTATOADM.SUBCAMPANHAGRUPOUSUARIO SUBCAMPANHAGRUPOUSUARIO
+		WHERE 
+			IDSUBCAMPANHAFIXA = :cAuxidSubCampanhaFixa;
+
+	EXEC SQL OPEN CursorListId;
+
+	for(;;)
+	{
+		memset( &stRegistro, 0, sizeof(stRegistro) );
+		EXEC SQL FETCH CursorListId INTO :stRegistro:stIndicator;
+
+		Add( (char*)stRegistro.stidSubCampanhaGrupoUsuario.arr,
+		     (char*)stRegistro.stidSubCampanhaFixa.arr,
+		     (char*)stRegistro.stidGrupo.arr,
+		     (char*)stRegistro.stinAtivo.arr 
+		);		
+
+		iCont++;
+	}
+	EXEC SQL CLOSE CursorListId;
+
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}

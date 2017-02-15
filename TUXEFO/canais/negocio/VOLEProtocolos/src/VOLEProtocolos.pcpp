@@ -1,0 +1,582 @@
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <tuxfw.h>
+#include <sqlca.h>
+#include <ctype.h>
+ 
+EXEC SQL INCLUDE SQLCA;
+
+char * rtrim(char *pStr)
+{
+	int rInd;
+
+	if (pStr == NULL)
+			return NULL;
+
+   rInd = strlen(pStr) - 1;
+   while ( isspace(pStr[rInd]) && rInd >= 0){
+      rInd--;
+   }
+
+   pStr[rInd + 1] = '\0';
+   
+   return pStr;
+}
+
+char * ltrim(char *pStr)
+{
+	int lInd = 0;
+
+	if (pStr == NULL)
+			return NULL;
+
+    //rInd = strlen(pStr) - 1;
+
+    while (isspace(pStr[lInd])){
+        lInd++;
+	}
+
+	pStr = pStr + lInd;
+     
+   return pStr;
+}
+
+char * trim(char *pStr){
+	return ltrim(rtrim(pStr));		
+}
+
+
+
+void getUltimosProtocolos( char * cdContaPrm, XMLGen * xml_g )
+{
+    ULOG_START( "getUltimosProtocolos()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char cdConta[256];
+       
+       char nrProtocolo[256];
+       char canal[256];
+       char status[256];
+       char nrLinha[16];
+       char cdAreaRegistro[5];
+       char dataRegistro[32];
+       char dataFechamento[32];
+       
+       short i_nrProtocolo = -1;
+       short i_canal = -1;
+       short i_status = -1;
+       short i_nrLinha = -1;
+       short i_cdAreaRegistro = -1;
+       short i_dataRegistro = -1;
+       short i_dataFechamento = -1;
+       
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( cdConta       , cdContaPrm );
+    
+    ULOG( "cdConta        [%s]", cdConta ); 
+    
+    memset( nrProtocolo,    0x0, sizeof(nrProtocolo) );
+    memset( canal,          0x0, sizeof(canal) );
+    memset( status,         0x0, sizeof(status) );
+    memset( nrLinha,        0x0, sizeof(nrLinha) );
+    memset( cdAreaRegistro, 0x0, sizeof(cdAreaRegistro) );
+    memset( dataRegistro  , 0x0, sizeof(dataRegistro) );
+    memset( dataFechamento, 0x0, sizeof(dataFechamento) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+    EXEC SQL DECLARE csrUltimoProtocolo CURSOR FOR
+    select /*+ PARALLEL_INDEX(, 8) */ 
+       nrProtocolo, 
+       canal, 
+       status, 
+       nrLinha, 
+       cdAreaRegistro, 
+       to_char(dataRegistro, 'DD/MM/YYYY HH24:MI:SS' ) ,
+       to_char(dataFechamento, 'DD/MM/YYYY HH24:MI:SS' )  
+    from 
+       (
+          select /*+ PARALLEL_INDEX(CONSULTAHISTORICOPROTOCOLOV02, 8) */ 
+             nrProtocolo, 
+             canal, 
+             status, 
+             nrLinha, 
+             cdAreaRegistro, 
+             DATAREGISTRO as dataRegistro,
+             DTFECHAMENTO as dataFechamento
+          from 
+             CONTATOADM.CONSULTAHISTORICOPROTOCOLOV02
+          where 
+             CDCONTA = :cdConta
+          order by DATAREGISTRO DESC
+       ) where rownum < 7;
+                
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL OPEN csrUltimoProtocolo;
+    for( ;; ) 
+    {
+        EXEC SQL FETCH csrUltimoProtocolo INTO
+             :nrProtocolo:i_nrProtocolo ,
+             :canal:i_canal ,
+             :status:i_status ,
+             :nrLinha:i_nrLinha ,
+             :cdAreaRegistro:i_cdAreaRegistro ,
+             :dataRegistro:i_dataRegistro ,
+             :dataFechamento:i_dataFechamento ;
+
+        xml_g->createTag( "UltimosProtocolosVO" );
+            xml_g->addItem( "Protocolo",  trim(nrProtocolo) );
+            xml_g->addItem( "Canal", trim(canal) );
+            xml_g->addItem( "Status", trim(status) );
+            xml_g->addItem( "nrLinha", trim(nrLinha) );
+            xml_g->addItem( "cdAreaRegistro", trim(cdAreaRegistro) );
+            xml_g->addItem( "dataRegistro", trim(dataRegistro) );
+            xml_g->addItem( "dataFechamento", trim(dataFechamento) );
+        xml_g->closeTag();
+    }
+
+    EXEC SQL CLOSE csrUltimoProtocolo;
+
+    ULOG_END( "getUltimosProtocolos()" );
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}
+
+
+
+void getHistoricoProtocoloPorDataProtocolo( char * cdContaPrm,
+                                            char * dataInicialPrm,
+                                            char * dataFinalPrm,
+                                            char * nrProtocoloPrm, 
+                                            XMLGen * xml_g )
+{
+    ULOG_START( "getHistoricoProtocoloPorDataProtocolo()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char cdConta[256];
+       char startDate[16];
+       char endDate[16];
+       char nrProtocoloIN[256];
+       
+       char nrProtocolo[256];
+       char canal[256];
+       char status[256];
+       char nrLinha[16];
+       char cdAreaRegistro[5];
+       char dataRegistro[32];
+       char dataFechamento[32];
+       
+       short i_nrProtocolo = -1;
+       short i_canal = -1;
+       short i_status = -1;
+       short i_nrLinha = -1;
+       short i_cdAreaRegistro = -1;
+       short i_dataRegistro = -1;
+       short i_dataFechamento = -1;
+       
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( cdConta    , cdContaPrm );
+    strcpy( startDate  , dataInicialPrm );
+    strcpy( endDate    , dataFinalPrm );
+    strcpy( nrProtocoloIN, nrProtocoloPrm );
+
+    ULOG( "cdConta     [%s]", cdConta );
+    ULOG( "startDate   [%s]", startDate );
+    ULOG( "endDate     [%s]", endDate );
+    ULOG( "nrProtocoloIN [%s]", nrProtocoloIN );
+    
+    memset( nrProtocolo,    0x0, sizeof(nrProtocolo) );
+    memset( canal,          0x0, sizeof(canal) );
+    memset( status,         0x0, sizeof(status) );
+    memset( nrLinha,        0x0, sizeof(nrLinha) );
+    memset( cdAreaRegistro, 0x0, sizeof(cdAreaRegistro) );
+    memset( dataRegistro  , 0x0, sizeof(dataRegistro) );
+    memset( dataFechamento, 0x0, sizeof(dataFechamento) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+    EXEC SQL DECLARE csrProtocoloPorData CURSOR FOR
+    SELECT /*+ PARALLEL_INDEX(CONSULTAHISTORICOPROTOCOLOV02, 8) */  
+       nrProtocolo,
+       canal,
+       status,
+       nrLinha,
+       cdAreaRegistro,
+       to_char(DATAREGISTRO, 'DD/MM/YYYY HH24:MI:SS' ) as dataRegistro,
+       to_char(DTFECHAMENTO, 'DD/MM/YYYY HH24:MI:SS' ) as dataFechamento
+    FROM 
+       CONTATOADM.CONSULTAHISTORICOPROTOCOLOV02
+    WHERE 
+       CDCONTA = :cdConta
+    AND NRPROTOCOLO = :nrProtocoloIN
+    AND TRUNC(DATAREGISTRO) BETWEEN to_date( :startDate, 'DD/MM/YYYY' ) AND to_date( :endDate, 'DD/MM/YYYY' )
+    ORDER BY NRPROTOCOLO DESC;    
+    
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL OPEN csrProtocoloPorData;
+    for( ;; ) 
+    {
+        EXEC SQL FETCH csrProtocoloPorData INTO
+             :nrProtocolo:i_nrProtocolo ,
+             :canal:i_canal ,
+             :status:i_status ,
+             :nrLinha:i_nrLinha ,
+             :cdAreaRegistro:i_cdAreaRegistro ,
+             :dataRegistro:i_dataRegistro ,
+             :dataFechamento:i_dataFechamento ;
+
+        xml_g->createTag( "UltimosProtocolosVO" );
+            xml_g->addItem( "Protocolo",  trim(nrProtocolo) );
+            xml_g->addItem( "Canal", trim(canal) );
+            xml_g->addItem( "Status", trim(status) );
+            xml_g->addItem( "nrLinha", trim(nrLinha) );
+            xml_g->addItem( "cdAreaRegistro", trim(cdAreaRegistro) );
+            xml_g->addItem( "dataRegistro", trim(dataRegistro) );
+            xml_g->addItem( "dataFechamento", trim(dataFechamento) );
+        xml_g->closeTag();
+    }
+
+    EXEC SQL CLOSE csrProtocoloPorData;
+
+    ULOG_END( "getHistoricoProtocoloPorDataProtocolo()" );
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}
+
+
+
+void getHistoricoProtocoloPorNumero( char * cdContaPrm, char * nrProtocoloPrm, XMLGen * xml_g )
+{
+    ULOG_START( "getHistoricoProtocoloPorDataProtocolo()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char cdConta[256];
+       char nrProtocoloIN[256];
+       
+       char nrProtocolo[256];
+       char canal[256];
+       char status[256];
+       char nrLinha[16];
+       char cdAreaRegistro[5];
+       char dataRegistro[32];
+       char dataFechamento[32];
+       
+       short i_nrProtocolo = -1;
+       short i_canal = -1;
+       short i_status = -1;
+       short i_nrLinha = -1;
+       short i_cdAreaRegistro = -1;
+       short i_dataRegistro = -1;
+       short i_dataFechamento = -1;
+       
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( cdConta    , cdContaPrm );
+    strcpy( nrProtocoloIN, nrProtocoloPrm );
+
+    ULOG( "cdConta     [%s]", cdConta );
+    ULOG( "nrProtocolo [%s]", nrProtocoloIN );
+    
+    memset( nrProtocolo,    0x0, sizeof(nrProtocolo) );
+    memset( canal,          0x0, sizeof(canal) );
+    memset( status,         0x0, sizeof(status) );
+    memset( nrLinha,        0x0, sizeof(nrLinha) );
+    memset( cdAreaRegistro, 0x0, sizeof(cdAreaRegistro) );
+    memset( dataRegistro  , 0x0, sizeof(dataRegistro) );
+    memset( dataFechamento, 0x0, sizeof(dataFechamento) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+    EXEC SQL DECLARE csrProtocoloPorNumero CURSOR FOR
+    SELECT /*+ PARALLEL_INDEX(CONSULTAHISTORICOPROTOCOLOV02, 8) */  
+       nrProtocolo,
+       canal,
+       status,
+       nrLinha,
+       cdAreaRegistro,
+       to_char(DATAREGISTRO, 'DD/MM/YYYY HH24:MI:SS' ) as dataRegistro,
+       to_char(DTFECHAMENTO, 'DD/MM/YYYY HH24:MI:SS' ) as dataFechamento
+    FROM 
+       CONTATOADM.CONSULTAHISTORICOPROTOCOLOV02
+    WHERE 
+       CDCONTA = :cdConta
+    AND NRPROTOCOLO = :nrProtocoloIN
+    ORDER BY NRPROTOCOLO DESC;
+
+                
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL OPEN csrProtocoloPorNumero;
+    for( ;; ) 
+    {
+        EXEC SQL FETCH csrProtocoloPorNumero INTO
+             :nrProtocolo:i_nrProtocolo ,
+             :canal:i_canal ,
+             :status:i_status ,
+             :nrLinha:i_nrLinha ,
+             :cdAreaRegistro:i_cdAreaRegistro ,
+             :dataRegistro:i_dataRegistro ,
+             :dataFechamento:i_dataFechamento ;
+
+        xml_g->createTag( "UltimosProtocolosVO" );
+            xml_g->addItem( "Protocolo",  trim(nrProtocolo) );
+            xml_g->addItem( "Canal", trim(canal) );
+            xml_g->addItem( "Status", trim(status) );
+            xml_g->addItem( "nrLinha", trim(nrLinha) );
+            xml_g->addItem( "cdAreaRegistro", trim(cdAreaRegistro) );
+            xml_g->addItem( "dataRegistro", trim(dataRegistro) );
+            xml_g->addItem( "dataFechamento", trim(dataFechamento) );
+        xml_g->closeTag();
+    }
+
+    EXEC SQL CLOSE csrProtocoloPorNumero;
+
+    ULOG_END( "getHistoricoProtocoloPorDataProtocolo()" );
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}
+
+
+
+void getHistoricoProtocoloPorData( char * cdContaPrm,
+                                   char * dataInicialPrm,
+                                   char * dataFinalPrm,
+                                   XMLGen * xml_g )
+{
+    ULOG_START( "getHistoricoProtocoloPorData()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char cdConta[256];
+       char startDate[16];
+       char endDate[16];
+       
+       char nrProtocolo[256];
+       char canal[256];
+       char status[256];
+       char nrLinha[16];
+       char cdAreaRegistro[5];
+       char dataRegistro[32];
+       char dataFechamento[32];
+       
+       short i_nrProtocolo = -1;
+       short i_canal = -1;
+       short i_status = -1;
+       short i_nrLinha = -1;
+       short i_cdAreaRegistro = -1;
+       short i_dataRegistro = -1;
+       short i_dataFechamento = -1;
+       
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( cdConta    , cdContaPrm );
+    strcpy( startDate  , dataInicialPrm );
+    strcpy( endDate    , dataFinalPrm );
+
+    ULOG( "cdConta     [%s]", cdConta );
+    ULOG( "startDate   [%s]", startDate );
+    ULOG( "endDate     [%s]", endDate );
+    
+    memset( nrProtocolo,    0x0, sizeof(nrProtocolo) );
+    memset( canal,          0x0, sizeof(canal) );
+    memset( status,         0x0, sizeof(status) );
+    memset( nrLinha,        0x0, sizeof(nrLinha) );
+    memset( cdAreaRegistro, 0x0, sizeof(cdAreaRegistro) );
+    memset( dataRegistro  , 0x0, sizeof(dataRegistro) );
+    memset( dataFechamento, 0x0, sizeof(dataFechamento) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+    EXEC SQL DECLARE csrHistProtocoloPorData CURSOR FOR
+    SELECT /*+ PARALLEL_INDEX(CONSULTAHISTORICOPROTOCOLOV02, 8) */  
+       nrProtocolo,
+       canal,
+       status,
+       nrLinha,
+       cdAreaRegistro,
+       to_char( DATAREGISTRO, 'DD/MM/YYYY HH24:MI:SS' ) as dataRegistro,
+       to_char( DTFECHAMENTO, 'DD/MM/YYYY HH24:MI:SS' ) as dataFechamento
+    FROM 
+       CONTATOADM.CONSULTAHISTORICOPROTOCOLOV02
+    WHERE CDCONTA = :cdConta
+    AND TRUNC(DATAREGISTRO) BETWEEN to_date(:startDate,'DD/MM/YYYY') AND to_date(:endDate,'DD/MM/YYYY')
+    ORDER BY NRPROTOCOLO DESC;
+    
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL OPEN csrHistProtocoloPorData;
+    for( ;; ) 
+    {
+        EXEC SQL FETCH csrHistProtocoloPorData INTO
+             :nrProtocolo:i_nrProtocolo ,
+             :canal:i_canal ,
+             :status:i_status ,
+             :nrLinha:i_nrLinha ,
+             :cdAreaRegistro:i_cdAreaRegistro ,
+             :dataRegistro:i_dataRegistro ,
+             :dataFechamento:i_dataFechamento ;
+
+        xml_g->createTag( "UltimosProtocolosVO" );
+            xml_g->addItem( "Protocolo",  trim(nrProtocolo) );
+            xml_g->addItem( "Canal", trim(canal) );
+            xml_g->addItem( "Status", trim(status) );
+            xml_g->addItem( "nrLinha", trim(nrLinha) );
+            xml_g->addItem( "cdAreaRegistro", trim(cdAreaRegistro) );
+            xml_g->addItem( "dataRegistro", trim(dataRegistro) );
+            xml_g->addItem( "dataFechamento", trim(dataFechamento) );
+        xml_g->closeTag();
+    }
+
+    EXEC SQL CLOSE csrHistProtocoloPorData;
+
+    ULOG_END( "getHistoricoProtocoloPorData()" );
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}
+
+
+
+void getTelefoneHistoricoProtocolo( char * nrProtocoloPrm, XMLGen * xml_g )
+{
+    ULOG_START( "getTelefoneHistoricoProtocolo()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char nrProtocolo[256];
+       
+       char nrLinha[16];
+       short i_nrLinha = -1;
+       
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( nrProtocolo, nrProtocoloPrm );
+
+    ULOG( "nrProtocolo [%s]", nrProtocolo );
+    
+    memset( nrLinha,        0x0, sizeof(nrLinha) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+    EXEC SQL
+    SELECT 
+       AL.nrTelefone
+    INTO
+       :nrLinha:i_nrLinha
+    FROM 
+       ATENDIMENTO.ATENDIMENTO       A,
+       ATENDIMENTO.ATENDIMENTOLINHAS AL
+    WHERE 
+       A.IDATENDIMENTO = AL.IDATENDIMENTO
+    AND A.IDATENDIMENTOPROTOCOLO = :nrProtocolo;
+    
+    xml_g->createTag( "TelefoneHistoricoVO" );
+        xml_g->addItem( "nrLinha",  trim(nrLinha) );
+    xml_g->closeTag();
+
+
+    ULOG_END( "getTelefoneHistoricoProtocolo()" );
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}
+
+
+
+void getDetalhesProtocolo( char * nrProtocoloPrm, XMLGen * xml_g )
+{
+    ULOG_START( "getDetalhesProtocolo()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char nrProtocolo[256];
+       
+       char tipo[256];
+       char solicitacao[256];
+       char acompanhamento[256];
+       short i_tipo = -1;
+       short i_solicitacao = -1;
+       short i_acompanhamento = -1;
+       
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( nrProtocolo, nrProtocoloPrm );
+    ULOG( "nrProtocolo [%s]", nrProtocolo );
+    
+    memset( tipo,           0x0, sizeof(tipo) );
+    memset( solicitacao,    0x0, sizeof(solicitacao) );
+    memset( acompanhamento, 0x0, sizeof(acompanhamento) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+    EXEC SQL DECLARE csrDetalheProtocolo CURSOR FOR
+    SELECT 
+       tipo, 
+       solicitacao, 
+       acompanhamento
+    FROM 
+       CONTATOADM.DETALHEPROTOCOLOV02
+    WHERE 
+       NRPROTOCOLO = :nrProtocolo;
+    
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL OPEN csrDetalheProtocolo;
+    for( ;; ) 
+    {
+        EXEC SQL FETCH csrDetalheProtocolo INTO
+             :tipo:i_tipo ,
+             :solicitacao:i_solicitacao ,
+             :acompanhamento:i_acompanhamento ;
+
+        xml_g->createTag( "DetalheProtocoloVO" );
+            xml_g->addItem( "Tipo",  trim(tipo) );
+            xml_g->addItem( "Solicitacao", trim(solicitacao) );
+            xml_g->addItem( "Acompanhamento", trim(acompanhamento) );
+        xml_g->closeTag();
+    }
+
+    EXEC SQL CLOSE csrDetalheProtocolo;
+
+    ULOG_END( "getDetalhesProtocolo()" );
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}

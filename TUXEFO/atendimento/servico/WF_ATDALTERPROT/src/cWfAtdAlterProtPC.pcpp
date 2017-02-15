@@ -1,0 +1,299 @@
+/**
+ * 
+ * @modulo  Atendimento
+ * @usecase Protocolo
+ * @author  Cassio Garcia
+ * @version $Revision: 1.1.114.21.8.1.34.7 $
+ * @CVS     $Author: a5114878 $ - $Date: 2016/10/22 17:52:52 $
+ **/
+
+#ifdef WIN32
+#pragma warning(disable:4786)
+#endif
+
+#include <string>
+
+using namespace std;
+
+#include <tuxfw.h>
+
+#include "../include/cWfAtdAlterProtPC.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/cWfAtdProtocoloException.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+    #include "../include/stWfAtdAlterProt.h"
+EXEC SQL END DECLARE SECTION;
+
+void cWfAtdAlterProtPC::AlterarDadosProtocolo(st_DadosEntradaAltProt *dados,st_StatusEntradaAltProt *status)
+{
+    ULOG_START("void cWfAtdAlterProtPC::AlterarDadosProtocolo(st_DadosEntradaAltProt *dados,st_StatusEntradaAltProt *status)");
+
+    string query;
+    string updt;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    
+        const char * pQuery=0;
+        int          cdAreaRegistro=0;
+        int          nrTelefone=0;
+        char         sgTipoPessoa[16];
+        char         sgUF[8];
+        char         idTipoPessoa[40];
+        VARCHAR      V_SGTIPOPESSOA[256];
+        int          V_IDTIPOLINHA=0;
+        VARCHAR      V_SGUF[256];
+        char         v_nrTelefone[16];
+        char         v_DDD[3];
+        
+        VARCHAR      v_idSistemaOrigem[64];
+        short      i_v_idSistemaOrigem = -1;
+
+	short 	iV_SGTIPOPESSOA=0;
+	short 	iV_IDTIPOLINHA=0;
+	short 	iV_SGUF=0;
+        
+    EXEC SQL END DECLARE SECTION;
+    
+    char    idSistemaAmdocs[16];
+    memset( idSistemaAmdocs, 0x0, sizeof(idSistemaAmdocs) );
+
+    memset(sgTipoPessoa, 0, sizeof(sgTipoPessoa));
+    memset(sgUF, 0, sizeof(sgUF));
+    memset(idTipoPessoa, 0, sizeof(idTipoPessoa));
+    
+    memset( &v_idSistemaOrigem, 0x0, sizeof(v_idSistemaOrigem) );
+
+    // Note: To use VARCHAR, CHARZ, or STRING types as output host variables in PL/SQL blocks, you must initialize the length before entering the block.
+    // Set the length to the declared (maximum) length of the VARCHAR, CHARZ, or STRING.
+    memset(&V_SGTIPOPESSOA, 0, sizeof(V_SGTIPOPESSOA));
+    memset(&V_SGUF, 0, sizeof(V_SGUF));
+    V_SGTIPOPESSOA.len=256; // initialize length component
+    V_SGUF.len=256; // initialize length component
+
+    //
+    //==========================================================================
+    // Atualiza dados de protocolo se solicitado
+    if ( 1 == status->cdAreaRegistro)          { if(updt.length()>0) {updt+=",";} updt +="CDAREAREGISTRO=" + (string)dados->cdAreaRegistro; }
+    if ( 1 == status->nrTelefone)              { if(updt.length()>0) {updt+=",";} updt +="NRTELEFONE=" + (string)dados->nrTelefone; }
+    if ( 1 == status->nrTelefone)              { if(updt.length()>0) {updt+=",";} updt +="NRTELEFONE_N9=" + (string)dados->nrTelefone; } //N9
+    if ( 1 == status->idSistemaOrigem)         { if(updt.length()>0) {updt+=",";} updt +="IDSISTEMAORIGEM=" + (string)dados->idSistemaOrigem; }
+    if ( 1 == status->idPessoaDePara)          { if(updt.length()>0) {updt+=",";} updt +="IDPESSOADEPARA=" + (string)dados->idPessoaDePara; }
+    if ( 1 == status->cdConta)                 { if(updt.length()>0) {updt+=",";} updt +="CDCONTA=" + (string)dados->cdConta; }
+    if ( 1 == status->qtProcessoAberto)        { if(updt.length()>0) {updt+=",";} updt +="QTPROCESSOABERTO=" + (string)dados->qtProcessoAberto; }
+    if ( 1 == status->qtProcessoPendente)      { if(updt.length()>0) {updt+=",";} updt +="QTPROCESSOPENDENTE=" + (string)dados->qtProcessoPendente; }
+    if ( 1 == status->idLinhaTelefonica)       { if(updt.length()>0) {updt+=",";} updt +="IDLINHATELEFONICA=" + (string)dados->idLinhaTelefonica; }
+    if ( 1 == status->idTipoAberturaProtocolo) { if(updt.length()>0) {updt+=",";} updt +="IDTIPOABERTURAPROTOCOLO=" + (string)dados->idTipoAberturaProtocolo; }
+    else if (1 == status->idLinhaTelefonica )  { if(updt.length()>0) {updt+=",";} updt +="IDTIPOABERTURAPROTOCOLO=3"; }
+
+	
+    if ( 1 == status->idSistemaOrigem)
+    { 
+    
+        strcpy( v_DDD       , (char*)dados->cdAreaRegistro );
+        strcpy( v_nrTelefone, (char*)dados->nrTelefone );
+
+        EXEC SQL
+        SELECT lb.idsistemaorigem
+          INTO :v_idSistemaOrigem:i_v_idSistemaOrigem
+          FROM linha.linhabase lb, apoio.arearegistro ar
+         WHERE lb.idarearegistro = ar.idarearegistro
+           AND lb.nrlinha = :v_nrTelefone
+           AND ar.cdarearegistro = :v_DDD 
+           AND ROWNUM <= 1;
+        
+        CONVIND( v_idSistemaOrigem, i_v_idSistemaOrigem );
+    
+		if( !strcmp((char*)v_idSistemaOrigem.arr, "333") )
+        {
+            if(updt.length()>0) {
+                updt+=",";
+            } 
+            strcpy( idSistemaAmdocs, (char*)v_idSistemaOrigem.arr );
+			updt +="CDORIGEM='AMBOS'"; 
+            ULOG( ">>> CDORIGEM   [AMBOS]" );
+		}
+        
+	}
+    else   // NAO TEM IDSISTEMAORIGEM, AJUSTA PARA DEFAULT 7
+    {
+        status->idSistemaOrigem = 1;
+        strcpy( (char*)dados->idSistemaOrigem, "7" );
+        if ( 1 == status->idSistemaOrigem) { if(updt.length()>0) {updt+=",";} updt +="IDSISTEMAORIGEM=" + (string)dados->idSistemaOrigem; }
+    }
+	
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WfAtdAlterProtPC();
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    if(updt.length()>0)
+    {
+        query = "UPDATE ATENDIMENTO.ATENDIMENTOPROTOCOLO"
+                " SET " + updt + 
+                " WHERE IDATENDIMENTOPROTOCOLO="+(string)dados->idAtendimentoProtocolo;
+
+        pQuery = query.c_str();
+
+        ULOG("%s",pQuery);
+
+        EXEC SQL EXECUTE IMMEDIATE :pQuery;
+
+        if ( 1403 == sqlca.sqlcode )
+        {
+            throw new TuxException(ERR_NEGINFO_PROTOCOLO_NOTFOUND,CErroAtendimento(ERR_NEGINFO_PROTOCOLO_NOTFOUND).outMsg());
+        }
+
+    }
+    else
+    {
+        ULOG("Não solicitou alteração de dados de protocolo");
+    }
+    //
+    //==========================================================================
+    // Atualiza dados de SMS se solicitado
+    updt.erase();
+
+    if (1 == status->cdAreaRegistroSMS)       { if(updt.length()>0) {updt+=",";} updt +="CDAREAREGISTRO=" + (string)dados->cdAreaRegistroSMS; }
+    if (1 == status->nrTelefoneSMS)           { if(updt.length()>0) {updt+=",";} updt +="NRLINHA=" + (string)dados->nrTelefoneSMS; }
+    
+    if( !strcmp(idSistemaAmdocs, "333") )
+    {
+        if(updt.length()>0) 
+        {
+            updt+=",";
+        } 
+        updt +="IDSISTEMAORIGEM=" + (string)idSistemaAmdocs; 
+    }
+    else
+    {
+        if ( 1 == status->idSistemaOrigem)        
+        { 
+           if(updt.length()>0) 
+           {
+              updt+=",";
+           } 
+           updt +="IDSISTEMAORIGEM=" + (string)dados->idSistemaOrigem; 
+        }
+    }
+
+    cdAreaRegistro = atoi(dados->cdAreaRegistroSMS);
+    nrTelefone     = atoi(dados->nrTelefoneSMS);
+
+    ULOG("cdAreaRegistro: %d", cdAreaRegistro);
+    ULOG("nrTelefone: %d", nrTelefone);
+    ULOG("Executando SOA_OW.PKG_MSGCOMPLEMENTO.PRC_BUSCACHAVEMSGCOMPLEMENTO");
+
+    EXEC SQL CALL 
+    SOA_OW.PKG_MSGCOMPLEMENTO.PRC_BUSCACHAVEMSGCOMPLEMENTO
+    (
+        :cdAreaRegistro ,
+        :nrTelefone ,
+        :V_SGTIPOPESSOA:iV_SGTIPOPESSOA ,
+        :V_IDTIPOLINHA:iV_IDTIPOLINHA ,
+        :V_SGUF:iV_SGUF 
+    );
+    ULOG("Retorno SOA_OW.PKG_MSGCOMPLEMENTO.PRC_BUSCACHAVEMSGCOMPLEMENTO");
+
+    if ( !iV_SGTIPOPESSOA ) {
+    	V_SGTIPOPESSOA.arr[V_SGTIPOPESSOA.len] = 0;
+    	ULOG("V_SGTIPOPESSOA: %s", V_SGTIPOPESSOA.arr);
+    	sprintf(sgTipoPessoa,"%.*s",V_SGTIPOPESSOA.len,(char*)V_SGTIPOPESSOA.arr);
+
+    	if(updt.length()>0) {updt+=",";} updt +=" SGTIPOPESSOA = '" + string(sgTipoPessoa) + "' ";
+    }
+
+    if ( !iV_IDTIPOLINHA ) {
+    	ULOG("V_IDTIPOLINHA: %d", V_IDTIPOLINHA);
+    	sprintf(idTipoPessoa,"%d",V_IDTIPOLINHA);
+
+        if(updt.length()>0) {updt+=",";} updt +=" IDTIPOLINHA  = '" + string(idTipoPessoa) + "' ";
+    }
+
+    if ( !iV_SGUF ) {
+    	V_SGUF.arr[V_SGUF.len] = 0;
+    	ULOG("V_SGUF: %s", V_SGUF.arr);
+    	sprintf(sgUF,"%.*s",V_SGUF.len,(char*)V_SGUF.arr);
+
+    	if(updt.length()>0) {updt+=",";} updt +=" SGUF = '" + string(sgUF) + "' ";
+    }
+
+    if(updt.length()>0)
+    {
+        query = "UPDATE ATENDIMENTO.FILASMSPROTOCOLO"
+                " SET " + updt + 
+                " WHERE IDATENDIMENTOPROTOCOLO="+(string)dados->idAtendimentoProtocolo;
+
+        pQuery = query.c_str();
+
+        ULOG("Executando query: %s",pQuery);
+
+        EXEC SQL EXECUTE IMMEDIATE :pQuery;
+
+        if ( 1403 == sqlca.sqlcode )
+        {
+            throw new TuxException(ERR_NEGINFO_PROTOCOLO_NOTFOUND,CErroAtendimento(ERR_NEGINFO_PROTOCOLO_NOTFOUND).outMsg());
+        }
+    }
+    else
+    {
+        ULOG("Não solicitou alteração de dados de SMS");
+    }
+
+    ULOG_END("void cWfAtdAlterProtPC::AlterarDadosProtocolo(st_DadosEntradaAltProt *dados,st_StatusEntradaAltProt *status)");
+}
+
+void cWfAtdAlterProtPC::IncrementarQuantidades(const char *idAtendimentoProtocolo,const char *incAberto,const char *incPendente,const char *idPessoaUsuarioWeb)
+{
+    ULOG_START("void cWfAtdAlterProtPC::IncrementarQuantidades(const char *idAtendimentoProtocolo,const char *incAberto,const char *incPendente,const char *idPessoaUsuarioWeb)");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char *varOraIdAtendimentoProtocolo = idAtendimentoProtocolo;
+        const char *varOraIncAberto = incAberto;
+        const char *varOraIncPendente = incPendente;
+        const char *varOraIdPessoaUsuarioWeb = idPessoaUsuarioWeb;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WfAtdAlterProtPC();
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        UPDATE ATENDIMENTO.ATENDIMENTOPROTOCOLO SET
+            QTPROCESSOABERTO = QTPROCESSOABERTO + TO_NUMBER(:varOraIncAberto),
+            QTPROCESSOPENDENTE = QTPROCESSOPENDENTE + TO_NUMBER(:varOraIncPendente),
+            IDUSUARIOALTERACAO = :varOraIdPessoaUsuarioWeb,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE IDATENDIMENTOPROTOCOLO = :varOraIdAtendimentoProtocolo;
+
+    ULOG_END("void cWfAtdAlterProtPC::IncrementarQuantidades(const char *idAtendimentoProtocolo,const char *incAberto,const char *incPendente,const char *idPessoaUsuarioWeb)");
+}
+
+void cWfAtdAlterProtPC::DecrementarPendentes(const char *idAtendimentoProtocolo,const char *incPendente,const char *idPessoaUsuarioWeb)
+{
+    ULOG_START("void cWfAtdAlterProtPC::DecrementarPendentes(const char *idAtendimentoProtocolo,const char *incPendente,const char *idPessoaUsuarioWeb)");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char *varOraIdAtendimentoProtocolo = idAtendimentoProtocolo;
+        const char *varOraIncPendente = incPendente;
+        const char *varOraIdPessoaUsuarioWeb = idPessoaUsuarioWeb;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WfAtdAlterProtPC();
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        UPDATE ATENDIMENTO.ATENDIMENTOPROTOCOLO SET
+            QTPROCESSOPENDENTE =
+                DECODE(SIGN(QTPROCESSOPENDENTE-TO_NUMBER(:varOraIncPendente)),-1,0,
+                                        QTPROCESSOPENDENTE-TO_NUMBER(:varOraIncPendente)),
+            IDUSUARIOALTERACAO = :varOraIdPessoaUsuarioWeb,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE IDATENDIMENTOPROTOCOLO = :varOraIdAtendimentoProtocolo;
+
+    ULOG_END("void cWfAtdAlterProtPC::DecrementarPendentes(const char *idAtendimentoProtocolo,const char *incPendente,const char *idPessoaUsuarioWeb)");
+}
+
+void cWfAtdAlterProtPC::sql_error_WfAtdAlterProtPC()
+{
+    throw new TuxBasicOraException(sqlca.sqlcode
+                                  ,sqlca.sqlerrm.sqlerrmc
+                                  ,sqlca.sqlerrm.sqlerrml);
+}

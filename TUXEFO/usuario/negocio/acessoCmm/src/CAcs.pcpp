@@ -1,0 +1,676 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "CAcs.h"
+
+CAcs::CAcs()
+{
+	memset( cMensagem, 0, sizeof( cMensagem ) );
+	strcpy( cMensagem, "Sucesso" );
+}
+
+CAcs::~CAcs()
+{
+}
+
+int CAcs::UsuarioAtivo( char* cidPessoaUsuario )
+{
+	ULOG_START("CAcs::UsuarioAtivo()");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iStatus = 0;
+		char* cidPessoaUsuarioAux = cidPessoaUsuario;
+	EXEC SQL END DECLARE SECTION;
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoUsuarioAtivo;
+	sqlca.sqlcode=0;
+	
+	//Verifica se um certo usuario esta ativo
+	EXEC SQL
+	SELECT
+		COUNT(1)
+	INTO
+		:iStatus
+	FROM
+		ACESSO.USUARIO
+	WHERE
+		IDPESSOAUSUARIO = :cidPessoaUsuarioAux
+	AND
+		IDSTATUSUSUARIO = ( SELECT IDSTATUSUSUARIO FROM APOIO.STATUSUSUARIO WHERE SGSTATUSUSUARIO = 'ATIVO' );
+
+
+	ULOG_END("CAcs::UsuarioAtivo( )");
+	return iStatus;
+
+GotoUsuarioAtivo:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CAcs::ListId( char* cnmurlpagina, char* cidusuario )
+{
+	ULOG_START("CAcs::ListId( )");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cnmUrlPagina  = cnmurlpagina;
+		char* cidUsuario = cidusuario;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+		} stAcessoUsuarioRegistro;
+		struct
+		{
+			short iId;
+			short iNome;
+		} stAcessoUsuarioIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		ZeraAcessoUsuario();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorAcessoUsuarioId CURSOR FOR
+			SELECT IDUNIDADE, 
+			       CDUNIDADE
+			  FROM ACESSO.ROLEV01
+			 WHERE UPPER(NMURL) = UPPER(:cnmUrlPagina)
+			   AND IDPESSOAUSUARIO = :cidUsuario;
+
+		EXEC SQL OPEN CursorAcessoUsuarioId;
+	
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CAcs::ListId( )");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stAcessoUsuarioRegistro, 0, sizeof(stAcessoUsuarioRegistro) );
+				EXEC SQL FETCH CursorAcessoUsuarioId INTO :stAcessoUsuarioRegistro:stAcessoUsuarioIndicator;
+	
+				Add( 
+					 (char*)stAcessoUsuarioRegistro.stId.arr
+				    ,(char*)stAcessoUsuarioRegistro.stNome.arr
+				   );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorAcessoUsuarioId;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CAcs::ListId(  )");
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CAcs::ListId( char* cidusuario, XMLGen*xml )
+{
+	ULOG_START("CAcs::ListId( )");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidUsuario = cidusuario;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stIdPagina[21+1];
+			VARCHAR stNmUrl[255+1];
+		} stAcsUsr;
+		struct
+		{
+			short iId;
+			short iNome;
+			short iIdPagina;
+			short iNmUrl;
+		} stAcsUsrInd;
+		VARCHAR stIdPaginaOld[21+1];
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+	sqlca.sqlcode=0;
+
+   	EXEC SQL 
+   	DECLARE 
+   		CursorListId CURSOR FOR
+	SELECT 
+		IDUNIDADE, 
+	    CDUNIDADE,
+		IDPAGINA, 
+	    NMURL
+	FROM 
+		ACESSO.ROLEV01
+	WHERE 
+		IDPESSOAUSUARIO = :cidUsuario
+	ORDER BY 
+		NMURL, CDUNIDADE;
+
+	EXEC SQL OPEN CursorListId;
+
+	memset( &stIdPaginaOld, 0, sizeof(stIdPaginaOld) );
+	for(iCont=0;;iCont++)
+	{
+		memset( &stAcsUsr, 0, sizeof(stAcsUsr) );
+		EXEC SQL FETCH CursorListId INTO :stAcsUsr:stAcsUsrInd;
+
+		//Verifica se a pagina atual eh igual a anterior, se nao for, entao
+		//preenche o campo, caso contrario fica vazio, isto para ficar pronto
+		//para montar o RuleVO
+		if( strcmp( (char*)stIdPaginaOld.arr, (char*)stAcsUsr.stIdPagina.arr ) != 0 )
+		{
+			if( iCont > 0 )
+				xml->closeTag();//Antes de abrir outra TAG <ar>, fecha a anterior
+
+			xml->createTag( "ar" );
+			xml->addItem("ur", (char*)stAcsUsr.stNmUrl.arr );
+			xml->addItem("un", (char*)stAcsUsr.stNome.arr );
+			//salva o valor da pagina atual para evitar que nas interacoes em que a pagina
+			//eh a mesmo nao salve a URL nem o IDPAGINA
+			strcpy( (char*)stIdPaginaOld.arr, (char*)stAcsUsr.stIdPagina.arr );
+		}
+		else
+		{
+			xml->addItem("un", (char*)stAcsUsr.stNome.arr );
+		}
+	}
+	//Fecha a ultima TAG <ar> (se retornou alguma coisa
+	if( iCont > 0 )
+		xml->closeTag();
+
+	EXEC SQL CLOSE CursorListId;
+
+	ULOG_END("CAcs::ListId( )");
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CAcs::ListAll( void )
+{
+	ULOG_START("CAcs::ListAll( )");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+		} stAcessoUsuarioRegistro;
+		struct
+		{
+			short iId;
+			short iNome;
+		} stAcessoUsuarioIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		ZeraAcessoUsuario();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorAcessoUsuarioAll CURSOR FOR
+			SELECT IDUNIDADE, 
+			       CDUNIDADE
+			  FROM ACESSO.ROLEV01;
+	
+		EXEC SQL OPEN CursorAcessoUsuarioAll;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CAcs::ListAll( void )");
+			return 0;
+	    }
+		else
+		{
+			for(;;)
+			{
+				memset( &stAcessoUsuarioRegistro, 0, sizeof(stAcessoUsuarioRegistro) );
+				EXEC SQL FETCH CursorAcessoUsuarioAll INTO :stAcessoUsuarioRegistro:stAcessoUsuarioIndicator;
+	
+				Add( (char*)stAcessoUsuarioRegistro.stId.arr, (char*)stAcessoUsuarioRegistro.stNome.arr );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorAcessoUsuarioAll;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CAcs::ListAll( )");
+	return iCont;
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CAcs::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	ULOG_START("CAcs::GetXml( )");
+	
+	int iTag = strlen( cNomeTag );
+	if( Quantidade() > 0 )
+	{
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			if( iTag > 0 )
+			{
+				xml->createTag(cNomeTag);
+				xml->addProp(	"xmlns", "usuario.fo.vivo.com.br/vo" );
+			}
+			if( Registro( x ) != NULL )
+			{
+				xml->addItem("idUnidade", Registro(x)->cidAcessoUsuario   );
+				xml->addItem("cdUnidade", Registro(x)->cnmAcessoUsuario   );
+			}
+			if( iTag > 0 )
+				xml->closeTag();
+		}
+	}
+	
+	ULOG_END("CAcs::GetXml( )");
+}
+
+int CAcs::GetSessaoUsuario(char* cidusuario,char* dsSessaoUsuario)
+{
+	ULOG_START("CAcs::GetSessaoUsuario()");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidUsuario = cidusuario;
+		struct
+		{
+			VARCHAR stdsSessaoUsuario[500+1];
+		} stAcessoUsuarioRegistro;
+		struct
+		{
+			short idsSessaoUsuario;
+		} stAcessoUsuarioIndicator;
+	EXEC SQL END DECLARE SECTION;
+	memset( &stAcessoUsuarioRegistro, 0, sizeof(stAcessoUsuarioRegistro) );
+	try
+	{
+		EXEC SQL WHENEVER NOT FOUND GOTO GotoListId;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL
+			SELECT
+				  DSSESSAOUSUARIO
+			INTO
+				:stAcessoUsuarioRegistro:stAcessoUsuarioIndicator
+			FROM
+				ACESSO.USUARIO
+			WHERE
+				IDPESSOAUSUARIO = :cidUsuario;
+
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CAcs::GetSessaoUsuario()");
+			return 0;
+		}
+		else
+		{
+			strcpy(dsSessaoUsuario,(char*)stAcessoUsuarioRegistro.stdsSessaoUsuario.arr);
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CAcs::GetSessaoUsuario()");
+	return 1;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+int CAcs::login( char* cidPessoaUsuario, char* csessionId )
+{
+	ULOG_START("CAcs::login()");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* csessionIdAux = csessionId;
+		char* cidPessoaUsuarioAux = cidPessoaUsuario;
+	EXEC SQL END DECLARE SECTION;
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO Gotologin;
+	sqlca.sqlcode=0;
+	
+	ULOG( "cidPessoaUsuario[%s]", cidPessoaUsuario );
+	ULOG( "csessionId[%s]", csessionId );
+	
+	//Efetua o logout no hora de login, ou seja, apaga a sessao anterior do usuario antes de inserir uma nova
+	logout( cidPessoaUsuario );
+		
+	//Entao insere a nova sessao
+	ULOG( "Inserindo a sessão[%s] para o usuario[%s]", csessionIdAux, cidPessoaUsuarioAux );
+	EXEC SQL
+	INSERT INTO ACESSO.SESSAOUSUARIO
+	(
+	    IDSESSAOUSUARIO, 
+	    IDPESSOAUSUARIO, 
+	    IDSESSAO, 
+	    DTLOGIN
+	)
+	VALUES
+	(   
+	    ACESSO.SESSAOUSUARIOSQ.NEXTVAL, 
+	    :cidPessoaUsuarioAux, 
+	    :csessionIdAux, 
+	    SYSDATE
+	);
+		
+	ULOG_END("CAcs::login()");
+
+	return 1;//Sucesso (Agora que não verifica mais o tempo é sempre sucesso)
+
+Gotologin:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+int CAcs::UsuarioLogado( char* cidPessoaUsuario )
+{
+	ULOG_START("CAcs::UsuarioLogado()");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidPessoaUsuarioAux = cidPessoaUsuario;
+		int   nTempoExpiracao = BuscaTempoDeExpiracao();
+		float nTempoDecorrido = 0;
+		short sTempoDecorrido = 0;
+		int   nRetorno = 0;//sucesso
+		VARCHAR stSegundosEmHexa[8+1];
+		short   sSegundosEmHexa = 0;
+	EXEC SQL END DECLARE SECTION;
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoUsuarioLogado;
+	sqlca.sqlcode=0;
+	memset( &stSegundosEmHexa, 0, sizeof(stSegundosEmHexa) );
+	
+	ULOG( "cidPessoaUsuario[%s]", cidPessoaUsuario );
+	
+	//Se nao achar o tempo de expiracao retorna -1
+	if( nTempoExpiracao <= 0 )
+	{
+		ULOG_END("CAcs::UsuarioLogado()");
+		return -1;
+	}
+		
+	//Verifica se a sessao existe e se esta dentro do tempo
+	EXEC SQL
+	SELECT
+	    ( ( (SYSDATE - DTLOGIN)*1440 ) - :nTempoExpiracao ) AS TEMPODECORRIDO,
+	    TRIM( TO_CHAR( ( ( SYSDATE - DTLOGIN)*86400 ), 'XXXXXXXX' ) ) AS SEGUNDOS //Segundos transcorridos, desde a última atualização (em hexa)
+	INTO
+		:nTempoDecorrido:sTempoDecorrido,
+		:stSegundosEmHexa:sSegundosEmHexa
+	FROM
+	    ACESSO.SESSAOUSUARIO
+	WHERE
+	    IDPESSOAUSUARIO = :cidPessoaUsuarioAux
+	AND
+		ROWNUM < 2;
+
+	ULOG( "nTempoDecorrido[%f]", nTempoDecorrido );
+	ULOG( "stSegundosEmHexa[%s]", (char*)stSegundosEmHexa.arr );
+	
+	//Se nTempoDecorrido <  0 entao esta dentro do tempo, ai é duplo login (deixa logar mas da warning)
+	//Se nTempoDecorrido >= 0 entao o usuario nao deu logout, mas o tempo de espera ja passou (pode logar sem warning)
+	if( nTempoDecorrido < 0 )
+	{
+		nRetorno = 1;
+		strcpy( cMensagem, "[" );
+		strcat( cMensagem, (char*)stSegundosEmHexa.arr );
+		strcat( cMensagem, "] Já existe outro usuário utilizando este login. Deseja continuar assim mesmo?" );
+	};
+
+	ULOG_END("CAcs::UsuarioLogado()");
+
+	return nRetorno;
+
+GotoUsuarioLogado:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CAcs::logout( char* cidPessoaUsuario )
+{
+	ULOG_START("CAcs::logout()");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidPessoaUsuarioAux = cidPessoaUsuario;
+	EXEC SQL END DECLARE SECTION;
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO Gotologout;
+	sqlca.sqlcode=0;
+	
+	//Logout, apaga a sessao do usuario
+	ULOG( "Apagando a sessão para o usuario[%s]", cidPessoaUsuarioAux );
+	EXEC SQL
+	DELETE FROM
+		ACESSO.SESSAOUSUARIO
+	WHERE 
+		IDPESSOAUSUARIO = :cidPessoaUsuarioAux;
+
+	ULOG_END("CAcs::logout()");
+	return 1;
+
+Gotologout:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CAcs::logout( char* cidPessoaUsuario, char* csessionId )
+{
+	ULOG_START("CAcs::logout()");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidPessoaUsuarioAux = cidPessoaUsuario;
+		char* csessionIdAux = csessionId;
+	EXEC SQL END DECLARE SECTION;
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO Gotologout;
+	sqlca.sqlcode=0;
+	
+	//Logout, apaga a sessao do usuario
+	ULOG( "Apagando a sessão para o usuario[%s]", cidPessoaUsuarioAux );
+	EXEC SQL
+	DELETE FROM
+		ACESSO.SESSAOUSUARIO
+	WHERE 
+		IDPESSOAUSUARIO = :cidPessoaUsuarioAux
+	AND
+		IDSESSAO = :csessionIdAux;
+
+	ULOG_END("CAcs::logout()");
+	return 1;
+
+Gotologout:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CAcs::VerificaAtualizalogin( char* cidPessoaUsuario, char* csessionId )
+{
+	ULOG_START("CAcs::VerificaAtualizalogin()");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* csessionIdAux = csessionId;
+		char* cidPessoaUsuarioAux = cidPessoaUsuario;
+		int   nTempoExpiracao = BuscaTempoDeExpiracao();
+		float nTempoDecorrido = 0;
+		short sTempoDecorrido = 0;
+		int   nRetorno = 0;//Indica sucesso (sessao atualizada com sucesso)
+		VARCHAR stSessao[255+1];
+		short   sSessao = 0;
+		VARCHAR stSegundosEmHexa[8+1];
+		short   sSegundosEmHexa = 0;
+	EXEC SQL END DECLARE SECTION;
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoVerificaAtualizalogin;
+	sqlca.sqlcode=0;
+	memset( &stSessao, 0, sizeof(stSessao) );
+	memset( &stSegundosEmHexa, 0, sizeof(stSegundosEmHexa) );
+	
+	ULOG( "cidPessoaUsuario[%s]", cidPessoaUsuario );
+	ULOG( "csessionId[%s]", csessionId );
+	//Se nao achar o tempo de expiracao retorna -1
+	if( nTempoExpiracao <= 0 )
+	{
+		ULOG_END("CAcs::VerificaAtualizalogin()");
+		return -1;
+	}
+	
+	//Verifica se a sessao existe e se esta dentro do tempo
+	EXEC SQL
+	SELECT
+	    ( ( (SYSDATE - DTLOGIN)*1440 ) - :nTempoExpiracao ) AS TEMPODECORRIDO,
+	    TRIM( TO_CHAR( ( ( SYSDATE - DTLOGIN)*86400 ), 'XXXXXXXX' ) ) AS SEGUNDOS,//Segundos transcorridos, desde a última atualização (em hexa)
+	    IDSESSAO
+	INTO
+		:nTempoDecorrido:sTempoDecorrido,
+		:stSegundosEmHexa:sSegundosEmHexa,
+		:stSessao:sSessao
+	FROM
+	    ACESSO.SESSAOUSUARIO
+	WHERE
+	    IDPESSOAUSUARIO = :cidPessoaUsuarioAux
+	AND
+		IDSESSAO = :csessionIdAux
+	ORDER BY
+		DTLOGIN DESC;
+
+	ULOG( "nTempoDecorrido[%f]", nTempoDecorrido );
+	ULOG( "stSessao[%s]", (char*)stSessao.arr );
+	ULOG( "stSessao.len[%d]", stSessao.len );
+	ULOG( "stSegundosEmHexa[%s]", (char*)stSegundosEmHexa.arr );
+		
+	//Sessão invalida (sessao enviada como parametro nao confere com a encontrada na base)
+	if( stSessao.len <= 0 )
+	{
+		ULOG( "stSessao.len <= 0 (nRetorno = 3 Sessao invalida)" );
+		strcpy( cMensagem, "Sua conexão foi encerrada.O Login informado já esta sendo utilizado!" );
+		nRetorno = 3;//Sessao invalida
+	}
+	else
+	{
+		//Se nTempoDecorrido < 0 entao esta dentro do tempo
+		if( nTempoDecorrido < 0 )
+		{
+			//Atualiza a data da sessao
+			ULOG( "Atualizando a sessão[%s] para o usuario[%s]", csessionIdAux, cidPessoaUsuarioAux );
+			EXEC SQL
+			UPDATE 
+				ACESSO.SESSAOUSUARIO
+			SET 
+				DTLOGIN = SYSDATE
+			WHERE
+			    IDPESSOAUSUARIO = :cidPessoaUsuarioAux
+			AND
+				IDSESSAO = :csessionIdAux;
+			
+		}
+		else
+		{
+			ULOG( "stSessao.len <= 0 (nRetorno = 2 Sessao expirada)" );
+			strcpy( cMensagem, "[" );
+			strcat( cMensagem, (char*)stSegundosEmHexa.arr );
+			strcat( cMensagem, "] Tempo de inatividade expirado. Favor realizar o login novamente!" );
+			nRetorno = 2;//Sessao expirada	
+		}
+	}//if( sSessao.len <= 0 )
+
+	ULOG("CAcs::nRetorno[%d]",nRetorno);
+	ULOG_END("CAcs::VerificaAtualizalogin()");
+
+	return nRetorno;
+
+GotoVerificaAtualizalogin:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CAcs::BuscaTempoDeExpiracao( void )
+{
+	ULOG_START("CAcs::BuscaTempoDeExpiracao()");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		int   nTempoDeExpiracao = 0;
+		short sTempoDeExpiracao = 0;
+	EXEC SQL END DECLARE SECTION;
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoBuscaTempoDeExpiracao;
+	sqlca.sqlcode=0;
+	
+	//Verifica se um certo usuario esta ativo
+	EXEC SQL
+	SELECT 
+		TO_NUMBER(DSVALORPARAMETRO) 
+	INTO
+		:nTempoDeExpiracao:sTempoDeExpiracao
+	FROM 
+		APOIO.PARAMETRO 
+	WHERE 
+		CDPARAMETRO = 'TEMPO_LOGIN_CONCOMITANTE';
+
+	ULOG( "nTempoDeExpiracao[%d]", nTempoDeExpiracao );
+
+	if( nTempoDeExpiracao <= 0 )
+		strcpy( cMensagem, "Tempo de login concomitante APOIO.PARAMETRO.CDPARAMETRO = TEMPO_LOGIN_CONCOMITANTE não foi encontrado." );
+
+	ULOG_END("CAcs::BuscaTempoDeExpiracao()");
+	
+	//Retorna o tempo de expiracao ou zero quando nao achou o parametro
+	return nTempoDeExpiracao;
+
+GotoBuscaTempoDeExpiracao:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}

@@ -1,0 +1,91 @@
+//
+// $Id: ins_destint.pcpp,v 1.1 2009/07/31 15:33:59 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+int ins_destint(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char parm[2000];
+  char szMsg[255];
+  int  existReg = 1;
+  int  rc;
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  int     idPergunta; 
+  VARCHAR dsResposta[2000];
+  int     idPessoaUsuarioInclusao;
+
+	int     idResposta = 0; 
+	short iidRespota=0;
+
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  EXEC SQL WHENEVER NOT FOUND DO cl_flag(&existReg);
+  
+  try
+  {
+    get_tag(parm,dnode,"idperg",0,0);
+    idPergunta = atoi(parm);
+
+    get_tag(parm,dnode,"descricao",0,0);
+    strToOra(dsResposta,parm);
+
+    // Pegando id do usuario
+    idPessoaUsuarioInclusao = usuario;
+
+    // Pesquisar descricao -- nao repete descricao
+    EXEC SQL 
+      select count(idResposta)
+      into   iidRespota
+      from   questionario.resposta
+      where  inDisponibilidade != 0
+      and    idPergunta = :idPergunta
+      and    UPPER(TRIM(dsResposta)) = UPPER(TRIM(:dsResposta));
+
+    if (!iidRespota)
+	{
+ 
+		// Insert linha  
+		EXEC SQL 
+		INSERT INTO questionario.resposta( IDRESPOSTA, 
+											  IDPERGUNTA, 
+											  DSRESPOSTA, 
+											  SQAPRESENTACAO, 
+											  INENCERRAMENTO,
+											  IDUSUARIOALTERACAO, 
+											  DTULTIMAALTERACAO )
+		VALUES (questionario.respostaSQ.nextval,
+										:idPergunta,
+										:dsResposta, 
+										0, 
+										0,
+										:idPessoaUsuarioInclusao, 
+										sysdate);
+		rc = sqlca.sqlerrd[2];
+		strcpy(szMsg,"INSERIDO");
+	}
+	else
+	{
+		// Jah existe este registro
+		ULOG(" --- Encontrou descricao : [%d] \n",idResposta);
+		strcpy(szMsg,"Ja existe registro com essa descrição");
+		rc = -1;
+    }
+  
+    // insert OK 
+    xml->addItem("descricao",szMsg);
+    xml->addItem("valor",rc);
+  }
+  catch(...)
+  {
+	throw;
+  }
+  
+  return 1; 
+} 
+
+
+
+
+

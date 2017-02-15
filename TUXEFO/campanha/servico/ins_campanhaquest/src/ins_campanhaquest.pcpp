@@ -1,0 +1,108 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include "../../negocio/cmputil/include/campanha.hpp"
+
+int InsCampanhaQuest( char * usuario, DOMNode *dnode , XMLGen *XMLOut )
+{
+    char parm[256];
+    int  Valor = 1;
+    char Descricao[256];
+    try
+    {
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        int     idCanalCampanha;
+        int     idCanalCampanhaDest;
+        int     idPergunta;
+        int     idPessoaUsuarioAlteracao;
+        int     inAtivo;
+        int     NextVal1;
+        int     idCampanhaQuestionario = 0;
+	EXEC SQL END DECLARE SECTION;
+        EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+        EXEC SQL WHENEVER NOT FOUND DO break;
+
+    
+        //  Obtendo dados do xml
+        get_tag(parm, dnode, "idCanalCampanha", 0, -1);
+        idCanalCampanha = atoi(parm);   
+
+
+        //  Obtendo dados do xml
+        get_tag(parm, dnode, "idCanalCampanhaDest", 0, -1);
+        idCanalCampanhaDest = atoi(parm);   
+
+        // Pegando id do usuario
+        idPessoaUsuarioAlteracao = get_idUsuario(usuario);
+
+        inAtivo = 1;    
+
+        /* Verifica se existe o item a adcionar */
+        EXEC SQL DECLARE crsPergunta1 CURSOR FOR 
+            SELECT distinct idPergunta
+            FROM campanha.CampanhaQuestionario
+            WHERE idCanalCampanha = :idCanalCampanha
+			AND inativo=1;
+        EXEC SQL OPEN crsPergunta1;
+
+        for(;;)
+        {
+            EXEC SQL FETCH crsPergunta1 INTO :idPergunta;
+
+            /* Verifica se existe o item a adcionar */
+            EXEC SQL DECLARE crsPergunta2 CURSOR FOR
+                SELECT distinct idCampanhaQuestionario
+                FROM campanha.CampanhaQuestionario
+                WHERE idCanalCampanha = :idCanalCampanhaDest
+                AND   idPergunta = :idPergunta
+				and	  inativo=1;
+            EXEC SQL OPEN crsPergunta2;
+ 
+            for(;;)
+            {
+                EXEC SQL FETCH crsPergunta2 INTO :idCampanhaQuestionario;
+                Valor = 0;
+                strcpy(Descricao,"Itens Não Copiados");
+            }
+
+            EXEC SQL CLOSE crsPergunta2;
+
+            if(idCampanhaQuestionario <= 0)
+            {
+	        EXEC SQL SELECT campanha.CampanhaQuestionarioSQ.NEXTVAL INTO :NextVal1 FROM DUAL;
+// ulog("Pergunta [%d]",idPergunta);
+                EXEC SQL INSERT INTO campanha.CampanhaQuestionario(idCampanhaQuestionario,
+                                                                  idPergunta,
+                                                                  idCanalCampanha,
+                                                                  idUsuarioAlteracao,
+                                                                  dtUltimaAlteracao,
+                                                                  inativo)
+			                                   VALUES(:NextVal1,
+                                                                  :idPergunta,
+                                                                  :idCanalCampanhaDest,
+                                                                  :idPessoaUsuarioAlteracao,
+                                                                  SYSDATE,
+                                                                  :inAtivo);
+                if (sqlca.sqlcode)
+                {
+                    throw new TuxBasicSvcException("00E1000","INSERT INTO campanha.CampanhaQuestionario");
+                }
+                Valor = 1 ;
+                strcpy(Descricao,"Itens Copiados");
+            }
+
+        }
+
+        EXEC SQL CLOSE crsPergunta1;
+
+	XMLOut->addItem("descricao",Descricao);
+	XMLOut->addItem("valor",Valor);
+
+    }
+    catch( ... )
+    {
+        throw;
+    }
+    return 1;
+}

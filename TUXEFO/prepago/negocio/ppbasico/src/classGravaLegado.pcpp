@@ -1,0 +1,1068 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <classGravaLegado.h>
+#include <PrePagoException.h>
+#include <Tools.h>
+
+#include <unistd.h>
+
+CGravaLegado::CGravaLegado()
+{
+	iStatus = 0;
+}
+
+CGravaLegado::~CGravaLegado()
+{
+}
+
+void CGravaLegado::PesquisaPorData( char* pszDataIni
+                                   ,char* pszDataFim
+                                   ,char* pszUser )
+{
+    ULOG_START("CGravaLegado::PesquisaPorData");
+
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* pszDataIniAux = pszDataIni;
+		char* pszDataFimAux = pszDataFim;
+		struct
+		{
+			VARCHAR stNrLinha[255+1];
+			VARCHAR stIdGrupo[255+1];
+			VARCHAR stTipoCliente[255+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stDataNascimento[255+1];
+			VARCHAR stEstadoCivil[255+1];
+			VARCHAR stCodSexo[255+1];
+			VARCHAR stDsRazaoSocial[255+1];
+			VARCHAR stIE[255+1];
+			VARCHAR stCPF[255+1];
+			VARCHAR stRG[255+1];
+			VARCHAR stDataExpiracao[255+1];
+			VARCHAR stOrgaoExpeditor[255+1];
+			VARCHAR stEstadoExpedicao[255+1];
+			VARCHAR stPassaporte[255+1];
+			VARCHAR stCNPJ[255+1];
+			VARCHAR stCNAE[255+1];
+			VARCHAR stTelefone[255+1];
+			VARCHAR stFax[255+1];
+			VARCHAR stEMail[255+1];
+			VARCHAR stNumDepend[255+1];
+			VARCHAR stNomeContato[255+1];
+			VARCHAR stLogradouro[255+1];
+			VARCHAR stEndereco[255+1];
+			VARCHAR stComplemento[255+1];
+			VARCHAR stBairro[255+1];
+			VARCHAR stCEP[255+1];
+			VARCHAR stCidade[255+1];
+			VARCHAR stEstado[255+1];
+			VARCHAR stNumero[255+1];
+			VARCHAR stIdPessoa[21+1];
+		} stGravaLegadoRegistro;
+		struct
+		{
+			short iNrLinha;
+			short iIdGrupo;
+			short iTipoCliente;
+			short iNome;
+			short iDataNascimento;
+			short iEstadoCivil;
+			short iCodSexo;
+			short iDsRazaoSocial;
+			short iIE;
+			short iCPF;
+			short iRG;
+			short iDataExpiracao;
+			short iOrgaoExpeditor;
+			short iEstadoExpedicao;
+			short iPassaporte;
+			short iCNPJ;
+			short iCNAE;
+			short iTelefone;
+			short iFax;
+			short iEMail;
+			short iNumDepend;
+			short iNomeContato;
+			short iLogradouro;
+			short iEndereco;
+			short iComplemento;
+			short iBairro;
+			short iCEP;
+			short iCidade;
+			short iEstado;
+			short iNumero;
+			short iIdPessoa;
+		} stGravaLegadoIndicator;
+		int iCont;
+	EXEC SQL END DECLARE SECTION;
+
+	//Apaga a estrutura interna
+	Zera();
+
+	try
+	{
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoPesquisaPorData;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL 
+   		DECLARE 
+   			CursorPesquisaPorData CURSOR FOR
+		SELECT 
+		       NRLINHA                // nrLinha (DDD+NUMERO)
+		     , IDGRUPO                // GRUPO NAO UTILIZADO NESTA PESQUISA
+		     , SGTIPOPESSOA           // tipoCliente     - SIGLA (PF/PJ)
+		     , NMPESSOA               // nome
+		     , DTNASCIMENTO           // dataNascimento  - dd/mm/yyyy
+		     , SGESTADOCIVIL          // estadoCivil - ID
+		     , SGSEXO                 // codSexo - SIGLA
+		     , NMFANTASIA             // dsRazaoSocial
+		     , IE                     // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , CPF                    // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , RG                     // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , RGDTEMISSAO            // dataExpiracao
+		     , RGSGORGAOEXPEDIDOR     // orgaoExpedidor
+		     , RGSGUF                 // estadoExpedicao - SIGLA UF
+		     , PASS                   // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , CNPJ                   // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , CNAE                   // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , TELEFONE               // telefone, fax, eMail
+		     , FAX                    // telefone, fax, eMail
+		     , EMAIL                  // telefone, fax, eMail
+		     , NUMDEPEND              // numDepend
+		     , NMCONTATO              // nomeContato
+		     , LOGRADOURO             // logradouro
+		     , NMLOGRADOURO           // endereco
+		     , DSENDERECOCOMPLEMENTO  // complemento
+		     , NMBAIRRO               // bairro
+		     , NRCEP                  // CEP
+		     , NMMUNICIPIO            // cidade
+		     , SGUF                   // estado - SIGLA UF
+		     , NRENDERECO             // numero
+			 , IDPESSOA               // idPessoa
+		FROM 
+		  	CUSTOMER.GRAVALEGADOV01 GL
+		WHERE 
+		   //VERIFICA SE JA FOI ENVIADO OU NAO PARA O LEGADO
+			GL.IDPESSOA NOT IN ( SELECT IDPESSOA FROM INFRA.LOGGRAVALEGADO WHERE DSSTATUSEXECUCAO = 'OK' )
+
+		   // CONDIÇÃO DE PESQUISA
+		AND 
+			TRUNC(GL.DTULTIMAALTERACAO) BETWEEN TO_DATE(:pszDataIniAux, 'dd/mm/yyyy') AND TO_DATE(:pszDataFimAux, 'dd/mm/yyyy');
+
+
+		ULOG("CGravaLegado::PesquisaPorData::Antes de abrir o cursor\nData Ini: %s\nData Fim: %s", pszDataIniAux, pszDataFimAux);
+		EXEC SQL OPEN CursorPesquisaPorData;
+		ULOG("CGravaLegado::PesquisaPorData::Depois de abrir o cursor");
+
+		for(iCont=1;;iCont++)
+		{
+			memset( &stGravaLegadoRegistro, 0, sizeof(stGravaLegadoRegistro) );
+			EXEC SQL FETCH CursorPesquisaPorData INTO :stGravaLegadoRegistro:stGravaLegadoIndicator;
+			
+			//Armazena os dados na estrutura interna
+			Add(
+				 (char*)stGravaLegadoRegistro.stIdPessoa.arr
+				,(char*)stGravaLegadoRegistro.stNrLinha.arr
+				,(char*)stGravaLegadoRegistro.stIdGrupo.arr
+				,(char*)stGravaLegadoRegistro.stTipoCliente.arr
+				,(char*)stGravaLegadoRegistro.stNome.arr
+				,(char*)stGravaLegadoRegistro.stDataNascimento.arr
+				,(char*)stGravaLegadoRegistro.stEstadoCivil.arr
+				,(char*)stGravaLegadoRegistro.stCodSexo.arr
+				,(char*)stGravaLegadoRegistro.stDsRazaoSocial.arr
+				,(char*)stGravaLegadoRegistro.stIE.arr
+				,(char*)stGravaLegadoRegistro.stCPF.arr
+				,(char*)stGravaLegadoRegistro.stRG.arr
+				,(char*)stGravaLegadoRegistro.stDataExpiracao.arr
+				,(char*)stGravaLegadoRegistro.stOrgaoExpeditor.arr
+				,(char*)stGravaLegadoRegistro.stEstadoExpedicao.arr
+				,(char*)stGravaLegadoRegistro.stPassaporte.arr
+				,(char*)stGravaLegadoRegistro.stCNPJ.arr
+				,(char*)stGravaLegadoRegistro.stCNAE.arr
+				,(char*)stGravaLegadoRegistro.stTelefone.arr
+				,(char*)stGravaLegadoRegistro.stFax.arr
+				,(char*)stGravaLegadoRegistro.stEMail.arr
+				,(char*)stGravaLegadoRegistro.stNumDepend.arr
+				,(char*)stGravaLegadoRegistro.stNomeContato.arr
+				,(char*)stGravaLegadoRegistro.stLogradouro.arr
+				,(char*)stGravaLegadoRegistro.stEndereco.arr
+				,(char*)stGravaLegadoRegistro.stComplemento.arr
+				,(char*)stGravaLegadoRegistro.stBairro.arr
+				,(char*)stGravaLegadoRegistro.stCEP.arr
+				,(char*)stGravaLegadoRegistro.stCidade.arr
+				,(char*)stGravaLegadoRegistro.stEstado.arr
+				,(char*)stGravaLegadoRegistro.stNumero.arr
+			);
+			
+			//A Cada 50 registros envia para o legado
+			if( iCont >= 50 )
+			{
+				//Envia para o legado
+				ULOG("CGravaLegado::PesquisaPorData::Chamando EnviaParaLegado(%s)", pszUser );
+				EnviaParaLegado( pszUser );
+				ULOG("CGravaLegado::PesquisaPorData::EnviaParaLegado(%s) com sucesso", pszUser );
+
+				//Apaga a estrutura interna
+				Zera();
+				iCont = 0;
+			}
+
+		}
+		EXEC SQL CLOSE CursorPesquisaPorData;
+
+		if( Quantidade() > 0 )
+		{
+			//Envia para o legado
+			ULOG("CGravaLegado::PesquisaPorData::Chamando EnviaParaLegado(%s)", pszUser );
+			EnviaParaLegado( pszUser );
+			ULOG("CGravaLegado::PesquisaPorData::EnviaParaLegado(%s) com sucesso", pszUser );
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CGravaLegado::PesquisaPorData");
+	return;
+
+GotoPesquisaPorData:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+void CGravaLegado::PesquisaPorDataNOK( char* pszDataIni
+                                      ,char* pszDataFim
+                                      ,char* pszUser )
+{
+    ULOG_START("CGravaLegado::PesquisaPorDataNOK");
+
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* pszDataIniAux = pszDataIni;
+		char* pszDataFimAux = pszDataFim;
+		struct
+		{
+			VARCHAR stNrLinha[255+1];
+			VARCHAR stIdGrupo[255+1];
+			VARCHAR stTipoCliente[255+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stDataNascimento[255+1];
+			VARCHAR stEstadoCivil[255+1];
+			VARCHAR stCodSexo[255+1];
+			VARCHAR stDsRazaoSocial[255+1];
+			VARCHAR stIE[255+1];
+			VARCHAR stCPF[255+1];
+			VARCHAR stRG[255+1];
+			VARCHAR stDataExpiracao[255+1];
+			VARCHAR stOrgaoExpeditor[255+1];
+			VARCHAR stEstadoExpedicao[255+1];
+			VARCHAR stPassaporte[255+1];
+			VARCHAR stCNPJ[255+1];
+			VARCHAR stCNAE[255+1];
+			VARCHAR stTelefone[255+1];
+			VARCHAR stFax[255+1];
+			VARCHAR stEMail[255+1];
+			VARCHAR stNumDepend[255+1];
+			VARCHAR stNomeContato[255+1];
+			VARCHAR stLogradouro[255+1];
+			VARCHAR stEndereco[255+1];
+			VARCHAR stComplemento[255+1];
+			VARCHAR stBairro[255+1];
+			VARCHAR stCEP[255+1];
+			VARCHAR stCidade[255+1];
+			VARCHAR stEstado[255+1];
+			VARCHAR stNumero[255+1];
+			VARCHAR stIdPessoa[21+1];
+		} stGravaLegadoRegistro;
+		struct
+		{
+			short iNrLinha;
+			short iIdGrupo;
+			short iTipoCliente;
+			short iNome;
+			short iDataNascimento;
+			short iEstadoCivil;
+			short iCodSexo;
+			short iDsRazaoSocial;
+			short iIE;
+			short iCPF;
+			short iRG;
+			short iDataExpiracao;
+			short iOrgaoExpeditor;
+			short iEstadoExpedicao;
+			short iPassaporte;
+			short iCNPJ;
+			short iCNAE;
+			short iTelefone;
+			short iFax;
+			short iEMail;
+			short iNumDepend;
+			short iNomeContato;
+			short iLogradouro;
+			short iEndereco;
+			short iComplemento;
+			short iBairro;
+			short iCEP;
+			short iCidade;
+			short iEstado;
+			short iNumero;
+			short iIdPessoa;
+		} stGravaLegadoIndicator;
+		int iCont;
+	EXEC SQL END DECLARE SECTION;
+
+	//Apaga a estrutura interna
+	Zera();
+
+	try
+	{
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoPesquisaPorDataNOK;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL 
+   		DECLARE 
+   			CursorPesquisaPorDataNOK CURSOR FOR
+		SELECT 
+		       NRLINHA                // nrLinha (DDD+NUMERO)
+		     , IDGRUPO                // GRUPO NAO UTILIZADO NESTA PESQUISA
+		     , SGTIPOPESSOA           // tipoCliente     - SIGLA (PF/PJ)
+		     , NMPESSOA               // nome
+		     , DTNASCIMENTO           // dataNascimento  - dd/mm/yyyy
+		     , SGESTADOCIVIL          // estadoCivil - ID
+		     , SGSEXO                 // codSexo - SIGLA
+		     , NMFANTASIA             // dsRazaoSocial
+		     , IE                     // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , CPF                    // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , RG                     // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , RGDTEMISSAO            // dataExpiracao
+		     , RGSGORGAOEXPEDIDOR     // orgaoExpedidor
+		     , RGSGUF                 // estadoExpedicao - SIGLA UF
+		     , PASS                   // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , CNPJ                   // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , CNAE                   // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , TELEFONE               // telefone, fax, eMail
+		     , FAX                    // telefone, fax, eMail
+		     , EMAIL                  // telefone, fax, eMail
+		     , NUMDEPEND              // numDepend
+		     , NMCONTATO              // nomeContato
+		     , LOGRADOURO             // logradouro
+		     , NMLOGRADOURO           // endereco
+		     , DSENDERECOCOMPLEMENTO  // complemento
+		     , NMBAIRRO               // bairro
+		     , NRCEP                  // CEP
+		     , NMMUNICIPIO            // cidade
+		     , SGUF                   // estado - SIGLA UF
+		     , NRENDERECO             // numero
+			 , IDPESSOA               // idPessoa
+		FROM 
+		  	CUSTOMER.GRAVALEGADOV01 GL
+		WHERE
+			//SOH ENVIA OS NAO ENVIADOS
+			GL.IDPESSOA IN ( SELECT IDPESSOA FROM INFRA.LOGGRAVALEGADO WHERE GL.IDPESSOA = IDPESSOA AND DSSTATUSEXECUCAO = 'NOK' )
+		
+			// CONDIÇÃO DE PESQUISA
+		AND 
+			TRUNC(GL.DTULTIMAALTERACAO) BETWEEN TO_DATE(:pszDataIniAux, 'dd/mm/yyyy') AND TO_DATE(:pszDataFimAux, 'dd/mm/yyyy');
+
+
+		ULOG("CGravaLegado::PesquisaPorDataNOK::Antes de abrir o cursor\nData Ini: %s\nData Fim: %s", pszDataIniAux, pszDataFimAux);
+		EXEC SQL OPEN CursorPesquisaPorDataNOK;
+		ULOG("CGravaLegado::PesquisaPorDataNOK::Depois de abrir o cursor");
+
+		for(iCont=1;;iCont++)
+		{
+			memset( &stGravaLegadoRegistro, 0, sizeof(stGravaLegadoRegistro) );
+			EXEC SQL FETCH CursorPesquisaPorDataNOK INTO :stGravaLegadoRegistro:stGravaLegadoIndicator;
+			
+			//Armazena os dados na estrutura interna
+			Add(
+				 (char*)stGravaLegadoRegistro.stIdPessoa.arr
+				,(char*)stGravaLegadoRegistro.stNrLinha.arr
+				,(char*)stGravaLegadoRegistro.stIdGrupo.arr
+				,(char*)stGravaLegadoRegistro.stTipoCliente.arr
+				,(char*)stGravaLegadoRegistro.stNome.arr
+				,(char*)stGravaLegadoRegistro.stDataNascimento.arr
+				,(char*)stGravaLegadoRegistro.stEstadoCivil.arr
+				,(char*)stGravaLegadoRegistro.stCodSexo.arr
+				,(char*)stGravaLegadoRegistro.stDsRazaoSocial.arr
+				,(char*)stGravaLegadoRegistro.stIE.arr
+				,(char*)stGravaLegadoRegistro.stCPF.arr
+				,(char*)stGravaLegadoRegistro.stRG.arr
+				,(char*)stGravaLegadoRegistro.stDataExpiracao.arr
+				,(char*)stGravaLegadoRegistro.stOrgaoExpeditor.arr
+				,(char*)stGravaLegadoRegistro.stEstadoExpedicao.arr
+				,(char*)stGravaLegadoRegistro.stPassaporte.arr
+				,(char*)stGravaLegadoRegistro.stCNPJ.arr
+				,(char*)stGravaLegadoRegistro.stCNAE.arr
+				,(char*)stGravaLegadoRegistro.stTelefone.arr
+				,(char*)stGravaLegadoRegistro.stFax.arr
+				,(char*)stGravaLegadoRegistro.stEMail.arr
+				,(char*)stGravaLegadoRegistro.stNumDepend.arr
+				,(char*)stGravaLegadoRegistro.stNomeContato.arr
+				,(char*)stGravaLegadoRegistro.stLogradouro.arr
+				,(char*)stGravaLegadoRegistro.stEndereco.arr
+				,(char*)stGravaLegadoRegistro.stComplemento.arr
+				,(char*)stGravaLegadoRegistro.stBairro.arr
+				,(char*)stGravaLegadoRegistro.stCEP.arr
+				,(char*)stGravaLegadoRegistro.stCidade.arr
+				,(char*)stGravaLegadoRegistro.stEstado.arr
+				,(char*)stGravaLegadoRegistro.stNumero.arr
+			);
+			
+			//A Cada 50 registros envia para o legado
+			if( iCont >= 50 )
+			{
+				//Envia para o legado
+				ULOG("CGravaLegado::PesquisaPorDataNOK::Chamando EnviaParaLegado(%s)", pszUser );
+				EnviaParaLegado( pszUser );
+				ULOG("CGravaLegado::PesquisaPorDataNOK::EnviaParaLegado(%s) com sucesso", pszUser );
+
+				//Apaga a estrutura interna
+				Zera();
+				iCont = 0;
+			}
+
+		}
+		EXEC SQL CLOSE CursorPesquisaPorDataNOK;
+
+		if( Quantidade() > 0 )
+		{
+			//Envia para o legado
+			ULOG("CGravaLegado::PesquisaPorDataNOK::Chamando EnviaParaLegado(%s)", pszUser );
+			EnviaParaLegado( pszUser );
+			ULOG("CGravaLegado::PesquisaPorDataNOK::EnviaParaLegado(%s) com sucesso", pszUser );
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CGravaLegado::PesquisaPorDataNOK");
+	return;
+
+GotoPesquisaPorDataNOK:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CGravaLegado::PesquisaPorIdPessoa( char* pszIdPessoa
+                                       ,char* pszUser )
+{
+    ULOG_START("CGravaLegado::PesquisaPorIdPessoa");
+
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* pszIdPessoaAux = pszIdPessoa;
+		struct
+		{
+			VARCHAR stNrLinha[255+1];
+			VARCHAR stIdGrupo[255+1];
+			VARCHAR stTipoCliente[255+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stDataNascimento[255+1];
+			VARCHAR stEstadoCivil[255+1];
+			VARCHAR stCodSexo[255+1];
+			VARCHAR stDsRazaoSocial[255+1];
+			VARCHAR stIE[255+1];
+			VARCHAR stCPF[255+1];
+			VARCHAR stRG[255+1];
+			VARCHAR stDataExpiracao[255+1];
+			VARCHAR stOrgaoExpeditor[255+1];
+			VARCHAR stEstadoExpedicao[255+1];
+			VARCHAR stPassaporte[255+1];
+			VARCHAR stCNPJ[255+1];
+			VARCHAR stCNAE[255+1];
+			VARCHAR stTelefone[255+1];
+			VARCHAR stFax[255+1];
+			VARCHAR stEMail[255+1];
+			VARCHAR stNumDepend[255+1];
+			VARCHAR stNomeContato[255+1];
+			VARCHAR stLogradouro[255+1];
+			VARCHAR stEndereco[255+1];
+			VARCHAR stComplemento[255+1];
+			VARCHAR stBairro[255+1];
+			VARCHAR stCEP[255+1];
+			VARCHAR stCidade[255+1];
+			VARCHAR stEstado[255+1];
+			VARCHAR stNumero[255+1];
+			VARCHAR stIdPessoa[21+1];
+		} stGravaLegadoRegistro;
+		struct
+		{
+			short iNrLinha;
+			short iIdGrupo;
+			short iTipoCliente;
+			short iNome;
+			short iDataNascimento;
+			short iEstadoCivil;
+			short iCodSexo;
+			short iDsRazaoSocial;
+			short iIE;
+			short iCPF;
+			short iRG;
+			short iDataExpiracao;
+			short iOrgaoExpeditor;
+			short iEstadoExpedicao;
+			short iPassaporte;
+			short iCNPJ;
+			short iCNAE;
+			short iTelefone;
+			short iFax;
+			short iEMail;
+			short iNumDepend;
+			short iNomeContato;
+			short iLogradouro;
+			short iEndereco;
+			short iComplemento;
+			short iBairro;
+			short iCEP;
+			short iCidade;
+			short iEstado;
+			short iNumero;
+			short iIdPessoa;
+		} stGravaLegadoIndicator;
+		int iCont;
+	EXEC SQL END DECLARE SECTION;
+
+	//Apaga a estrutura interna
+	Zera();
+
+	try
+	{
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoPesquisaPorIdPessoa;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL 
+   		DECLARE 
+   			CursorPesquisaPorIdPessoa CURSOR FOR
+		SELECT 
+		       NRLINHA                // nrLinha (DDD+NUMERO)
+		     , IDGRUPO                // GRUPO NAO UTILIZADO NESTA PESQUISA
+		     , SGTIPOPESSOA           // tipoCliente     - SIGLA (PF/PJ)
+		     , NMPESSOA               // nome
+		     , DTNASCIMENTO           // dataNascimento  - dd/mm/yyyy
+		     , SGESTADOCIVIL          // estadoCivil - ID
+		     , SGSEXO                 // codSexo - SIGLA
+		     , NMFANTASIA             // dsRazaoSocial
+		     , IE                     // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , CPF                    // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , RG                     // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , RGDTEMISSAO            // dataExpiracao
+		     , RGSGORGAOEXPEDIDOR     // orgaoExpedidor
+		     , RGSGUF                 // estadoExpedicao - SIGLA UF
+		     , PASS                   // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , CNPJ                   // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , CNAE                   // IE, CPF, RG, CNPJ, CNAE, PASSAPORTE
+		     , TELEFONE               // telefone, fax, eMail
+		     , FAX                    // telefone, fax, eMail
+		     , EMAIL                  // telefone, fax, eMail
+		     , NUMDEPEND              // numDepend
+		     , NMCONTATO              // nomeContato
+		     , LOGRADOURO             // logradouro
+		     , NMLOGRADOURO           // endereco
+		     , DSENDERECOCOMPLEMENTO  // complemento
+		     , NMBAIRRO               // bairro
+		     , NRCEP                  // CEP
+		     , NMMUNICIPIO            // cidade
+		     , SGUF                   // estado - SIGLA UF
+		     , NRENDERECO             // numero
+			 , IDPESSOA               // idPessoa
+		FROM 
+		  	CUSTOMER.GRAVALEGADOV01 GL
+
+			//ENVIA SOMENTE UMA PESSOA
+		WHERE
+			IDPESSOA = :pszIdPessoaAux;
+
+		ULOG("CGravaLegado::PesquisaPorIdPessoa::Antes de abrir o cursor\nIdPessoa%s", pszIdPessoaAux);
+		EXEC SQL OPEN CursorPesquisaPorIdPessoa;
+		ULOG("CGravaLegado::PesquisaPorIdPessoa::Depois de abrir o cursor");
+
+		for(iCont=1;;iCont++)
+		{
+			memset( &stGravaLegadoRegistro, 0, sizeof(stGravaLegadoRegistro) );
+			EXEC SQL FETCH CursorPesquisaPorIdPessoa INTO :stGravaLegadoRegistro:stGravaLegadoIndicator;
+		
+			//Armazena os dados na estrutura interna
+			Add(
+				 (char*)stGravaLegadoRegistro.stIdPessoa.arr
+				,(char*)stGravaLegadoRegistro.stNrLinha.arr
+				,(char*)stGravaLegadoRegistro.stIdGrupo.arr
+				,(char*)stGravaLegadoRegistro.stTipoCliente.arr
+				,(char*)stGravaLegadoRegistro.stNome.arr
+				,(char*)stGravaLegadoRegistro.stDataNascimento.arr
+				,(char*)stGravaLegadoRegistro.stEstadoCivil.arr
+				,(char*)stGravaLegadoRegistro.stCodSexo.arr
+				,(char*)stGravaLegadoRegistro.stDsRazaoSocial.arr
+				,(char*)stGravaLegadoRegistro.stIE.arr
+				,(char*)stGravaLegadoRegistro.stCPF.arr
+				,(char*)stGravaLegadoRegistro.stRG.arr
+				,(char*)stGravaLegadoRegistro.stDataExpiracao.arr
+				,(char*)stGravaLegadoRegistro.stOrgaoExpeditor.arr
+				,(char*)stGravaLegadoRegistro.stEstadoExpedicao.arr
+				,(char*)stGravaLegadoRegistro.stPassaporte.arr
+				,(char*)stGravaLegadoRegistro.stCNPJ.arr
+				,(char*)stGravaLegadoRegistro.stCNAE.arr
+				,(char*)stGravaLegadoRegistro.stTelefone.arr
+				,(char*)stGravaLegadoRegistro.stFax.arr
+				,(char*)stGravaLegadoRegistro.stEMail.arr
+				,(char*)stGravaLegadoRegistro.stNumDepend.arr
+				,(char*)stGravaLegadoRegistro.stNomeContato.arr
+				,(char*)stGravaLegadoRegistro.stLogradouro.arr
+				,(char*)stGravaLegadoRegistro.stEndereco.arr
+				,(char*)stGravaLegadoRegistro.stComplemento.arr
+				,(char*)stGravaLegadoRegistro.stBairro.arr
+				,(char*)stGravaLegadoRegistro.stCEP.arr
+				,(char*)stGravaLegadoRegistro.stCidade.arr
+				,(char*)stGravaLegadoRegistro.stEstado.arr
+				,(char*)stGravaLegadoRegistro.stNumero.arr
+			);
+		}//for(;;)	
+		//Envia para o legado
+		ULOG("CGravaLegado::PesquisaPorIdPessoa::Chamando EnviaParaLegado(%s)", pszUser );
+		EnviaParaLegado( pszUser );
+		ULOG("CGravaLegado::PesquisaPorIdPessoa::EnviaParaLegado(%s) com sucesso", pszUser );
+
+		EXEC SQL CLOSE CursorPesquisaPorIdPessoa;
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CGravaLegado::PesquisaPorIdPessoa");
+	return iStatus;
+
+GotoPesquisaPorIdPessoa:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CGravaLegado::EnviaParaLegado( char* pszUser )
+{
+    ULOG_START("CGravaLegado::EnviaParaLegado");
+
+    //XML de saida para o legado
+    XMLGen                      *pclXmlGen;
+	//Classes para chamada remota
+    TuxMessage                  *inputMessageSetCliente;
+    TuxRemoteService            *remoteServiceSetCliente;
+	//Variaveis de uso geral
+    char szMessageException[LEN_RETURN_MESSAGE + LEN_EOS];
+    char *pStatusCode = NULL;
+    char *pStatusText = NULL;
+    int  iRetSistemaLegado=0;
+	int  iCont;
+	//De para de tipo de logradouros para o NGIN
+	char* pszTipoLogNGIN[] = 
+	{ 
+		"ACS",
+		"AL",
+		"AV",
+		"BC",
+		"ESTR",
+		"GLR",
+		"JD",
+		"LAD",
+		"LGO",
+		"PAS",
+		"PCA",
+		"PRA", 
+		"PQ",
+		"PTE",
+		"R",
+		"ROD",
+		"TRAV",
+		"TRV",
+		"V",
+		"VD",
+		"VIA",
+		"VL" 
+	};
+	//Enderecos FO
+	char* pszTipoLogFO[] = 
+	{ 
+		"ACESSO"  ,
+		"ALAMEDA" ,
+		"AVENIDA" ,
+		"BECO"    ,
+		"ESTRADA" ,
+		"GALERIA" ,
+		"JARDIM"  ,
+		"LADEIRA" ,
+		"LARGO"   ,
+		"PASSAGEM",
+		"PRACA"   ,
+		"PRAIA"   ,
+		"PARQUE"  ,
+		"PONTE"   ,
+		"RUA"     ,
+		"RODOVIA" ,
+		"TRAVESSA",
+		"TREVO"   ,
+		"VALE"    ,
+		"VIADUTO" ,
+		"VIA"     ,
+		"VIELA"
+	};
+	//Quantidade de elemento nas arrays acima, se forem modificadas a const a baixo
+	//devera ser modificada
+	const int iQuantidadeLogradouros = 22;
+  
+    for( int x = 0; x < Quantidade(); x++ )
+    {
+		pclXmlGen = new XMLGen;
+		remoteServiceSetCliente = new TuxRemoteService();
+		inputMessageSetCliente = new TuxMessage();
+
+		// Seta informacoes para acesso ao sistema legado
+	    pclXmlGen->addItem("ProxyOperacao", "setCliente");
+	    pclXmlGen->addItem("usuario", "FO" );
+
+	    //Verifica se existe grupo
+	    if(STRLENNULL( Registro(x)->pzcIdGrupo ) <= 0 )
+	    {
+			ULOG("Registro(x)->pzcNrLinha[%s]", Registro(x)->pzcNrLinha );
+	        pclXmlGen->addItem("ProxyLinha", Registro(x)->pzcNrLinha);
+	    }
+	    else
+	    {
+			ULOG("Registro(x)->pzcIdGrupo[%s]", Registro(x)->pzcIdGrupo );
+	        pclXmlGen->addItem("ProxyLinha", "");
+	        pclXmlGen->addItem("idGrupo", Registro(x)->pzcIdGrupo);
+	    }
+
+	    if( !strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_FISICA) ) 
+	    {
+	        pclXmlGen->addItem("tipoCliente", "P");
+	    } else if(!strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_JURIDICA)) 
+	    {
+	        pclXmlGen->addItem("tipoCliente", "E");
+	    } else 
+	    {
+	        sprintf(szMessageException, "Registro(x)->pzcTipoCliente invalido[%s]", Registro(x)->pzcTipoCliente);
+	        throw PrePagoException(ERRO_EXECUCAO, szMessageException);
+	    }
+
+
+	    if( strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_FISICA) == 0 ) 
+		{
+	        pclXmlGen->addItem("nome", Registro(x)->pzcNome);
+		    pclXmlGen->addItem("confidencial", "N");
+
+            pclXmlGen->addItem("dataNascimento", Registro(x)->pzcDataNascimento);
+
+            if( strcmp( Registro(x)->pzcEstadoCivil, SG_TIPO_EC_SOLTEIRO ) == 0 )
+                pclXmlGen->addItem("estadoCivil", "S");
+            else if(strcmp( Registro(x)->pzcEstadoCivil, SG_TIPO_EC_CASADO ) == 0 )
+                pclXmlGen->addItem("estadoCivil", "C");
+            else if(strcmp( Registro(x)->pzcEstadoCivil, SG_TIPO_EC_VIUVO ) == 0 )
+                pclXmlGen->addItem("estadoCivil", "V");
+            else if(strcmp( Registro(x)->pzcEstadoCivil, SG_TIPO_EC_DIVORCIADO ) == 0 )
+                pclXmlGen->addItem("estadoCivil", "D");
+            else
+                pclXmlGen->addItem("estadoCivil", "");
+
+            if(strcmp( Registro(x)->pzcCodSexo, SG_SEXO_MASCULINO ) == 0 )
+                pclXmlGen->addItem("codSexo", "M");
+            else if(strcmp( Registro(x)->pzcCodSexo, SG_SEXO_FEMININO ) == 0 )
+                pclXmlGen->addItem("codSexo", "F");
+            else
+                pclXmlGen->addItem("codSexo", "");
+	    }//if( strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_FISICA) == 0 ) 
+	    else if( strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_JURIDICA) == 0 ) 
+	    {
+            pclXmlGen->addItem("nome", Registro(x)->pzcDsRazaoSocial);
+			pclXmlGen->addItem("nomeAbreviado", "");
+            pclXmlGen->addItem("IE", Registro(x)->pzcIE);
+	    }//else if( strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_JURIDICA) == 0 ) 
+	    else
+	    {
+	        sprintf(szMessageException, "Registro(x)->pzcTipoCliente invalida[%s]", Registro(x)->pzcTipoCliente);
+	        throw PrePagoException(ERRO_EXECUCAO, szMessageException);
+	    }//else
+
+        if( strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_FISICA) == 0 ) 
+        {
+			if( STRLENNULL(Registro(x)->pzcCPF ) > 0 )
+			{
+                TrataNrDocumento(Registro(x)->pzcCPF);
+                Registro(x)->pzcCPF[LEN_CPF_LEGADO]=0x00;
+				//Caso soh venha documento somente com caracteres especiais eh cadastrado o documento "0"
+				if( STRLENNULL( Registro(x)->pzcCPF ) <= 0 )
+					strcpy( Registro(x)->pzcCPF, "0" );
+                pclXmlGen->addItem("CPF", Registro(x)->pzcCPF);
+                pclXmlGen->addItem("tipoCPF", "D");
+            }
+            else if( STRLENNULL( Registro(x)->pzcRG ) > 0 )
+            {
+                TrataNrDocumento( Registro(x)->pzcRG );
+                Registro(x)->pzcRG[LEN_RG_LEGADO]=0x00;
+				//Caso soh venha documento somente com caracteres especiais eh cadastrado o documento "0"
+				if( strlen( Registro(x)->pzcRG ) <= 0 )
+					strcpy( Registro(x)->pzcRG, "0" );
+                pclXmlGen->addItem("RG", Registro(x)->pzcRG);
+                pclXmlGen->addItem("tipoRG", "D");
+                pclXmlGen->addItem("dataExpiracao", Registro(x)->pzcDataExpiracao);
+                pclXmlGen->addItem("orgaoExpeditor", Registro(x)->pzcOrgaoExpeditor);
+
+                if(!strcmp( Registro(x)->pzcEstadoExpedicao, "NC"))
+                    pclXmlGen->addItem("estadoExpedicao", "" );
+                else
+                    pclXmlGen->addItem("estadoExpedicao", Registro(x)->pzcEstadoExpedicao );
+
+            } 
+            else if( STRLENNULL( Registro(x)->pzcPassaporte ) > 0 )
+            {
+                TrataNrDocumento(Registro(x)->pzcPassaporte);
+                Registro(x)->pzcPassaporte[LEN_PASSAPORTE_LEGADO]=0x00;
+				//Caso soh venha documento somente com caracteres especiais eh cadastrado o documento "0"
+				if( strlen( Registro(x)->pzcPassaporte ) <= 0 )
+					strcpy( Registro(x)->pzcPassaporte, "0" );
+                pclXmlGen->addItem("passaporte", Registro(x)->pzcPassaporte);
+                pclXmlGen->addItem("tipoPassaporte", "D");
+			}
+        }//if( strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_FISICA) == 0 ) 
+        else if( strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_JURIDICA) == 0 )
+        {
+			if( STRLENNULL(Registro(x)->pzcCNPJ ) > 0 )
+			{
+                TrataNrDocumento(Registro(x)->pzcCNPJ);
+                Registro(x)->pzcCNPJ[LEN_CNPJ_LEGADO]=0x00;
+				//Caso soh venha documento somente com caracteres especiais eh cadastrado o documento "0"
+				if( strlen( Registro(x)->pzcCNPJ ) <= 0 )
+					strcpy( Registro(x)->pzcCNPJ, "0" );
+                pclXmlGen->addItem("CNPJ", Registro(x)->pzcCNPJ);
+			} 
+			else if( STRLENNULL(Registro(x)->pzcCNAE ) > 0 )
+			{
+                TrataNrDocumento(Registro(x)->pzcCNAE);
+                Registro(x)->pzcCNAE[LEN_CNAE_LEGADO]=0x00;
+				//Caso soh venha documento somente com caracteres especiais eh cadastrado o documento "0"
+				if( strlen( Registro(x)->pzcCNAE ) <= 0 )
+					strcpy( Registro(x)->pzcCNAE, "0" );
+                pclXmlGen->addItem("CNAE", Registro(x)->pzcCNAE);
+                
+			}
+		}//else if( strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_JURIDICA) == 0 )
+
+	    // Referente ao sistema legado
+	    if( strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_FISICA) == 0 ) 
+	    {
+	        if(STRLENNULL( Registro(x)->pzcTelefone ) > 0 ) 
+	        {
+	            pclXmlGen->addItem("telefone", Registro(x)->pzcTelefone );
+	        }
+	        else if(STRLENNULL( Registro(x)->pzcFax ) > 0 ) 
+	        {
+	            pclXmlGen->addItem("fax", Registro(x)->pzcFax);
+	        }
+	        else if(STRLENNULL( Registro(x)->pzcFax ) > 0 )
+	        {
+	            pclXmlGen->addItem("eMail", Registro(x)->pzcEMail);
+	            pclXmlGen->addItem("numDepend", "");
+	        }
+	        //duvida: tem o documento passaporte e o dscontato do tipo passaporte, tem que verificar o que eh
+	        else //????if(atoi(szAux) == ID_TIPO_COMUNICACAO_PASSAPORTE)
+	            pclXmlGen->addItem("passaporte", "");
+	    }
+	    else if( strcmp(Registro(x)->pzcTipoCliente, PP_PESSOA_JURIDICA) == 0 ) 
+	    {
+	        pclXmlGen->addItem("telefone", Registro(x)->pzcTelefone );
+
+	        pclXmlGen->addItem("fax", "");
+	        pclXmlGen->addItem("eMail", "");
+	        pclXmlGen->addItem("numDepend", "");
+	        pclXmlGen->addItem("passaporte", "");
+	        pclXmlGen->addItem("tipoPassaporte", "");
+	        pclXmlGen->addItem("cartaConducao", "");
+	        pclXmlGen->addItem("tipoCartaCond", "");
+	        pclXmlGen->addItem("aoCuidadoDe", "");
+	        pclXmlGen->addItem("obs", "");
+	        pclXmlGen->addItem("conservatoriaRegistro", "");
+	        pclXmlGen->addItem("nomeContato", Registro(x)->pzcNomeContato );
+	    }
+	    
+		alltrim( Registro(x)->pzcLogradouro );
+		for( iCont=0; iCont<iQuantidadeLogradouros; iCont++ )
+		{
+			if( strcmp( pszTipoLogFO[iCont], Registro(x)->pzcLogradouro ) == 0 )
+			{
+				strcpy( Registro(x)->pzcLogradouro, pszTipoLogNGIN[iCont] );
+				break;
+			}
+		}
+		//Caso nao ache nehum item no array acima, fica definido com RUA (R)
+		if( iCont >= iQuantidadeLogradouros )
+			strcpy( Registro(x)->pzcLogradouro, "" );
+	    TrataNrDocumento(Registro(x)->pzcCEP);
+	    Registro(x)->pzcCEP[LEN_CEP_LEGADO]=0x00;
+
+	    ULOG("Registro(x)->pzcLogradouro[%s]", Registro(x)->pzcLogradouro);
+	    ULOG("Registro(x)->pzcEndereco[%s]", Registro(x)->pzcEndereco);
+	    ULOG("Registro(x)->pzcComplemento[%s]", Registro(x)->pzcComplemento);
+	    ULOG("Registro(x)->pzcBairro[%s]", Registro(x)->pzcBairro);
+	    ULOG("Registro(x)->pzcCEP[%s]", Registro(x)->pzcCEP);
+	    ULOG("Registro(x)->pzcCidade[%s]", Registro(x)->pzcCidade);
+	    ULOG("Registro(x)->pzcEstado[%s]", Registro(x)->pzcEstado);
+	    ULOG("Registro(x)->pzcNumero[%s]", Registro(x)->pzcNumero);
+
+	    pclXmlGen->addItem("logradouro", Registro(x)->pzcLogradouro);
+	    pclXmlGen->addItem("endereco", Registro(x)->pzcEndereco);
+	    pclXmlGen->addItem("complemento", Registro(x)->pzcComplemento);
+	    pclXmlGen->addItem("bairro", Registro(x)->pzcBairro);
+	    pclXmlGen->addItem("CEP", Registro(x)->pzcCEP);
+	    pclXmlGen->addItem("cidade", Registro(x)->pzcCidade);
+	    pclXmlGen->addItem("estado", Registro(x)->pzcEstado);
+	    pclXmlGen->addItem("pais", "BRA");
+	    pclXmlGen->addItem("numero", Registro(x)->pzcNumero);
+
+	    //////////////////////////////////////
+	    // INICIO DA SETAGEM DO CLIENTE     //
+	    //////////////////////////////////////
+	    try
+	    {
+	        ULOG("** Inicio do setCliente... <setCliente>");
+	        inputMessageSetCliente->setUser(pszUser);
+	    	inputMessageSetCliente->setService("DTuxProxyBE");
+	        inputMessageSetCliente->setMessageBody(pclXmlGen);
+
+	        // Repassa configuracoes ao manipulador do serviço remoto e invoca o servico.
+	        remoteServiceSetCliente->setServiceName("DTuxProxyBE");
+	        remoteServiceSetCliente->setInputMessage(inputMessageSetCliente);
+
+	        ULOG("*** Inicio do acesso remoto ao sistema legado... <remoteCall>");
+	        iRetSistemaLegado = remoteServiceSetCliente->remoteCall();
+	        ULOG("iRetSistemaLegado(%d)", iRetSistemaLegado);
+	        if(iRetSistemaLegado != TUXFWRET_OK) 
+	            throw PrePagoException(ERRO_LEGADO_SET_CLIENTE, "Erro de comunicação com sistema legado para Setagem de cliente");
+
+	    	pStatusCode = remoteServiceSetCliente->getOutputMessage()->getStatusCode();
+	    	ULOG("pStatusCode[%s](%p)", pStatusCode, pStatusCode);
+	        if(pStatusCode != NULL) 
+	        {
+	            if(strlen(pStatusCode) > 0) 
+	            {
+	                if(pStatusCode[2] != 'I') 
+	                {
+	                    free(pStatusCode); 
+							pStatusCode = NULL;
+	                    throw PrePagoException(ERRO_LEGADO_SET_CLIENTE, "Erro de comunicação com sistema legado para Setagem de cliente");
+	                }
+	            }
+	        }
+			ULOG("DADOS ENVIADOS COM SUCESSO");
+			GravaStatus( GRAVALEGADO_SUCESSO, Registro(x)->pzcIdPessoa );
+			iStatus = 1;
+
+			ULOG("*** Final do acesso remoto ao sistema legado... <remoteCall>");
+
+			pStatusCode = remoteServiceSetCliente->getOutputMessage()->getStatusCode();
+			ULOG("pStatusCode[%s](%p)", pStatusCode, pStatusCode);
+			pStatusText = remoteServiceSetCliente->getOutputMessage()->getStatusText();
+			ULOG("pStatusText[%s](%p)", pStatusText, pStatusText);
+	    }
+	    catch(...)
+	    {
+			ULOGE("DADOS ENVIADOS COM FALHA");
+			GravaStatus( GRAVALEGADO_FALHA, Registro(x)->pzcIdPessoa );
+			iStatus = 0;
+	    }
+		if(pStatusCode) 
+		{
+		    ULOG("free - pStatusCode");
+		    free(pStatusCode); 
+			pStatusCode = NULL;
+		}
+		if(pStatusText) 
+		{
+		    ULOG("free - pStatusText");
+		    free(pStatusText); 
+			pStatusText = NULL;
+		}
+		delete remoteServiceSetCliente;
+		delete inputMessageSetCliente;
+		delete pclXmlGen;
+	    ULOG("** Final da Setagem do cliente... <setCliente>");
+
+		// colocando intervalo de 2 segundos entre as chamadas
+		sleep(2);
+
+	}//for( int x = 0; x < Quantidade(); x++ )
+    ULOG("* Final do processamento para sistema legado...");
+    ULOG_END("CGravaLegado::EnviaParaLegado");
+	return iStatus;
+}
+
+
+void CGravaLegado::GravaStatus( char* cStatus
+				               ,char* cIdPessoa )
+{
+    ULOG_START("CGravaLegado::GravaStatus");
+
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cStatusAux = cStatus;
+		char* cIdPessoaAux = cIdPessoa;
+		int   iCont = 0;
+	EXEC SQL END DECLARE SECTION;
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoGravaStatus;
+	sqlca.sqlcode=0;
+
+	//Verifica se existe ou não o IDPESSOA
+	EXEC SQL
+	SELECT
+		COUNT(1)
+	INTO
+		:iCont
+	FROM
+		INFRA.LOGGRAVALEGADO
+	WHERE
+		IDPESSOA = :cIdPessoaAux;
+		
+	//Se não existe insere
+	if( iCont <= 0 )
+	{
+	EXEC SQL 
+	INSERT INTO INFRA.LOGGRAVALEGADO
+	(
+		 IDPESSOA
+		,DSSTATUSEXECUCAO
+		,DTEXECUCAO
+	)
+	VALUES
+	(
+		:cIdPessoaAux, 
+		:cStatusAux, 
+		 SYSDATE
+	);
+	}
+	else
+	{//Se existe insere
+		EXEC SQL 
+		UPDATE INFRA.LOGGRAVALEGADO
+		SET
+			DSSTATUSEXECUCAO = :cStatusAux,
+			DTEXECUCAO = SYSDATE
+		WHERE
+			IDPESSOA = :cIdPessoaAux;
+	}
+
+    ULOG_END("CGravaLegado::GravaStatus");
+	return;
+
+GotoGravaStatus:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}

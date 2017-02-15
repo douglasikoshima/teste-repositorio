@@ -1,0 +1,258 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:32 $
+ **/
+//
+// =======================================================================
+// Detalhe da produtividade por representante (Rel3) não existe
+// Este código esta desativado - Fev/2007 - Cassio
+// =======================================================================
+//
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+#include "../../AtendimentoCommonsRel/include/cWFComunsRelatorios.h"
+#include "../include/cWFAtendimentoRel3Det.h"
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+#define MAXCOLUNAS 21
+EXEC SQL END DECLARE SECTION;
+
+void MontarQuebra(string &nmColuna,st_AtendimentoRel *dados);
+
+bool proCExecutarRelatorio3Det( st_AtendimentoRel *dados
+                              , st_vlAtendimentoRel *status
+                              , XMLGen *saida
+                              , DOMNode *dnode )
+{
+    struct sqlca sqlca;
+    string idColunas;
+    string idColunasTmp;
+    string where;
+    string group;
+    string nmColuna;
+    string saidaDet;
+    int linha=0;
+    int i;
+
+    if ( !dados )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !status )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !saida )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !dnode )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    idColunasTmp = "DTABERTURA,IDGRUPO,IDOPERADORA,"
+                   "IDSTATUSUSUARIO,IDUFOPERADORA,NMGRUPO,NMGRUPOOPERADORA,NMLOGINUSUARIO,NMNOME,"
+                   "SGSTATUSUSUARIO,FECHADOS,TENTATIVASRETORNO,TENTATIVASTRATAMENTO,NUMENCERRADOS,"
+                   "UF";
+
+    idColunas += "SELECT TO_CHAR(DTABERTURA,'MM/DD/YYYY') AS DTABERTURA,IDGRUPO,IDOPERADORA,"
+                 "IDSTATUSUSUARIO,IDUFOPERADORA,NMGRUPO,NMGRUPOOPERADORA,NMLOGINUSUARIO,NMNOME,"
+                 "SGSTATUSUSUARIO,FECHADOS,TENTATIVASRETORNO,TENTATIVASTRATAMENTO,NUMENCERRADOS,"
+                 "UF";
+
+    MontarQuebra(nmColuna,dados);
+
+    idColunas += " FROM atendimento.ProdutividadePorRepresV01";
+
+    WFAtdRelCompletarWhere(where,dnode,"WFGrupoVO");
+    WFAtdRelCompletarWhere(where,dnode,"WFEstadoVO");
+    WFAtdRelCompletarWhere(where,dnode,"FiltroDetalhe");
+
+    if ( where.size() )
+    {
+        idColunas += " WHERE " + where;
+    }
+
+    if ( group.size() )
+    {
+        idColunas += " GROUP BY " + group;
+    }
+
+    char linIni[32],linFin[32];
+    string idColunasTmp2;
+
+    sprintf(linIni,"%d",dados->bloco * dados->qtdLinhasBloco + 1);
+    sprintf(linFin,"%d",(dados->bloco+1) * dados->qtdLinhasBloco + 1); //+1 aqui é necessário para controle de fim de relatório
+
+    idColunasTmp2 = "SELECT " + idColunasTmp + " FROM ("
+                    "SELECT ROWNUM as nLin," + idColunasTmp + " FROM (" + idColunas + "))"
+                     "WHERE nLin >= " + linIni + " AND nLin <= " + linFin;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *query;
+        short i_colunas[MAXCOLUNAS];
+        VARCHAR colunas[MAXCOLUNAS][256];
+    EXEC SQL END DECLARE SECTION;
+
+    query = (char*)idColunasTmp2.c_str();
+
+    ULOG( "QUERY=%s",query );
+
+    saida->createTag("WFRelatorioDinamicoVO");
+    saida->addProp("xmlns","workflow.fo.vivo.com.br/vo");
+
+    WFAtdRelGerarHeaderSaidaXML(nmColuna,saida,dnode);
+
+    for ( i=0; i<MAXCOLUNAS;i++ )
+    {
+        colunas[i].arr[0] = 0;
+        colunas[i].len = 0;
+    }
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdRelSqlErro(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL PREPARE recebeQuery FROM :query;
+    EXEC SQL DECLARE consulta CURSOR FOR recebeQuery;
+
+    EXEC SQL OPEN consulta;
+
+    char *p;
+    
+    int nRegs = 0;
+
+    while ( true )
+    {
+        nRegs++;
+
+        EXEC SQL FETCH consulta INTO :colunas[ 0]:i_colunas[ 0],
+                                     :colunas[ 1]:i_colunas[ 1],
+                                     :colunas[ 2]:i_colunas[ 2],
+                                     :colunas[ 3]:i_colunas[ 3],
+                                     :colunas[ 4]:i_colunas[ 4],
+                                     :colunas[ 5]:i_colunas[ 5],
+                                     :colunas[ 6]:i_colunas[ 6],
+                                     :colunas[ 7]:i_colunas[ 7],
+                                     :colunas[ 8]:i_colunas[ 8],
+                                     :colunas[ 9]:i_colunas[ 9],
+                                     :colunas[10]:i_colunas[10],
+                                     :colunas[11]:i_colunas[11],
+                                     :colunas[12]:i_colunas[12],
+                                     :colunas[13]:i_colunas[13],
+                                     :colunas[14]:i_colunas[14],
+                                     :colunas[15]:i_colunas[15],
+                                     :colunas[16]:i_colunas[16],
+                                     :colunas[17]:i_colunas[17],
+                                     :colunas[18]:i_colunas[18],
+                                     :colunas[19]:i_colunas[19],
+                                     :colunas[20]:i_colunas[20];
+
+        if ( nRegs > dados->qtdLinhasBloco )
+        {
+            break;
+        }
+
+        if ( saidaDet.length() ) saidaDet += "\n";
+
+        for ( i=0;i<MAXCOLUNAS;i++ )
+        {
+            CONVIND(colunas[i],i_colunas[i]);
+
+            // Verifica se existe caractere conflitante com CSV_SEPARADOR
+            // e se existir, substitui por 0x20
+            while ( p=strstr((char*)colunas[i].arr,CSV_SEPARADOR),p )
+            {
+                *p = ' ';
+            }
+
+            saidaDet += (char*)(colunas[i].arr);
+
+            if ( i < MAXCOLUNAS ) saidaDet += CSV_SEPARADOR;
+        }
+
+        if ( saidaDet.length() >= 22000L )
+        {
+            saida->addItem("csv",(char*)saidaDet.c_str());
+            saidaDet.erase();
+        }
+    }
+
+    if ( saidaDet.length() )
+    {
+        saida->addItem("csv",(char*)saidaDet.c_str());
+    }
+
+    saida->addItem("inFin", sqlca.sqlcode == 1403 ? true:false);
+
+    saida->closeTag();
+
+    EXEC SQL CLOSE consulta;
+
+    return true;
+}
+
+void MontarQuebra(string &nmColuna,st_AtendimentoRel *dados)
+{
+    //   DTABERTURA, FECHADOS, IDGRUPO, IDOPERADORA, IDSTATUSUSUARIO, IDUFOPERADORA, NMGRUPO, 
+    //   NMGRUPOOPERADORA, NMLOGINUSUARIO, NMNOME, NUMENCERRADOS, SGSTATUSUSUARIO, TENTATIVASRETORNO, 
+    //   TENTATIVASTRATAMENTO, UF
+
+    nmColuna += obterNomeColunaFixa(ID_DATA_ABERTURA);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_UF);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_NUM_PROCESSO);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_DATA_ABERTURA);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_DATA_ENTR_GRUPO);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_GRUPO_ATUAL);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_GRUPO_ABERTURA);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_USUARIO_ABERTURA);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_CARTEIRA);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_SEGMENTO);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_FONE_CONTATO);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_TIPO_CLIENTE);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_ESTADO_PROCESSO);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_SUBEST_PROCESSO);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_ARVORE_CONTATO);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_HORAS_DECORRIDAS);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa('A' == toupper(dados->prazo[0]) ? ID_PRAZO_ANATEL:ID_PRAZO_INTERNO);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_USUARIO_ABERTURA);
+    nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_NOME_USU_ABER);
+
+    ULOG( "Nomes de colunas=%s",nmColuna.c_str() );
+}

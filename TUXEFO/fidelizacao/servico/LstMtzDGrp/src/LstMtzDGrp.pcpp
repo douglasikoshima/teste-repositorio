@@ -1,0 +1,162 @@
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+int LstMtzDGrp( int usuario, DOMNode * dnode, XMLGen * xml )
+{
+    char parm[256];
+    memset( parm,0x0,sizeof(parm) );
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+        
+        VARCHAR idMtzDesconto[40];
+        VARCHAR dsDesconto[101];
+        VARCHAR idGrupo[40]; 
+
+    EXEC SQL END DECLARE SECTION;
+    memset( &idMtzDesconto , 0x0, sizeof(idMtzDesconto) );
+    memset( &dsDesconto    , 0x0, sizeof(dsDesconto) );
+    memset( &idGrupo    , 0x0, sizeof(idGrupo) );
+    
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  
+    try
+    {
+        //  Obtendo dados do xml
+        get_tag( parm, dnode, "idGrupoRetencao", 0, 0 );
+        if ( strlen(parm) > 0 )
+        {
+            strToOra( idGrupo, parm );
+        }
+
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+        EXEC SQL DECLARE crsMtzApDesc CURSOR FOR
+        SELECT DISTINCT
+            DESCONTO.IDDESCONTO ,
+            DESCONTO.DSDESCONTOPERCENTUAL
+        FROM
+            RETENCAO.DESCONTO DESCONTO
+        WHERE
+            DESCONTO.INATIVO = 1
+        AND
+            DESCONTO.IDDESCONTO NOT IN
+        (
+            SELECT
+               IDDESCONTO
+            FROM
+               RETENCAO.MATRIZDESCONTOGRUPO
+            WHERE 
+               IDGRUPO= :idGrupo
+            AND
+               INATIVO = 1
+        )
+        ORDER BY DESCONTO.DSDESCONTOPERCENTUAL;
+   
+        bool achou = false;
+        EXEC SQL OPEN crsMtzApDesc;
+        for(;;)
+        {
+            EXEC SQL 
+            FETCH crsMtzApDesc INTO :idMtzDesconto ,
+                                    :dsDesconto ;
+
+            endOraStr( idMtzDesconto );
+            endOraStr( dsDesconto );
+
+            achou = true;
+            xml->createTag("listaMatrizDescDisp");
+                xml->addItem("id",(char*)idMtzDesconto.arr);
+                xml->addItem("ds",(char*)dsDesconto.arr);
+            xml->closeTag();
+        }
+        EXEC SQL CLOSE crsMtzApDesc;
+        
+
+        // Matrizes Associadas
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+        EXEC SQL DECLARE crsMtzApDescAssoc CURSOR FOR
+        SELECT DISTINCT
+            DESCONTO.IDDESCONTO ,
+            DESCONTO.DSDESCONTOPERCENTUAL
+        FROM
+            RETENCAO.DESCONTO DESCONTO
+        WHERE
+            DESCONTO.INATIVO = 1
+        AND
+            DESCONTO.IDDESCONTO IN
+        (
+            SELECT
+               IDDESCONTO
+            FROM
+               RETENCAO.MATRIZDESCONTOGRUPO
+            WHERE 
+               IDGRUPO= :idGrupo
+            AND 
+               INATIVO = 1
+        )
+        ORDER BY DESCONTO.DSDESCONTOPERCENTUAL;
+
+        EXEC SQL OPEN crsMtzApDescAssoc;
+        for(;;)
+        {
+ULOG( "Lendo aparelhos selecionados...");        
+
+            memset( &idMtzDesconto, 0x0, sizeof(idMtzDesconto) );
+            memset( &dsDesconto   , 0x0, sizeof(dsDesconto) );
+
+            EXEC SQL 
+            FETCH crsMtzApDescAssoc INTO :idMtzDesconto ,
+                                         :dsDesconto ;
+
+            endOraStr( idMtzDesconto );
+            endOraStr( dsDesconto );
+            achou = true;
+
+ULOG( "Mostrando aparelhos selecionados...");        
+            xml->createTag("listaMatrizDescAssoc");
+                xml->addItem("id",(char*)idMtzDesconto.arr);
+                xml->addItem("ds",(char*)dsDesconto.arr);
+            xml->closeTag();
+        }
+        EXEC SQL CLOSE crsMtzApDescAssoc;
+
+        if ( achou == false )
+        {
+            EXEC SQL WHENEVER NOT FOUND DO BREAK;
+            EXEC SQL DECLARE crsDesc CURSOR FOR
+            SELECT DISTINCT
+                DESCONTO.IDDESCONTO ,
+                DESCONTO.DSDESCONTOPERCENTUAL
+            FROM
+                RETENCAO.DESCONTO DESCONTO
+            WHERE
+                DESCONTO.INATIVO = 1
+            ORDER BY DESCONTO.DSDESCONTOPERCENTUAL;
+        
+            EXEC SQL OPEN crsDesc;
+            for(;;)
+            {
+                EXEC SQL 
+                FETCH crsDesc INTO :idMtzDesconto ,
+                                   :dsDesconto ;
+
+                endOraStr( idMtzDesconto );
+                endOraStr( dsDesconto );
+
+                achou = true;
+                xml->createTag("listaMatrizDescDisp");
+                    xml->addItem("id",(char*)idMtzDesconto.arr);
+                    xml->addItem("ds",(char*)dsDesconto.arr);
+                xml->closeTag();
+            }
+            EXEC SQL CLOSE crsDesc;
+        }
+
+
+    }
+    catch(...)
+    {
+        throw;
+    }
+    
+  return 1;
+}

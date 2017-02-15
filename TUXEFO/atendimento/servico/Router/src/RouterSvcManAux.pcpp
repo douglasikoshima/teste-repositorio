@@ -1,0 +1,80 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include"../include/RouterClass.h"
+
+/*++
+Module Name:
+    RouterSvcManAux.pcpp
+
+Abstract:
+	RouterService manager
+	Extended PRO*C part
+
+Author:
+    Ivan Mentone 2004-06-29
+
+Environment:
+    Router Core
+
+Revision History:
+	
+
+--*/
+
+// TR 16
+#define ORACA
+#include<sqlcpr.h>
+#include<sqlca.h>
+#include<sqlda.h>
+#include<oci.h>
+
+EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+EXEC SQL WHENEVER NOT FOUND GOTO NotFound;
+
+int RouterSvcMan::QueryDB(char**src,int id)
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		OCIClobLocator*scpLine;
+		int scrpID;
+		int sz;
+		short ind;
+		VARCHAR*_read=0L;
+	EXEC SQL END DECLARE SECTION;
+
+	sqlca sqlca;
+
+	EXEC SQL ALLOCATE :scpLine;
+	scrpID=id;
+
+	EXEC SQL SELECT vlScriptSource 
+			 INTO :scpLine:ind
+		FROM workflow.RouterScript
+		WHERE idRouterScript=:scrpID AND inActive='1';
+
+	if(ind==-1)
+		goto UndefinedError;
+
+	EXEC SQL LOB DESCRIBE :scpLine GET LENGTH INTO :sz;
+	_read=(varchar*)malloc(sz+3);
+	_read->len=sz;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL LOB READ :sz FROM :scpLine INTO :_read WITH LENGTH :sz;
+
+	_read->arr[_read->len]=0;
+	*src=(char*)malloc(_read->len+1);
+	strcpy(*src,(const char*)_read->arr);
+
+	free(_read);
+	EXEC SQL FREE :scpLine;
+
+	return 1;
+NotFound:
+UndefinedError:
+	if(_read)
+		free(_read);
+	EXEC SQL FREE :scpLine;
+	return 0;
+}
+

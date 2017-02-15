@@ -1,0 +1,116 @@
+
+#include <COfertaRealizada.h>
+
+
+int COfertaRealizada::Inserir( DOMNode* pdnode, char* pidUser, char* pidRetencao, char* pidOfertaRealizada )
+{
+    ULOG_START("COfertaRealizada::Inserir()");  
+
+    char parm[255];
+    parm[0] = 0x0;
+    
+    int	 iOfertarealizada = 0;
+    int  iOfertaaceita = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    
+        VARCHAR     idRetencao[21+1];
+        VARCHAR     idOfertaAceita[21+1];
+        VARCHAR     idMatrizOferta[21+1];
+        VARCHAR     idUser[21+1];
+        
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    
+    ULOG( "Parametros de entrada: pidRetencao [%s] - pidOfertaRealizada [%s]",pidRetencao, pidOfertaRealizada );
+
+    strToOra(idRetencao,pidRetencao);
+    strToOra(idUser,pidUser);
+
+    iOfertaaceita = get_tag( parm, pdnode, "idOfertaAceita", 0, -1 ); 
+    if( iOfertaaceita != -1 )
+	{
+        strToOra(idMatrizOferta,parm);
+        EXEC SQL 
+        SELECT RETENCAO.OFERTAREALIZADASQ.NEXTVAL 
+        INTO :idOfertaAceita
+        FROM DUAL;
+        
+        endOraStr(idOfertaAceita);
+        strcpy(pidOfertaRealizada,(char*)idOfertaAceita.arr);
+
+		//insere a oferta aceita
+        EXEC SQL 
+        INSERT INTO RETENCAO.OFERTAREALIZADA 
+        ( 
+            IDOFERTAREALIZADA,
+            IDRETENCAO,
+            IDOFERTA,
+            INOFERTAACEITA,
+            IDPESSOAUSUARIOINCLUSAO,
+            DTINCLUSAO,
+            IDPESSOAUSUARIOALTERACAO,
+            DTALTERACAO,
+            IDUSUARIOALTERACAO,
+            DTULTIMAALTERACAO,
+            INATIVO
+        )
+        VALUES 
+        ( 
+            :idOfertaAceita,
+            :idRetencao,
+            :idMatrizOferta, 
+            1,
+            :idUser,
+            sysdate,
+            :idUser,
+            sysdate,
+            :idUser,
+            sysdate,
+            1
+        );
+	}	
+
+    while( get_tag(parm,pdnode,"idOfertaRealizada",iOfertarealizada,-1) != -1 )
+    {
+        strToOra(idMatrizOferta,parm);
+        //insere as ofertas realizadas
+        if( strlen(parm) > 0 )
+        {
+            EXEC SQL 
+            INSERT INTO RETENCAO.OFERTAREALIZADA 
+            ( 
+                IDOFERTAREALIZADA,
+                IDRETENCAO,
+                IDOFERTA,
+                INOFERTAACEITA,
+                IDPESSOAUSUARIOINCLUSAO,
+                DTINCLUSAO,
+                IDPESSOAUSUARIOALTERACAO,
+                DTALTERACAO,
+                IDUSUARIOALTERACAO,
+                DTULTIMAALTERACAO,
+                INATIVO
+            )
+            VALUES 
+            ( 
+                retencao.OfertaRealizadaSQ.nextval,
+                :idRetencao,
+                :idMatrizOferta, 
+                0,
+                :idUser,
+                sysdate,
+                :idUser,
+                sysdate,
+                :idUser,
+                sysdate,
+                1
+            );
+		}
+        iOfertarealizada++;
+    }
+
+    ULOG_END("COfertaRealizada::Inserir()");  
+    return 1;
+}

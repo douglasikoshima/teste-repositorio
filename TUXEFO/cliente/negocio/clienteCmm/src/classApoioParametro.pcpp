@@ -1,0 +1,101 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../include/Exception.h"
+
+#undef MSG_NONE
+#define MSG_NONE
+#include "../include/Messages.h"
+
+
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../include/classApoioParametro.h";
+
+//Construtor e Destrutor
+CApoioParametro::CApoioParametro()
+{
+    ULOG("CApoioParametro::CApoioParametro()");
+    memset(&tApoioParametro, 0x00, sizeof(tApoioParametro));
+}
+
+CApoioParametro::~CApoioParametro()
+{
+    ULOG("CApoioParametro::~CApoioParametro()");
+}
+
+char* CApoioParametro::getIdParametro(void)
+{
+    return ((char*)tApoioParametro.oszIdParametro.arr); 
+}
+
+char* CApoioParametro::getDsParametro(void)
+{
+    return ((char*)tApoioParametro.oszDsParametro.arr); 
+}
+
+char* CApoioParametro::getDsValorParametro(void)
+{
+    return ((char*)tApoioParametro.oszDsValorParametro.arr); 
+}
+
+char* CApoioParametro::getCdParametro(void)
+{
+    return ((char*)tApoioParametro.oszCdParametro.arr); 
+}
+
+// Metodos de acesso ao BD
+void CApoioParametro::buscaApoioParametro(char *pszCdParametro)
+{
+    ULOG_END("CApoioParametro::buscaApoioParametro()");
+    
+    struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszCdParametro[LEN_CDPARAMETRO + LEN_EOS];
+	EXEC SQL END DECLARE SECTION;
+
+    ULOG("CApoioParametro::buscaApoioParametro");
+
+    memset(&tApoioParametro, 0x00, sizeof(tApoioParametro));
+
+    STRCPY_TO_ORA(oszCdParametro, pszCdParametro);
+
+	// Marca ponto de controle de erro
+    EXEC SQL WHENEVER NOT FOUND goto sqlNotFound;
+	EXEC SQL WHENEVER SQLERROR goto sqlErrorLista;
+
+	EXEC SQL 
+        SELECT idparametro,
+               cdparametro,
+               dsparametro,
+               dsvalorparametro
+          INTO :tApoioParametro.oszIdParametro:tApoioParametro.oiIdParametro,
+               :tApoioParametro.oszCdParametro:tApoioParametro.oiCdParametro,
+               :tApoioParametro.oszDsParametro:tApoioParametro.oiDsParametro,
+               :tApoioParametro.oszDsValorParametro:tApoioParametro.oiDsValorParametro
+          FROM apoio.parametro
+         WHERE cdparametro = :oszCdParametro;
+
+    ULOG("FOUND");
+    ULOG_END("CApoioParametro::buscaApoioParametro()");
+    return;
+
+    sqlNotFound:
+        ULOG("NOT FOUND");
+        ULOG_END("CApoioParametro::buscaApoioParametro()");
+        return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("CApoioParametro::buscaApoioParametro()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

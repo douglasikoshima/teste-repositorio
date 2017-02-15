@@ -1,0 +1,258 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Fonte   : main.cpp
+//* Servico : FiltroLupaLinha
+//* Servidor: LupaLinha
+//*
+//* Ficheiro: TUXEFO/cliente/LupaLinha/FiltroLupaLinha/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson Martins
+//*
+//* Fecha primeira version:13/06/2004
+//*
+//* Version actual: 01.01
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Servico a ser chamando a partir da tela de LupaCliente recebendo um XML de entrada
+//* com os valores selecionados para realizar o filtro e retorna o XML esperado.
+//*
+//*//-------------------------------------------------------------------------------
+//*  ALTERACAO  DESCRICAO
+//*    01.00    Alteracao do nome do servico internamente a pedido da equipe
+//*             de Suporte Tecnologico. 30/08/2004
+//*    01.01    Task force to seek potential memory leaks and exception errors
+//*             - March,2005 - Cassio
+//---------------------------------------------------------------------
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../../negocio/clienteCmm/include/Exception.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+#include "../include/FiltroLupaLinha.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+#define STRLENNULL( y ) ( y == NULL ? 0 : strlen( y )  )
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classBuscaDadosLinha.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/Parametro.h";
+
+DECLARE_TUXEDO_SERVICE(FILTROLUPALIN);
+
+void implFILTROLUPALIN::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+	int iNroReg=0;
+	int iAux;
+	char* pParam=0;
+	char* pParam1=0;
+	char* pParam2=0;
+	char* pParam3=0;
+	char* pParam4=0;
+	char  cContadorPagina[255+1];
+	int   iProximaPagina = 0;
+	char  cPaginaAtual[255+1];
+	CBuscaDadosLinha* poBDL=0;
+    char  szIdSistemaOrigem[21+1];
+    bool  bFlagLegado;
+    CParametro clParametro;
+
+    ULOG_START( "implFILTROLUPALIN::Execute()" );
+    
+    try{
+		memset( cContadorPagina, 0, sizeof( cContadorPagina ) );
+		memset( cPaginaAtual, 0, sizeof( cPaginaAtual ) );
+        pParam = walkTree(pDnode, "paginaAtual", 0);
+        if(STRLENNULL( pParam ) <= 0 )
+			strcpy( cPaginaAtual, "0" );
+		else
+			strcpy( cPaginaAtual, pParam );
+
+		XMLString::release(&pParam);
+		pParam = NULL;
+        //*
+        //* Campo e´ obrigatorio.
+        //*
+        pParam = walkTree(pDnode, XML_OUT_IDPESSOAFIL, 0);
+        if(!pParam)
+        {
+            ERROR(NRO_ID_PESSOA_NE);
+            TAG_INEXISTENTE(XML_OUT_IDPESSOAFIL);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !*pParam)
+        {
+            ERROR(NRO_ID_PESSOA_VV);
+            TAG_VALOR_VAZIO(XML_OUT_IDPESSOAFIL);
+            if (pParam) XMLString::release(&pParam);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !IsNumeric(pParam) ){
+            ERROR(NRO_ID_PESSOA_VI);
+            TAG_VALOR_INVALIDO(XML_OUT_IDPESSOAFIL);
+            if (pParam) XMLString::release(&pParam);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        //*
+        //* Campos nao obrigatorios.
+        //*
+        pParam1 = walkTree(pDnode, XML_OUT_NRLINHA_DE, 0);
+        if(!pParam1 || !*pParam1) {
+            if ( pParam1 ) XMLString::release(&pParam1);
+            pParam1 = NULL;
+        }
+        else {
+            if ( !IsNumeric(pParam1) ) {
+                ERROR(NRO_NR_LINHA_DE_VI);
+                TAG_VALOR_INVALIDO(XML_OUT_NRLINHA_DE);
+                if (pParam) XMLString::release(&pParam);
+                if (pParam1) XMLString::release(&pParam1);
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+        }
+
+        pParam2 = walkTree(pDnode, XML_OUT_NRLINHA_ATE, 0);
+        if(!pParam2 || !*pParam2) {
+            if ( pParam2 ) XMLString::release(&pParam2);
+            pParam2 = NULL;
+        }
+        else{
+            if ( !IsNumeric(pParam2) ){
+                ERROR(NRO_NR_LINHA_ATE_VI);
+                TAG_VALOR_INVALIDO(XML_OUT_NRLINHA_ATE);
+                if (pParam) XMLString::release(&pParam);
+                if (pParam1) XMLString::release(&pParam1);
+                if (pParam2) XMLString::release(&pParam2);
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+        }
+
+        pParam3 = walkTree(pDnode, XML_OUT_IDTIPOLINHA, 0);
+        if(!pParam3 || !*pParam3) {
+            if ( pParam3 ) XMLString::release(&pParam3);
+            pParam3 = NULL;
+        }
+        else{
+            if ( !IsNumeric(pParam3) ){
+                ERROR(NRO_ID_TIPOLINHA_VI);
+                TAG_VALOR_INVALIDO(XML_OUT_IDTIPOLINHA);
+                if (pParam) XMLString::release(&pParam);
+                if (pParam1) XMLString::release(&pParam1);
+                if (pParam2) XMLString::release(&pParam2);
+                if (pParam3) XMLString::release(&pParam3);
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+        }
+
+        pParam4 = walkTree(pDnode, XML_OUT_IDSTATUSLIN, 0);
+        if(!pParam4 || !*pParam4) {
+            if ( pParam4 ) XMLString::release(&pParam4);
+            pParam4 = NULL;
+        }
+        else{
+            if ( !IsNumeric(pParam4) ){
+                ERROR(NRO_ID_STATUSLINHA_VI);
+                TAG_VALOR_INVALIDO(XML_OUT_IDSTATUSLIN);
+                if (pParam) XMLString::release(&pParam);
+                if (pParam1) XMLString::release(&pParam1);
+                if (pParam2) XMLString::release(&pParam2);
+                if (pParam3) XMLString::release(&pParam3);
+                if (pParam4) XMLString::release(&pParam4);
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+        }
+
+        poBDL = CBuscaDadosLinha::buscarPorDadosFiltro(&iNroReg, pParam, pParam1, pParam2, pParam3, pParam4, cPaginaAtual, cContadorPagina, &iProximaPagina );
+        pXmlG->createTag(XML_OUT_ROOT);
+        pXmlG->addProp("xmlns", XML_OUT_PROP);
+
+            for (iAux=0; iAux < iNroReg; iAux++) 
+            {
+                pXmlG->createTag(XML_OUT_NO_LISTA);
+                    pXmlG->addItem(XML_OUT_IDPESSOA, poBDL[iAux].getIdPessoa());
+                    pXmlG->addItem(XML_OUT_IDLINHA, poBDL[iAux].getIdLinhaTelefonica());
+                    pXmlG->addItem(XML_OUT_NRCODAREA, poBDL[iAux].getCdAreaRegistro());
+                    pXmlG->addItem(XML_OUT_NRLINHA, poBDL[iAux].getNrLinha());
+                    pXmlG->addItem(XML_OUT_DSTIPOLINHA, poBDL[iAux].getDsTipoLinha());
+                    pXmlG->addItem(XML_OUT_DSPLANOSERVICO, poBDL[iAux].getNmServico());
+                    pXmlG->addItem(XML_OUT_DSSTATUSLINHA, poBDL[iAux].getDsEstadoLinha());
+                    pXmlG->addItem(XML_OUT_DTHABILITACAO, poBDL[iAux].getDtHabilitacaoOut());
+                    pXmlG->addItem(XML_OUT_INDIVULGANUMERO, poBDL[iAux].getInDivulgacaoNrLinha());
+                    pXmlG->addItem(XML_OUT_DTTERMINOCONTRATO, poBDL[iAux].getDtTerminoContrato());
+                    pXmlG->addItem(XML_OUT_DSTIPOCONTRATO, poBDL[iAux].getTpContrato());
+
+                    if(clParametro.buscaIdSistemaOrigem(poBDL[iAux].getNrLinha(), poBDL[iAux].getCdAreaRegistro(), szIdSistemaOrigem) == true) {
+
+	                    bFlagLegado = clParametro.buscaLegado( clParametro.getIdUfOperador(), szIdSistemaOrigem);
+	
+	                    if(bFlagLegado == false) {
+	                        pXmlG->addItem(XML_OUT_INLEGADO, "1");
+	                    }
+	                    else {
+	                        pXmlG->addItem(XML_OUT_INLEGADO, "0");
+	                    }
+	                }
+	                else {
+                        pXmlG->addItem(XML_OUT_INLEGADO, "0");
+                    }
+	                	
+
+                pXmlG->closeTag();
+            }
+
+            pXmlG->addItem(XML_OUT_TOTALLINHAS, CBuscaDadosLinha::getTotalReg(pParam, pParam1, pParam2, pParam3, pParam4));
+            pXmlG->addItem(XML_OUT_TOTALRETORNADA, iNroReg);
+
+       		//Mensagem indicando o total de pagina, eh um texto
+       		pXmlG->addItem("totalPagina", cContadorPagina );
+       		//Indica se eh ou nao a ultima pagina, se tem proxima eu envio 1
+       		pXmlG->addItem("inProxima"  , iProximaPagina );
+
+        pXmlG->closeTag();
+
+        if ( pParam ) XMLString::release(&pParam);
+        if ( pParam1 ) XMLString::release(&pParam1);
+        if ( pParam2 ) XMLString::release(&pParam2);
+        if ( pParam3 ) XMLString::release(&pParam3);
+        if ( pParam4 ) XMLString::release(&pParam4);
+
+        free(poBDL);
+    }
+    catch(...) {
+
+        if ( pParam ) XMLString::release(&pParam);
+        if ( pParam1 ) XMLString::release(&pParam1);
+        if ( pParam2 ) XMLString::release(&pParam2);
+        if ( pParam3 ) XMLString::release(&pParam3);
+        if ( pParam4 ) XMLString::release(&pParam4);
+
+        throw;  //repassando o erro para nucleo
+    }
+
+	// Execução OK.
+	INFORMATION(NRO_OK);
+    ULOG_END( "implFILTROLUPALIN::Execute()" );
+	setStatusCode(sNrMsg, MSG_OK);
+}
+
+
+

@@ -1,0 +1,317 @@
+#include <stdio.h>
+#include <tuxfw.h>
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include<string>
+#include <iterator>
+#include <list>
+
+
+using namespace std;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+typedef list<int> LISTA_ID;
+
+
+// Prototipos
+void SqlErrorListaCampanha( sqlca * sqlca );
+void proCListaCampanha( int idCampanhaPrm, int tpCampanha, XMLGen * Saida,  int TipoPessoa );
+void proCListaCampanhaFiltro( LISTA_ID * pidDDD, LISTA_ID * pidTipoLinha, LISTA_ID * pidSegmentacao, XMLGen * Saida, int TipoPessoa  );
+
+void proCListaCampanha( int idCampanhaPrm, int tpCampanha, XMLGen * Saida,  int TipoPessoa  )
+{
+      ULOG_START( "proCListaCampanha()" );
+      
+      struct sqlca sqlca;
+      
+      EXEC SQL BEGIN DECLARE SECTION;
+         int idCampanha = idCampanhaPrm;
+		 int idItemMenu = 0;
+		 int tpCampanhaSql = tpCampanha;
+         VARCHAR nmCampanha[51];
+         VARCHAR dsCampanha[2001];
+         VARCHAR dtInicio[32];
+         VARCHAR dtTermino[32];
+		 int idTipoPessoa = TipoPessoa;
+	 VARCHAR dsUrlFinal[200];
+	 VARCHAR dsUrlAutenticador[200];
+
+       
+      EXEC SQL END DECLARE SECTION;
+      
+      memset( &nmCampanha,0x0,sizeof(nmCampanha) );
+      memset( &dsCampanha,0x0,sizeof(dsCampanha) );
+      memset( &dtInicio,0x0,sizeof(dtInicio) );
+      memset( &dtTermino,0x0,sizeof(dtTermino) );
+      memset( &dsUrlFinal,0x0,sizeof(dsUrlFinal) );
+      memset( &dsUrlAutenticador,0x0,sizeof(dsUrlAutenticador) );
+
+      EXEC SQL WHENEVER SQLERROR DO SqlErrorListaCampanha( &sqlca );
+
+	  EXEC SQL DECLARE LSTCAMPANHA CURSOR FOR
+	  SELECT
+	 IDCAMPANHA,
+		 NMCAMPANHA ,
+		 NVL(DSCAMPANHA, ' '),
+		 TO_CHAR( TRUNC(DTINICIO),'DD/MM/YYYY' ) ,
+		 TO_CHAR( TRUNC(DTTERMINO),'DD/MM/YYYY' ),
+	 TPCAMPANHA,
+	 NVL(DSURLAUTENTICADOR, ' '),
+	 NVL(DSURLFINAL, ' '),
+	 DECODE(IDITEMMENU, NULL, 0, IDITEMMENU)
+	  FROM
+		 vol.campanhace campanhace
+	  WHERE
+		  (campanhace.idcampanha = :idCampanha OR :idCampanha = 0) 
+	  AND (campanhace.tpcampanha = :tpCampanhaSql OR :tpCampanhaSql = 0)
+	  AND (campanhace.idtipopessoa = :idTipoPessoa OR :idTipoPessoa = 0);
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	EXEC SQL OPEN LSTCAMPANHA;
+
+	for( ;; ) 
+	{
+		// varre todos os registros para criar a lista com as linhas		
+		EXEC SQL FETCH LSTCAMPANHA INTO
+			:idCampanha,
+			:nmCampanha, 
+			:dsCampanha,
+			:dtInicio,
+			:dtTermino,
+			:tpCampanhaSql,
+			:dsUrlAutenticador,
+			:dsUrlFinal,
+			:idItemMenu;
+              
+      Saida->createTag( "CampanhaVO" );
+        Saida->addItem( "idCampanha"   , idCampanha );
+        Saida->addItem( "nmCampanha"   , (char *)nmCampanha.arr );
+        Saida->addItem( "dsCampanha"   , (char *)dsCampanha.arr );
+        Saida->addItem( "dtValidadeDe" , (char *)dtInicio.arr );
+        Saida->addItem( "dtValidadeAte", (char *)dtTermino.arr );
+		Saida->addItem( "dtValidadeDe" , (char *)dtInicio.arr );
+		Saida->addItem( "tpCampanha"   , tpCampanhaSql);
+		Saida->addItem( "dsUrlAutenticador", (char *)dsUrlAutenticador.arr );
+		Saida->addItem( "dsUrlFinal",	     (char *)dsUrlFinal.arr );
+		Saida->addItem( "dtValidadeDe" , (char *)dtInicio.arr );
+		if (idItemMenu)
+			Saida->addItem( "idItemMenu",	  idItemMenu );
+		else	
+			Saida->addItem( "idItemMenu", "" );
+
+	     memset( &nmCampanha,0x0,sizeof(nmCampanha) );
+	     memset( &dsCampanha,0x0,sizeof(dsCampanha) );
+	     memset( &dtInicio,0x0,sizeof(dtInicio) );
+	     memset( &dtTermino,0x0,sizeof(dtTermino) );
+	     memset( &dsUrlFinal,0x0,sizeof(dsUrlFinal) );
+	     memset( &dsUrlAutenticador,0x0,sizeof(dsUrlAutenticador) );
+
+      Saida->closeTag();
+	}
+
+	EXEC SQL CLOSE LSTCAMPANHA;
+
+	return;
+
+      ULOG_END("proCListaCampanha()");
+
+}
+
+
+
+void proCListaCampanhaFiltro( LISTA_ID * pidDDD, LISTA_ID * pidTipoLinha, LISTA_ID * pidSegmentacao, XMLGen * Saida, int TipoPessoa )
+{
+      ULOG_START( "proCListaCampanhaFiltro()" );
+      
+      struct sqlca sqlca;
+      string sql;
+      bool flag = false;
+      int j;
+      char buffer[32];
+      list<int>::iterator it;
+      
+      EXEC SQL BEGIN DECLARE SECTION;
+         char * query;
+         int idCampanha;
+         VARCHAR nmCampanha[51];
+         VARCHAR dsCampanha[2001];
+         VARCHAR dtInicio[32];
+         VARCHAR dtTermino[32];
+         
+         short i_nmCampanha = -1;
+         short i_dsCampanha = -1;
+         short i_dtInicio = -1;
+         short i_dtTermino = -1;
+      EXEC SQL END DECLARE SECTION;
+      
+      memset( &nmCampanha,0x0,sizeof(nmCampanha) );
+      memset( &dsCampanha,0x0,sizeof(dsCampanha) );
+      memset( &dtInicio,0x0,sizeof(dtInicio) );
+      memset( &dtTermino,0x0,sizeof(dtTermino) );
+
+      sql = 
+         "SELECT "
+         "   campanhace.idcampanha , "
+         "   campanhace.nmcampanha , "
+         "   campanhace.dscampanha , "
+         "   TO_CHAR(TRUNC(campanhace.dtinicio), 'DD/MM/YYYY') dtinicio, "
+         "   TO_CHAR(TRUNC(campanhace.dttermino), 'DD/MM/YYYY') dttermino "
+         "FROM "
+         "   vol.campanhace campanhace "
+         "WHERE "
+		 " (campanhace.idtipopessoa = ";
+		 sprintf( buffer, "%d", TipoPessoa );
+	  sql += buffer;
+	  sql += " OR ";
+	  sql += buffer;
+	  sql += " = 0 )"
+			 " AND   campanhace.idcampanha IN ";
+      if ( pidDDD->size() > 0 )
+      {
+         sql +=    
+			"( "
+			"   SELECT "
+			"      idCampanha "
+			"   FROM "
+			"      vol.campanhaceddd "
+			"   WHERE "
+			"      IDAREAREGISTRO IN ( ";
+         j=0;  
+         for ( it = pidDDD->begin(); it != pidDDD->end(); it++ )
+         {
+            if ( j > 0 )
+               sql += ",";
+            
+            sprintf( buffer, "%d", *it );
+            sql += buffer;
+            j++;
+         }
+         sql += " )) ";
+			flag = true;
+		}
+
+      if ( pidTipoLinha->size() > 0 )
+      {
+			if ( flag == true )
+			{
+			   sql +=
+			   " AND "
+            " campanhace.idcampanha IN ";
+         }
+			sql +=
+			"( "
+			"   SELECT "
+			"      idCampanha "
+			"   FROM "
+			"      vol.campanhacetipolinha "
+			"   WHERE "
+			"      idTipoLinha IN ( ";
+         j=0;  
+         for ( it = pidTipoLinha->begin(); it != pidTipoLinha->end(); it++ )
+         {
+            if ( j > 0 )
+               sql += ",";
+            
+            sprintf( buffer, "%d", *it );
+            sql += buffer;
+            j++;
+         }
+         sql += " )) ";
+			flag = true;
+      }
+      
+      if ( pidSegmentacao->size() > 0 )
+      {
+			if ( flag == true )
+			{
+			   sql +=
+			   " AND "
+            " campanhace.idcampanha IN ";
+         }
+			sql +=
+			" ( "
+			"   SELECT "
+			"      idCampanha "
+			"   FROM "
+			"      vol.campanhacesegmentacao "
+			"   WHERE "
+			"      idSegmentacao IN ( ";
+         j=0;  
+         for ( it = pidSegmentacao->begin(); it != pidSegmentacao->end(); it++ )
+         {
+            if ( j > 0 )
+               sql += ",";
+            
+            sprintf( buffer, "%d", *it );
+            sql += buffer;
+            j++;
+         }
+         sql += " )) ";
+			flag = true;
+      }
+
+		sql += " ORDER BY campanhace.dscampanha";
+
+      query = (char *)sql.c_str();
+      tuxfw_getlogger()->debug( "QUERY=%s", query );
+
+
+      EXEC SQL WHENEVER SQLERROR DO SqlErrorListaCampanha( &sqlca );
+      
+      EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+      EXEC SQL PREPARE queryConsulta FROM :query;
+      EXEC SQL DECLARE crConsultaCampanha CURSOR FOR queryConsulta;
+      EXEC SQL OPEN crConsultaCampanha;
+      
+      for( ;; )
+      {
+        EXEC SQL FETCH crConsultaCampanha 
+                        INTO
+                           :idCampanha ,
+                           :nmCampanha:i_nmCampanha ,
+                           :dsCampanha:i_dsCampanha ,
+                           :dtInicio:i_dtInicio ,
+                           :dtTermino:i_dtTermino;
+
+
+         CONVIND( nmCampanha,i_nmCampanha );
+         CONVIND( dsCampanha,i_dsCampanha );
+         CONVIND( dtInicio,i_dtInicio );
+         CONVIND( dtTermino,i_dtTermino );
+              
+         Saida->createTag( "CampanhaVO" );
+           Saida->addItem( "idCampanha"   , idCampanha );
+           Saida->addItem( "nmCampanha"   , (char *)nmCampanha.arr );
+           Saida->addItem( "dsCampanha"   , (char *)dsCampanha.arr );
+           Saida->addItem( "dtValidadeDe" , (char *)dtInicio.arr );
+           Saida->addItem( "dtValidadeAte", (char *)dtTermino.arr );
+         Saida->closeTag();
+      }
+      EXEC SQL CLOSE crConsultaCampanha;
+      
+      ULOG_END("proCListaCampanhaFiltro()");
+
+}
+
+
+
+void SqlErrorListaCampanha( sqlca * sqlca )
+{
+   ULOGE("SqlError -> sqlcode=%d,sqlerrmc=%.256s",sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc);
+   throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

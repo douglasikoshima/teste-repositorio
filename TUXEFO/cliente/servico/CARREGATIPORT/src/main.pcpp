@@ -1,0 +1,261 @@
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+#include "../include/CarregaTIPORT.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/Portabilidade.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classPessoaLinha.h";
+
+DECLARE_TUXEDO_SERVICE(CARREGATIPORT);
+
+void implCARREGATIPORT::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    char *pPointer=NULL;
+    int iFlagErro=0;
+    int inSaltador = 0;
+
+    char szCdAreaRegistro[LEN_CDAREAREGISTRO + LEN_EOS]={0};
+    char szNrLinha[LEN_CDAREAREGISTRO + LEN_NRLINHA + LEN_EOS]={0};
+    char szIdLinhaTelefonica[LEN_IDLINHATELEFONICA + LEN_NRLINHA + LEN_EOS]={0};
+
+    CPortabilidade  *pclPortabilidade=NULL;
+	CPessoaLinha oPessLinha;
+
+	int  iPortabilidade=0;
+	char szTpPortabilidade[10];
+	char szDsPortabilidade[255];
+
+    try
+    {
+        ULOG_START("CARREGATIPORT::Execute()" );
+
+        pclPortabilidade = new CPortabilidade;
+
+
+        pPointer = walkTree(pDnode, "idLinhaTelefonica", 0);
+        ULOG("idLinhaTelefonica[%s]", pPointer?pPointer:NULL);
+
+        if (pPointer) {
+        	if (!*pPointer) {
+				ERROR(NRO_IDLINHATELEFONICA_VV);
+				TAG_VALOR_VAZIO("idLinhaTelefonica");
+				XMLString::release(&pPointer);
+				throw new TuxBasicSvcException(sNrMsg, sMsg);
+        	}
+        	if(!IsNumeric(pPointer)) {
+				ERROR(NRO_IDLINHATELEFONICA_VI);
+				TAG_VALOR_INVALIDO("idLinhaTelefonica");
+				XMLString::release(&pPointer);
+				throw new TuxBasicSvcException(sNrMsg, sMsg);
+        	}
+
+        	strcpy(szIdLinhaTelefonica, pPointer);
+        	XMLString::release(&pPointer);
+
+        	pclPortabilidade->setIdLinhaTelefonica( szIdLinhaTelefonica );
+        }
+
+        if ( !szIdLinhaTelefonica[0] )
+        {
+        // Referente a nrLinha
+        //pPointer = walkTree(pDnode, "nrLinha", 0); ULOG("nrLinha[%s]", pPointer?pPointer:"NULL");
+        pPointer = walkTree(pDnode, "nrLinha", 0); ULOG("nrLinha[%s]", pPointer?pPointer:NULL);
+        //strcpy(szNrLinha, pPointer?pPointer:"");
+        if(!pPointer) {
+            ERROR(NRO_NR_LINHA_NE); TAG_INEXISTENTE("nrLinha"); iFlagErro=1;
+        }
+        ULOG( "1." ); 
+        if(!*pPointer) {
+            ERROR(NRO_NR_LINHA_VV); TAG_VALOR_VAZIO("nrLinha"); iFlagErro=1;
+        }
+        ULOG( "2." ); 
+        if(!IsNumeric(pPointer)) {
+            ERROR(NRO_NR_LINHA_VI); TAG_VALOR_INVALIDO("nrLinha"); iFlagErro=1;
+        }
+        ULOG( "3." ); 
+        strcpy(szNrLinha, pPointer);
+        ULOG( "1." ); 
+        if(pPointer) XMLString::release(&pPointer);
+        ULOG( "4." ); 
+        if(iFlagErro) {
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        ULOG( "5." ); 
+
+        pclPortabilidade->setNrLinha(szNrLinha+2);
+        ULOG( "6." ); 
+        sprintf( szCdAreaRegistro,"%.2s", szNrLinha );
+        ULOG( "szCdAreaRegistro [%s]",szCdAreaRegistro );
+        //memcpy(szCdAreaRegistro, szNrLinha, 2); szCdAreaRegistro[2] = 0x00;
+        ULOG( "7." ); 
+
+        pclPortabilidade->setCdAreaRegistro(szCdAreaRegistro);
+        ULOG( "8." ); 
+        }
+
+        pclPortabilidade->buscaPortabilidade();
+        ULOG( "9." );
+
+        pXmlG->createTag("TelaInicialVO");
+        pXmlG->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+
+            pXmlG->createTag("TICliente");
+                pXmlG->addItem("idPessoa", pclPortabilidade->getIdPessoa());
+        ULOG( "10." ); 
+                pXmlG->addItem("idPessoaDePara", pclPortabilidade->getIdPessoaDePara());
+        ULOG( "11." ); 
+                pXmlG->addItem("nmNome", pclPortabilidade->getNmPessoa());
+        ULOG( "12." ); 
+                pXmlG->addItem("nrTelefone", "");
+        ULOG( "13." ); 
+                pXmlG->addItem("dsChurn", "");
+        ULOG( "14." ); 
+                pXmlG->addItem("inTipoPessoa", pclPortabilidade->getSgTipoPessoa());
+        ULOG( "15." ); 
+            pXmlG->closeTag(); //TICliente
+
+            pXmlG->createTag("TILinha");
+                pXmlG->addItem("nrCodArea", pclPortabilidade->getCdAreaRegistro());
+        ULOG( "16." ); 
+                pXmlG->addItem("nrLinha", pclPortabilidade->getNrLinha());
+
+                /*
+                if ( oPessLinha.IsClienteSaltador(szNrLinha) == true )
+                {
+                    inSaltador = 1;
+                }
+
+                pXmlG->addItem( "flagSaltador", inSaltador );
+                */
+
+            ULOG( "17." ); 
+                pXmlG->addItem("dsTipoLinha", pclPortabilidade->getDsTipoLinha());
+        ULOG( "18." ); 
+                pXmlG->addItem("idTipoLinha", pclPortabilidade->getIdTipoLinha());
+        ULOG( "19." ); 
+                pXmlG->addItem("inBloqueado", "");
+        ULOG( "20." ); 
+                pXmlG->addItem("idLinha", "");
+        ULOG( "21." ); 
+                pXmlG->addItem("nrLinhaFormat", "");
+        ULOG( "22." ); 
+                pXmlG->addItem("dsEstadoLinha", "");
+        ULOG( "23." ); 
+                pXmlG->addItem("dtHabilitacao", "");
+        ULOG( "24." ); 
+                pXmlG->addItem("dsPlanoServico", "");
+        ULOG( "25." ); 
+                pXmlG->addItem("qtdLinhasAtivas", "");
+        ULOG( "26." ); 
+                pXmlG->addItem("qtdLinhasInativas", "");
+        ULOG( "27." ); 
+                pXmlG->addItem("qtdLinhas", "");
+        ULOG( "28." ); 
+
+                pXmlG->createTag("UsuarioLinhaVO");
+                    pXmlG->addItem("idPessoa", "");
+        ULOG( "29." ); 
+                    pXmlG->addItem("nmUsuario", "");
+        ULOG( "30." ); 
+                    pXmlG->addItem("idDocumento", "");
+        ULOG( "31." ); 
+                    pXmlG->addItem("dsTipoDocumento", "");
+        ULOG( "32." ); 
+                    pXmlG->addItem("nrDocumento", "");
+        ULOG( "33." ); 
+                    pXmlG->addItem("dsTipoContato", "");
+        ULOG( "34." ); 
+                    pXmlG->addItem("nrContato", "");
+        ULOG( "35." ); 
+                    pXmlG->addItem("vlRentabilidade", "");
+        ULOG( "36." ); 
+                    pXmlG->addItem("dsCargo", "");
+        ULOG( "37." ); 
+                pXmlG->closeTag(); //UsuarioLinhaVO
+
+			  //799 - Protocolo - identificao de portabilidade na tela inicia
+			  ULOG( "szNrLinha [%s], szTpPortabilidade [%s], szDsPortabilidade [%s]",szNrLinha,szTpPortabilidade,szDsPortabilidade );
+		  	  iPortabilidade= oPessLinha.obterDadosPortabilidade(szNrLinha,szTpPortabilidade,szDsPortabilidade);
+        ULOG( "38." ); 
+			  pXmlG->addItem("inPortabilidade",iPortabilidade);
+        ULOG( "39." ); 
+             
+			  if (iPortabilidade)
+			  {
+				  pXmlG->addItem("tpPortada",szTpPortabilidade);
+				  pXmlG->addItem("dsPortada",szDsPortabilidade);
+			  }
+
+
+            pXmlG->closeTag(); //TILinha
+
+            pXmlG->createTag("EnderecoBaseVO");
+                pXmlG->addItem("idEndereco", pclPortabilidade->getIdPessoaEndereco());
+        ULOG( "40." ); 
+                pXmlG->addItem("dsEndereco", pclPortabilidade->getDsEndereco());
+        ULOG( "41." ); 
+                pXmlG->addItem("nrEndereco", pclPortabilidade->getNrEndereco());
+        ULOG( "42." ); 
+                pXmlG->addItem("dsComplemento", pclPortabilidade->getDsEnderecoComplemento());
+        ULOG( "43." ); 
+                pXmlG->addItem("dsBairro", pclPortabilidade->getNmBairro());
+        ULOG( "44." ); 
+                pXmlG->addItem("dsCidade", pclPortabilidade->getNmMunicipio());
+        ULOG( "45." ); 
+                pXmlG->addItem("nrCEP", pclPortabilidade->getNrCEP());
+        ULOG( "46." ); 
+
+                pXmlG->createTag("UFVO");
+                    pXmlG->addItem("idUF", pclPortabilidade->getIdUF());
+        ULOG( "47." ); 
+                    pXmlG->addItem("sgUF", pclPortabilidade->getSgUF());
+        ULOG( "48." ); 
+                    pXmlG->addItem("nmUF", pclPortabilidade->getNmUF());
+        ULOG( "49." ); 
+                pXmlG->closeTag(); //UFVO
+
+                pXmlG->createTag("PaisVO");
+                    pXmlG->addItem("idPais", pclPortabilidade->getIdPais());
+        ULOG( "50." ); 
+                    pXmlG->addItem("sgPais", pclPortabilidade->getSgPais());
+        ULOG( "51." ); 
+                    pXmlG->addItem("dsPais", pclPortabilidade->getDsPais());
+        ULOG( "52." ); 
+                    pXmlG->addItem("dsNacionalidade", pclPortabilidade->getDsNacionalidade());
+        ULOG( "53." ); 
+                pXmlG->closeTag(); //PaisVO
+
+            pXmlG->closeTag(); //EnderecoBaseVO
+
+            pXmlG->createTag("TIDocumento");
+                pXmlG->addItem("idDocumento", pclPortabilidade->getIdDocumento());
+        ULOG( "54." ); 
+                pXmlG->addItem("dsTipoDocumento", pclPortabilidade->getDsTipoDocumento());
+        ULOG( "55." ); 
+                pXmlG->addItem("nrDocumento", pclPortabilidade->getNrDocumento());
+        ULOG( "56." ); 
+            pXmlG->closeTag(); //TIDocumento
+
+
+        pXmlG->closeTag(); //TelaInicialVO
+    }
+    catch(...)
+    {
+        ULOG("Exception ...");
+        delete pclPortabilidade;
+        throw;
+    }
+
+    ULOG("OK");
+    delete pclPortabilidade;
+
+    INFORMATION(NRO_OK);
+
+    ULOG_END( "CARREGATIPORT::Execute()" );
+    setStatusCode(sNrMsg, MSG_OK);
+}

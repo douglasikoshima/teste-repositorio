@@ -1,0 +1,733 @@
+/**
+ * @modulo  Clientes
+ * @usecase Aba Tracking
+ * @remark  Rotinas básicas para a tabela OrdemVenda
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:17 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../include/OrdemNotaFiscalpc.h"
+#include "../include/OrdemVendapc.h"
+#include "../include/ProdutoEntregapc.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+
+#include "../include/GlobalPedido.h"
+
+    struct TOrdemVendaOra
+    {
+        VARCHAR canalVenda[LEN_CANALVENDA+LEN_EOS];
+        VARCHAR cdCpfCnpj[LEN_CDCPFCNPJ+LEN_EOS];
+        VARCHAR dsMotivoOrdem[LEN_DSMOTIVOORDEM+LEN_EOS];
+        VARCHAR dsTipoOrdemVenda[LEN_DSTIPOORDEMVENDA+LEN_EOS];
+        VARCHAR dtAberturaPedido[LEN_DTABERTURAPEDIDO+LEN_EOS];
+        VARCHAR enderecoEntrega[LEN_ENDERECOENTREGA+LEN_EOS];
+        VARCHAR escritorioVenda[LEN_ESCRITORIOVENDA+LEN_EOS];
+        VARCHAR formaPagamento[LEN_FORMAPAGAMENTO+LEN_EOS];
+        VARCHAR grupoVenda[LEN_GRUPOVENDA+LEN_EOS];
+        VARCHAR idOrdemVenda[LEN_IDORDEMVENDA+LEN_EOS];
+        VARCHAR idSistemaOrigem[LEN_IDSISTEMAORIGEM+LEN_EOS];
+        VARCHAR inCancelada[LEN_INCANCELADA+LEN_EOS];
+
+        VARCHAR dsMotivoBloqueio[LEN_DSMOTIVOBLOQUEIO+LEN_EOS];
+        VARCHAR tpMotivoBloqueio[LEN_TPMOTIVOBLOQUEIO+LEN_EOS];
+
+        VARCHAR nmResponsavelOrdemVenda[LEN_NMRESPONSAVELORDEMVENDA+LEN_EOS];
+        VARCHAR normaExpedicao[LEN_NORMAEXPEDICAO+LEN_EOS];
+        VARCHAR nrFornecimento[LEN_NRFORNECIMENTO+LEN_EOS];
+
+        VARCHAR dtFornecimento[LEN_DTFORNECIMENTO+LEN_EOS];
+        VARCHAR dtPicking[LEN_DTPICKING+LEN_EOS];
+        VARCHAR dtConfirmacaoPicking[LEN_DTCONFIRMACAOPICKING+LEN_EOS];
+        VARCHAR dtSaidaMercadoria[LEN_DTSAIDAMERCADORIA+LEN_EOS];
+        VARCHAR dtNotaFiscal[LEN_DTNOTAFISCAL+LEN_EOS];
+
+        VARCHAR nrOrdemVenda[LEN_NRORDEMVENDA+LEN_EOS];
+        VARCHAR nrPedido[LEN_NRPEDIDO+LEN_EOS];
+        VARCHAR nrPicking[LEN_NRPICKING+LEN_EOS];
+        VARCHAR statusOrdemVenda[LEN_STATUSORDEMVENDA+LEN_EOS];
+        VARCHAR ufOrdem[LEN_UFORDEM+LEN_EOS];
+        VARCHAR vlTotalPedido[LEN_VLTOTALPEDIDO+LEN_EOS];
+        VARCHAR observacaoEtapaPedido[LEN_OBSERVACAOETAPA+LEN_EOS];
+        VARCHAR flagComparacao[1+LEN_EOS];
+        VARCHAR nmSistemaOrigem[LEN_NM_SISTEMA_ORIGEM+LEN_EOS];
+        VARCHAR inCorrompido[1+LEN_EOS];
+    };
+
+    struct TOrdemVendaStatusOra
+    {
+        short canalVenda;
+        short cdCpfCnpj;
+        short dsMotivoOrdem;
+        short dsTipoOrdemVenda;
+        short dtAberturaPedido;
+        short enderecoEntrega;
+        short escritorioVenda;
+        short formaPagamento;
+        short grupoVenda;
+        short idOrdemVenda;
+        short idSistemaOrigem;
+        short inCancelada;
+
+        short dsMotivoBloqueio;
+        short tpMotivoBloqueio;
+
+        short nmResponsavelOrdemVenda;
+        short normaExpedicao;
+        short nrFornecimento;
+
+        short dtFornecimento;
+        short dtPicking;
+        short dtConfirmacaoPicking;
+        short dtSaidaMercadoria;
+        short dtNotaFiscal;
+
+        short nrOrdemVenda;
+        short nrPedido;
+        short nrPicking;
+        short statusOrdemVenda;
+        short ufOrdem;
+        short vlTotalPedido;
+        short observacaoEtapaPedido;
+        short flagComparacao;
+        short nmSistemaOrigem;
+        short inCorrompido;
+    };
+
+EXEC SQL END DECLARE SECTION;
+
+//==============================================================================
+int COrdemVendapc::proCbuscarOrdVendaPorPedDoc(struct DadosParametros *pDadosParametros
+                                              ,VEC_TORDEMVENDA &vecTOrdemVenda
+                                              ,bool preencherLstProdEntrega)
+{
+    ULOG_START("COrdemVendapc::proCbuscarOrdVendaPorPedDoc()");
+
+    if ( 0 == *pDadosParametros->nrDoc )
+    {
+        throw new TuxException("24E9999","Número do documento não fornecido para busca de ordem de venda.");
+    }
+
+    int retorno = RET_SUCESSO;
+    struct sqlca sqlca;
+    TOrdemVenda tOrdemVenda;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct TOrdemVendaOra tOrdemVendaOra;
+        struct TOrdemVendaStatusOra tOrdemVendaStatusOra;
+
+        const char *pOraCdCpfCnpj = pDadosParametros->nrDoc;
+        const char *pOraIdPedido = pDadosParametros->nrPedido;
+        const char *pOraNrOrdemVenda = pDadosParametros->nrOrdemVenda;
+        const char *pOraNrFornecimento = pDadosParametros->nrFornecimento;
+        const char *pOraNrPicking = pDadosParametros->nrPicking;
+        const char *pOraNrNotaFiscal = pDadosParametros->nrNotaFiscal;
+
+        short statusOraNrOrdemVenda = strlen(pOraNrOrdemVenda) ? 1 : 0;
+        short statusOraNrFornecimento = strlen(pOraNrFornecimento) ? 1 : 0;
+        short statusOraNrPicking = strlen(pOraNrPicking) ? 1 : 0;
+        short statusOraNrNotaFiscal = strlen(pOraNrNotaFiscal) ? 1 : 0;
+        short statusOraIdPedido = strlen(pOraIdPedido) ? 1 : 0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("          nrDoc = '%s'",pDadosParametros->nrDoc);
+    ULOG("       nrPedido = '%s'",pDadosParametros->nrPedido);
+    ULOG("   nrOrdemVenda = '%s', status=%d",pDadosParametros->nrOrdemVenda,statusOraNrOrdemVenda);
+    ULOG(" nrFornecimento = '%s', status=%d",pDadosParametros->nrFornecimento,statusOraNrFornecimento);
+    ULOG("      nrPicking = '%s', status=%d",pDadosParametros->nrPicking,statusOraNrPicking);
+    ULOG("   nrNotaFiscal = '%s', status=%d",pDadosParametros->nrNotaFiscal,statusOraNrNotaFiscal);
+
+    memset( &tOrdemVendaOra, 0, sizeof(tOrdemVendaOra) );
+    memset( &tOrdemVendaStatusOra,-1, sizeof(tOrdemVendaStatusOra) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO erro;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            ORDEMVENDA.CANALVENDA,
+            ORDEMVENDA.CDCPFCNPJ,
+            ORDEMVENDA.DSMOTIVOORDEM,
+            ORDEMVENDA.DSTIPOORDEMVENDA,
+            TO_CHAR(ORDEMVENDA.DTABERTURAPEDIDO,'DD/MM/YYYY') AS DTABERTURAPEDIDO,
+            ORDEMVENDA.ENDERECOENTREGA,
+            ORDEMVENDA.ESCRITORIOVENDA,
+            ORDEMVENDA.FORMAPAGAMENTO,
+            ORDEMVENDA.GRUPOVENDA,
+            ORDEMVENDA.IDORDEMVENDA,
+            ORDEMVENDA.IDSISTEMAORIGEM,
+            ORDEMVENDA.INCANCELADA,
+            MOTIVOBLOQUEIO.DSMOTIVOBLOQUEIO,
+            MOTIVOBLOQUEIO.TPMOTIVOBLOQUEIO,
+            ORDEMVENDA.NMRESPONSAVELORDEMVENDA,
+            ORDEMVENDA.NORMAEXPEDICAO,
+            --//DECODE(:statusOraNrFornecimento,1,:pOraNrFornecimento,NULL) AS NRFORNECIMENTO,
+            ORDEMVENDA.NRFORNECIMENTO,
+            TO_CHAR(ORDEMVENDA.DTFORNECIMENTO, 'DD/MM/YYYY') as DTFORNECIMENTO,
+            TO_CHAR(ORDEMVENDA.DTPICKING, 'DD/MM/YYYY') as DTPICKING,
+            TO_CHAR(ORDEMVENDA.DTCONFIRMACAOPICKING, 'DD/MM/YYYY') as DTCONFIRMACAOPICKING,
+            TO_CHAR(ORDEMVENDA.DTSAIDAMERCADORIA, 'DD/MM/YYYY') as DTSAIDAMERCADORIA,
+            TO_CHAR(ORDEMNOTAFISCAL.DTNOTAFISCAL, 'DD/MM/YYYY') as DTNOTAFISCAL,
+            DECODE(:statusOraNrOrdemVenda,1,:pOraNrOrdemVenda,NULL) AS NRORDEMVENDA,
+            ORDEMVENDA.NRPEDIDO,
+            --//DECODE(:statusOraNrPicking,1,:pOraNrPicking,NULL) AS NRPICKING,
+            ORDEMVENDA.NRPICKING,
+            DECODE(NVL(ORDEMVENDA.INCANCELADA,0),0,ORDEMVENDA.STATUSORDEMVENDA,'Ordem Eliminada SAP') AS STATUSORDEMVENDA,
+            ORDEMVENDA.UFORDEM,
+            RTRIM(LTRIM(TO_CHAR(ORDEMVENDA.VLTOTALPEDIDO,'9999,999,999,990.00MI'))) AS VLTOTALPEDIDO,
+            NVL(ETAPAPEDIDO.OBSERVACAOETAPAPEDIDO,' '),
+            0 AS FLAGCOMPARACAO, --// sem uso. 
+            SISTEMAORIGEM.NMSISTEMAORIGEM,
+            ORDEMVENDA.INCORROMPIDO
+        INTO
+            :tOrdemVendaOra:tOrdemVendaStatusOra
+        FROM
+            RETENCAO.ORDEMVENDA ORDEMVENDA,
+            RETENCAO.PEDIDO PEDIDO,
+            RETENCAO.ETAPAPEDIDO ETAPAPEDIDO,
+            RETENCAO.ORDEMNOTAFISCAL ORDEMNOTAFISCAL,
+            APOIO.SISTEMAORIGEM SISTEMAORIGEM,
+            APOIO.SISTEMAORIGEM SISTEMAORIGEMPEDIDO,
+            APOIO.MOTIVOBLOQUEIO MOTIVOBLOQUEIO
+        WHERE
+            ORDEMVENDA.IDORDEMVENDA = ORDEMNOTAFISCAL.IDORDEMVENDA (+)
+        AND NVL(ORDEMVENDA.NRPEDIDO,1) = DECODE(:statusOraIdPedido,1,:pOraIdPedido,NVL(ORDEMVENDA.NRPEDIDO,1))
+        AND ORDEMVENDA.CDCPFCNPJ = :pOraCdCpfCnpj
+        AND ORDEMVENDA.NRPEDIDO = PEDIDO.IDPEDIDO (+)
+        AND ORDEMVENDA.CDCPFCNPJ = PEDIDO.CDCPFCNPJ (+)
+        AND ORDEMVENDA.NRPEDIDO = ETAPAPEDIDO.IDPEDIDO (+)
+        AND ORDEMVENDA.CDCPFCNPJ = ETAPAPEDIDO.CDCPFCNPJ (+)
+        AND ORDEMVENDA.IDSISTEMAORIGEM = SISTEMAORIGEM.IDSISTEMAORIGEM
+        AND ETAPAPEDIDO.IDSISTEMAORIGEMPEDIDO = SISTEMAORIGEMPEDIDO.IDSISTEMAORIGEM(+)
+        AND NVL(ORDEMVENDA.NRORDEMVENDA,1) = DECODE(:statusOraNrOrdemVenda,1,:pOraNrOrdemVenda,NVL(ORDEMVENDA.NRORDEMVENDA,1))
+        AND ORDEMVENDA.IDMOTIVOBLOQUEIO = MOTIVOBLOQUEIO.IDMOTIVOBLOQUEIO (+)
+        AND ROWNUM < 2;
+
+    if ( 0 == sqlca.sqlcode )
+    {
+        ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+
+        CONVIND(tOrdemVendaOra.canalVenda,tOrdemVendaStatusOra.canalVenda);
+        CONVIND(tOrdemVendaOra.cdCpfCnpj,tOrdemVendaStatusOra.cdCpfCnpj);
+        CONVIND(tOrdemVendaOra.dsMotivoOrdem,tOrdemVendaStatusOra.dsMotivoOrdem);
+        CONVIND(tOrdemVendaOra.dsTipoOrdemVenda,tOrdemVendaStatusOra.dsTipoOrdemVenda);
+        CONVIND(tOrdemVendaOra.dtAberturaPedido,tOrdemVendaStatusOra.dtAberturaPedido);
+        CONVIND(tOrdemVendaOra.enderecoEntrega,tOrdemVendaStatusOra.enderecoEntrega);
+        CONVIND(tOrdemVendaOra.escritorioVenda,tOrdemVendaStatusOra.escritorioVenda);
+        CONVIND(tOrdemVendaOra.formaPagamento,tOrdemVendaStatusOra.formaPagamento);
+        CONVIND(tOrdemVendaOra.grupoVenda,tOrdemVendaStatusOra.grupoVenda);
+        CONVIND(tOrdemVendaOra.idOrdemVenda,tOrdemVendaStatusOra.idOrdemVenda);
+        CONVIND(tOrdemVendaOra.idSistemaOrigem,tOrdemVendaStatusOra.idSistemaOrigem);
+        CONVIND(tOrdemVendaOra.inCancelada,tOrdemVendaStatusOra.inCancelada);
+
+        CONVIND(tOrdemVendaOra.dsMotivoBloqueio,tOrdemVendaStatusOra.dsMotivoBloqueio);
+        CONVIND(tOrdemVendaOra.tpMotivoBloqueio,tOrdemVendaStatusOra.tpMotivoBloqueio);
+
+        CONVIND(tOrdemVendaOra.nmResponsavelOrdemVenda,tOrdemVendaStatusOra.nmResponsavelOrdemVenda);
+        CONVIND(tOrdemVendaOra.normaExpedicao,tOrdemVendaStatusOra.normaExpedicao);
+        CONVIND(tOrdemVendaOra.nrFornecimento,tOrdemVendaStatusOra.nrFornecimento);
+
+
+        CONVIND(tOrdemVendaOra.dtFornecimento,tOrdemVendaStatusOra.dtFornecimento);
+        CONVIND(tOrdemVendaOra.dtPicking,tOrdemVendaStatusOra.dtPicking);
+        CONVIND(tOrdemVendaOra.dtConfirmacaoPicking,tOrdemVendaStatusOra.dtConfirmacaoPicking);
+        CONVIND(tOrdemVendaOra.dtSaidaMercadoria,tOrdemVendaStatusOra.dtSaidaMercadoria);
+        CONVIND(tOrdemVendaOra.dtNotaFiscal,tOrdemVendaStatusOra.dtNotaFiscal);
+
+
+        CONVIND(tOrdemVendaOra.nrOrdemVenda,tOrdemVendaStatusOra.nrOrdemVenda);
+        CONVIND(tOrdemVendaOra.nrPedido,tOrdemVendaStatusOra.nrPedido);
+        CONVIND(tOrdemVendaOra.nrPicking,tOrdemVendaStatusOra.nrPicking);
+        CONVIND(tOrdemVendaOra.statusOrdemVenda,tOrdemVendaStatusOra.statusOrdemVenda);
+        CONVIND(tOrdemVendaOra.ufOrdem,tOrdemVendaStatusOra.ufOrdem);
+        CONVIND(tOrdemVendaOra.vlTotalPedido,tOrdemVendaStatusOra.vlTotalPedido);
+        CONVIND(tOrdemVendaOra.observacaoEtapaPedido,tOrdemVendaStatusOra.observacaoEtapaPedido);
+        CONVIND(tOrdemVendaOra.flagComparacao,tOrdemVendaStatusOra.flagComparacao);
+        CONVIND(tOrdemVendaOra.nmSistemaOrigem,tOrdemVendaStatusOra.nmSistemaOrigem);
+        CONVIND(tOrdemVendaOra.inCorrompido,tOrdemVendaStatusOra.inCorrompido);
+
+        // Se recebeu num.de nf como param de entrada busca os dados da nota fiscal
+        if ( 1 == statusOraNrNotaFiscal && tOrdemVendaOra.idOrdemVenda.arr[0] )
+        {
+            SAFE_STRNCPY(pDadosParametros->idOrdemVenda,(const char*)tOrdemVendaOra.idOrdemVenda.arr);
+
+            COrdemNotaFiscalpc cOrdemNotaFiscalpc;
+            cOrdemNotaFiscalpc.procBuscarLstOrdemNotaFiscal(pDadosParametros
+                                                           ,tOrdemVenda.vecTOrdemNotaFiscal);
+        }
+
+        // Produtos entregues pela ordem de venda
+        if ( preencherLstProdEntrega
+                && tOrdemVenda.vecTOrdemNotaFiscal.size()
+                    && tOrdemVendaOra.nrOrdemVenda.arr[0] )
+        { // este método proC é usado por outro ponto de negócio onde a lista de produtos entregues
+          // não é necessária, dai o teste com 'preencherLstProdEntrega'
+            // Preenche lista de ProdutoEntrega's relacionadas a esta Ordem de venda
+            SAFE_STRNCPY(pDadosParametros->nrOrdemVenda,(const char*)tOrdemVendaOra.nrOrdemVenda.arr);
+            SAFE_STRNCPY(pDadosParametros->nrNotaFiscal,tOrdemVenda.vecTOrdemNotaFiscal.at(0).getIdNotaFiscal());
+
+            CProdutoEntregapc cprodutoentregapc;
+            cprodutoentregapc.proCbuscarLstProdEntregaPorDocOVenda(pDadosParametros,tOrdemVenda.vecTProdutoEntrega);
+        }
+
+        tOrdemVenda.setCanalVenda(tOrdemVendaOra.canalVenda.arr);
+        tOrdemVenda.setCdCpfCnpj(tOrdemVendaOra.cdCpfCnpj.arr);
+        tOrdemVenda.setDsMotivoOrdem(tOrdemVendaOra.dsMotivoOrdem.arr);
+        tOrdemVenda.setDsTipoOrdemVenda(tOrdemVendaOra.dsTipoOrdemVenda.arr);
+        tOrdemVenda.setDtAberturaPedido(tOrdemVendaOra.dtAberturaPedido.arr);
+        tOrdemVenda.setEnderecoEntrega(tOrdemVendaOra.enderecoEntrega.arr);
+        tOrdemVenda.setEscritorioVenda(tOrdemVendaOra.escritorioVenda.arr);
+        tOrdemVenda.setFormaPagamento(tOrdemVendaOra.formaPagamento.arr);
+        tOrdemVenda.setGrupoVenda(tOrdemVendaOra.grupoVenda.arr);
+        tOrdemVenda.setIdOrdemVenda(tOrdemVendaOra.idOrdemVenda.arr);
+        tOrdemVenda.setIdSistemaOrigem(tOrdemVendaOra.idSistemaOrigem.arr);
+        tOrdemVenda.setInCancelada(tOrdemVendaOra.inCancelada.arr);
+
+        tOrdemVenda.setDsMotivoBloqueio(tOrdemVendaOra.dsMotivoBloqueio.arr);
+        tOrdemVenda.setTpMotivoBloqueio(tOrdemVendaOra.tpMotivoBloqueio.arr);
+
+        tOrdemVenda.setNmResponsavelOrdemVenda(tOrdemVendaOra.nmResponsavelOrdemVenda.arr);
+        tOrdemVenda.setNormaExpedicao(tOrdemVendaOra.normaExpedicao.arr);
+        tOrdemVenda.setNrFornecimento(tOrdemVendaOra.nrFornecimento.arr);
+
+
+        tOrdemVenda.setDtFornecimento(tOrdemVendaOra.dtFornecimento.arr);
+        tOrdemVenda.setDtPicking(tOrdemVendaOra.dtPicking.arr);
+        tOrdemVenda.setDtConfirmacaoPicking(tOrdemVendaOra.dtConfirmacaoPicking.arr);
+        tOrdemVenda.setDtSaidaMercadoria(tOrdemVendaOra.dtSaidaMercadoria.arr);
+        tOrdemVenda.setDtNotaFiscal(tOrdemVendaOra.dtNotaFiscal.arr);
+
+
+        tOrdemVenda.setNrOrdemVenda(tOrdemVendaOra.nrOrdemVenda.arr);
+        tOrdemVenda.setNrPedido(tOrdemVendaOra.nrPedido.arr);
+        tOrdemVenda.setNrPicking(tOrdemVendaOra.nrPicking.arr);
+        tOrdemVenda.setStatusOrdemVenda(tOrdemVendaOra.statusOrdemVenda.arr);
+        tOrdemVenda.setUfOrdem(tOrdemVendaOra.ufOrdem.arr);
+        tOrdemVenda.setVlTotalPedido(tOrdemVendaOra.vlTotalPedido.arr);
+        tOrdemVenda.setObservacaoEtapaPedido(tOrdemVendaOra.observacaoEtapaPedido.arr);
+        tOrdemVenda.setFlagComparacao(tOrdemVendaOra.flagComparacao.arr);
+        tOrdemVenda.setNmSistemaOrigem(tOrdemVendaOra.nmSistemaOrigem.arr);
+        tOrdemVenda.setInCorrompido(tOrdemVendaOra.inCorrompido.arr);
+
+        vecTOrdemVenda.push_back(tOrdemVenda);
+    }
+    else if ( 1403 == sqlca.sqlcode )
+    {
+        ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+            retorno = RET_NAO_EXISTEM_DADOS;
+    }
+
+    ULOG("retorno=%d",retorno);
+
+    ULOG_END("COrdemVendapc::proCbuscarOrdVendaPorPedDoc()");
+
+    return retorno;
+
+    erro:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("COrdemVendapc::proCbuscarOrdVendaPorPedDoc()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+//==============================================================================
+int COrdemVendapc::proCbuscarOrdVdaComparacao(struct DadosParametros *pDadosParametros
+                                             ,VEC_TORDEMVENDA &vecTOrdemVenda
+                                             ,bool preencherLstProdEntrega)
+{
+    ULOG_START("COrdemVendapc::proCbuscarOrdVdaComparacao()");
+
+    if ( 0 == *pDadosParametros->nrDoc )
+    {
+        throw new TuxException("24E9999","Número do documento não fornecido para busca de ordem de venda.");
+    }
+
+    int retorno = RET_SUCESSO;
+    struct sqlca sqlca;
+    TOrdemVenda tOrdemVenda;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct TOrdemVendaOra tOrdemVendaOra;
+        struct TOrdemVendaStatusOra tOrdemVendaStatusOra;
+
+        const char *pOraCdCpfCnpj = pDadosParametros->nrDoc;
+        const char *pOraIdPedido = pDadosParametros->nrPedido;
+        const char *pOraNrOrdemVenda = pDadosParametros->nrOrdemVenda;
+        const char *pOraNrFornecimento = pDadosParametros->nrFornecimento;
+        const char *pOraNrPicking = pDadosParametros->nrPicking;
+        const char *pOraNrNotaFiscal = pDadosParametros->nrNotaFiscal;
+
+        short statusOraNrOrdemVenda = strlen(pOraNrOrdemVenda) ? 1 : 0;
+        short statusOraNrFornecimento = strlen(pOraNrFornecimento) ? 1 : 0;
+        short statusOraNrPicking = strlen(pOraNrPicking) ? 1 : 0;
+        short statusOraNrNotaFiscal = strlen(pOraNrNotaFiscal) ? 1 : 0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("          nrDoc = '%s'",pDadosParametros->nrDoc);
+    ULOG("       nrPedido = '%s'",pDadosParametros->nrPedido);
+    ULOG("   nrOrdemVenda = '%s', status=%d",pDadosParametros->nrOrdemVenda,statusOraNrOrdemVenda);
+    ULOG(" nrFornecimento = '%s', status=%d",pDadosParametros->nrFornecimento,statusOraNrFornecimento);
+    ULOG("      nrPicking = '%s', status=%d",pDadosParametros->nrPicking,statusOraNrPicking);
+    ULOG("   nrNotaFiscal = '%s', status=%d",pDadosParametros->nrNotaFiscal,statusOraNrNotaFiscal);
+
+    memset( &tOrdemVendaOra, 0, sizeof(tOrdemVendaOra) );
+    memset( &tOrdemVendaStatusOra,-1, sizeof(tOrdemVendaStatusOra) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO erro;
+
+    EXEC SQL
+        SELECT
+            ORDEMVENDA.CANALVENDA,
+            ORDEMVENDA.CDCPFCNPJ,
+            ORDEMVENDA.DSMOTIVOORDEM,
+            ORDEMVENDA.DSTIPOORDEMVENDA,
+            TO_CHAR(ORDEMVENDA.DTABERTURAPEDIDO,'DD/MM/YYYY HH24:MI:SS') AS DTABERTURAPEDIDO,
+            ORDEMVENDA.ENDERECOENTREGA,
+            ORDEMVENDA.ESCRITORIOVENDA,
+            ORDEMVENDA.FORMAPAGAMENTO,
+            ORDEMVENDA.GRUPOVENDA,
+            ORDEMVENDA.IDORDEMVENDA,
+            ORDEMVENDA.IDSISTEMAORIGEM,
+            ORDEMVENDA.INCANCELADA,
+
+            MOTIVOBLOQUEIO.DSMOTIVOBLOQUEIO,
+            MOTIVOBLOQUEIO.TPMOTIVOBLOQUEIO,
+
+            ORDEMVENDA.NMRESPONSAVELORDEMVENDA,
+            ORDEMVENDA.NORMAEXPEDICAO,
+            DECODE(:statusOraNrFornecimento,1,:pOraNrFornecimento,NULL) AS NRFORNECIMENTO,
+
+            TO_CHAR(ORDEMVENDA.DTFORNECIMENTO, 'DD/MM/YYYY') as DTFORNECIMENTO,
+            TO_CHAR(ORDEMVENDA.DTPICKING, 'DD/MM/YYYY') as DTPICKING,
+            TO_CHAR(ORDEMVENDA.DTCONFIRMACAOPICKING, 'DD/MM/YYYY') as DTCONFIRMACAOPICKING,
+            TO_CHAR(ORDEMVENDA.DTSAIDAMERCADORIA, 'DD/MM/YYYY') as DTSAIDAMERCADORIA,
+            TO_CHAR(ORDEMNOTAFISCAL.DTNOTAFISCAL, 'DD/MM/YYYY') as DTNOTAFISCAL,
+
+            DECODE(:statusOraNrOrdemVenda,1,:pOraNrOrdemVenda,NULL) AS NRORDEMVENDA,
+            ORDEMVENDA.NRPEDIDO,
+            DECODE(:statusOraNrPicking,1,:pOraNrPicking,NULL) AS NRPICKING,
+            DECODE(NVL(ORDEMVENDA.INCANCELADA,0),0,ORDEMVENDA.STATUSORDEMVENDA,'Ordem Eliminada SAP') AS STATUSORDEMVENDA,
+            ORDEMVENDA.UFORDEM,
+            RTRIM(LTRIM(TO_CHAR(ORDEMVENDA.VLTOTALPEDIDO,'9999,999,999,990.00MI'))) AS VLTOTALPEDIDO,
+            NVL(ETAPAPEDIDO.OBSERVACAOETAPAPEDIDO,' '),
+            0 AS FLAGCOMPARACAO,
+            SISTEMAORIGEM.NMSISTEMAORIGEM,
+            ORDEMVENDA.INCORROMPIDO
+        INTO
+            :tOrdemVendaOra:tOrdemVendaStatusOra
+        FROM
+            RETENCAO.ORDEMVENDA ORDEMVENDA,
+            RETENCAO.ETAPAPEDIDO ETAPAPEDIDO,
+            RETENCAO.ORDEMNOTAFISCAL ORDEMNOTAFISCAL,
+            APOIO.SISTEMAORIGEM SISTEMAORIGEM,
+            APOIO.MOTIVOBLOQUEIO MOTIVOBLOQUEIO
+        WHERE
+            ORDEMVENDA.IDORDEMVENDA = ORDEMNOTAFISCAL.IDORDEMVENDA (+)
+        AND ORDEMVENDA.NRPEDIDO = :pOraIdPedido
+        AND ORDEMVENDA.CDCPFCNPJ = :pOraCdCpfCnpj
+        AND ORDEMVENDA.NRPEDIDO = ETAPAPEDIDO.IDPEDIDO (+)
+        AND ORDEMVENDA.CDCPFCNPJ = ETAPAPEDIDO.CDCPFCNPJ (+)
+        AND ORDEMVENDA.IDSISTEMAORIGEM = SISTEMAORIGEM.IDSISTEMAORIGEM
+        AND NVL(ORDEMVENDA.NRORDEMVENDA,1) = DECODE(:statusOraNrOrdemVenda,1,:pOraNrOrdemVenda,NVL(ORDEMVENDA.NRORDEMVENDA,1))
+        AND ORDEMVENDA.IDMOTIVOBLOQUEIO = MOTIVOBLOQUEIO.IDMOTIVOBLOQUEIO (+)
+        AND ROWNUM < 2;
+
+    if ( 0 == sqlca.sqlcode )
+    {
+        ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+
+        CONVIND(tOrdemVendaOra.canalVenda,tOrdemVendaStatusOra.canalVenda);
+        CONVIND(tOrdemVendaOra.cdCpfCnpj,tOrdemVendaStatusOra.cdCpfCnpj);
+        CONVIND(tOrdemVendaOra.dsMotivoOrdem,tOrdemVendaStatusOra.dsMotivoOrdem);
+        CONVIND(tOrdemVendaOra.dsTipoOrdemVenda,tOrdemVendaStatusOra.dsTipoOrdemVenda);
+        CONVIND(tOrdemVendaOra.dtAberturaPedido,tOrdemVendaStatusOra.dtAberturaPedido);
+        CONVIND(tOrdemVendaOra.enderecoEntrega,tOrdemVendaStatusOra.enderecoEntrega);
+        CONVIND(tOrdemVendaOra.escritorioVenda,tOrdemVendaStatusOra.escritorioVenda);
+        CONVIND(tOrdemVendaOra.formaPagamento,tOrdemVendaStatusOra.formaPagamento);
+        CONVIND(tOrdemVendaOra.grupoVenda,tOrdemVendaStatusOra.grupoVenda);
+        CONVIND(tOrdemVendaOra.idOrdemVenda,tOrdemVendaStatusOra.idOrdemVenda);
+        CONVIND(tOrdemVendaOra.idSistemaOrigem,tOrdemVendaStatusOra.idSistemaOrigem);
+        CONVIND(tOrdemVendaOra.inCancelada,tOrdemVendaStatusOra.inCancelada);
+
+        CONVIND(tOrdemVendaOra.dsMotivoBloqueio,tOrdemVendaStatusOra.dsMotivoBloqueio);
+        CONVIND(tOrdemVendaOra.tpMotivoBloqueio,tOrdemVendaStatusOra.tpMotivoBloqueio);
+
+        CONVIND(tOrdemVendaOra.nmResponsavelOrdemVenda,tOrdemVendaStatusOra.nmResponsavelOrdemVenda);
+        CONVIND(tOrdemVendaOra.normaExpedicao,tOrdemVendaStatusOra.normaExpedicao);
+        CONVIND(tOrdemVendaOra.nrFornecimento,tOrdemVendaStatusOra.nrFornecimento);
+
+        CONVIND(tOrdemVendaOra.dtFornecimento,tOrdemVendaStatusOra.dtFornecimento);
+        CONVIND(tOrdemVendaOra.dtPicking,tOrdemVendaStatusOra.dtPicking);
+        CONVIND(tOrdemVendaOra.dtConfirmacaoPicking,tOrdemVendaStatusOra.dtConfirmacaoPicking);
+        CONVIND(tOrdemVendaOra.dtSaidaMercadoria,tOrdemVendaStatusOra.dtSaidaMercadoria);
+        CONVIND(tOrdemVendaOra.dtNotaFiscal,tOrdemVendaStatusOra.dtNotaFiscal);
+
+        CONVIND(tOrdemVendaOra.nrOrdemVenda,tOrdemVendaStatusOra.nrOrdemVenda);
+        CONVIND(tOrdemVendaOra.nrPedido,tOrdemVendaStatusOra.nrPedido);
+        CONVIND(tOrdemVendaOra.nrPicking,tOrdemVendaStatusOra.nrPicking);
+        CONVIND(tOrdemVendaOra.statusOrdemVenda,tOrdemVendaStatusOra.statusOrdemVenda);
+        CONVIND(tOrdemVendaOra.ufOrdem,tOrdemVendaStatusOra.ufOrdem);
+        CONVIND(tOrdemVendaOra.vlTotalPedido,tOrdemVendaStatusOra.vlTotalPedido);
+        CONVIND(tOrdemVendaOra.observacaoEtapaPedido,tOrdemVendaStatusOra.observacaoEtapaPedido);
+        CONVIND(tOrdemVendaOra.flagComparacao,tOrdemVendaStatusOra.flagComparacao);
+        CONVIND(tOrdemVendaOra.nmSistemaOrigem,tOrdemVendaStatusOra.nmSistemaOrigem);
+        CONVIND(tOrdemVendaOra.inCorrompido,tOrdemVendaStatusOra.inCorrompido);
+
+        // Se recebeu num.de nf como param de entrada busca os dados da nota fiscal
+        if ( 1 == statusOraNrNotaFiscal && tOrdemVendaOra.idOrdemVenda.arr[0] )
+        {
+            SAFE_STRNCPY(pDadosParametros->idOrdemVenda,(const char*)tOrdemVendaOra.idOrdemVenda.arr);
+
+            COrdemNotaFiscalpc cOrdemNotaFiscalpc;
+            cOrdemNotaFiscalpc.procBuscarLstOrdemNotaFiscal(pDadosParametros
+                                                           ,tOrdemVenda.vecTOrdemNotaFiscal);
+        }
+
+        tOrdemVenda.setCanalVenda(tOrdemVendaOra.canalVenda.arr);
+        tOrdemVenda.setCdCpfCnpj(tOrdemVendaOra.cdCpfCnpj.arr);
+        tOrdemVenda.setDsMotivoOrdem(tOrdemVendaOra.dsMotivoOrdem.arr);
+        tOrdemVenda.setDsTipoOrdemVenda(tOrdemVendaOra.dsTipoOrdemVenda.arr);
+        tOrdemVenda.setDtAberturaPedido(tOrdemVendaOra.dtAberturaPedido.arr);
+        tOrdemVenda.setEnderecoEntrega(tOrdemVendaOra.enderecoEntrega.arr);
+        tOrdemVenda.setEscritorioVenda(tOrdemVendaOra.escritorioVenda.arr);
+        tOrdemVenda.setFormaPagamento(tOrdemVendaOra.formaPagamento.arr);
+        tOrdemVenda.setGrupoVenda(tOrdemVendaOra.grupoVenda.arr);
+        tOrdemVenda.setIdOrdemVenda(tOrdemVendaOra.idOrdemVenda.arr);
+        tOrdemVenda.setIdSistemaOrigem(tOrdemVendaOra.idSistemaOrigem.arr);
+        tOrdemVenda.setInCancelada(tOrdemVendaOra.inCancelada.arr);
+
+        tOrdemVenda.setDsMotivoBloqueio(tOrdemVendaOra.dsMotivoBloqueio.arr);
+        tOrdemVenda.setTpMotivoBloqueio(tOrdemVendaOra.tpMotivoBloqueio.arr);
+
+
+        tOrdemVenda.setNmResponsavelOrdemVenda(tOrdemVendaOra.nmResponsavelOrdemVenda.arr);
+        tOrdemVenda.setNormaExpedicao(tOrdemVendaOra.normaExpedicao.arr);
+        tOrdemVenda.setNrFornecimento(tOrdemVendaOra.nrFornecimento.arr);
+
+
+        tOrdemVenda.setDtFornecimento(tOrdemVendaOra.dtFornecimento.arr);
+        tOrdemVenda.setDtPicking(tOrdemVendaOra.dtPicking.arr);
+        tOrdemVenda.setDtConfirmacaoPicking(tOrdemVendaOra.dtConfirmacaoPicking.arr);
+        tOrdemVenda.setDtSaidaMercadoria(tOrdemVendaOra.dtSaidaMercadoria.arr);
+        tOrdemVenda.setDtNotaFiscal(tOrdemVendaOra.dtNotaFiscal.arr);
+
+
+        tOrdemVenda.setNrOrdemVenda(tOrdemVendaOra.nrOrdemVenda.arr);
+        tOrdemVenda.setNrPedido(tOrdemVendaOra.nrPedido.arr);
+        tOrdemVenda.setNrPicking(tOrdemVendaOra.nrPicking.arr);
+        tOrdemVenda.setStatusOrdemVenda(tOrdemVendaOra.statusOrdemVenda.arr);
+        tOrdemVenda.setUfOrdem(tOrdemVendaOra.ufOrdem.arr);
+        tOrdemVenda.setVlTotalPedido(tOrdemVendaOra.vlTotalPedido.arr);
+        tOrdemVenda.setObservacaoEtapaPedido(tOrdemVendaOra.observacaoEtapaPedido.arr);
+        tOrdemVenda.setFlagComparacao(tOrdemVendaOra.flagComparacao.arr);
+        tOrdemVenda.setNmSistemaOrigem(tOrdemVendaOra.nmSistemaOrigem.arr);
+        tOrdemVenda.setInCorrompido(tOrdemVendaOra.inCorrompido.arr);
+
+        vecTOrdemVenda.push_back(tOrdemVenda);
+    }
+    else if ( 1403 == sqlca.sqlcode )
+    {
+        ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+            retorno = RET_NAO_EXISTEM_DADOS;
+    }
+
+    ULOG("retorno=%d",retorno);
+
+    ULOG_END("COrdemVendapc::proCbuscarOrdVdaComparacao()");
+
+    return retorno;
+
+    erro:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("COrdemVendapc::proCbuscarOrdVdaComparacao()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+//==============================================================================
+int COrdemVendapc::procBuscarDetOVendaPorDocumento(struct DadosParametros *pDadosParametros,VEC_TPEDIDO &vecTPedido)
+{
+    ULOG_START("COrdemVendapc::procBuscarDetOVendaPorDocumento()");
+
+    if ( 0 == *pDadosParametros->nrDoc )
+    {
+        throw new TuxException("04E9999","Número do documento não fornecido para busca de detalhe de pedido.");
+    }
+
+    int retorno = RET_NAO_EXISTEM_DADOS;
+    struct sqlca sqlca;
+    TPedido tPedido;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct
+        {
+            VARCHAR ordem[LEN_ORDEM+LEN_EOS];
+            VARCHAR cdAgenteFilial[LEN_CDAGENTEFILIAL+LEN_EOS];
+            VARCHAR cdCpfCnpj[LEN_CDCPFCNPJ+LEN_EOS];
+            VARCHAR dsCanalOrigem[LEN_DSCANALORIGEM+LEN_EOS];
+            VARCHAR dtAberturaPedido[LEN_DTABERTURAPEDIDO+LEN_EOS];
+            VARCHAR EnderecoEntrega[LEN_ENDERECOENTREGA+LEN_EOS];
+            VARCHAR FormaPagamento[LEN_FORMAPAGAMENTO+LEN_EOS];
+            VARCHAR idPedido[LEN_IDPEDIDO+LEN_EOS];
+            VARCHAR idSistemaOrigem[LEN_IDSISTEMAORIGEM+LEN_EOS];
+            VARCHAR idOrdemVenda[LEN_IDORDEMVENDA+LEN_EOS];
+            VARCHAR idTipoLinha[LEN_IDTIPOLINHA+LEN_EOS];
+            VARCHAR observacaoPedido[LEN_OBSERVACAOETAPA+LEN_EOS];
+            VARCHAR qtPontoResgatado[LEN_QTPONTORESGATADO+LEN_EOS];
+            VARCHAR sgUF[LEN_SGUF+LEN_EOS];
+            VARCHAR vlParcela[LEN_VLPARCELA+LEN_EOS];
+            VARCHAR vlTotalPedido[LEN_VLTOTALPEDIDO+LEN_EOS];
+            VARCHAR nmNomeRazaoSocial[LEN_NMNOMERAZAOSOCIAL+LEN_EOS];
+            VARCHAR nmGestor[LEN_NMGESTOR+LEN_EOS];
+            VARCHAR nrTelefoneGestor[LEN_NRTELEFONEGESTOR+LEN_EOS];
+            VARCHAR dsTipoLinha[LEN_DSTIPOLINHA+LEN_EOS];
+            VARCHAR nmSistemaOrigem[LEN_NM_SISTEMA_ORIGEM+LEN_EOS];
+        } tPedidoOra;
+
+        struct
+        {
+            short ordem;
+            short cdAgenteFilial;
+            short cdCpfCnpj;
+            short dsCanalOrigem;
+            short dtAberturaPedido;
+            short EnderecoEntrega;
+            short FormaPagamento;
+            short idPedido;
+            short idSistemaOrigem;
+            short idOrdemVenda;
+            short idTipoLinha;
+            short observacaoPedido;
+            short qtPontoResgatado;
+            short sgUF;
+            short vlParcela;
+            short vlTotalPedido;
+            short nmNomeRazaoSocial;
+            short nmGestor;
+            short nrTelefoneGestor;
+            short dsTipoLinha;
+            short nmSistemaOrigem;
+        } tPedidoStatusOra;
+
+        const char *pOraCdCpfCnpj = pDadosParametros->nrDoc;
+        const char *pOraIdPedido = pDadosParametros->nrPedido;
+        const char *pOraNrOrdemVenda = pDadosParametros->nrOrdemVenda;
+
+        short statusOraIdPedido = strlen(pOraIdPedido) ? 1 : 0;
+        short statusOraNrOrdemVenda = strlen(pOraNrOrdemVenda) ? 1 : 0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("          nrDoc = '%s'",pDadosParametros->nrDoc);
+    ULOG("       idPedido = '%s',status = %d",pOraIdPedido,statusOraIdPedido);
+    ULOG("   nrOrdemVenda = '%s',status = %d",pOraNrOrdemVenda,statusOraNrOrdemVenda);
+
+    memset( &tPedidoOra, 0, sizeof(tPedidoOra) );
+    memset( &tPedidoStatusOra,-1, sizeof(tPedidoStatusOra) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO erro;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT DISTINCT
+            2 AS ORDEM,
+            NULL AS CDAGENTEFILIAL,
+            ORDEMVENDA.CDCPFCNPJ,
+            ORDEMVENDA.CANALVENDA AS DSCANALORIGEM,
+            TO_CHAR(ORDEMVENDA.DTABERTURAPEDIDO,'DD/MM/YYYY HH24:MI:SS') AS DTABERTURAPEDIDO,
+            ORDEMVENDA.ENDERECOENTREGA,
+            ORDEMVENDA.FORMAPAGAMENTO,
+            ORDEMVENDA.NRPEDIDO,
+            ORDEMVENDA.IDSISTEMAORIGEM,
+            ORDEMVENDA.IDORDEMVENDA,
+            NULL AS IDTIPOLINHA,
+            NVL(ETAPAPEDIDO.OBSERVACAOETAPAPEDIDO,' ') AS OBSERVACAOPEDIDO,
+            NULL AS QTPONTORESGATADO,
+            ORDEMVENDA.UFORDEM AS SGUF,
+            NULL AS VLPARCELA,
+            RTRIM(LTRIM(TO_CHAR(ORDEMVENDA.VLTOTALPEDIDO,'9999,999,999,990.00MI'))) AS VLTOTALPEDIDO,
+            NULL AS NMNOMERAZAOSOCIAL,
+            NULL AS NMGESTOR,
+            NULL AS NRTELEFONEGESTOR,
+            NULL AS DSTIPOLINHA,
+            ORDEMVENDA.NMRESPONSAVELORDEMVENDA AS NMSISTEMAORIGEM
+        INTO
+            :tPedidoOra:tPedidoStatusOra
+        FROM
+            RETENCAO.ORDEMVENDA ORDEMVENDA,
+            RETENCAO.ETAPAPEDIDO ETAPAPEDIDO
+        WHERE
+            ORDEMVENDA.CDCPFCNPJ = :pOraCdCpfCnpj
+        AND NVL(ORDEMVENDA.NRPEDIDO,1) = DECODE(:statusOraIdPedido,1,:pOraIdPedido,NVL(ORDEMVENDA.NRPEDIDO,1))
+        AND ORDEMVENDA.NRORDEMVENDA = DECODE(:statusOraNrOrdemVenda,1,:pOraNrOrdemVenda,ORDEMVENDA.NRORDEMVENDA)
+        AND ORDEMVENDA.IDORDEMVENDA = ETAPAPEDIDO.IDORDEMVENDA (+)
+        AND ORDEMVENDA.CDCPFCNPJ = ETAPAPEDIDO.CDCPFCNPJ (+)
+        AND ROWNUM < 2;
+
+    if ( 0 == sqlca.sqlcode )
+    {
+
+        CONVIND(tPedidoOra.cdAgenteFilial,tPedidoStatusOra.cdAgenteFilial);
+        CONVIND(tPedidoOra.cdCpfCnpj,tPedidoStatusOra.cdCpfCnpj);
+        CONVIND(tPedidoOra.dsCanalOrigem,tPedidoStatusOra.dsCanalOrigem);
+        CONVIND(tPedidoOra.dtAberturaPedido,tPedidoStatusOra.dtAberturaPedido);
+        CONVIND(tPedidoOra.EnderecoEntrega,tPedidoStatusOra.EnderecoEntrega);
+        CONVIND(tPedidoOra.FormaPagamento,tPedidoStatusOra.FormaPagamento);
+        CONVIND(tPedidoOra.idPedido,tPedidoStatusOra.idPedido);
+        CONVIND(tPedidoOra.idSistemaOrigem,tPedidoStatusOra.idSistemaOrigem);
+        CONVIND(tPedidoOra.idOrdemVenda,tPedidoStatusOra.idOrdemVenda);
+        CONVIND(tPedidoOra.idTipoLinha,tPedidoStatusOra.idTipoLinha);
+        CONVIND(tPedidoOra.observacaoPedido,tPedidoStatusOra.observacaoPedido);
+        CONVIND(tPedidoOra.qtPontoResgatado,tPedidoStatusOra.qtPontoResgatado);
+        CONVIND(tPedidoOra.sgUF,tPedidoStatusOra.sgUF);
+        CONVIND(tPedidoOra.vlParcela,tPedidoStatusOra.vlParcela);
+        CONVIND(tPedidoOra.vlTotalPedido,tPedidoStatusOra.vlTotalPedido);
+        CONVIND(tPedidoOra.nmNomeRazaoSocial,tPedidoStatusOra.nmNomeRazaoSocial);
+        CONVIND(tPedidoOra.nmGestor,tPedidoStatusOra.nmGestor);
+        CONVIND(tPedidoOra.nrTelefoneGestor,tPedidoStatusOra.nrTelefoneGestor);
+        CONVIND(tPedidoOra.dsTipoLinha,tPedidoStatusOra.dsTipoLinha);
+        CONVIND(tPedidoOra.nmSistemaOrigem,tPedidoStatusOra.nmSistemaOrigem);
+
+        tPedido.setCdAgenteFilial(tPedidoOra.cdAgenteFilial.arr);
+        tPedido.setCdCpfCnpj(tPedidoOra.cdCpfCnpj.arr);
+        tPedido.setDsCanalOrigem(tPedidoOra.dsCanalOrigem.arr);
+        tPedido.setDtAberturaPedido(tPedidoOra.dtAberturaPedido.arr);
+        tPedido.setEnderecoEntrega(tPedidoOra.EnderecoEntrega.arr);
+        tPedido.setFormaPagamento(tPedidoOra.FormaPagamento.arr);
+        tPedido.setIdPedido(tPedidoOra.idPedido.arr);
+        tPedido.setIdSistemaOrigem(tPedidoOra.idSistemaOrigem.arr);
+        tPedido.setIdTipoLinha(tPedidoOra.idTipoLinha.arr);
+        tPedido.setObservacaoPedido(tPedidoOra.observacaoPedido.arr);
+        tPedido.setQtPontoResgatado(tPedidoOra.qtPontoResgatado.arr);
+        tPedido.setSgUF(tPedidoOra.sgUF.arr);
+        tPedido.setVlParcela(tPedidoOra.vlParcela.arr);
+        tPedido.setVlTotalPedido(tPedidoOra.vlTotalPedido.arr);
+        tPedido.setDsTipoLinha(tPedidoOra.dsTipoLinha.arr);
+        tPedido.setNmSistemaOrigem(tPedidoOra.nmSistemaOrigem.arr);
+        tPedido.setIdOrdemVenda(tPedidoOra.idOrdemVenda.arr);
+
+        vecTPedido.push_back(tPedido);
+
+        retorno = RET_SUCESSO;
+    }
+
+    ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+    ULOG("retorno=%d",retorno);
+
+    ULOG_END("COrdemVendapc::procBuscarDetOVendaPorDocumento()");
+
+    return retorno;
+
+    erro:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("COrdemVendapc::procBuscarDetOVendaPorDocumento()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

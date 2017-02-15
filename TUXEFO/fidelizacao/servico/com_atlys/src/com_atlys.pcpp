@@ -1,0 +1,605 @@
+//
+// $Id: com_atlys.pcpp,v 1.1.118.1 2013/03/08 18:42:13 a5114878 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+#include  "../../negocio/fidutil/include/CallTux.h"
+
+struct RetornoAtlys
+{
+    char iErroAPI[11];
+    char indConsulta[2];
+    char indCredito[2];
+    char dsRestricao[512];
+};
+
+// USO COM LIB ATLYS
+int com_Atlys( long idPessoaPrm, int idUser, XMLGen * xml_g )
+{
+    ULOG_START( "com_Atlys()" );
+    
+    int iRetorno = 0;
+    int iTimeOut = 0;
+    int iCreditoOk = -1;
+    int iConsulta = -1;
+    
+    int iAnalise = -1;
+    int iErroLegado = -1;
+    
+    char szDsErro[255];
+
+    int   iXmlInLen=0;
+    char *pXmlIn=NULL;
+    char szXmlIn[2500];
+    char sUser[50];
+    char szRetorno[2000];
+    
+
+    RetornoAtlys pRetorno;
+    
+    CCallTuxSrv TuxServico;
+    XercesDOMParser *pParser;
+    MemBufInputSource *pMemBuf;
+    const char *pMemBufId = "inputInfo";
+    
+    sprintf( sUser,"%d",idUser );
+
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idpessoa = idPessoaPrm;
+        VARCHAR idPessoaSistemaOrigem[64];
+        int user = idUser;
+        
+        VARCHAR    NRDOCUMENTO[128];
+        VARCHAR    DATASOLICITACAO[64];
+        VARCHAR    DATARESPOSTA[64];
+        VARCHAR    DATAFALHA[64];
+        VARCHAR    DSOBSERVACAO[3000];
+        VARCHAR    XMLIN[2500];
+        VARCHAR    XMLOUT[2500];
+        
+        short i_idPessoaSistemaOrigem;
+        short i_NRDOCUMENTO;
+    
+    EXEC SQL END DECLARE SECTION;
+    
+    
+    memset( &NRDOCUMENTO    , 0x0, sizeof(NRDOCUMENTO) );
+    memset( &DATASOLICITACAO, 0x0, sizeof(DATASOLICITACAO) );
+    memset( &DATARESPOSTA   , 0x0, sizeof(DATARESPOSTA) );
+    memset( &DATAFALHA      , 0x0, sizeof(DATAFALHA) );
+    memset( &DSOBSERVACAO   , 0x0, sizeof(DSOBSERVACAO) );
+    memset( &XMLIN          , 0x0, sizeof(XMLIN) );
+    memset( &XMLOUT         , 0x0, sizeof(XMLOUT) );
+    memset( &pRetorno       , 0x0, sizeof(pRetorno) );
+    
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    try
+    {
+        XMLGen oEntrada;
+
+        EXEC SQL
+            SELECT 
+                PESSOA.IDPESSOASISTEMAORIGEM,
+                DOC.NRDOCUMENTO 
+            INTO
+                :idPessoaSistemaOrigem:i_idPessoaSistemaOrigem,
+                :NRDOCUMENTO:i_NRDOCUMENTO
+            FROM 
+                CUSTOMER.PESSOA PESSOA,
+                CUSTOMER.PESSOADOCUMENTO PDOC,
+                CUSTOMER.DOCUMENTO DOC
+            WHERE 
+                PESSOA.IDPESSOA = PDOC.IDPESSOA
+            AND   
+                PDOC.IDDOCUMENTO = DOC.IDDOCUMENTO
+            AND	  
+                DOC.IDTIPODOCUMENTO 
+            IN 
+                (
+                    SELECT 
+                        IDTIPODOCUMENTO 
+                    FROM 
+                        APOIO.TIPODOCUMENTO 
+                    WHERE 
+                        SGCLASSIFICACAO = 'CPF'
+                )	 
+            AND   
+                PESSOA.IDPESSOA = :idpessoa;
+
+        endOraStr(idPessoaSistemaOrigem);
+        endOraStr(NRDOCUMENTO);
+        
+        ULOG( "ORACLE:idPessoaSistemaOrigem [%s]",(char *)idPessoaSistemaOrigem.arr );
+        ULOG( "ORACLE:nrDocumento [%s]",(char *)NRDOCUMENTO.arr );
+
+        oEntrada.addItem( "idPessoaOrigem",(char *)idPessoaSistemaOrigem.arr );
+        oEntrada.addItem( "nrCPF",(char *)NRDOCUMENTO.arr );
+        
+        pXmlIn=oEntrada.retrieveXML(&iXmlInLen);
+        
+        if(pXmlIn!=NULL)
+        {
+        	strcpy(szXmlIn,pXmlIn);
+        	free(pXmlIn);
+        }
+
+        ULOG("Criou objeto TuxServico");
+        
+        TuxServico.SetService("AcsAtlysTibco");
+        
+        TuxServico.SetUser( sUser );
+        TuxServico.SetBody(&oEntrada);
+        
+        ULOG("Configurou objeto TuxServico");
+        
+        TuxServico.SetServiceName("AcsAtlysTibco");
+        
+        TuxServico.SetInputMessage();
+      
+        EXEC SQL
+           SELECT
+              TO_CHAR( SYSDATE,'DD/MM/YYYY HH24:MI:SS' )
+           INTO
+              :DATASOLICITACAO
+           FROM
+              DUAL;
+              
+        ULOG("DATASOLICITACAO = [%s]",(char *)DATASOLICITACAO.arr);  
+        endOraStr(DATASOLICITACAO);
+        if( TuxServico.RemoteCall() )
+        {
+            if( TuxServico.IsValidMessage() )
+            {
+                ULOG("Entrou no IsValidMessage()");
+                
+                TuxServico.GetMessgeStr( szRetorno );
+                ULOG( "API ATLYS RETORNOU [%s]", szRetorno );
+                
+                pParser = new XercesDOMParser;
+                pMemBuf = new MemBufInputSource( (const XMLByte*)szRetorno, strlen(szRetorno), pMemBufId );
+                
+                pParser->parse( *pMemBuf );
+                DOMNode * pDoc = pParser->getDocument();
+            
+                get_tag( pRetorno.indConsulta,pDoc,"indConsulta",0,0 );
+                get_tag( pRetorno.indCredito,pDoc,"indCreditoOk",0,-1 );
+                get_tag( pRetorno.dsRestricao,pDoc,"dsRestricao",0,-1 );
+                get_tag( pRetorno.iErroAPI,pDoc,"indErro",0,0 );
+                
+                iErroLegado = atoi(pRetorno.iErroAPI);
+                
+                if ( pRetorno.indCredito[0] == NULL )
+                {
+                    iConsulta = 1;
+                }
+                else
+                {
+                    iCreditoOk = atoi(pRetorno.indCredito);
+                }
+                
+                if ( pRetorno.indConsulta[0] == NULL )
+                {
+                    iConsulta = 1;
+                }
+                else
+                {
+                    iConsulta = atoi(pRetorno.indConsulta);
+                }
+                
+                if ( iConsulta == 0 && iCreditoOk == 1 )
+                {
+                    iAnalise = 0;
+                    iCreditoOk = 1;
+                }
+                
+                if ( iConsulta == 0 && iCreditoOk == 0 )
+                {
+                    iAnalise = 2;
+                    iCreditoOk = 0;
+                }
+    
+                if ( iConsulta == 1 )
+                {
+                    iAnalise = 1;
+//                    iCreditoOk = 1;  // Diferente da SM, acordo com Robson e Marcelo
+                    iCreditoOk = 0;
+                }
+
+                EXEC SQL
+                   SELECT
+                      TO_CHAR( SYSDATE,'DD/MM/YYYY HH24:MI:SS' )
+                   INTO
+                      :DATARESPOSTA
+                   FROM
+                      DUAL;
+
+                endOraStr(DATARESPOSTA);
+                ULOG("DATAFALHA = [%s]",(char *)DATAFALHA.arr); 
+                strcpy( szDsErro, (char *)pRetorno.dsRestricao );
+                
+                if ( iErroLegado > 0 )
+                {
+                    EXEC SQL
+                       SELECT
+                          TO_CHAR( SYSDATE,'DD/MM/YYYY HH24:MI:SS' )
+                       INTO
+                          :DATAFALHA
+                       FROM
+                          DUAL;
+    
+                    endOraStr(DATAFALHA);
+                    ULOG("DATAFALHA = [%s]",(char *)DATAFALHA.arr); 
+                    iTimeOut = 1;
+
+                }
+                
+                
+                iRetorno = 1;
+            }
+            else
+            {
+                EXEC SQL
+                   SELECT
+                      TO_CHAR( SYSDATE,'DD/MM/YYYY HH24:MI:SS' )
+                   INTO
+                      :DATAFALHA
+                   FROM
+                      DUAL;
+
+                endOraStr(DATAFALHA);
+                iTimeOut = 1;
+                
+                ULOG("DATAFALHA = [%s]",(char *)DATAFALHA.arr); 
+                
+                strcpy( szDsErro, "MENSAGEM DE RETORNO DA LIB DE CONSULTA NAO E VALIDA" );
+                ULOGE( "*** MENSAGEM DE RETORNO DA LIB DE CONSULTA NAO E VALIDA" );
+            }
+
+        }
+        else
+        {
+//            iCodErro = 1111;
+
+            EXEC SQL
+               SELECT
+                  TO_CHAR( SYSDATE,'DD/MM/YYYY HH24:MI:SS' )
+               INTO
+                  :DATAFALHA
+               FROM
+                  DUAL;
+
+            endOraStr(DATAFALHA);
+            iTimeOut = 1;
+            strcpy(szDsErro,"FALHA NA COMUNICAÇÃO COM O SISTEMA");
+            ULOGE(">>> Falha na Comunicaçao com o Sistema...");	
+        }
+        ULOG("DATAFALHA = [%s]",(char *)DATAFALHA.arr);  
+    } 
+    catch(...)
+    {
+       ULOGE( ">>> ERRO ESPECIFICO NA CHAMADA DE AcsAtlysTibco" );
+       iTimeOut = 1;
+    }
+
+    strToOra( XMLIN,szXmlIn );
+    strToOra( XMLOUT,szRetorno );
+    strToOra( DSOBSERVACAO,szDsErro );
+    
+    ULOG( "XMLIN DO REMOTE CALL: [%s]",szXmlIn );
+
+    EXEC SQL
+       INSERT INTO RETENCAO.STATUSANALISECREDITO
+       (
+          IDSTATUSANALISECREDITO,
+          QTTENTATIVAS,
+          VLREFERENCIA,
+          IDUSUARIOALTERACAO,
+          DTULTIMAALTERACAO,
+          DSOBSERVACAO,
+          LOGXMLIN,
+          LOGXMLOUT
+       )
+       VALUES
+       (
+            RETENCAO.STATUSANALISECREDITOSQ.NEXTVAL,
+            1,
+            0,
+            :user,
+            SYSDATE,
+            :DSOBSERVACAO,
+            :XMLIN,
+            :XMLOUT
+       );
+
+
+    xml_g->createTag( "ConsultaAdimplenciaVO" );
+        xml_g->addProp( "xmlns","fidelizacao.fo.vivo.com.br/vo" );
+        xml_g->addItem( "inTimeOutAPI", iTimeOut );
+        if ( iTimeOut > 0 )
+        {
+            xml_g->addItem( "dsMotivoErro", szDsErro );
+        }
+        xml_g->addItem( "documento", (char *)NRDOCUMENTO.arr );
+        xml_g->addItem( "idClienteLegado", (char *)idPessoaSistemaOrigem.arr );
+        
+        xml_g->addItem( "statusAvaliacao", iAnalise );
+        if ( iCreditoOk == 0 )
+        {
+            xml_g->addItem( "historico", (char *)pRetorno.dsRestricao );
+        }
+
+        xml_g->addItem( "dataRequisicao", (char *)DATASOLICITACAO.arr );
+        if ( strlen((char *)DATARESPOSTA.arr) > 0 )
+            xml_g->addItem( "dataResposta", (char *)DATARESPOSTA.arr );
+        if ( strlen((char *)DATAFALHA.arr) > 0 )
+            xml_g->addItem( "dtInterrupcao", (char *)DATAFALHA.arr );
+            
+//		xml_g->addItem( "codErro",iCodErro);
+		xml_g->addItem( "descErro",szDsErro);
+    xml_g->closeTag();
+
+   ULOG_END( "com_Atlys()" );
+
+   return iRetorno;
+
+}
+
+
+
+
+
+/*
+
+
+//  Simulador de consulta
+int com_Atlys( char * cpfParam, long idPessoaPrm, int idUser, XMLGen * xml_g )
+{
+    ULOG_START( "com_Atlys()" );
+    
+    int iRetorno = 0;
+    int iTimeOut = 0;
+    int iCreditoOk = -1;
+    int iConsulta = -1;
+    int iAnalise = -1;
+    
+    char szDsErro[255];
+
+    int   iXmlInLen=0;
+    char *pXmlIn=NULL;
+    char szXmlIn[2500];
+
+    char sUser[50];
+    
+    RetornoAtlys pRetorno;
+    
+    CCallTuxSrv TuxServico;
+    XercesDOMParser *pParser;
+    MemBufInputSource *pMemBuf;
+    const char *pMemBufId = "inputInfo";
+    
+    sprintf( sUser,"%d",idUser );
+
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idpessoa = idPessoaPrm;
+        int idPessoaSistemaOrigem = -1;
+        VARCHAR    NRDOCUMENTO[128];
+        VARCHAR    DATASOLICITACAO[64];
+        VARCHAR    DATARESPOSTA[64];
+        VARCHAR    DATAFALHA[64];
+        VARCHAR    szXML[2500];
+        
+        
+        VARCHAR cpfPrm[50];
+        int user = idUser;
+        
+        int statuscd = -1;
+        VARCHAR returnMsg[512];
+        short i_returnMsg;
+        
+        VARCHAR intCreValRes[2];
+        short i_intCreValRes;
+        
+        VARCHAR BadHistData[500];
+        short i_BadHistData;
+    
+        VARCHAR    DSOBSERVACAO[3000];
+        VARCHAR    XMLIN[2500];
+
+    EXEC SQL END DECLARE SECTION;
+    
+    DATAFALHA.arr[0] = 0x0;
+    sprintf( (char *)cpfPrm.arr,"%s",cpfParam );
+    cpfPrm.len = strlen(cpfParam);
+    
+    ULOG( "CPF : [%d]",cpfPrm );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    try
+    {
+        char szRetorno[2000];
+        XMLGen oEntrada;
+
+        EXEC SQL
+            SELECT 
+                PESSOA.IDPESSOASISTEMAORIGEM,
+                DOC.NRDOCUMENTO 
+            INTO
+                :idPessoaSistemaOrigem,
+                :NRDOCUMENTO
+            FROM 
+                CUSTOMER.PESSOA PESSOA,
+                CUSTOMER.PESSOADOCUMENTO PDOC,
+                CUSTOMER.DOCUMENTO DOC
+            WHERE 
+                PESSOA.IDPESSOA = PDOC.IDPESSOA
+            AND   
+                PDOC.IDDOCUMENTO = DOC.IDDOCUMENTO
+            AND	  
+                DOC.IDTIPODOCUMENTO 
+            IN 
+                (
+                    SELECT 
+                        IDTIPODOCUMENTO 
+                    FROM 
+                        APOIO.TIPODOCUMENTO 
+                    WHERE 
+                        SGCLASSIFICACAO = 'CPF'
+                )	 
+            AND   
+                PESSOA.IDPESSOA = :idpessoa;
+
+        endOraStr(NRDOCUMENTO);
+        
+        ULOG( "ORACLE:idPessoaSistemaOrigem [%d]",idPessoaSistemaOrigem );
+        ULOG( "ORACLE:nrDocumento [%s]",(char *)NRDOCUMENTO.arr );
+
+        oEntrada.addItem( "idPessoaOrigem",idPessoaSistemaOrigem );
+        oEntrada.addItem( "nrCPF",(char *)NRDOCUMENTO.arr );
+        
+        pXmlIn=oEntrada.retrieveXML(&iXmlInLen);
+        
+        if(pXmlIn!=NULL)
+        {
+        	strcpy(szXmlIn,pXmlIn);
+        	free(pXmlIn);
+        }
+
+        EXEC SQL
+           SELECT
+              TO_CHAR( SYSDATE,'DD/MM/YYYY HH24:MI:SS' )
+           INTO
+              :DATASOLICITACAO
+           FROM
+              DUAL;
+        endOraStr(DATASOLICITACAO);
+
+
+        EXEC SQL
+            SELECT 
+               STATUSCD,
+               RETURNMSG,
+               INTCREVALRES,
+               BADHISTDATA
+            INTO
+               :statuscd,
+               :returnMsg:i_returnMsg,
+               :intCreValRes:i_intCreValRes,
+               :BadHistData:i_BadHistData
+            FROM
+               C_MARNSILVA.ATLYS
+            WHERE
+               CPF = :cpfPrm;
+                
+             endOraStr(returnMsg);
+             endOraStr(intCreValRes);
+             endOraStr(BadHistData);
+
+            iCreditoOk = atoi( (char *)intCreValRes.arr );
+            iConsulta = statuscd;
+            
+            ULOG( "iConsulta [%d] iCreditoOk [%d]",iConsulta,iCreditoOk );
+            
+            if ( iConsulta == 0 && iCreditoOk == 1 )
+            {
+                iAnalise = 0;
+                iCreditoOk = 1;
+            }
+            
+            if ( iConsulta == 0 && iCreditoOk == 0 )
+            {
+                iAnalise = 2;
+                iCreditoOk = 0;
+            }
+
+            if ( iConsulta == 1 )
+            {
+                iAnalise = 1;
+                iCreditoOk = 1;
+            }
+            
+            EXEC SQL
+               SELECT
+                  TO_CHAR( SYSDATE,'DD/MM/YYYY HH24:MI:SS' )
+               INTO
+                  :DATARESPOSTA
+               FROM
+                  DUAL;
+
+            strcpy( szDsErro,"CONSULTA REALIZADA COM SUCESSO" );
+            iRetorno = 1;
+             
+
+    } 
+    catch(...)
+    {
+      ULOGE( ">>> ERRO ESPECIFICO NA CHAMADA DE AcsAtlysTibco" );
+    }
+
+    strToOra( XMLIN,szXmlIn );
+    strToOra( DSOBSERVACAO,szDsErro );
+
+    /* NAO TEM SEQUENCE
+    EXEC SQL
+       INSERT INTO RETENCAO.STATUSANALISECREDITO
+       (
+          IDSTATUSATLYS,
+          QTTENTATIVAS,
+          VLREFERENCIA,
+          IDUSUARIOALTERACAO,
+          DTULTIMAALTERACAO,
+          DSOBSERVACAO,
+          VLLOGXMLIN
+       )
+       VALUES
+       (
+            RETENCAO.STATUSANALISECREDITOSQ.NEXTVAL,
+            1,
+            0,
+            :user,
+            SYSDATE,
+            :DSOBSERVACAO,
+            :XMLIN
+       );
+       */
+
+/*
+    xml_g->createTag( "ConsultaAdimplenciaVO" );
+        xml_g->addProp( "xmlns","fidelizacao.fo.vivo.com.br/vo" );
+        xml_g->addItem( "inTimeOutAPI", iTimeOut );
+        if ( iTimeOut > 0 )
+        {
+            xml_g->addItem( "dsMotivoErro", szDsErro );
+        }
+        xml_g->addItem( "documento", (char *)NRDOCUMENTO.arr );
+        xml_g->addItem( "idClienteLegado", idPessoaSistemaOrigem );
+        
+        xml_g->addItem( "statusAvaliacao", iAnalise );
+        if ( iCreditoOk == 0 )
+        {
+            xml_g->addItem( "historico", (char *)BadHistData.arr );
+        }
+
+        xml_g->addItem( "dataRequisicao", (char *)DATASOLICITACAO.arr );
+        if ( strlen((char *)DATARESPOSTA.arr) > 0 )
+            xml_g->addItem( "dataResposta", (char *)DATARESPOSTA.arr );
+        if ( strlen((char *)DATAFALHA.arr) > 0 )
+            xml_g->addItem( "dtInterrupcao", (char *)DATAFALHA.arr );
+            
+//		xml_g->addItem( "erro",iErro);
+//		xml_g->addItem( "codErro",iCodErro);
+//		xml_g->addItem( "descErro",szDsErro);
+    xml_g->closeTag();
+
+   ULOG_END( "com_Atlys()" );
+
+   return iRetorno;
+
+}
+
+*/

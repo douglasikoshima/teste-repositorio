@@ -1,0 +1,1751 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1.2.3 $
+ * @CVS     $Author: a5116174 $ - $Date: 2011/08/12 17:11:19 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+#include "../../../commons/definesAtendimento.h"
+#include "../include/cWFAtdGetMotTab.h"
+
+void WFAtdGetMotTabError(sqlca*sqlca);
+void proCGMTConsultaWFGruposAtual(long _idAtendimento,XMLGen* saida) ;
+
+void proCGMTConsultaWFGruposCri(XMLGen* saida);
+
+void proCTodosGruposCRI(XMLGen* saida)
+{
+	ULOG_START( "proCTodosGruposCRI()" );
+
+    // Alguém implementou esta operação desnecessariamente pois já existe uma
+    // idêndica que é chamada abaixo. Jun,2006 - Cassio
+    proCGMTConsultaWFGruposCri(saida);
+
+	ULOG_END( "proCTodosGruposCRI()" );
+}
+
+void proCTodosGruposNormal(XMLGen* saida)
+{
+	ULOG_START( "proCTodosGruposNormal()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		int idgrupo;
+		VARCHAR nmgrupo[256];
+
+		short i_idgrupo;
+		short i_nmgrupo;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE crsrproCTodosGruposNormal CURSOR FOR
+	SELECT 
+		AG.IDGRUPO, 
+		AG.NMGRUPO
+	FROM 
+		 ACESSO.GRUPO AG
+		,APOIO.TIPOGRUPO ATG
+	WHERE 
+		AG.IDTIPOGRUPO = ATG.IDTIPOGRUPO
+	AND
+		ATG.CDTIPOGRUPO = 'NORMAL' 
+	AND
+		AG.DTEXCLUSAO IS NULL
+	ORDER BY 
+		UPPER(AG.NMGRUPO);
+	
+	EXEC SQL OPEN crsrproCTodosGruposNormal;
+	
+    for(;;)
+    {
+		EXEC SQL FETCH crsrproCTodosGruposNormal INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+		CONVIND(nmgrupo, i_nmgrupo);
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",idgrupo);
+		    saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE crsrproCTodosGruposNormal;
+
+	ULOG_END( "proCTodosGruposNormal()" );
+}
+
+void proCTodosGruposTipoCRISupervisor(int m_idUser, XMLGen* saida)
+{
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		int idUser = m_idUser;
+		int idgrupo;
+		VARCHAR nmgrupo[256];
+
+		short i_idgrupo;
+		short i_nmgrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	// Para essa consulta não será mais utilizado o idUser conforme incidencia 3219
+	EXEC SQL DECLARE proCTodosGruposTipoCRISupervisor CURSOR FOR
+	SELECT 
+		AG.IDGRUPO, 
+		AG.NMGRUPO
+	FROM 
+		 ACESSO.GRUPO AG
+		,APOIO.TIPOGRUPO ATG
+	WHERE 
+		AG.IDTIPOGRUPO = ATG.IDTIPOGRUPO
+	AND
+		ATG.CDTIPOGRUPO = 'CRI'
+	AND
+		AG.DTEXCLUSAO IS NULL
+	ORDER BY 
+		UPPER(AG.NMGRUPO);
+	
+	EXEC SQL OPEN proCTodosGruposTipoCRISupervisor;
+
+    for(;;)
+    {
+        i_nmgrupo = -1;
+
+		EXEC SQL FETCH proCTodosGruposTipoCRISupervisor INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+		CONVIND(nmgrupo, i_nmgrupo);
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",idgrupo);
+		    saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE proCTodosGruposTipoCRISupervisor;
+}
+
+void proCTodosGrupoCRIFolhaSupervisor(long m_idAtendimento, int m_idUser, int m_idContato, XMLGen* saida)
+{
+	ULOG_START( "proCTodosGrupoCRIFolhaSupervisor()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long idAtendimento = m_idAtendimento;
+        int idUser = m_idUser;
+        int idContato = m_idContato;
+        int idgrupo;
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG("idAtendimento = %d", idAtendimento);
+
+    ULOG("idUser = %d", idUser);
+
+    ULOG("idContato = %d", idContato);
+
+    /*
+    DESABILITEI A GERAÇÃO DESTES GRUPOS ASSOCIADOS A LINHA POIS EXISTE UM PROBLEMA DE REGRA
+    FUNCIONAL E A TATIANA PRECISA CORRIGIR ISSO NA PRIMEIRA CHANCE.
+    O PROBLEMA QUE ESTA OCORRENDO É QUE OS GRUPOS QUE ESTÃO SENDO MOSTRADOS NA TELA DE
+    ASSOCIAÇÃO DE LINHA X GRUPO SÃO TODOS OS GRUPOS CRI, SEM FILTRAR GRUPOS QUE POSSUAM
+    CONTATO ASSOCIADO. ISSO CAUSA UM ERRO DE FLUXO NO WORKFLOW.
+
+      NOV/2005 - CASSIO
+
+    // Neste select foi acrescentado os grupos provenientes da associacao da linha telefonica com o
+    // o grupo, conforme incidencia 3211
+    EXEC SQL DECLARE proCTodosGrupoCRIFolhaSuper1 CURSOR FOR
+        SELECT
+              AG.IDGRUPO, AG.NMGRUPO
+        FROM
+              ACESSO.GRUPO AG,
+              ATENDIMENTO.ATENDIMENTOLINHA ATL,
+              CUSTOMER.LINHATELEFONICAGRUPO LTG 
+        WHERE 
+              ATL.IDATENDIMENTO = :idAtendimento
+              AND LTG.IDPESSOALINHAHISTORICO = ATL.IDPESSOALINHAHISTORICO
+              AND LTG.DTEXCLUSAO IS NULL
+              AND AG.IDGRUPO = LTG.IDGRUPO
+        ORDER BY UPPER(AG.NMGRUPO);
+
+    EXEC SQL OPEN proCTodosGrupoCRIFolhaSuper1;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH proCTodosGrupoCRIFolhaSuper1 
+             INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+            saida->addItem("idGrupo",idgrupo);
+            saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE proCTodosGrupoCRIFolhaSuper1;
+    */
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL DECLARE proCTodosGrupoCRIFolhaSuper2 CURSOR FOR
+    //     SELECT DISTINCT
+    //         IDGRUPO,NMGRUPO
+    //     FROM
+    //     (
+    //         SELECT
+    //             GRUPO.IDGRUPO,
+    //             GRUPO.NMGRUPO
+    //         FROM
+    //             CONTATOADM.GRUPOPERFIL GRUPOPERFIL,
+    //             CONTATOADM.CONTATOPERFIL CONTATOPERFIL,
+    //             ACESSO.GRUPO GRUPO,
+    //             APOIO.TIPOGRUPO TIPOGRUPO,
+    //             CONTATOADM.PERFIL PERFIL
+    //         WHERE
+    //             GRUPOPERFIL.IDGRUPOPERFIL = CONTATOPERFIL.IDGRUPOPERFIL
+    //         AND (GRUPOPERFIL.DTEXPIRACAO IS NULL OR GRUPOPERFIL.DTEXPIRACAO > SYSDATE)
+    //         AND PERFIL.IDPERFIL = GRUPOPERFIL.IDPERFIL
+    //         AND GRUPOPERFIL.IDGRUPO = GRUPO.IDGRUPO
+    //         AND CONTATOPERFIL.IDCONTATO = :idContato
+    //         AND CONTATOPERFIL.DTEXCLUSAO IS NULL
+    //         AND GRUPO.DTEXCLUSAO IS NULL
+    //         AND PERFIL.DTEXCLUSAO IS NULL
+    //         AND PERFIL.INATIVO = 1
+    //         AND GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+    //         AND TIPOGRUPO.CDTIPOGRUPO = 'CRI'
+    //     UNION
+    //         SELECT
+    //              GRUPO.IDGRUPO
+    //             ,GRUPO.NMGRUPO
+    //         FROM
+    //             ATENDIMENTO.ATENDIMENTOGRUPOATUAL ATENDIMENTOGRUPOATUAL,
+    //             ACESSO.GRUPO GRUPO,
+    //             APOIO.TIPOGRUPO TIPOGRUPO
+    //         WHERE
+    //             ATENDIMENTOGRUPOATUAL.IDATENDIMENTO = :idAtendimento
+    //         AND ATENDIMENTOGRUPOATUAL.IDGRUPO = GRUPO.IDGRUPO
+    //         AND GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+    //         AND TIPOGRUPO.CDTIPOGRUPO = 'CRI'
+    //     )
+    //     ORDER BY UPPER(NMGRUPO);
+
+    EXEC SQL DECLARE proCTodosGrupoCRIFolhaSuper2 CURSOR FOR
+        SELECT DISTINCT
+            IDGRUPO,NMGRUPO
+        FROM
+        (
+            SELECT
+                GRUPO.IDGRUPO,
+                GRUPO.NMGRUPO
+            FROM
+                CONTATOADM.GRUPOPERFIL GRUPOPERFIL,
+                CONTATOADM.CONTATOPERFIL CONTATOPERFIL,
+                ACESSO.GRUPO GRUPO,
+                APOIO.TIPOGRUPO TIPOGRUPO,
+                CONTATOADM.PERFIL PERFIL
+            WHERE
+                GRUPOPERFIL.IDGRUPOPERFIL = CONTATOPERFIL.IDGRUPOPERFIL
+            AND (GRUPOPERFIL.DTEXPIRACAO IS NULL OR GRUPOPERFIL.DTEXPIRACAO > SYSDATE)
+            AND PERFIL.IDPERFIL = GRUPOPERFIL.IDPERFIL
+            AND GRUPOPERFIL.IDGRUPO = GRUPO.IDGRUPO
+            AND CONTATOPERFIL.IDCONTATO = :idContato
+            AND CONTATOPERFIL.DTEXCLUSAO IS NULL
+            AND GRUPO.DTEXCLUSAO IS NULL
+            AND PERFIL.DTEXCLUSAO IS NULL
+            AND PERFIL.INATIVO = 1
+            AND GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+            AND TIPOGRUPO.CDTIPOGRUPO = 'CRI'
+        UNION
+            SELECT
+                 GRUPO.IDGRUPO
+                ,GRUPO.NMGRUPO
+            FROM
+                ATENDIMENTO.ATENDIMENTO ATENDIMENTO,
+                ACESSO.GRUPO GRUPO,
+                APOIO.TIPOGRUPO TIPOGRUPO
+            WHERE
+                ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+            AND ATENDIMENTO.IDGRUPOATUAL = GRUPO.IDGRUPO
+            AND GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+            AND TIPOGRUPO.CDTIPOGRUPO = 'CRI'
+        )
+        ORDER BY UPPER(NMGRUPO);
+
+    EXEC SQL OPEN proCTodosGrupoCRIFolhaSuper2;
+    
+    for(;;)
+    {
+        i_nmgrupo = -1;
+
+        EXEC SQL FETCH proCTodosGrupoCRIFolhaSuper2 
+                  INTO :idgrupo:i_idgrupo
+                      ,:nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+            saida->addItem("idGrupo",idgrupo);
+            saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE proCTodosGrupoCRIFolhaSuper2;
+
+	ULOG_END( "proCTodosGrupoCRIFolhaSupervisor()" );
+	
+}
+
+bool proCConsultaWFGruposPorAtendimentoEUsuarioParaTrocarCri(int _User,int _inCRI,long _idAtendimento, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFGruposPorAtendimentoEUsuarioParaTrocarCri()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		int idgrupo; 
+		VARCHAR nmgrupo[256];
+
+		short i_idgrupo;
+		short i_nmgrupo;
+
+		long idAtendimento = _idAtendimento;
+		int inCRI = _inCRI;
+		int m_User = _User;
+
+    EXEC SQL END DECLARE SECTION;
+
+	// Essa implementação foi feita especialmente para atender uma necessidade
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG("inCRI = %d", inCRI);
+    ULOG("m_User = %d", m_User);
+    ULOG("idAtendimento = %d", idAtendimento);
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+	// EXEC SQL DECLARE proCConsultaWFGruposPorAtendimentoEUsuarioParaTrocarCri CURSOR FOR
+	// SELECT DISTINCT
+    //     AUG.IDGRUPO, AG.NMGRUPO
+    // FROM
+    //     ACESSO.USUARIOGRUPO AUG
+    //    ,ACESSO.GRUPO AG
+    //    ,APOIO.TIPOGRUPO TG
+    // WHERE 
+    //     (AUG.IDGRUPO IN (SELECT
+    //                           AGA.IDGRUPO
+    //                      FROM 
+    //                           ATENDIMENTO.ATENDIMENTOGRUPOATUAL AGA
+    //                      WHERE
+    //                           AGA.IDATENDIMENTO = :idAtendimento
+    //                     )
+	//      OR ( AUG.IDPESSOAUSUARIO = :m_User AND aug.insupervisor = 1 )
+	//     )
+    // AND AG.DTEXCLUSAO IS NULL
+    // // AND ag.incri = :inCRI
+    // AND AG.IDTIPOGRUPO = TG.IDTIPOGRUPO
+    // AND ((TG.CDTIPOGRUPO = 'CRI' AND :inCRI = 1) OR
+    //      (TG.CDTIPOGRUPO = 'NORMAL' AND :inCRI = 0))
+    // AND AG.IDGRUPO = AUG.IDGRUPO
+    // ORDER BY UPPER (AG.NMGRUPO);
+
+
+	EXEC SQL DECLARE proCConsultaWFGruposPorAtendimentoEUsuarioParaTrocarCri CURSOR FOR
+	SELECT DISTINCT
+        AUG.IDGRUPO, AG.NMGRUPO
+    FROM
+        ACESSO.USUARIOGRUPO AUG
+       ,ACESSO.GRUPO AG
+       ,APOIO.TIPOGRUPO TG
+    WHERE 
+        (AUG.IDGRUPO IN (SELECT
+                              ATENDIMENTO.IDGRUPOATUAL AS IDGRUPO
+                         FROM 
+                              ATENDIMENTO.ATENDIMENTO ATENDIMENTO
+                         WHERE
+                              ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+                        )
+	     OR ( AUG.IDPESSOAUSUARIO = :m_User AND aug.insupervisor = 1 )
+	    )
+    AND AG.DTEXCLUSAO IS NULL
+    AND AG.IDTIPOGRUPO = TG.IDTIPOGRUPO
+    AND ((TG.CDTIPOGRUPO = 'CRI' AND :inCRI = 1) OR
+         (TG.CDTIPOGRUPO = 'NORMAL' AND :inCRI = 0))
+    AND AG.IDGRUPO = AUG.IDGRUPO
+    ORDER BY UPPER (AG.NMGRUPO);
+
+	EXEC SQL OPEN proCConsultaWFGruposPorAtendimentoEUsuarioParaTrocarCri;
+	
+    for(;;)
+    {
+        i_nmgrupo = -1;
+
+		EXEC SQL FETCH proCConsultaWFGruposPorAtendimentoEUsuarioParaTrocarCri 
+                  INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+		CONVIND(nmgrupo, i_nmgrupo);
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",idgrupo);
+		    saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE proCConsultaWFGruposPorAtendimentoEUsuarioParaTrocarCri;
+
+    ULOG_END( "proCConsultaWFGruposPorAtendimentoEUsuarioParaTrocarCri()" );
+
+	return true;
+}
+
+bool proCConsultaWFTodosGrupos(int iUser, char* csgTipoGrupo, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFTodosGrupos()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    	struct
+    	{
+	    	VARCHAR stidGrupo[21+1];
+			VARCHAR stnmGrupo[255+1];
+		} stRegistro;
+    	struct
+    	{
+			short sidGrupo;
+			short snmGrupo;
+		} stRegistroInd;
+		char* pzcsgTipoGrupo = csgTipoGrupo;
+		int   iUserAux = iUser;
+    EXEC SQL END DECLARE SECTION;
+
+	// Essa implementação foi feita especialmente para atender uma necessidade
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG("Iniciando Query SQL...");
+    ULOG("Parâmetro csgTipoGrupo = %s", pzcsgTipoGrupo);
+
+	EXEC SQL DECLARE CursorproCConsultaWFTodosGrupos CURSOR FOR
+	SELECT DISTINCT
+		GRUPO.IDGRUPO,
+		GRUPO.NMGRUPO
+	FROM
+		ACESSO.GRUPO GRUPO,
+		ACESSO.USUARIOGRUPO USUARIOGRUPO
+	WHERE
+		GRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+	AND	
+		GRUPO.IDTIPOGRUPO = ( SELECT IDTIPOGRUPO FROM APOIO.TIPOGRUPO WHERE CDTIPOGRUPO = :pzcsgTipoGrupo )
+    AND
+        GRUPO.DTEXCLUSAO IS NULL
+    AND
+    	USUARIOGRUPO.IDPESSOAUSUARIO = :iUserAux
+	ORDER BY 
+		UPPER(GRUPO.NMGRUPO);
+
+	EXEC SQL OPEN CursorproCConsultaWFTodosGrupos;
+	
+    for(;;)
+    {
+		memset( &stRegistro, 0, sizeof( stRegistro ) );
+		EXEC SQL 
+		FETCH 
+			CursorproCConsultaWFTodosGrupos 
+		INTO 
+			:stRegistro:stRegistroInd;
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",(char*)stRegistro.stidGrupo.arr);
+		    saida->addItem("dsGrupo",(char*)stRegistro.stnmGrupo.arr);
+		saida->closeTag();
+		ULOG("Grupo Obtido: (%s,%s)", (char*)stRegistro.stidGrupo.arr,(char*)stRegistro.stnmGrupo.arr);
+	}
+
+	EXEC SQL CLOSE CursorproCConsultaWFTodosGrupos;
+
+    ULOG("Finalizando Query SQL...");
+
+    ULOG_END( "proCConsultaWFTodosGrupos()" );
+
+	return true;
+}
+
+bool proCConsultaWFGruposPorAtendimentoEUsuario(int _User,int _inCRI,long _idAtendimento, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFGruposPorAtendimentoEUsuario()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		int idgrupo; 
+		VARCHAR nmgrupo[256];
+
+		short i_idgrupo;
+		short i_nmgrupo;
+
+        /*int idContato = _idContato;
+        //int idSequencia = _idFase;
+        int idSequenciaB;*/
+		long idAtendimento = _idAtendimento;
+		int inCRI = _inCRI;
+		int m_User = _User;
+
+    EXEC SQL END DECLARE SECTION;
+
+	// Essa implementação foi feita especialmente para atender uma necessidade
+	// não planejada no desenvolvimento da função.
+/*
+	if (idSequencia == 3)
+		idSequenciaB = 2;
+	else
+		idSequenciaB = -1;
+*/
+
+    /*if ( idSequencia == 3 )
+    {
+        if( TipoRetorno == 2)
+        {
+            idSequenciaB = -1;
+        }
+        else
+        {
+            if( TipoRetorno == 1 ) 
+            {
+                idSequenciaB = 2;
+            }
+        }
+    }
+    else
+		idSequenciaB = -1;*/
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG("Iniciando Query SQL...");
+    ULOG("Parâmetro inCRI = %d", inCRI);
+    ULOG("Parâmetro m_User = %d", m_User);
+    ULOG("Parâmetro idAtendimento = %d", idAtendimento);    
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+	// EXEC SQL DECLARE proCConsultaWFGruposPorAtendimentoEUsuarioCursor CURSOR FOR
+	// SELECT DISTINCT aug.idgrupo, ag.nmgrupo
+	// 		   FROM acesso.usuariogrupo aug
+    //                ,acesso.grupo ag
+    //                ,apoio.tipogrupo tg
+	// 		  WHERE (aug.idgrupo IN (SELECT aga.idgrupo
+	// 									  FROM atendimento.atendimentogrupoatual aga
+	// 									 WHERE aga.idatendimento = :idAtendimento)
+	// 				 OR aug.idpessoausuario = :m_User
+	// 				)
+	//             AND ag.dtexclusao IS NULL
+	// 			//AND ag.incri = :inCRI
+    //             AND ag.idtipogrupo = tg.idtipogrupo
+    //             AND ((tg.cdtipogrupo = 'CRI' AND :inCRI = 1) OR
+    //                  (tg.cdtipogrupo = 'NORMAL' AND :inCRI = 0))
+	// 			AND ag.idgrupo = aug.idgrupo
+	// 	   ORDER BY UPPER (ag.nmgrupo);
+
+    EXEC SQL DECLARE proCConsultaWFGruposPorAtendimentoEUsuarioCursor CURSOR FOR
+    SELECT DISTINCT AUG.IDGRUPO, AG.NMGRUPO
+               FROM ACESSO.USUARIOGRUPO AUG
+                   ,ACESSO.GRUPO AG
+                   ,APOIO.TIPOGRUPO TG
+              WHERE (AUG.IDGRUPO IN (SELECT ATENDIMENTO.IDGRUPOATUAL
+                                       FROM ATENDIMENTO.ATENDIMENTO ATENDIMENTO
+                                      WHERE ATENDIMENTO.IDATENDIMENTO = :idAtendimento)
+                     OR AUG.IDPESSOAUSUARIO = :m_User
+                    )
+                AND AG.DTEXCLUSAO IS NULL
+                AND AG.IDTIPOGRUPO = TG.IDTIPOGRUPO
+                AND ((TG.CDTIPOGRUPO = 'CRI' AND :inCRI = 1) OR
+                     (TG.CDTIPOGRUPO = 'NORMAL' AND :inCRI = 0))
+                AND AG.IDGRUPO = AUG.IDGRUPO
+           ORDER BY UPPER (AG.NMGRUPO);
+
+	/*SELECT   aug.idgrupo, ag.nmgrupo
+		FROM acesso.grupo ag,
+			 acesso.usuariogrupo aug
+	   WHERE ag.incri = :inCRI
+		 AND aug.IDPESSOAUSUARIO = :m_User
+		 AND ag.idgrupo = aug.idgrupo
+		 AND ag.idgrupo IN (
+				SELECT DISTINCT cg.idgrupo
+						   FROM contatoadm.contatofolha cf,
+								contatoadm.contatogrupo cg,
+								contatoadm.sequencia s,
+								contatoadm.tiposequencia ts
+						  WHERE cf.idcontato = :idContato
+							AND cg.idcontato = cf.idcontato
+							AND s.idcontatogrupo = cg.idcontatogrupo
+							AND ts.idtiposequencia = s.idtiposequencia
+							AND (   s.idtiposequencia = :idSequencia
+								 OR s.idtiposequencia = :idSequenciaB
+								))
+	ORDER BY UPPER (nmgrupo);*/
+	/*SELECT 
+		idGrupo, 
+		nmGrupo 
+	  FROM 
+		acesso.Grupo
+     WHERE
+        idGrupo IN (SELECT DISTINCT CG.IDGRUPO
+				      FROM CONTATOADM.CONTATOFOLHA CF
+				          ,CONTATOADM.CONTATOGRUPO CG
+				   	      ,CONTATOADM.SEQUENCIA S
+					      ,CONTATOADM.TIPOSEQUENCIA TS
+				     WHERE CF.IDCONTATO = :idContato
+				       AND CG.IDCONTATO = CF.IDCONTATO 
+				  	   AND S.IDCONTATOGRUPO = CG.IDCONTATOGRUPO 
+					   AND TS.IDTIPOSEQUENCIA = S.IDTIPOSEQUENCIA
+					   AND (S.IDTIPOSEQUENCIA = :idSequencia OR S.IDTIPOSEQUENCIA = :idSequenciaB)
+				   )
+	ORDER BY 
+		UPPER(nmGrupo);*/
+
+	EXEC SQL OPEN proCConsultaWFGruposPorAtendimentoEUsuarioCursor;
+	
+    for(;;)
+    {
+		EXEC SQL FETCH proCConsultaWFGruposPorAtendimentoEUsuarioCursor INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+		CONVIND(nmgrupo, i_nmgrupo);
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",idgrupo);
+		    saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+		saida->closeTag();
+		ULOG("Grupo Obtido: (%d,%s)", idgrupo,(char*)nmgrupo.arr);
+	}
+
+	EXEC SQL CLOSE proCConsultaWFGruposPorAtendimentoEUsuarioCursor;
+
+    ULOG_END( "proCConsultaWFGruposPorAtendimentoEUsuario()" );
+
+	return true;
+}
+
+void proCGMTConsultaWFGrupos(int _User,int _inCRI,int _idContato,int _idFase,int TipoRetorno,long _idAtendimento,XMLGen* saida)
+{
+    ULOG_START( "proCGMTConsultaWFGrupos()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idgrupo; 
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+
+        int idContato = _idContato;
+        int idSequencia = _idFase;
+        int idSequenciaB = -1;
+        int inCRI = _inCRI;
+        int m_User = _User;
+        long idAtendimento = _idAtendimento;
+        int iCursor = 0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    // Essa implementação foi feita especialmente para atender uma necessidade
+    // não planejada no desenvolvimento da função.
+    if ( idSequencia == RETORNO && TipoRetorno == TP_RET_COM_RET_GRP_BKO )
+    {
+        idSequenciaB = TRATAMENTO;
+    }
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG("inCRI = %d", inCRI);
+    ULOG("TipoRetorno = %d", TipoRetorno);
+    ULOG("idFase = %d", _idFase);
+    ULOG("m_User = %d", m_User);
+    ULOG("idContato = %d", idContato);
+    ULOG("idSequencia = %d", idSequencia);
+    ULOG("idSequenciaB = %d", idSequenciaB);
+    ULOG("idAtendimento = %d", idAtendimento);
+
+	if( idSequencia == TRATAMENTO )
+	{
+		/*
+		Regra 1)
+		Caso o(s) processo(s) selecionado(s) esteja com Estado EM TRATAMENTO Sub-Estado TODOS 
+		e o(s) mesmo(s) não tenha retorno o sistema lista os grupos da Fase TRATAMENTO
+        inclusive o grupo atual do processo.
+		*/
+		iCursor = 1;
+        // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+		// EXEC SQL DECLARE crsrproCGMTConsultaWFGrupos1 CURSOR FOR
+        // SELECT DISTINCT
+        //     IDGRUPO,NMGRUPO
+        // FROM
+        // (
+        //     SELECT
+        //          GRUPO.IDGRUPO
+        //         ,GRUPO.NMGRUPO
+        //     FROM 
+        //         ACESSO.GRUPO GRUPO
+        //     WHERE
+        //         IDGRUPO = 
+        //         (
+        //             SELECT
+        //                 IDGRUPO
+        //             FROM
+        //                  CONTATOADM.CONTATOGRUPO CG
+        //                 ,CONTATOADM.SEQUENCIA S
+        //             WHERE
+        //                 CG.IDCONTATOGRUPO = S.IDCONTATOGRUPO
+        //             AND
+        //                 CG.IDGRUPO = GRUPO.IDGRUPO
+        //             AND
+        //                 S.DTEXCLUSAO IS NULL
+        //             AND
+        //                 S.IDTIPOSEQUENCIA = 2 //RECUPERA TODOS OS GRUPOS DA FASE TRATAMENTO
+        //             AND
+        //                 ROWNUM < 2
+        //             AND
+        //                 CG.IDCONTATO = :idContato
+        //         )
+        //     AND
+        //         GRUPO.DTEXCLUSAO IS NULL
+        //     UNION
+        //         SELECT
+        //              GRUPO.IDGRUPO
+        //             ,GRUPO.NMGRUPO
+        //         FROM
+        //             ATENDIMENTO.ATENDIMENTOGRUPOATUAL ATENDIMENTOGRUPOATUAL,
+        //             ACESSO.GRUPO GRUPO
+        //         WHERE
+        //             ATENDIMENTOGRUPOATUAL.IDATENDIMENTO = :idAtendimento
+        //         AND ATENDIMENTOGRUPOATUAL.IDGRUPO = GRUPO.IDGRUPO
+        // )
+        // ORDER BY UPPER(NMGRUPO);
+
+		EXEC SQL DECLARE crsrproCGMTConsultaWFGrupos1 CURSOR FOR
+        SELECT DISTINCT
+            IDGRUPO,NMGRUPO
+        FROM
+        (
+            SELECT
+                 GRUPO.IDGRUPO
+                ,GRUPO.NMGRUPO
+            FROM 
+                ACESSO.GRUPO GRUPO
+            WHERE
+                IDGRUPO = 
+                (
+                    SELECT
+                        IDGRUPO
+                    FROM
+                         CONTATOADM.CONTATOGRUPO CG
+                        ,CONTATOADM.SEQUENCIA S
+                    WHERE
+                        CG.IDCONTATOGRUPO = S.IDCONTATOGRUPO
+                    AND
+                        CG.IDGRUPO = GRUPO.IDGRUPO
+                    AND
+                        S.DTEXCLUSAO IS NULL
+                    AND
+                        S.IDTIPOSEQUENCIA = 2 // RECUPERA TODOS OS GRUPOS DA FASE TRATAMENTO
+                    AND
+                        ROWNUM < 2
+                    AND
+                        CG.IDCONTATO = :idContato
+                )
+            AND
+                GRUPO.DTEXCLUSAO IS NULL
+            UNION
+                SELECT
+                     GRUPO.IDGRUPO
+                    ,GRUPO.NMGRUPO
+                FROM
+                    ATENDIMENTO.ATENDIMENTO ATENDIMENTO,
+                    ACESSO.GRUPO GRUPO
+                WHERE
+                    ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+                AND ATENDIMENTO.IDGRUPOATUAL = GRUPO.IDGRUPO
+        )
+        ORDER BY UPPER(NMGRUPO);
+
+		EXEC SQL OPEN crsrproCGMTConsultaWFGrupos1;
+	}
+	else if( idSequencia == RETORNO && TipoRetorno == TP_RET_COM_RET_GRP_RET )
+	{
+		/*
+		Regra 2)
+		Caso o(s) processo(s) selecionado(s) esteja com Estado EM RETORNO Sub-Estado TODOS 
+		e o(s) mesmo(s) têm retorno pelo grupo de retorno o sistema lista os grupos da Fase RETORNO.
+		*/
+		iCursor = 2;
+        // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+		// EXEC SQL DECLARE crsrproCGMTConsultaWFGrupos2 CURSOR FOR
+        // SELECT DISTINCT
+        //     IDGRUPO,NMGRUPO
+        // FROM
+        // (
+        // SELECT
+        //      GRUPO.IDGRUPO
+        //     ,GRUPO.NMGRUPO
+        // FROM 
+        //     ACESSO.GRUPO GRUPO
+        // WHERE
+        //     IDGRUPO = 
+        //     (
+        //         SELECT
+        //             IDGRUPO
+        //         FROM
+        //              CONTATOADM.CONTATOGRUPO CG
+        //             ,CONTATOADM.SEQUENCIA S
+        //         WHERE
+        //             CG.IDCONTATOGRUPO = S.IDCONTATOGRUPO
+        //         AND
+        //             CG.IDGRUPO = GRUPO.IDGRUPO
+        //         AND
+        //             S.DTEXCLUSAO IS NULL
+        //         AND
+        //             S.IDTIPOSEQUENCIA = 3 //RECUPERA TODOS OS GRUPOS DA FASE RETORNO
+        //         AND
+        //             ROWNUM < 2
+        //         AND
+        //             CG.IDCONTATO = :idContato
+        //     )
+        // AND
+        //     GRUPO.DTEXCLUSAO IS NULL
+        //     UNION
+        //         SELECT
+        //              GRUPO.IDGRUPO
+        //             ,GRUPO.NMGRUPO
+        //         FROM
+        //             ATENDIMENTO.ATENDIMENTOGRUPOATUAL ATENDIMENTOGRUPOATUAL,
+        //             ACESSO.GRUPO GRUPO
+        //         WHERE
+        //             ATENDIMENTOGRUPOATUAL.IDATENDIMENTO = :idAtendimento
+        //         AND ATENDIMENTOGRUPOATUAL.IDGRUPO = GRUPO.IDGRUPO
+        // )
+        // ORDER BY UPPER(NMGRUPO);
+		EXEC SQL DECLARE crsrproCGMTConsultaWFGrupos2 CURSOR FOR
+        SELECT DISTINCT
+            IDGRUPO,NMGRUPO
+        FROM
+        (
+        SELECT
+             GRUPO.IDGRUPO
+            ,GRUPO.NMGRUPO
+        FROM 
+            ACESSO.GRUPO GRUPO
+        WHERE
+            IDGRUPO = 
+            (
+                SELECT
+                    IDGRUPO
+                FROM
+                     CONTATOADM.CONTATOGRUPO CG
+                    ,CONTATOADM.SEQUENCIA S
+                WHERE
+                    CG.IDCONTATOGRUPO = S.IDCONTATOGRUPO
+                AND
+                    CG.IDGRUPO = GRUPO.IDGRUPO
+                AND
+                    S.DTEXCLUSAO IS NULL
+                AND
+                    S.IDTIPOSEQUENCIA = 3 //RECUPERA TODOS OS GRUPOS DA FASE RETORNO
+                AND
+                    ROWNUM < 2
+                AND
+                    CG.IDCONTATO = :idContato
+            )
+        AND
+            GRUPO.DTEXCLUSAO IS NULL
+            UNION
+                SELECT
+                     GRUPO.IDGRUPO
+                    ,GRUPO.NMGRUPO
+                FROM
+                    ATENDIMENTO.ATENDIMENTO ATENDIMENTO,
+                    ACESSO.GRUPO GRUPO
+                WHERE
+                    ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+                AND ATENDIMENTO.IDGRUPOATUAL = GRUPO.IDGRUPO
+        )
+        ORDER BY UPPER(NMGRUPO);
+
+		EXEC SQL OPEN crsrproCGMTConsultaWFGrupos2;
+	}
+	else if( idSequencia == RETORNO && TipoRetorno == TP_RET_COM_RET_GRP_BKO )
+	{
+		/*
+		Regra 3)
+		Caso o(s) processo(s) selecionado(s) esteja com Estado EM RETORNO Sub-Estado TODOS 
+		e o(s) mesmo(s) têm retorno pelo grupo de bko o sistema lista os grupos da Fase de TRATAMENTO e RETORNO.
+		*/
+		iCursor = 3;
+        // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+		// EXEC SQL DECLARE crsrproCGMTConsultaWFGrupos3 CURSOR FOR
+        // SELECT DISTINCT
+        //     IDGRUPO,NMGRUPO
+        // FROM
+        // (
+		// SELECT
+		// 	 GRUPO.IDGRUPO
+		// 	,GRUPO.NMGRUPO
+		// FROM 
+		// 	ACESSO.GRUPO GRUPO
+		// WHERE
+		// 	IDGRUPO = 
+		// 	(
+		// 		SELECT
+		// 			IDGRUPO
+		// 		FROM
+		// 			 CONTATOADM.CONTATOGRUPO CG
+		// 			,CONTATOADM.SEQUENCIA S
+		// 		WHERE
+		// 			CG.IDCONTATOGRUPO = S.IDCONTATOGRUPO
+		// 		AND
+		// 			CG.IDGRUPO = GRUPO.IDGRUPO
+		// 		AND
+		// 			S.DTEXCLUSAO IS NULL
+		// 		AND
+        //             S.IDTIPOSEQUENCIA IN (2,3) //RECUPERA TODOS OS GRUPOS DA FASE TRATAMENTO/RETORNO
+		// 		AND
+		// 			ROWNUM < 2
+		// 		AND
+		// 			CG.IDCONTATO = :idContato
+		// 	)
+		// AND
+		// 	GRUPO.DTEXCLUSAO IS NULL
+        //     UNION
+        //         SELECT
+        //              GRUPO.IDGRUPO
+        //             ,GRUPO.NMGRUPO
+        //         FROM
+        //             ATENDIMENTO.ATENDIMENTOGRUPOATUAL ATENDIMENTOGRUPOATUAL,
+        //             ACESSO.GRUPO GRUPO
+        //         WHERE
+        //             ATENDIMENTOGRUPOATUAL.IDATENDIMENTO = :idAtendimento
+        //         AND ATENDIMENTOGRUPOATUAL.IDGRUPO = GRUPO.IDGRUPO
+        // )
+        // ORDER BY UPPER(NMGRUPO);
+
+		EXEC SQL DECLARE crsrproCGMTConsultaWFGrupos3 CURSOR FOR
+        SELECT DISTINCT
+            IDGRUPO,NMGRUPO
+        FROM
+        (
+		SELECT
+			 GRUPO.IDGRUPO
+			,GRUPO.NMGRUPO
+		FROM 
+			ACESSO.GRUPO GRUPO
+		WHERE
+			IDGRUPO = 
+			(
+				SELECT
+					IDGRUPO
+				FROM
+					 CONTATOADM.CONTATOGRUPO CG
+					,CONTATOADM.SEQUENCIA S
+				WHERE
+					CG.IDCONTATOGRUPO = S.IDCONTATOGRUPO
+				AND
+					CG.IDGRUPO = GRUPO.IDGRUPO
+				AND
+					S.DTEXCLUSAO IS NULL
+				AND
+                    S.IDTIPOSEQUENCIA IN (2,3) //RECUPERA TODOS OS GRUPOS DA FASE TRATAMENTO/RETORNO
+				AND
+					ROWNUM < 2
+				AND
+					CG.IDCONTATO = :idContato
+			)
+		AND
+			GRUPO.DTEXCLUSAO IS NULL
+            UNION
+                SELECT
+                     GRUPO.IDGRUPO
+                    ,GRUPO.NMGRUPO
+                FROM
+                    ATENDIMENTO.ATENDIMENTO ATENDIMENTO,
+                    ACESSO.GRUPO GRUPO
+                WHERE
+                    ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+                AND ATENDIMENTO.IDGRUPOATUAL = GRUPO.IDGRUPO
+        )
+        ORDER BY UPPER(NMGRUPO);
+
+		EXEC SQL OPEN crsrproCGMTConsultaWFGrupos3;
+	}
+	else
+    { // caem aqui processos em RETORNO com tipo retorno = SEM RETORNO, 
+        //Se não entrar em nenhum item acima entra na pesquisa antiga, que não foi modificada
+		iCursor = 4;
+        // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+		// EXEC SQL DECLARE crsrproCGMTConsultaWFGrupos4 CURSOR FOR
+        // SELECT DISTINCT
+        //     IDGRUPO,NMGRUPO
+        // FROM
+        // (
+		// SELECT  
+		// 	AG.IDGRUPO, 
+		// 	AG.NMGRUPO
+	  	// FROM 
+	  	// 	ACESSO.GRUPO AG,
+	    //     APOIO.TIPOGRUPO TG
+		// WHERE 
+		// 	AG.DTEXCLUSAO IS NULL
+	    // AND 
+	    // 	AG.IDTIPOGRUPO = TG.IDTIPOGRUPO
+	    // AND 
+        //     ((TG.CDTIPOGRUPO = 'CRI' AND :inCRI = 1) 
+        //   OR (TG.CDTIPOGRUPO = 'NORMAL' AND :inCRI = 0))
+		// AND 
+		// 	AG.IDGRUPO = 
+		// 	( 
+		// 		SELECT CG.IDGRUPO
+		// 		FROM CONTATOADM.CONTATOGRUPO CG,
+		// 			 CONTATOADM.SEQUENCIA S
+		// 		WHERE CG.IDCONTATO = :idContato
+		// 		AND S.IDCONTATOGRUPO = CG.IDCONTATOGRUPO
+		// 		AND (S.IDTIPOSEQUENCIA = :idSequencia OR S.IDTIPOSEQUENCIA = :idSequenciaB)
+		// 		AND AG.IDGRUPO = CG.IDGRUPO
+		// 		AND ROWNUM < 2
+		//     )
+        //     UNION
+        //         SELECT
+        //              GRUPO.IDGRUPO
+        //             ,GRUPO.NMGRUPO
+        //         FROM
+        //             ATENDIMENTO.ATENDIMENTOGRUPOATUAL ATENDIMENTOGRUPOATUAL,
+        //             ACESSO.GRUPO GRUPO,
+        //             APOIO.TIPOGRUPO TIPOGRUPO
+        //         WHERE
+        //             ATENDIMENTOGRUPOATUAL.IDATENDIMENTO = :idAtendimento
+        //         AND ATENDIMENTOGRUPOATUAL.IDGRUPO = GRUPO.IDGRUPO
+        //         AND GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+        //         AND ((TIPOGRUPO.CDTIPOGRUPO = 'CRI' AND :inCRI = 1) 
+        //             OR (TIPOGRUPO.CDTIPOGRUPO = 'NORMAL' AND :inCRI = 0))
+        // )
+        // ORDER BY UPPER(NMGRUPO);
+		EXEC SQL DECLARE crsrproCGMTConsultaWFGrupos4 CURSOR FOR
+        SELECT DISTINCT
+            IDGRUPO,NMGRUPO
+        FROM
+        (
+		SELECT  
+			AG.IDGRUPO, 
+			AG.NMGRUPO
+	  	FROM 
+	  		ACESSO.GRUPO AG,
+	        APOIO.TIPOGRUPO TG
+		WHERE 
+			AG.DTEXCLUSAO IS NULL
+	    AND 
+	    	AG.IDTIPOGRUPO = TG.IDTIPOGRUPO
+	    AND 
+            ((TG.CDTIPOGRUPO = 'CRI' AND :inCRI = 1) 
+          OR (TG.CDTIPOGRUPO = 'NORMAL' AND :inCRI = 0))
+		AND 
+			AG.IDGRUPO = 
+			( 
+				SELECT CG.IDGRUPO
+				FROM CONTATOADM.CONTATOGRUPO CG,
+					 CONTATOADM.SEQUENCIA S
+				WHERE CG.IDCONTATO = :idContato
+				AND S.IDCONTATOGRUPO = CG.IDCONTATOGRUPO
+				AND (S.IDTIPOSEQUENCIA = :idSequencia OR S.IDTIPOSEQUENCIA = :idSequenciaB)
+				AND AG.IDGRUPO = CG.IDGRUPO
+				AND ROWNUM < 2
+		    )
+            UNION
+                SELECT
+                     GRUPO.IDGRUPO
+                    ,GRUPO.NMGRUPO
+                FROM
+                    ATENDIMENTO.ATENDIMENTO ATENDIMENTO,
+                    ACESSO.GRUPO GRUPO,
+                    APOIO.TIPOGRUPO TIPOGRUPO
+                WHERE
+                    ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+                AND ATENDIMENTO.IDGRUPOATUAL = GRUPO.IDGRUPO
+                AND GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+                AND ((TIPOGRUPO.CDTIPOGRUPO = 'CRI' AND :inCRI = 1) 
+                    OR (TIPOGRUPO.CDTIPOGRUPO = 'NORMAL' AND :inCRI = 0))
+        )
+        ORDER BY UPPER(NMGRUPO);
+		
+		EXEC SQL OPEN crsrproCGMTConsultaWFGrupos4;
+    } //else
+
+    for(;;)
+    {
+        i_nmgrupo = -1;
+
+		if( iCursor == 1 )
+		{
+			EXEC SQL FETCH crsrproCGMTConsultaWFGrupos1 INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+		}
+		else if( iCursor == 2 )
+		{
+			EXEC SQL FETCH crsrproCGMTConsultaWFGrupos2 INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+		}
+		else if( iCursor == 3 )
+		{
+			EXEC SQL FETCH crsrproCGMTConsultaWFGrupos3 INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+		}
+		else
+		{
+			EXEC SQL FETCH crsrproCGMTConsultaWFGrupos4 INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+		}
+
+		CONVIND(nmgrupo, i_nmgrupo);
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",idgrupo);
+		    saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+		saida->closeTag();
+	}
+
+	if( iCursor == 1 )
+	{
+		EXEC SQL CLOSE crsrproCGMTConsultaWFGrupos1;
+	}
+	else if( iCursor == 2 )
+	{
+		EXEC SQL CLOSE crsrproCGMTConsultaWFGrupos2;
+	}
+	else if( iCursor == 3 )
+	{
+		EXEC SQL CLOSE crsrproCGMTConsultaWFGrupos3;
+	}
+	else
+	{
+		EXEC SQL CLOSE crsrproCGMTConsultaWFGrupos4;
+	}
+
+    ULOG_END( "proCGMTConsultaWFGrupos()" );
+}
+
+void proCGMTConsultaWFGruposBKO(int _inCRI, int _idContato, int _idFase, int TipoRetorno, XMLGen* saida)
+{
+    ULOG_START( "proCGMTConsultaWFGruposBKO()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		int idgrupo; 
+		VARCHAR nmgrupo[256];
+
+		short i_idgrupo;
+		short i_nmgrupo;
+
+        int idContato = _idContato;
+        int idSequencia = _idFase;
+        int idSequenciaB = -1;
+		int inCRI = _inCRI;
+
+	EXEC SQL END DECLARE SECTION;
+
+    if ( idSequencia == RETORNO && TipoRetorno == TP_RET_COM_RET_GRP_BKO )
+    {
+        idSequenciaB = TRATAMENTO;
+    }
+
+    ULOG("idContato = %d - idFase = %d - TipoRetorno = %d", _idContato, _idFase, TipoRetorno);
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG("Iniciando Query SQL...");
+    ULOG("Parâmetro inCRI = %d", inCRI);
+    ULOG("Parâmetro idContato = %d", idContato);
+    ULOG("Parâmetro idSequencia = %d", idSequencia);
+    ULOG("Parâmetro idSequenciaB = %d", idSequenciaB);
+
+    EXEC SQL DECLARE cursorGMTConsultaWFGruposBKO CURSOR FOR
+        SELECT DISTINCT 
+            AG.IDGRUPO, AG.NMGRUPO
+        FROM
+            ACESSO.GRUPO AG,
+            APOIO.TIPOGRUPO TG
+        WHERE
+            AG.IDTIPOGRUPO = TG.IDTIPOGRUPO
+        AND AG.DTEXCLUSAO IS NULL
+        AND ((TG.CDTIPOGRUPO = 'CRI' AND :inCRI = 1) 
+         OR (TG.CDTIPOGRUPO = 'NORMAL' AND :inCRI = 0))
+        AND AG.IDGRUPO = (  SELECT DISTINCT
+                                CG.IDGRUPO
+                            FROM 
+                                CONTATOADM.CONTATOFOLHA CF,
+                                CONTATOADM.CONTATOGRUPO CG,
+                                CONTATOADM.SEQUENCIA S,
+                                CONTATOADM.TIPOSEQUENCIA TS
+                            WHERE
+                                CF.IDCONTATO = :idContato
+                            AND CG.IDCONTATO = CF.IDCONTATO
+                            AND S.IDCONTATOGRUPO = CG.IDCONTATOGRUPO
+                            AND TS.IDTIPOSEQUENCIA = S.IDTIPOSEQUENCIA
+                            AND (S.IDTIPOSEQUENCIA = :idSequencia OR S.IDTIPOSEQUENCIA = :idSequenciaB)
+                            AND CG.IDGRUPO = AG.IDGRUPO
+                            AND ROWNUM < 2
+                         )
+    ORDER BY
+        UPPER (AG.NMGRUPO);
+
+    EXEC SQL OPEN cursorGMTConsultaWFGruposBKO;
+
+    for(;;)
+    {
+        i_nmgrupo = -1;
+
+        EXEC SQL FETCH cursorGMTConsultaWFGruposBKO INTO :idgrupo:i_idgrupo,:nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+            saida->addItem("idGrupo",idgrupo);
+            saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE cursorGMTConsultaWFGruposBKO;
+
+    ULOG_END( "proCGMTConsultaWFGruposBKO()" );
+}
+
+void proCGMTConsultaWFGruposCri(XMLGen* saida)
+{
+    ULOG_START( "proCGMTConsultaWFGruposCri()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		int idgrupo; 
+		VARCHAR nmgrupo[256];
+
+		short i_idgrupo;
+		short i_nmgrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE proCGMTConsultaWFGruposCri CURSOR FOR
+    SELECT
+        G.IDGRUPO, 
+        G.NMGRUPO 
+    FROM 
+        ACESSO.GRUPO G
+    WHERE
+        G.IDTIPOGRUPO = (SELECT ATG.IDTIPOGRUPO FROM APOIO.TIPOGRUPO ATG WHERE ATG.CDTIPOGRUPO = 'CRI')
+    AND G.DTEXCLUSAO IS NULL
+    ORDER BY 
+        UPPER(G.NMGRUPO);
+
+	EXEC SQL OPEN proCGMTConsultaWFGruposCri;
+	
+    for(;;)
+    {
+        i_nmgrupo = -1;
+
+		EXEC SQL FETCH proCGMTConsultaWFGruposCri INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+		CONVIND(nmgrupo, i_nmgrupo);
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",idgrupo);
+		    saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE proCGMTConsultaWFGruposCri;
+
+    ULOG_END( "proCGMTConsultaWFGruposCri()" );
+}
+
+void proCGMTConsultaWFGruposMC1Associados(long _idAtendimento, XMLGen* saida)
+{
+    ULOG_START( "proCGMTConsultaWFGruposMC1Associados()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long idAtendimento = _idAtendimento;
+
+        VARCHAR varOraIdGrupo[39];
+        VARCHAR varOraNmGrupo[256];
+
+        short statOraIdGrupo = -1;
+        short statOraNmGrupo = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	EXEC SQL
+    SELECT
+        GRUPO.IDGRUPO,
+        GRUPO.NMGRUPO
+    INTO
+        :varOraIdGrupo:statOraIdGrupo,
+        :varOraNmGrupo:statOraNmGrupo
+    FROM 
+        ACESSO.GRUPO GRUPO,
+        ATENDIMENTO.ATENDIMENTO
+    WHERE
+        ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+    AND ATENDIMENTO.IDGRUPOATUAL = GRUPO.IDGRUPO;
+
+    if ( sqlca.sqlcode )
+    {
+		CONVIND(varOraIdGrupo,statOraIdGrupo);
+		CONVIND(varOraNmGrupo,statOraNmGrupo);
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",(char*)varOraIdGrupo.arr);
+		    saida->addItem("dsGrupo",(char*)varOraNmGrupo.arr);
+		saida->closeTag();
+	}
+
+    ULOG_END( "proCGMTConsultaWFGruposMC1Associados()" );
+}
+
+void proCGMTConsultaWFGruposCriAssociados(int _idContato, XMLGen* saida)
+{
+    ULOG_START( "proCGMTConsultaWFGruposCriAssociados()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		int idgrupo; 
+		VARCHAR nmgrupo[256];
+
+		short i_idgrupo;
+		short i_nmgrupo;
+
+        int idContato = _idContato;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE cursorGMTConsWFGrpCRIAssoc CURSOR FOR
+    SELECT DISTINCT
+        GRUPO.IDGRUPO, 
+        GRUPO.NMGRUPO 
+    FROM 
+        ACESSO.GRUPO GRUPO,
+        CONTATOADM.CONTATOPERFIL CONTATOPERFIL,
+        CONTATOADM.GRUPOPERFIL GRUPOPERFIL
+    WHERE
+        CONTATOPERFIL.IDGRUPOPERFIL = GRUPOPERFIL.IDGRUPOPERFIL
+    AND GRUPOPERFIL.IDGRUPO = GRUPO.IDGRUPO
+    AND CONTATOPERFIL.IDCONTATO = :idContato
+    AND GRUPO.DTEXCLUSAO IS NULL
+    AND (GRUPOPERFIL.DTEXPIRACAO IS NULL OR GRUPOPERFIL.DTEXPIRACAO > SYSDATE)
+    ORDER BY 
+        UPPER(GRUPO.NMGRUPO);
+
+	EXEC SQL OPEN cursorGMTConsWFGrpCRIAssoc;
+	
+    for(;;)
+    {
+        i_nmgrupo = -1;
+
+		EXEC SQL FETCH cursorGMTConsWFGrpCRIAssoc INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+		CONVIND(nmgrupo, i_nmgrupo);
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",idgrupo);
+		    saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE cursorGMTConsWFGrpCRIAssoc;
+
+    ULOG_END( "proCGMTConsultaWFGruposCriAssociados()" );
+}
+
+void proCGMTConsultaWFGruposReAbertura(int _idContato, int _idFase, XMLGen* saida)
+{
+    ULOG_START( "proCGMTConsultaWFGruposReAbertura()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		int idgrupo; 
+		VARCHAR nmgrupo[256];
+
+		short i_idgrupo;
+		short i_nmgrupo;
+
+		int idContato = _idContato;
+		int idSequencia = _idFase;		
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE proCGMTConsultaWFGruposReAbertura CURSOR FOR
+	SELECT
+		IDGRUPO, 
+		NMGRUPO 
+	FROM 
+		ACESSO.GRUPO GRUPO
+    WHERE
+        GRUPO.IDGRUPO = 
+        (
+        	SELECT 
+        		CG.IDGRUPO
+			FROM CONTATOADM.CONTATOGRUPO CG					      
+				,CONTATOADM.SEQUENCIA S
+			WHERE
+				CG.IDCONTATO = :idContato
+			AND
+				S.IDCONTATOGRUPO = CG.IDCONTATOGRUPO 
+			AND	
+				S.IDTIPOSEQUENCIA = :idSequencia	
+			AND
+				GRUPO.IDGRUPO = CG.IDGRUPO
+			AND
+				ROWNUM < 2
+	   )
+	   AND GRUPO.DTEXCLUSAO IS NULL
+	ORDER BY 
+		UPPER(GRUPO.NMGRUPO);
+
+	EXEC SQL OPEN proCGMTConsultaWFGruposReAbertura;
+	
+    for(;;)
+    {
+		EXEC SQL FETCH proCGMTConsultaWFGruposReAbertura INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+		CONVIND(nmgrupo, i_nmgrupo);
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",idgrupo);
+		    saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE proCGMTConsultaWFGruposReAbertura;
+
+    ULOG_END( "proCGMTConsultaWFGruposReAbertura()" );
+}
+
+void proCGMTConsultaWFGruposAbertura(int _idContato,int _idFase,int _idPessoaUsuario
+                                    ,long _idAtendimento, XMLGen* saida)
+{
+    ULOG_START( "proCGMTConsultaWFGruposAbertura()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idgrupo; 
+        VARCHAR nmgrupo[256];
+
+        short i_idgrupo;
+        short i_nmgrupo;
+
+        long idAtendimento = _idAtendimento;
+        int idContato = _idContato;
+        int idSequencia = _idFase;
+        int idPessoaUsuario = _idPessoaUsuario;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL DECLARE tsqlcursor2 CURSOR FOR
+    // SELECT DISTINCT 
+    //        IDGRUPO,
+    //        NMGRUPO
+    // FROM
+    // (
+    //     SELECT
+    //         IDGRUPO, 
+    //         NMGRUPO 
+    //     FROM 
+    //         ACESSO.GRUPO GRUPO
+    //     WHERE
+    //         GRUPO.IDGRUPO = 
+    //         (
+    //             SELECT 
+    //                 CG.IDGRUPO
+    //             FROM 
+    //                  CONTATOADM.CONTATOFOLHA CF
+    //                 ,CONTATOADM.CONTATOGRUPO CG
+    //                 ,CONTATOADM.SEQUENCIA S
+    //             WHERE
+    //                 CF.IDCONTATO = :idContato
+    //             AND 
+    //                 CG.IDCONTATO = CF.IDCONTATO 
+    //             AND 
+    //                 S.IDCONTATOGRUPO = CG.IDCONTATOGRUPO 
+    //             AND 
+    //                 S.IDTIPOSEQUENCIA = :idSequencia
+    //             AND
+    //                 GRUPO.IDGRUPO = CG.IDGRUPO
+    //             AND
+    //                 S.DTEXCLUSAO IS NULL
+    //             AND
+    //                 ROWNUM < 2
+    //         )
+    //     AND 
+    //         GRUPO.DTEXCLUSAO IS NULL
+    // UNION
+    //      SELECT
+    //            GRUPO.IDGRUPO,
+    //            GRUPO.NMGRUPO
+    //     FROM
+    //           ATENDIMENTO.ATENDIMENTOGRUPOATUAL ATENDIMENTOGRUPOATUAL,
+    //           ACESSO.GRUPO GRUPO
+    //     WHERE ATENDIMENTOGRUPOATUAL.IDATENDIMENTO = :idAtendimento
+    //       AND ATENDIMENTOGRUPOATUAL.IDGRUPO = GRUPO.IDGRUPO
+    // )
+    // ORDER BY 
+    //     UPPER(NMGRUPO);
+    EXEC SQL DECLARE tsqlcursor2 CURSOR FOR
+    SELECT DISTINCT 
+           IDGRUPO,
+           NMGRUPO
+    FROM
+    (
+        SELECT
+            IDGRUPO, 
+            NMGRUPO 
+        FROM 
+            ACESSO.GRUPO GRUPO
+        WHERE
+            GRUPO.IDGRUPO = 
+            (
+                SELECT 
+                    CG.IDGRUPO
+                FROM 
+                     CONTATOADM.CONTATOFOLHA CF
+                    ,CONTATOADM.CONTATOGRUPO CG
+                    ,CONTATOADM.SEQUENCIA S
+                WHERE
+                    CF.IDCONTATO = :idContato
+                AND CG.IDCONTATO = CF.IDCONTATO 
+                AND S.IDCONTATOGRUPO = CG.IDCONTATOGRUPO 
+                AND S.IDTIPOSEQUENCIA = :idSequencia
+                AND GRUPO.IDGRUPO = CG.IDGRUPO
+                AND S.DTEXCLUSAO IS NULL
+                AND ROWNUM < 2
+            )
+        AND 
+            GRUPO.DTEXCLUSAO IS NULL
+    UNION
+         SELECT
+               GRUPO.IDGRUPO,
+               GRUPO.NMGRUPO
+        FROM
+              ATENDIMENTO.ATENDIMENTO ATENDIMENTO,
+              ACESSO.GRUPO GRUPO
+        WHERE ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+          AND ATENDIMENTO.IDGRUPOATUAL = GRUPO.IDGRUPO
+    )
+    ORDER BY 
+        UPPER(NMGRUPO);
+
+    EXEC SQL OPEN tsqlcursor2;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH tsqlcursor2 INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+        CONVIND(nmgrupo, i_nmgrupo);
+
+        saida->createTag("WFGrupoVO");
+            saida->addItem("idGrupo",idgrupo);
+            saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE tsqlcursor2;
+    
+    ULOG_END( "proCGMTConsultaWFGruposAbertura()" );
+}
+
+
+// incidencioa 3271 
+// esta fucao retornara o grupo atual do processo
+void proCGMTConsultaWFGruposAtual(long _idAtendimento,XMLGen* saida)
+{
+    ULOG_START( "proCGMTConsultaWFGruposAtual()" );
+    ULOG(" _idAtendimento = [%lu] ",_idAtendimento );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		int idgrupo; 
+		VARCHAR nmgrupo[256];
+
+		short i_idgrupo;
+		short i_nmgrupo;
+        long idAtendimento =  _idAtendimento ;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL DECLARE tsqlcursor4 CURSOR FOR
+    //     SELECT 
+	// 	        GRUPO.IDGRUPO, 
+	// 	        GRUPO.NMGRUPO 
+    //       FROM  ATENDIMENTO.ATENDIMENTOGRUPOATUAL  ATENDIMENTOGRUPOATUAL, 
+  	//             ACESSO.GRUPO GRUPO
+    //             WHERE  ATENDIMENTOGRUPOATUAL.IDATENDIMENTO = :idAtendimento
+    //      AND    ATENDIMENTOGRUPOATUAL.IDGRUPO = GRUPO.IDGRUPO;
+
+    EXEC SQL DECLARE tsqlcursor4 CURSOR FOR
+        SELECT 
+		        GRUPO.IDGRUPO, 
+		        GRUPO.NMGRUPO 
+          FROM
+                ATENDIMENTO.ATENDIMENTO ATENDIMENTO,
+  	            ACESSO.GRUPO GRUPO
+         WHERE  
+                ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+         AND    ATENDIMENTO.IDGRUPOATUAL = GRUPO.IDGRUPO;
+
+	EXEC SQL OPEN tsqlcursor4;
+    for(;;)
+    {
+		EXEC SQL FETCH tsqlcursor4 INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+		CONVIND(nmgrupo, i_nmgrupo);
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",idgrupo);
+		    saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+		saida->closeTag();
+	}
+    EXEC SQL CLOSE tsqlcursor4;
+
+    ULOG_END( "proCGMTConsultaWFGruposAtual()" );
+}
+// fim  3271 
+
+bool proCGMTConsultaWFGruposTratamento(int _idContato,  XMLGen* saida)
+{
+
+    ULOG_START( "proCGMTConsultaWFGruposTratamento()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		int idgrupo; 
+		VARCHAR nmgrupo[256];
+
+		short i_idgrupo;
+		short i_nmgrupo;
+
+		int idContato = _idContato;
+
+    EXEC SQL END DECLARE SECTION;
+
+
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdGetMotTabError(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE tsqlcursorTratamento CURSOR for
+            SELECT DISTINCT
+                GRUPO.IDGRUPO, 
+                GRUPO.NMGRUPO
+            FROM
+                CONTATOADM.CONTATOGRUPO CONTATOGRUPO,
+                ACESSO.GRUPO GRUPO,
+                APOIO.TIPOGRUPO TIPOGRUPO
+            WHERE
+                CONTATOGRUPO.IDGRUPO = GRUPO.IDGRUPO
+            AND
+                GRUPO.DTEXCLUSAO IS NULL
+            AND
+                GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+            AND
+                TIPOGRUPO.CDTIPOGRUPO = 'NORMAL' //SIGLA 'NORMAL' INDICA GRUPO BKO
+            AND
+                CONTATOGRUPO.IDCONTATOGRUPO = ( SELECT 
+                                                    IDCONTATOGRUPO 
+                                                FROM 
+                                                    CONTATOADM.SEQUENCIA 
+                                                WHERE 
+                                                    SEQUENCIA.IDCONTATOGRUPO = CONTATOGRUPO.IDCONTATOGRUPO 
+                                                AND 
+                                                    SEQUENCIA.IDTIPOSEQUENCIA = 2 //ID DE TRATAMENTO 
+												AND
+													SEQUENCIA.DTEXCLUSAO IS NULL
+                                              )
+            AND
+                CONTATOGRUPO.IDCONTATO = :idContato
+            ORDER BY
+                UPPER(GRUPO.NMGRUPO);
+
+	EXEC SQL OPEN tsqlcursorTratamento;
+
+    for(;;)
+    {
+		EXEC SQL FETCH tsqlcursorTratamento INTO :idgrupo:i_idgrupo, :nmgrupo:i_nmgrupo;
+
+		CONVIND(nmgrupo, i_nmgrupo);
+
+		saida->createTag("WFGrupoVO");
+		    saida->addItem("idGrupo",idgrupo);
+		    saida->addItem("dsGrupo",(char*)nmgrupo.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE tsqlcursorTratamento;
+
+    ULOG_END( "proCGMTConsultaWFGruposTratamento()" );
+
+    return true;
+}
+
+void WFAtdGetMotTabError(sqlca*sqlca)
+{
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG( "WFAtdGetMotTabError:sqlcode=%d,sqlerrmc=%.70s"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

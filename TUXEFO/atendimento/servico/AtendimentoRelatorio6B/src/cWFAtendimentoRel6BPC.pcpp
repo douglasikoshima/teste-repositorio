@@ -1,0 +1,504 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:34:05 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+#include "../../AtendimentoCommonsRel/include/cWFComunsRelatorios.h"
+#include "../include/cWFAtendimentoRel6B.h"
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+#define MAXCOLUNAS 12
+#define COL_FIXAS   1
+EXEC SQL END DECLARE SECTION;
+
+// Vetor contendo valores lógicos onde cada item representa uma coluna da clausula select
+// sendo executada; Se o valor do vetor respectivo a coluna = true; é gerada uma tag no
+// xml de saida respectiva ao dado da coluna, mesmo que o valor do dado seja = NULL.
+// Caso contrário se o valor do vetor for diferente de true, a coluna não foi solicitada
+// na clausula select e não é gerada uma saida xml para a coluna.
+bool bColunas[MAXCOLUNAS];
+
+void MontarQuebra(string &idColunas
+                 ,string &group
+                 ,string &order
+                 ,string &nmColuna
+                 ,DOMNode *entrada
+                 ,char *dnode
+                 ,st_AtendimentoRel *dados
+                 ,st_vlAtendimentoRel *status);
+                 
+void WFAtdRelCompletarWhere6B(string &where,DOMNode *entrada,char *dnode);                 
+
+bool proCExecutarRelatorio6B( st_AtendimentoRel *dados
+                            , st_vlAtendimentoRel *status
+                            , XMLGen *saida
+                            , DOMNode *dnode )
+{
+    char valor[32];
+    struct sqlca sqlca;
+    string idColunasTotal;
+    string idColunas;
+    string where;
+    string group;
+    string order;
+    string nmColuna;
+    int i;
+    int linha=0;
+
+    if ( !dados )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !status )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !saida )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !dnode )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    // Gera os filtros
+    if( -1 != status->idOperadora )
+    {
+        sprintf(valor,"%d",dados->idOperadora);
+        if (where.size()) where += " AND ";
+        where += " idOperadora=" + (string)valor;
+    }
+
+    // Gera os filtros
+    if( -1 != status->idRegional )
+    {
+        sprintf(valor,"%d",dados->idRegional);
+        if (where.size()) where += " AND ";
+        where += " idUFOperadora=" + (string)valor;
+    }
+
+    if( -1 != status->idRepresentante )
+    {
+        sprintf(valor,"%d",dados->idRepresentante);
+        if (where.size()) where += " AND ";
+        where += " idPessoaUsuario=" + (string)valor;
+    }
+
+    if( -1 != status->idGrupo )
+    {
+        sprintf(valor,"%d",dados->idGrupo);
+        if (where.size()) where += " AND ";
+        where += " idGrupo=" + (string)valor;
+    }
+
+    if( -1 != status->dtInicio )
+    {
+        if (where.size()) where += " AND ";
+        where += " TRUNC(dtAbertura) >= (SELECT TO_DATE('" + (string)dados->dtInicio + "','DD-MM-YYYY') FROM DUAL)";
+    }
+
+    if( -1 != status->dtFim )
+    {
+        if (where.size()) where += " AND ";
+        where += " TRUNC(dtAbertura) <= (SELECT TO_DATE('" + (string)dados->dtFim + "','DD-MM-YYYY') FROM DUAL)";
+    }
+
+    WFAtdRelCompletarWhere(where,dnode,"WFGrupoVO");
+    WFAtdRelCompletarWhere(where,dnode,"WFEstadoVO");
+    WFAtdRelCompletarWhere(where,dnode,"FiltroDetalhe");
+
+    MontarQuebra(idColunas,group,order,nmColuna,dnode,"WFRelatoriosQuebraVO",dados,status);
+
+    idColunasTotal = 
+           "SELECT " + idColunas + ",total "
+           "FROM "
+               "(SELECT " + idColunas + ",total,ROWNUM AS nlin "
+                  "FROM (SELECT " + idColunas + ", sum(qtde) as total "
+                          "FROM (SELECT " + idColunas + ", 1 as qtde "
+                                  "FROM atendimento.tempomediofilav01 ";
+    if ( where.size() )
+    {
+        idColunasTotal += " WHERE " + where;
+    }
+
+    idColunasTotal += 
+                               ") ";
+    if ( group.size() )
+    {
+        idColunasTotal += " GROUP BY " + group;
+        idColunasTotal += " ORDER BY " + order;
+    }
+
+    idColunasTotal += "))";
+
+    char linIni[32],linFin[32];
+    sprintf(linIni,"%d",dados->bloco * dados->qtdLinhasBloco + 1);
+    sprintf(linFin,"%d",(dados->bloco+1) * dados->qtdLinhasBloco + 1); //+1 aqui é necessário para controle de fim de relatório
+
+    idColunasTotal += "WHERE nLin >= " + (string)linIni + " AND nLin <= " + (string)linFin;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *query;
+        short i_colunas[MAXCOLUNAS];
+        VARCHAR colunas[MAXCOLUNAS][256];
+    EXEC SQL END DECLARE SECTION;
+
+    query = (char*)idColunasTotal.c_str();
+
+    ULOG( "QUERY = [%s]",query );
+
+    saida->createTag("WFRelatorioDinamicoVO");
+    saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+    saida->addItem("dsTituloRelatorio", "Tempo Médio na Fila");
+
+    WFAtdRelGerarHeaderSaidaXML(nmColuna,saida,dnode);
+    
+    for ( i=0; i<MAXCOLUNAS;i++ )
+    {
+        colunas[i].arr[0] = 0;
+        colunas[i].len = 0;
+    }
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdRelSqlErro(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL PREPARE recebeQuery FROM :query;
+    EXEC SQL DECLARE consulta CURSOR FOR recebeQuery;
+
+    EXEC SQL OPEN consulta;
+
+    int nRegs = 0;
+
+    while ( true )
+    {
+        nRegs++;
+
+        EXEC SQL FETCH consulta INTO :colunas[ 0]:i_colunas[ 0],
+                                     :colunas[ 1]:i_colunas[ 1],
+                                     :colunas[ 2]:i_colunas[ 2],
+                                     :colunas[ 3]:i_colunas[ 3],
+                                     :colunas[ 4]:i_colunas[ 4],
+                                     :colunas[ 5]:i_colunas[ 5],
+                                     :colunas[ 6]:i_colunas[ 6],
+                                     :colunas[ 7]:i_colunas[ 7],
+                                     :colunas[ 8]:i_colunas[ 8],
+                                     :colunas[ 9]:i_colunas[ 9],
+                                     :colunas[10]:i_colunas[10],
+                                     :colunas[11]:i_colunas[11];
+
+        if ( nRegs > dados->qtdLinhasBloco )
+        {
+            break;
+        }
+
+        saida->createTag("ValoresRelatorio");
+
+        for ( i=0;i<MAXCOLUNAS;i++ )
+        {
+            CONVIND(colunas[i],i_colunas[i]);
+
+            if ( bColunas[i] ) 
+            {
+                WFAtdRelGerarDadosSaidaXML((VARCHAR*)&colunas[i],saida);
+            }
+        }
+
+        saida->closeTag();
+    }
+
+    saida->addItem("inFin", sqlca.sqlcode == 1403 ? true:false);
+
+    saida->closeTag();
+
+    EXEC SQL CLOSE consulta;
+
+    return true;
+}
+
+void MontarQuebra(string &idColunas,string &group,string &order,string &nmColuna,DOMNode *entrada,char *dnode,st_AtendimentoRel *dados, st_vlAtendimentoRel *status)
+{
+    bool firstTime = true;
+    char *p0;
+    DOMNode *dn;
+    int index = 0;
+    int i;
+    TuxHelper tx;
+
+    if ( !entrada )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !dnode )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    while ( dn = tx.walkDOM(entrada,dnode,index ) )
+    {
+        if ( p0 = tx.walkTree(dn,"idCampo",0),p0 )
+        {
+            if ( idColunas.size() )
+            {
+                idColunas += ",";
+            }
+
+            if (strlen(p0) > 0)
+            {
+                if ( group.size() )
+                {
+                    group += ",";
+                    order += ",";
+                    nmColuna += ",";
+                }
+
+                idColunas += (string)p0;
+                group += (string)p0;
+                nmColuna += (string)p0;
+
+                if ( isCampoAlfanumerico(p0) )
+                {
+                    order += "UPPER(" + (string)p0 + ")";
+                }
+                else
+                {
+                    order += (string)p0;
+                }
+
+                bColunas[index] = true;
+            }
+            else
+            {
+                idColunas += "NULL";
+                bColunas[index] = false;
+            }
+
+            XMLString::release(&p0);
+
+        }
+
+        index++;
+
+    }
+
+    for ( i=index; i<MAXCOLUNAS-COL_FIXAS; i++ )
+    {
+        bColunas[i] = false;
+    }
+
+    for ( i=MAXCOLUNAS-COL_FIXAS; i<MAXCOLUNAS; i++ )
+    {
+        bColunas[i] = true;
+    }
+
+    if ( nmColuna.size() ) nmColuna += ",";
+
+    nmColuna += obterNomeColunaFixa(ID_NUM_PROCESSOS);
+
+    index += COL_FIXAS;
+
+    for ( i=index; i<MAXCOLUNAS; i++ )
+    {
+        if ( idColunas.size() )
+        {
+            idColunas += ",";
+        }
+
+        idColunas += "NULL";
+    }
+
+    ULOG( "group=%s",group.c_str());
+    ULOG( "order=%s",order.c_str());
+    ULOG( "Nomes de colunas=%s",nmColuna.c_str());
+}
+
+
+void WFAtdRelCompletarWhereRel6B(string &where,DOMNode *entrada,char *dnode)
+{
+    bool firstTime = true;
+    char *p0;
+    char *p1;
+    DOMNode *dn;
+    int index = 0;
+    TuxHelper tx;
+
+    if ( !entrada )
+    {
+        ULOGE(erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !dnode )
+    {
+        ULOGE(erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    while ( dn = tx.walkDOM(entrada,dnode,index++ ) )
+    {
+        if ( !strcmp(dnode,"WFRelatoriosFiltroRegionalVO") )
+        {
+            if ( p0 = tx.walkTree(dn,"idRegional",0),p0 )
+            {
+                if ( firstTime )
+                {
+                    if ( where.size() ) where += " AND ";
+                    where += "(";
+                    firstTime = false;
+                }
+                else
+                {
+                    where += " OR ";
+                }
+                where += " idUFOperadora=" + (string) p0;
+                XMLString::release(&p0);
+            }
+        }
+        if ( !strcmp(dnode,"WFFaseVO") )
+        {
+            if ( p0 = tx.walkTree(dn,"idFase",0),p0 )
+            {
+                if ( firstTime )
+                {
+                    if ( where.size() ) where += " AND ";
+                    where += "(";
+                    firstTime = false;
+                }
+                else
+                {
+                    where += " OR ";
+                }
+                where += " idFase=" + (string) p0;
+                XMLString::release(&p0);
+            }
+        }
+        if ( !strcmp(dnode,"WFEstadoVO") )
+        {
+            if ( p0 = tx.walkTree(dn,"idEstado",0),p0 )
+            {
+                if ( firstTime )
+                {
+                    if ( where.size() ) where += " AND ";
+                    where += "(";
+                    firstTime = false;
+                }
+                else
+                {
+                    where += " OR ";
+                }
+                where += " idEstado=" + (string) p0;
+                XMLString::release(&p0);
+            }
+        }
+        else if ( !strcmp(dnode,"StatusUsuarioVO") )
+        {
+            if ( p0 = tx.walkTree(dn,"idStatus",0),p0 )
+            {
+                if ( firstTime )
+                {
+                    if ( where.size() ) where += " AND ";
+                    where += "(";
+                    firstTime = false;
+                }
+                else
+                {
+                    where += " OR ";
+                }
+                where += " idStatusUsuario=" + (string) p0;
+                XMLString::release(&p0);
+            }
+        }
+/*
+        else if ( !strcmp(dnode,"WFRelatoriosFiltroOperadoraVO") )
+        {
+            if ( p0 = tx.walkTree(dn,"idOperadora",0),p0 )
+            {
+                if ( firstTime )
+                {
+                    if ( where.size() ) where += " AND ";
+                    where += "(";
+                    firstTime = false;
+                }
+                else
+                {
+                    where += " OR ";
+                }
+                where += " idOperadora=" + (string) p0;
+                XMLString::release(&p0);
+            }
+        }
+*/
+        else if ( p0 = tx.walkTree(dn,"idGrupo",0),p0 )
+        {
+            if ( firstTime )
+            {
+                if ( where.size() ) where += " AND ";
+                where += "(";
+                firstTime = false;
+            }
+            else
+            {
+                where += " OR ";
+            }
+            where += " idGrupo=" + (string) p0;
+            XMLString::release(&p0);
+        }
+        else if ( p0 = tx.walkTree(dn,"idColuna",0),p0 )
+        {
+            p1 = tx.walkTree(dn,"valor",0);
+
+            if ( p1 )
+            {
+                if ( *p1 )
+                {
+                    if ( where.size() ) where += " AND ";
+                    where += (string)p0 + " = '" + (string)p1 + "'";
+                }
+                else
+                {
+                    if ( where.size() ) where += " AND ";
+                    where += (string)p0 + (string)" IS NULL";
+                }
+
+                XMLString::release(&p1);
+            }
+            else
+            {
+                Mensagem me = Endereco(__LINE__,__FILE__).mensagem("campo 'valor' para '%s' "
+                                                                   "do %do donNode '%s' nao definido"
+                                                                  ,p0,index,dnode);
+                ULOGE("%s",me.MsgPadrao());
+                throw new TuxBasicSvcException("04E9999",me.MsgPadrao());
+            }
+            XMLString::release(&p0);
+        }
+    }
+
+    if ( !firstTime )
+    {
+        where += ")";
+    }
+}

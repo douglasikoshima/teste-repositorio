@@ -1,0 +1,82 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+
+#include "tuxfw.h"
+#include "MiscpcPORT.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "PPGlobalPORT.h"
+EXEC SQL END DECLARE SECTION;
+
+/****************************************************************************************/
+bool CMiscpc::proCBuscaCliente(TMisc *ptMisc)
+{
+    ULOG_START("CMiscpc::proCBuscaCliente");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+
+        VARCHAR oszIdTipoLinha[LEN_IDTIPOLINHA];
+        VARCHAR oszIdTipoPessoa[LEN_IDTIPOPESSOA];
+        VARCHAR oszCdAreaRegistro[LEN_CDAREAREGISTRO];
+        VARCHAR oszNrLinha[LEN_NRLINHA];
+
+        short iIdPessoa = 0;
+    EXEC SQL END DECLARE SECTION;
+
+	struct sqlca sqlca;
+
+	STRCPY_TO_ORA(oszIdTipoLinha, ptMisc->szIdTipoLinha);
+	STRCPY_TO_ORA(oszIdTipoPessoa, ptMisc->szIdTipoPessoa);
+	STRCPY_TO_ORA(oszCdAreaRegistro, ptMisc->szCdAreaRegistro);
+	STRCPY_TO_ORA(oszNrLinha, ptMisc->szNrLinha);
+
+	EXEC SQL WHENEVER SQLERROR	goto erro;
+	EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+	EXEC SQL
+        SELECT
+            cp.idpessoa
+        INTO
+            :oszIdPessoa:iIdPessoa
+        FROM
+            customer.pessoa cp,
+            customer.pessoadepara cpdp,
+            customer.pessoaportabilidade cpp
+        WHERE
+             --//cpp.idtipolinha = :oszIdTipoLinha
+        --//AND
+             cpp.idtipopessoa = :oszIdTipoPessoa
+        AND
+             cpp.nrlinha = :oszNrLinha
+        AND
+             cpp.cdarearegistro = :oszCdAreaRegistro
+        AND
+             cpp.insincronizado = 0
+        AND
+             cpp.idpessoadepara = cpdp.idpessoadepara
+        AND
+             cp.idpessoa = cpdp.idpessoa
+        AND
+             ROWNUM < 2;
+
+
+    if(iIdPessoa != -1) {
+        STRCPY_FROM_ORA(ptMisc->szIdPessoa, oszIdPessoa);
+    }
+
+    ULOGI("Finalizando proCBuscaCliente <FOUND>");
+    ULOG_END("CMiscpc::proCBuscaCliente");
+    return true;
+
+    naoexiste:
+        ULOGI("Finalizando proCBuscaCliente <NOT FOUND>");
+        ULOG_END("CMiscpc::proCBuscaCliente");
+        return false;
+
+    erro:
+        ULOGE("Finalizando proCBuscaCliente <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+                                                                                                                                                                                                                                                                          

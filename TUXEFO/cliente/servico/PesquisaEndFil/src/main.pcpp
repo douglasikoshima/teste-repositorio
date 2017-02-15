@@ -1,0 +1,231 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Fonte: main.pcpp
+//* Servico: PesquisaEndFil
+//* Servidor: PesquisaEndereco
+//*
+//* Ficheiro: TUXEFO/cliente/PesquisaEndereco/PesquisaEndFil/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson da S. Martins
+//*
+//* Fecha primeira version:23/08/2004
+//*
+//* Version actual: 01.00
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Servico para recuperar a partir de um filtro os enderecos.
+//*
+//*//-------------------------------------------------------------------------------
+//---------------------------------------------------------------------
+//EXEC SQL INCLUDE SQLCA;
+
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include "../../negocio/clienteCmm/include/Log.h"
+
+#include "../include/PesqEnderecoFil.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE UF.h;
+//EXEC SQL INCLUDE classPessoaEndereco.h;
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/RelCepLogradBairro.h";
+
+DECLARE_TUXEDO_SERVICE(PesquisaEndFil);
+
+void implPesquisaEndFil::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    bool  bExisteCep  = true;
+    int   iNroReg     = 0;
+    int   iAux        = 0;
+    char* pCEP        = NULL;
+    char* pLogradouro = NULL;
+    char* pLocalidade = NULL;
+    char* pBairro     = NULL;
+    char* pIdUF       = NULL;
+
+    CRelCepLogradBairro* poEnd = NULL;
+    CRelCepLogradBairro  oCEP;
+
+    ULOG_START( "implPesquisaEndFil::Execute()" );
+    try
+    {
+
+      pCEP = walkTree(pDnode, XML_IN_NRCEP, 0);
+      Log(LINFORMATION, "Cep recuperado CEP[%s]  tamanho [%d] ", pCEP,strlen(pCEP));
+      if(pCEP != NULL)
+      {
+         // verifica se o CEP e  exite na tabela endereco.cep
+         if(strlen(pCEP) != 0 )
+             bExisteCep = oCEP.existeCEP(pCEP);
+         else
+         {  
+             XMLString::release(&pCEP);
+             pCEP = NULL;
+
+         }
+      }
+ 
+      // retorna erro xml de erro caso o cep nao existe
+      if(bExisteCep == false )
+      {
+         Log(LINFORMATION, "Cep 3 CEP[%s]  tamanho [%d] ", ( pCEP == NULL ? "" : pCEP ),( pCEP == NULL ? 0 : strlen(pCEP) ) );
+         pXmlG->createTag(XML_OUT_NO_ROOT);
+         pXmlG->addProp("xmlns", XML_OUT_PROP);
+         pXmlG->createTag(XML_OUT_NO_LISTA);
+         pXmlG->closeTag();
+         pXmlG->addItem("noCep", "1");
+         pXmlG->closeTag();
+      }
+      else
+      {
+          
+          pLogradouro = walkTree(pDnode, XML_IN_DSLOGRADOURO, 0);
+          if(pLogradouro != NULL )
+          {
+             if(strlen(pLogradouro) == 0 ) 
+             {
+                XMLString::release(&pLogradouro);
+                pLogradouro = NULL;
+             }
+          }
+          pLocalidade = walkTree(pDnode, XML_IN_DSLOCALIDADE, 0);
+          if(pLocalidade != NULL)
+          {
+             if(strlen(pLocalidade) == 0 ) 
+             {
+                pLocalidade = NULL;
+                XMLString::release(&pLocalidade);
+             }
+          }
+          pBairro = walkTree(pDnode, XML_IN_DSBAIRRO, 0);
+          if(pBairro != NULL)
+          {
+              if(strlen(pBairro) == 0 ) 
+              {
+                 XMLString::release(&pBairro);
+                 pBairro = NULL;
+              }
+          }
+          pIdUF = walkTree(pDnode, XML_IN_IDUF, 0);
+          if(pIdUF != NULL )
+          {
+             if(strlen(pIdUF) == 0 ) 
+             {
+                XMLString::release(&pIdUF);
+                pIdUF = NULL;
+             }
+          }
+          
+          //Inicio da pesquisa de endereco
+          poEnd = CRelCepLogradBairro::RecuperarTodosPorFiltro(&iNroReg, pCEP, pLogradouro, pLocalidade, pBairro, pIdUF);
+         
+          //Inicio da montagem do XML
+          pXmlG->createTag(XML_OUT_NO_ROOT);
+          pXmlG->addProp("xmlns", XML_OUT_PROP);
+  
+          if ( iNroReg > 50 )
+          {
+              pXmlG->createTag(XML_OUT_NO_LISTA);
+              pXmlG->closeTag();
+              pXmlG->addItem("erro", "Refinar pesquisa!!! Qtde superior a 50 registros.");
+          }
+          else
+          {
+              pXmlG->createTag(XML_OUT_NO_LISTA);
+              
+            for (; iAux < iNroReg; iAux++) 
+              {
+                pXmlG->createTag("EnderecoVO");
+                    pXmlG->addItem("idEndereco", "");
+  
+                    pXmlG->createTag("TipoEnderecoVO");
+                      pXmlG->closeTag();
+  
+                    pXmlG->addItem("nmTipoLogradouro",      poEnd[iAux].getDscTipoLograd());
+                    pXmlG->addItem("nmTituloLogradouro",    poEnd[iAux].getDscTituloLograd());
+                    pXmlG->addItem("nmLogradouro",          poEnd[iAux].getNomLogradouro());
+                    pXmlG->addItem("nmBairro",              poEnd[iAux].getNomBairro());
+                    pXmlG->addItem("nmMunicipio",           poEnd[iAux].getDscLocalidade());
+                    pXmlG->addItem("nrEndereco",            "");
+                    pXmlG->addItem("dsEnderecoComplemento", "");
+                    pXmlG->addItem("nrCEP",                 poEnd[iAux].getNumCEP());
+                    pXmlG->addItem("dsLado",                poEnd[iAux].getIndNumeracaoEndereco());
+  
+                    pXmlG->createTag("UFVO");
+                        pXmlG->addItem("idUF", poEnd[iAux].getCodUF());
+                        pXmlG->addItem("sgUF", poEnd[iAux].getSglUF());
+                        pXmlG->addItem("nmUF", poEnd[iAux].getNomUF());
+                      pXmlG->closeTag();
+                    pXmlG->createTag("PaisVO");
+                        pXmlG->addItem("idPais", poEnd[iAux].getCodPais());
+                        pXmlG->addItem("sgPais", poEnd[iAux].getSglIsoPais());
+                        pXmlG->addItem("nmPais", poEnd[iAux].getNomPais());
+                      pXmlG->closeTag();
+                    pXmlG->addItem("codLogradouro", poEnd[iAux].getCdLogradouro());
+                    pXmlG->addItem("inCnl", poEnd[iAux].getInCNL());
+                    pXmlG->addItem("inCodigoIBGE", poEnd[iAux].getCdIBGE());
+                pXmlG->closeTag();
+            }
+              pXmlG->closeTag();
+          }
+          pXmlG->closeTag();
+      }
+      //Liberando memoria alocada
+      if( poEnd )
+          free(poEnd);
+      if(pCEP)
+          XMLString::release(&pCEP);
+      if(pLogradouro)
+          XMLString::release(&pLogradouro);
+      if(pLocalidade)
+          XMLString::release(&pLocalidade);
+      if(pBairro)
+          XMLString::release(&pBairro);
+      if(pIdUF)
+          XMLString::release(&pIdUF);
+    }
+    catch(...)
+    {
+      //Liberando memoria alocada
+      if( poEnd )
+          free(poEnd);
+      if(pCEP)
+          XMLString::release(&pCEP);
+      if(pLogradouro)
+          XMLString::release(&pLogradouro);
+      if(pLocalidade)
+          XMLString::release(&pLocalidade);
+      if(pBairro)
+          XMLString::release(&pBairro);
+      if(pIdUF)
+          XMLString::release(&pIdUF);
+      throw;  //repassando o erro para nucleo
+    }
+
+    ULOG_END( "implPesquisaEndFil::Execute()" );
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}
+
+
+

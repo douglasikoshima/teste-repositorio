@@ -1,0 +1,210 @@
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+
+int sel_chip( XMLGen *xml );
+int sel_chip_filtro( int dddPrm, XMLGen *xml );
+
+int sel_chip( XMLGen *xml )
+{
+    ULOG_START( "sel_chip()" );
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int     idChip = -1;
+        int     ddd = -1;
+        VARCHAR cdSAPChipAvulso[64];
+        VARCHAR cdSAPChipPre[64];
+        VARCHAR vlChipAvulso[10];
+        VARCHAR vlChipPre[10];
+        short   i_cdSAPChipAvulso = -1;
+        short   i_cdSAPChipPre = -1;
+        short   i_ddd = -1;
+        short   i_vlChipAvulso = -1;
+        short   i_vlChipPre = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &cdSAPChipAvulso, 0x0, sizeof(cdSAPChipAvulso) );
+    memset( &cdSAPChipPre   , 0x0, sizeof(cdSAPChipPre) );
+    memset( &vlChipAvulso   , 0x0, sizeof(vlChipAvulso) );
+    memset( &vlChipPre      , 0x0, sizeof(vlChipPre) );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error( NULL );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    try
+    {
+
+        // Definicao dos cursores
+        EXEC SQL DECLARE crsEstoqueChip CURSOR FOR
+        SELECT
+           CHIP.IDCHIP,
+           AREAREGISTRO.CDAREAREGISTRO,
+           CHIP.CDSAPCHIPAVULSO,
+           CHIP.CDSAPCHIPPREPROGRAMADO,
+           TRIM(TO_CHAR(CHIP.VLCHIPAVULSO,'99G999D99MI','NLS_NUMERIC_CHARACTERS = '',.''')),
+           TRIM(TO_CHAR(CHIP.VLCHIPPREPROGRAMADO,'99G999D99MI','NLS_NUMERIC_CHARACTERS = '',.'''))
+        FROM
+           RETENCAO.CHIP CHIP,
+           APOIO.AREAREGISTRO AREAREGISTRO
+        WHERE
+           CHIP.IDCHIP > 0
+        AND
+           CHIP.INATIVO = 1
+        AND
+           AREAREGISTRO.IDAREAREGISTRO = CHIP.IDAREAREGISTRO
+        ORDER BY AREAREGISTRO.CDAREAREGISTRO;
+
+            
+        EXEC SQL OPEN crsEstoqueChip;
+        for(;;) 
+        {
+            EXEC SQL FETCH crsEstoqueChip 
+                 INTO :idChip,
+                      :ddd:i_ddd,
+                      :cdSAPChipAvulso:i_cdSAPChipAvulso,
+                      :cdSAPChipPre:i_cdSAPChipPre,
+                      :vlChipAvulso:i_vlChipAvulso,
+                      :vlChipPre:i_vlChipPre;
+
+            endOraStr( cdSAPChipAvulso );
+            endOraStr( cdSAPChipPre );
+            endOraStr( vlChipAvulso );
+            endOraStr( vlChipPre );
+
+            ULOG_INT( idChip );
+            ULOG_INT( ddd );
+
+            ULOG( "Codigos encontrados Chip Avulso [%s], Chip pre-programado [%s]", (char *)cdSAPChipAvulso.arr, (char *)cdSAPChipPre.arr );
+            
+            xml->createTag( "chipsCadastrados" );
+                xml->addItem( "id", idChip );
+                xml->addItem( "nrDDD", ddd );
+                xml->addItem( "cdChipAvulsoSAP", (char *)cdSAPChipAvulso.arr );
+                xml->addItem( "vlChipAvulsoSAP", (char *)vlChipAvulso.arr );
+                xml->addItem( "cdChipPreProgSAP", (char *)cdSAPChipPre.arr );
+                xml->addItem( "vlChipPreProgSAP", (char *)vlChipPre.arr );
+            xml->closeTag();
+        }
+
+        EXEC SQL CLOSE crsEstoqueChip;
+
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    ULOG_END( "sel_chip()" );
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+  return 1;
+}
+
+
+
+int sel_chip_filtro( int dddPrm, XMLGen *xml )
+{
+    ULOG_START( "sel_chip()" );
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int     dddBusca = dddPrm;
+        int     idAreaRegistro = -1;
+        int     idChip = -1;
+        int     ddd = -1;
+        VARCHAR cdSAPChipAvulso[64];
+        VARCHAR cdSAPChipPre[64];
+        VARCHAR vlChipAvulso[10];
+        VARCHAR vlChipPre[10];
+        short   i_cdSAPChipAvulso = -1;
+        short   i_cdSAPChipPre = -1;
+        short   i_ddd = -1;
+        short   i_vlChipAvulso = -1;
+        short   i_vlChipPre = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &cdSAPChipAvulso, 0x0, sizeof(cdSAPChipAvulso) );
+    memset( &cdSAPChipPre   , 0x0, sizeof(cdSAPChipPre) );
+    memset( &vlChipAvulso   , 0x0, sizeof(vlChipAvulso) );
+    memset( &vlChipPre      , 0x0, sizeof(vlChipPre) );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error( NULL );
+
+    try
+    {
+        EXEC SQL
+        SELECT idarearegistro
+          INTO :idAreaRegistro
+          FROM apoio.arearegistro
+         WHERE cdarearegistro = :dddBusca;
+         
+        EXEC SQL WHENEVER NOT FOUND DO break;
+
+        // Definicao dos cursores
+        EXEC SQL DECLARE crsEstoqueChipFiltro CURSOR FOR
+        SELECT
+           CHIP.IDCHIP,
+           AREAREGISTRO.CDAREAREGISTRO,
+           CHIP.CDSAPCHIPAVULSO,
+           CHIP.CDSAPCHIPPREPROGRAMADO,
+           TRIM(TO_CHAR(CHIP.VLCHIPAVULSO,'99G999D99MI','NLS_NUMERIC_CHARACTERS = '',.''')),
+           TRIM(TO_CHAR(CHIP.VLCHIPPREPROGRAMADO,'99G999D99MI','NLS_NUMERIC_CHARACTERS = '',.'''))
+        FROM
+           RETENCAO.CHIP CHIP,
+           APOIO.AREAREGISTRO AREAREGISTRO
+        WHERE
+           CHIP.IDCHIP > 0
+        AND
+           CHIP.INATIVO = 1
+        AND
+           AREAREGISTRO.IDAREAREGISTRO = CHIP.IDAREAREGISTRO
+        AND
+           AREAREGISTRO.IDAREAREGISTRO = :idAreaRegistro
+        ORDER BY AREAREGISTRO.CDAREAREGISTRO;
+
+            
+        EXEC SQL OPEN crsEstoqueChipFiltro;
+        for(;;) 
+        {
+            EXEC SQL FETCH crsEstoqueChipFiltro 
+                 INTO :idChip,
+                      :ddd:i_ddd,
+                      :cdSAPChipAvulso:i_cdSAPChipAvulso,
+                      :cdSAPChipPre:i_cdSAPChipPre,
+                      :vlChipAvulso:i_vlChipAvulso,
+                      :vlChipPre:i_vlChipPre;
+
+            endOraStr( cdSAPChipAvulso );
+            endOraStr( cdSAPChipPre );
+            endOraStr( vlChipAvulso );
+            endOraStr( vlChipPre );
+
+            ULOG_INT( idChip );
+            ULOG_INT( ddd );
+
+            ULOG( "Codigos encontrados Chip Avulso [%s], Chip pre-programado [%s]", (char *)cdSAPChipAvulso.arr, (char *)cdSAPChipPre.arr );
+            
+            xml->createTag( "chipsCadastrados" );
+                xml->addItem( "id", idChip );
+                xml->addItem( "nrDDD", ddd );
+                xml->addItem( "cdChipAvulsoSAP", (char *)cdSAPChipAvulso.arr );
+                xml->addItem( "vlChipAvulsoSAP", (char *)vlChipAvulso.arr );
+                xml->addItem( "cdChipPreProgSAP", (char *)cdSAPChipPre.arr );
+                xml->addItem( "vlChipPreProgSAP", (char *)vlChipPre.arr );
+            xml->closeTag();
+        }
+
+        EXEC SQL CLOSE crsEstoqueChipFiltro;
+
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    ULOG_END( "sel_chip()" );
+
+  return 1;
+}

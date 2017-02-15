@@ -1,0 +1,161 @@
+
+#include "../include/cWFAbrPrcPsqLinPC.h"
+
+bool proCGetDadosLinha(int idConta , int idLinha, XMLGen *saida );
+
+bool proCGetDadosLinha(int idConta , int idLinha, XMLGen *saida )
+{
+   ULOG_START("proCGetDadosLinha()");
+	struct sqlca sqlca;
+   
+	EXEC SQL BEGIN DECLARE SECTION;
+		int     idconta = idConta;
+		int     idlinha = idLinha;
+
+		int     idPessoaLinha;
+		int     cdAreaRegistro;
+		int     nrLinha;
+
+		short i_idPessoaLinha = -1;
+		short i_cdAreaRegistro = -1;
+		short i_nrLinha = -1;
+	EXEC SQL END DECLARE SECTION;
+   
+ 
+
+	EXEC SQL
+	    SELECT 
+		      LT.IDLINHATELEFONICA,
+		      AR.CDAREAREGISTRO,
+		      LB.NRLINHA
+	    INTO 
+		      :idPessoaLinha:i_idPessoaLinha, 
+		      :cdAreaRegistro:i_cdAreaRegistro, 
+		      :nrLinha:i_nrLinha
+        FROM  CUSTOMER.CONTA C,
+	          APOIO.AREAREGISTRO AR,
+	          LINHA.LINHABASE LB,
+              LINHA.LINHATELEFONICA LT,
+              CUSTOMER.TIPORELACIONAMENTO TR,
+              CUSTOMER.LINHACONTA LC
+        WHERE LC.IDCONTA = :idconta
+          AND LC.IDLINHATELEFONICA = :idlinha
+          AND LC.IDCONTA = C.IDCONTA
+          AND LC.IDTIPORELACIONAMENTO = TR.IDTIPORELACIONAMENTO
+          AND LC.IDLINHATELEFONICA = LT.IDLINHATELEFONICA
+          AND LT.IDLINHABASE = LB.IDLINHABASE
+          AND LB.IDAREAREGISTRO = AR.IDAREAREGISTRO
+	      AND ROWNUM < 2;
+
+	if (i_idPessoaLinha != -1)
+	{
+		saida->createTag( "LinhaVO" );
+			saida->addItem( "idPessoaLinhaHistorico" , idPessoaLinha );
+			saida->addItem( "cdAreaRegistro", cdAreaRegistro );
+			saida->addItem( "nrLinha", nrLinha );
+		saida->closeTag();
+	}
+
+	return true;
+}
+
+bool cWFAbrPrcPsqLinPC::proCObtemWFAtdLinhas( int idConta, int idLinha, XMLGen *saida)
+{
+   ULOG_START("cWFAbrPrcPsqLinPC::proCObtemWFAtdLinhas()");
+   
+	struct sqlca sqlca;
+   
+	ULOG("Abertura de Processo -> Pesquisa de Linhas.");
+
+	int numRegistros = 0;
+	bool linhaEncontrada = false;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        int     idconta = idConta;
+        int     idPessoaLinha;
+        int     cdAreaRegistro;
+        int     nrLinha;
+	EXEC SQL END DECLARE SECTION;
+   
+   
+
+	EXEC SQL DECLARE SQLObtemLinhas CURSOR FOR 
+	    SELECT 
+		      LT.IDLINHATELEFONICA,
+		      AR.CDAREAREGISTRO,
+		      LB.NRLINHA
+        FROM  CUSTOMER.CONTA C,
+	          APOIO.AREAREGISTRO AR,
+	          LINHA.LINHABASE LB,
+              LINHA.LINHATELEFONICA LT,
+              CUSTOMER.TIPORELACIONAMENTO TR,
+              CUSTOMER.LINHACONTA LC
+        WHERE LC.IDCONTA = :idconta
+          AND LC.IDCONTA = C.IDCONTA
+          AND LC.IDTIPORELACIONAMENTO = TR.IDTIPORELACIONAMENTO
+          AND LC.IDLINHATELEFONICA = LT.IDLINHATELEFONICA
+          AND LT.IDLINHABASE = LB.IDLINHABASE
+          AND LB.IDAREAREGISTRO = AR.IDAREAREGISTRO
+	      AND ROWNUM < 11;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	EXEC SQL OPEN SQLObtemLinhas;
+
+	while (true)
+	{
+		EXEC SQL FETCH SQLObtemLinhas INTO 
+											:idPessoaLinha, 
+											:cdAreaRegistro, 
+											:nrLinha ;
+         
+		if (idLinha == idPessoaLinha)
+			linhaEncontrada = true;
+
+		numRegistros++;
+
+		if ( numRegistros >= 10 )
+		{
+			if ( !linhaEncontrada )
+			{
+				if ( !proCGetDadosLinha (idConta, idLinha, saida) )
+				{
+					saida->createTag( "LinhaVO" );
+						saida->addItem( "idPessoaLinhaHistorico" , idPessoaLinha );
+						saida->addItem( "cdAreaRegistro", cdAreaRegistro );
+						saida->addItem( "nrLinha", nrLinha );
+					saida->closeTag();
+				}
+			}
+		    else
+		    {
+			    saida->createTag( "LinhaVO" );
+				    saida->addItem( "idPessoaLinhaHistorico" , idPessoaLinha );
+				    saida->addItem( "cdAreaRegistro", cdAreaRegistro );
+				    saida->addItem( "nrLinha", nrLinha );
+			    saida->closeTag();
+		    }
+		}
+		else
+		{
+			saida->createTag( "LinhaVO" );
+				saida->addItem( "idPessoaLinhaHistorico" , idPessoaLinha );
+				saida->addItem( "cdAreaRegistro", cdAreaRegistro );
+				saida->addItem( "nrLinha", nrLinha );
+			saida->closeTag();
+		}
+	}
+
+	EXEC SQL CLOSE SQLObtemLinhas;
+	
+	ULOG_START("cWFAbrPrcPsqLinPC::proCObtemWFAtdLinhas()");
+
+	return true;
+}
+
+
+
+void cWFAbrPrcPsqLinPC::sql_error_PesquisaLinhas( sqlca * sqlca )
+{
+	ULOGE( "Ocorreu um erro na Pesquisa de Linhas." );
+	throw new TuxBasicOraException( sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml );
+}

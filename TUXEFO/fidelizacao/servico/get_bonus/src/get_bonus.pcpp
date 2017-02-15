@@ -1,0 +1,647 @@
+//
+// $Id: get_bonus.pcpp,v 1.1.118.1 2012/07/13 18:09:25 a5114878 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+
+int get_errors( char *pnrlinha,char *pcdRet, char *pmsgRet)
+{
+	
+	 EXEC SQL BEGIN DECLARE SECTION;
+        varchar cdServico[256]; 
+			varchar nrLinha[255]; 
+			varchar szCdErro[20];
+			varchar szMsgErro[255];
+			int		iContador=0;
+     EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+
+	strToOra(nrLinha,pnrlinha);
+		
+		//codigo 02
+		EXEC SQL
+		SELECT COUNT(1),
+			   DECODE(COUNT(1),0,'02','00')cdErro,
+			   DECODE(COUNT(1),0,'Numero de linha invalido ou nao cadastrado','0')msgErro
+		INTO   :iContador,
+			   :szCdErro,
+			   :szMsgErro
+		FROM   linha.linhabase		 lb,
+			   apoio.arearegistro	  ar
+		WHERE  lb.IDAREAREGISTRO=ar.IDAREAREGISTRO
+		AND    ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+		AND	   lb.nrlinha=SUBSTR(:nrLinha,3);
+		
+		if(!iContador)
+		{
+			//formatando
+			endOraStr(szCdErro);
+			endOraStr(szMsgErro);
+			
+			//copiando
+			sprintf(pcdRet,"%s",(char*)szCdErro.arr);
+			sprintf(pmsgRet,"%s",(char*)szMsgErro.arr);
+		
+			return 1;
+		}
+		
+		//codigo 03
+		EXEC SQL
+		SELECT COUNT(1),
+			   DECODE(COUNT(1),0,'03','00')cdErro,
+			   DECODE(COUNT(1),0,'Cliente nao esta em Portabilidade','0')msgErro
+		INTO   :iContador,
+			   :szCdErro,
+			   :szMsgErro
+		FROM   atendimento.atendimento att,
+			   linha.linhatelefonica lt,
+			   linha.linhabase		 lb,
+			   apoio.arearegistro	  ar
+		WHERE  lb.IDAREAREGISTRO=ar.IDAREAREGISTRO
+		AND	   lt.IDLINHABASE=lb.IDLINHABASE
+		AND	   att.IDLINHATELEFONICA=lt.IDLINHATELEFONICA
+		AND	   att.SGTIPOPORTABILIDADE='PORTOUT'
+		AND    ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+		AND	   lb.nrlinha=SUBSTR(:nrLinha,3);
+		
+
+		if(!iContador)
+		{
+			//formatando
+			endOraStr(szCdErro);
+			endOraStr(szMsgErro);
+			
+			//copiando
+			sprintf(pcdRet,"%s",(char*)szCdErro.arr);
+			sprintf(pmsgRet,"%s",(char*)szMsgErro.arr);
+
+			return 1;
+		}
+		
+		//codigo 06
+		EXEC SQL
+		SELECT COUNT(1),
+			   DECODE(COUNT(1),0,'06','00')cdErro,
+			   DECODE(COUNT(1),0,'linha não possui processo de retenção','0')msgErro
+		INTO   :iContador,
+			   :szCdErro,
+			   :szMsgErro
+        FROM   atendimento.atendimento att,
+			   linha.linhatelefonica lt,
+			   linha.linhabase		 lb,
+               apoio.arearegistro      ar,
+               CONTATOADM.CONTATOFUNCIONALIDADE CF
+		WHERE  lb.IDAREAREGISTRO=ar.IDAREAREGISTRO
+		AND	   lt.IDLINHABASE=lb.IDLINHABASE
+		AND	   att.IDLINHATELEFONICA=lt.IDLINHATELEFONICA
+        and    cf.idcontato = att.idcontato
+        and    cf.CDFUNCIONALIDADE = 'PORTOUT_RETENÇÃO'
+		AND	   att.SGTIPOPORTABILIDADE='PORTOUT'
+		AND    ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+		AND	   lb.nrlinha=SUBSTR(:nrLinha,3);
+
+		if(!iContador)
+		{
+			//formatando
+			endOraStr(szCdErro);
+			endOraStr(szMsgErro);
+			
+			//copiando
+			sprintf(pcdRet,"%s",(char*)szCdErro.arr);
+			sprintf(pmsgRet,"%s",(char*)szMsgErro.arr);
+			return 1;
+		}
+        //codigo 07
+            EXEC SQL
+            SELECT COUNT(1),
+                   DECODE(COUNT(1),0,'07','00')cdErro,
+                   DECODE(COUNT(1),0,'Processo de retenção não permite tratamento','0')msgErro
+    		INTO   :iContador,
+    			   :szCdErro,
+    			   :szMsgErro
+            FROM   atendimento.atendimentopriorizacao att,
+                   linha.linhatelefonica lt,
+                   linha.linhabase		 lb,
+                   apoio.arearegistro	  ar
+            WHERE  lb.IDAREAREGISTRO=ar.IDAREAREGISTRO
+            AND	   lt.IDLINHABASE=lb.IDLINHABASE
+            AND	   att.IDLINHATELEFONICA=lt.IDLINHATELEFONICA
+            AND	   att.SGTIPOPORTABILIDADE='PORTOUT'
+            AND    ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+            AND	   lb.nrlinha=SUBSTR(:nrLinha,3);
+
+            ULOG( "Apos execucao iContador [%d]",iContador );
+            if( iContador == 0 )
+            {
+                ULOG( "Encontrou codigo de retorno 7...");
+                //formatando
+                endOraStr(szCdErro);
+                endOraStr(szMsgErro);
+                
+                //copiando
+                sprintf(pcdRet,"%s",(char*)szCdErro.arr);
+                sprintf(pmsgRet,"%s",(char*)szMsgErro.arr);
+                ULOG_END( "ERROR:CRetencao::get_errors()" );
+                return 1;
+            }
+            
+            //codigo 08
+               EXEC SQL
+                SELECT COUNT(1),
+                   DECODE(COUNT(1),0,'08','00')cdErro,
+                   DECODE(COUNT(1),0,'Processo esta sendo tratado por outro usuário','0')msgErro
+        		INTO   :iContador,
+        			   :szCdErro,
+        			   :szMsgErro
+                FROM   atendimento.atendimentopriorizacao att,
+                   linha.linhatelefonica lt,
+                   linha.linhabase		 lb,
+                   apoio.arearegistro	  ar
+                WHERE  lb.IDAREAREGISTRO=ar.IDAREAREGISTRO
+                AND	   lt.IDLINHABASE=lb.IDLINHABASE
+                AND	   att.IDLINHATELEFONICA=lt.IDLINHATELEFONICA
+                AND	   att.SGTIPOPORTABILIDADE='PORTOUT'
+                and    att.IDPESSOAUSUARIOATUAL is null
+                AND    ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+                AND	   lb.nrlinha=SUBSTR(:nrLinha,3);  
+ 
+
+    ULOG( "Apos execucao iContador [%d]",iContador );
+    if( iContador == 0 )
+    {
+        ULOG( "Encontrou codigo de retorno 8...");
+        //formatando
+        endOraStr(szCdErro);
+        endOraStr(szMsgErro);
+        
+        //copiando
+        sprintf(pcdRet,"%s",(char*)szCdErro.arr);
+        sprintf(pmsgRet,"%s",(char*)szMsgErro.arr);
+        ULOG_END( "ERROR:CRetencao::get_errors()" );
+        return 1;
+    }
+	return 0;
+
+}
+
+void get_parametros(char *nrlinha,int &iseg,int &itplinha,int &iiduf)
+{
+	
+	 EXEC SQL BEGIN DECLARE SECTION;
+			varchar nrLinha[255]; 
+			int     idUFOperadora=0; 
+			int		idSeg=0;
+			int		idtplinha=0;
+    EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+	strToOra(nrLinha,nrlinha);
+		
+	EXEC SQL
+		SELECT ar.idufoperadora,
+			   NVL(ls.IDSEGMENTACAO,11),
+			   lt.IDTIPOLINHA
+		INTO   :idUFOperadora,
+			   :idSeg,
+			   :idtplinha
+		FROM   linha.linhatelefonica lt,
+			   linha.linhabase		 lb,
+			   linha.linhasegmentacao ls,
+			   apoio.arearegistro	  ar
+		WHERE lt.IDLINHABASE=lb.idlinhabase
+		AND	  lt.IDLINHATELEFONICA=ls.IDLINHATELEFONICA(+)
+		AND	  lb.IDAREAREGISTRO=ar.IDAREAREGISTRO
+		AND   ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+		AND	  lb.nrlinha=SUBSTR(:nrLinha,3);
+
+	iiduf=idUFOperadora; 
+	iseg=idSeg;
+	itplinha=idtplinha;       
+}
+
+
+int get_list_bonus(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char parm[50];
+  int  whFlag;
+  int  iTipoPessoa=0;
+
+  EXEC SQL BEGIN DECLARE SECTION;
+	int     idMatrizBonus; 
+	int     idUFOperadora; 
+	int     idUF;
+	int     qtDiasValidade;
+	int     vlBonus;
+	int	  idUnidadeOferta;
+	int	  idUnidadeOfertaRTE;
+	VARCHAR nmBonus[2000]; 
+	VARCHAR dsRegional[255]; 
+	int     idPessoaUsuarioAlteracao;
+	VARCHAR whClause[255];
+	VARCHAR nmOferta[255];
+	VARCHAR dsTipoPessoa[255];
+	int     idMatrizOferta;
+	int	  idTipoPessoa;
+	int     idTipoLinha;
+	VARCHAR sgTipoPessoa[10];
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  
+
+  try{
+    //  Obtendo dados do xml
+    get_tag(parm, dnode, "idUfOperadora", 0, 0);
+    //idUF = atoi(parm);
+    idUFOperadora = atoi(parm);
+
+    get_tag(parm, dnode, "nmBonus", 0, 0);
+   
+    sprintf((char *)whClause.arr,"%%%s%%",parm);
+    whClause.len = strlen(parm) + 2;
+    whFlag = (parm[0] != '*');
+    
+	
+	get_tag(parm, dnode, "idUnidadeOferta", 0, 0);
+    idUnidadeOferta =atoi(parm); 
+
+	get_tag(parm, dnode, "idMatrizOferta", 0, 0);
+    idMatrizOferta = atoi(parm);
+
+	get_tag(parm, dnode, "idTipoLinha", 0, 0);
+    idTipoLinha = atoi(parm);
+
+	iTipoPessoa=get_tag(parm,dnode,"idTipoPessoa",0,-1);
+	//Não veio a Tag idTipoPessoa
+		if(iTipoPessoa==-1)
+			{
+				get_tag(parm,dnode,"sgTipoPessoa",0,0);
+				strToOra(sgTipoPessoa,parm);
+
+				EXEC SQL
+					SELECT IDTIPOPESSOA,DSTIPOPESSOA
+					INTO :idTipoPessoa,:dsTipoPessoa
+					FROM APOIO.TIPOPESSOA
+					WHERE SGTIPOPESSOA=:sgTipoPessoa;
+			}
+			else
+			{
+				idTipoPessoa = atoi(parm);
+				
+				EXEC SQL
+						SELECT DSTIPOPESSOA
+						INTO :dsTipoPessoa
+						FROM APOIO.TIPOPESSOA
+						WHERE IDTIPOPESSOA=:idTipoPessoa;
+
+			}
+		
+	ULOG_INT(idTipoPessoa);
+	endOraStr(dsTipoPessoa);
+
+	/*
+	EXEC SQL
+	SELECT 
+	   idufoperadora 
+	INTO
+	   :idUFOperadora
+	FROM 
+	   customer.ufoperadora 
+	WHERE 
+	   iduf = :idUF;
+    */
+    
+ 
+	ULOG_INT(idUnidadeOferta);
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	if(whFlag == 0)  //foi passado o nome do bonus
+	{
+	 ULOG("entrou no whFlag == 1");
+	  
+	 if(idUnidadeOferta)
+	 {
+		 ULOG("idUnidadeOferta");
+		 /*
+			EXEC SQL DECLARE crsBonus02 CURSOR FOR
+			SELECT   matrizbonus.idmatrizbonus, matrizbonus.idufoperadora,
+			         bonus.nrvalidade, bonus.vlbonus, bonus.dsbonus, uf.nmuf,
+			         bonus.idunidadeoferta
+			    FROM retencao.matrizbonus matrizbonus,
+			         retencao.bonus bonus,
+			         customer.ufoperadora ufoperadora,
+			         apoio.uf uf
+			   WHERE matrizbonus.inativo != 0
+			     AND bonus.idbonus = matrizbonus.idbonus
+			     AND matrizbonus.idufoperadora = ufoperadora.idufoperadora
+			     AND uf.iduf = ufoperadora.iduf
+			     AND matrizbonus.idufoperadora = :idUFOperadora
+			     AND bonus.idunidadeoferta = :idUnidadeOferta
+			     AND matrizbonus.idtipopessoa = :idTipoPessoa
+			     AND matrizbonus.idtipolinha = :idTipoLinha
+			ORDER BY UPPER (TRIM (bonus.dsbonus));
+		*/
+
+			EXEC SQL DECLARE crsBonus02 CURSOR FOR
+			SELECT /*+ LEADING(MATRIZBONUS) */ DISTINCT matrizbonus.idbonus, 
+			       matrizbonus.idufoperadora, 
+			       bonus.nrvalidade, 
+			       bonus.vlbonus, 
+			       bonus.dsbonus, 
+			       uf.nmuf, 
+			       bonus.idunidadeoferta 
+			  FROM retencao.bonus bonus, 
+			       apoio.uf uf, 
+			       customer.ufoperadora ufoperadora, 
+			       retencao.matrizbonus matrizbonus 
+			 WHERE (matrizbonus.inativo < 0 
+			         OR matrizbonus.inativo > 0) 
+			   AND matrizbonus.idbonus = bonus.idbonus 
+			   AND matrizbonus.idufoperadora = ufoperadora.idufoperadora 
+			   AND uf.iduf = ufoperadora.iduf + 0 
+			   AND matrizbonus.idufoperadora = :idUFOperadora 
+			   AND bonus.idunidadeoferta = :idUnidadeOferta 
+			   AND matrizbonus.idtipopessoa = :idTipoPessoa 
+			   AND matrizbonus.idtipolinha = :idTipoLinha 
+			   AND ufoperadora.idufoperadora = :idUFOperadora 
+			 ORDER BY UPPER(TRIM(bonus.dsbonus));
+			
+			  
+
+			EXEC SQL OPEN crsBonus02;
+	 }
+	 else
+	 {
+		 ULOG("!idUnidadeOferta");
+ 		EXEC SQL DECLARE crsBonusRTE02 CURSOR FOR		
+		SELECT /*+ LEADING(MATRIZBONUS) */ DISTINCT matrizbonus.idbonus, 
+		       matrizbonus.idufoperadora, 
+		       bonus.nrvalidade, 
+		       bonus.vlbonus, 
+		       bonus.dsbonus, 
+		       uf.nmuf, 
+		       bonus.idunidadeoferta 
+		  FROM retencao.bonus bonus, 
+		       apoio.uf uf, 
+		       customer.ufoperadora ufoperadora, 
+		       retencao.matrizbonus matrizbonus 
+		 WHERE (matrizbonus.inativo < 0 
+		         OR matrizbonus.inativo > 0) 
+		   AND matrizbonus.idbonus = bonus.idbonus 
+		   AND matrizbonus.idufoperadora = ufoperadora.idufoperadora 
+		   AND uf.iduf = ufoperadora.iduf + 0 
+		   AND matrizbonus.idufoperadora = :idUFOperadora 
+		   AND matrizbonus.idtipopessoa = :idTipoPessoa 
+		   AND matrizbonus.idtipolinha = :idTipoLinha 
+		   AND ufoperadora.idufoperadora = :idUFOperadora 
+		 ORDER BY UPPER(TRIM(bonus.dsbonus));
+ 
+ 	
+
+		EXEC SQL OPEN	crsBonusRTE02;
+	 }
+	ULOG("saiu do if");
+	for(;;)
+	{
+		//RTE TOSCA
+				if(idUnidadeOferta)
+				 {
+					 ULOG("abriu cursor crsBonus02");
+					 EXEC SQL FETCH crsBonus02 INTO	   :idMatrizBonus, 
+													   :idUFOperadora, 
+													   :qtDiasValidade, 
+													   :vlBonus, 
+													   :nmBonus, 
+													   :dsRegional,
+													   :idUnidadeOfertaRTE;
+				 }
+				 else
+				 {
+					ULOG("abriu cursor crsBonusRTE02");
+					 EXEC SQL FETCH crsBonusRTE02 INTO :idMatrizBonus, 
+													   :idUFOperadora, 
+													   :qtDiasValidade, 
+													   :vlBonus, 
+													   :nmBonus, 
+													   :dsRegional,
+													   :idUnidadeOfertaRTE;
+				 }
+
+		EXEC SQL
+		   SELECT nmOferta
+		   into  :nmOferta
+		   FROM retencao.oferta
+		   WHERE idUnidadeOferta=:idUnidadeOfertaRTE;
+
+      
+	  
+	  endOraStr(nmBonus);
+      endOraStr(dsRegional);
+	  endOraStr(nmOferta);
+
+      xml->createTag("tns:bonusVO");
+		xml->addItem("idRegional",idUFOperadora);
+		xml->addItem("dsRegional",(char*)dsRegional.arr);
+		xml->addItem("idBonus",idMatrizBonus);
+		xml->addItem("descricao",(char*)nmBonus.arr);
+		xml->addItem("validade",qtDiasValidade);
+		xml->addItem("idTipoPessoa",idTipoPessoa);
+		xml->addItem("dsTipoPessoa",(char*)dsTipoPessoa.arr);
+		xml->addItem("vlBonus",vlBonus);
+		xml->addItem("idUnidadeOferta",idUnidadeOferta);
+		xml->addItem("dsUnidadeOferta",(char *)nmOferta.arr);	
+      xml->closeTag();	
+	}
+		
+		if(idUnidadeOferta)
+		{
+			ULOG("fechou cursor crsBonus02");
+			EXEC SQL CLOSE crsBonus02;	
+		}
+		else 
+		{
+			ULOG("fechou cursor crsBonusRTE02");
+			EXEC SQL CLOSE crsBonusRTE02; 
+		}
+	}
+	else
+	{
+	ULOG("entrou no whFlag == 1");
+    // Pegando id do usuario
+    idPessoaUsuarioAlteracao = usuario;
+    
+    EXEC SQL DECLARE crsBonus01 CURSOR FOR
+	SELECT   matrizbonus.idmatrizbonus, matrizbonus.idufoperadora,
+	         bonus.nrvalidade, bonus.vlbonus, bonus.dsbonus, uf.nmuf,
+	         bonus.idunidadeoferta
+	    FROM retencao.matrizbonus matrizbonus,
+	         customer.ufoperadora ufoperadora,
+	         retencao.bonus bonus,
+	         apoio.uf uf
+	   WHERE matrizbonus.inativo != 0
+	     AND matrizbonus.idufoperadora = ufoperadora.idufoperadora
+	     AND bonus.idbonus = matrizbonus.idbonus
+	     AND uf.iduf = ufoperadora.iduf
+	     AND matrizbonus.idufoperadora = :idUFOperadora
+	     AND bonus.idunidadeoferta = :idUnidadeOferta
+	     AND matrizbonus.idtipopessoa = :idTipoPessoa
+	     AND matrizbonus.idtipolinha = :idTipoLinha
+	     AND UPPER (bonus.dsbonus) LIKE UPPER (:whClause)
+	ORDER BY UPPER (TRIM (bonus.dsbonus));
+	  
+      
+	  EXEC SQL OPEN crsBonus01;
+    
+
+
+	for(;;)
+	{	
+		EXEC SQL FETCH crsBonus01 INTO :idMatrizBonus, 
+								   :idUFOperadora, 
+								   :qtDiasValidade, 
+								   :vlBonus, 
+								   :nmBonus, 
+								   :dsRegional,
+								   :idUnidadeOferta;
+
+		EXEC SQL
+		   SELECT nmOferta
+		   into  :nmOferta
+		   FROM retencao.oferta
+		   WHERE idUnidadeOferta=:idUnidadeOferta;
+
+     	  
+	  endOraStr(nmBonus);
+      endOraStr(dsRegional);
+	  endOraStr(nmOferta);
+
+      xml->createTag("tns:bonusVO");
+		xml->addItem("idRegional",idUFOperadora);
+		xml->addItem("dsRegional",(char*)dsRegional.arr);
+		xml->addItem("idBonus",idMatrizBonus);
+		xml->addItem("descricao",(char*)nmBonus.arr);
+		xml->addItem("validade",qtDiasValidade);
+		xml->addItem("vlBonus",vlBonus);
+		xml->addItem("idTipoPessoa",idTipoPessoa);
+		xml->addItem("dsTipoPessoa",(char*)dsTipoPessoa.arr);
+		xml->addItem("idUnidadeOferta",idUnidadeOferta);
+		xml->addItem("dsUnidadeOferta",(char *)nmOferta.arr);	
+      xml->closeTag();	
+	}
+  
+      EXEC SQL CLOSE crsBonus01;
+  }
+  
+ 
+  }
+  catch(...)
+  {
+	throw;
+  }
+    
+  return 1;
+}
+
+
+int get_list_bonusURA(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+
+ char parm[50];
+  int  whFlag;
+  int  iTipoPessoa=0;
+  char cdRetorno[4];
+  char msgRetorno[255];
+  int  iCtrError=0;
+  int  iContador=0;
+
+  EXEC SQL BEGIN DECLARE SECTION;
+	VARCHAR	nrLinha[255];
+	char    cdServico[255];
+	int     idUFOperadora=0; 
+	int     qtDiasValidade=0;
+	int     vlBonus=0;
+	VARCHAR	sgGrupo[255];
+	VARCHAR cdBonus[255]; 
+	VARCHAR nmOferta[255];
+	int		idSegmentacaoLinha=0;
+	int     idTipoLinha=0;
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+ 
+try
+	{	
+		 memset(&cdRetorno,0,sizeof(cdRetorno));
+		 memset(&msgRetorno,0,sizeof(msgRetorno));
+		 strcpy(cdRetorno,"00");
+				
+		  get_tag(parm, dnode, "nrTelefone", 0, 0);
+		  strToOra(nrLinha,parm);
+
+		  iCtrError=get_errors( (char*)nrLinha.arr,cdRetorno,msgRetorno);
+		
+		  if(!iCtrError)
+		  {
+			get_parametros((char*)nrLinha.arr,idSegmentacaoLinha,idTipoLinha,idUFOperadora);
+				
+
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			EXEC SQL DECLARE crsBonusURA CURSOR FOR
+				SELECT tgp.SGTIPOGRUPOPACOTE,
+					   B.NRVALIDADE,
+					   B.CDSERVICO,
+					   B.VLBONUS 
+				FROM RETENCAO.BONUS B,
+					 RETENCAO.MATRIZBONUSURA MB,
+					 RETENCAO.TIPOGRUPOPACOTE tgp
+				WHERE tgp.IDTIPOGRUPOPACOTE=b.IDTIPOGRUPOPACOTE 
+				AND	  B.IDBONUS=MB.IDBONUS
+				AND	  B.IDTIPOLINHA=:idTipoLinha
+				AND	  MB.IDSEGMENTACAO=:idSegmentacaoLinha
+				AND	  MB.INATIVO=1
+				AND	  mb.IDUFOPERADORA=:idUFOperadora;
+
+				 EXEC SQL OPEN crsBonusURA;
+
+				  for(;;)
+				  {
+						EXEC SQL FETCH crsBonusURA INTO :sgGrupo, 
+														:qtDiasValidade, 
+														:cdBonus, 
+														:vlBonus;
+
+						 endOraStr(sgGrupo);
+						 endOraStr(cdBonus);
+					
+
+						   xml->createTag("Ofertas");
+								xml->addItem("grupo",(char*)sgGrupo.arr);
+								xml->addItem("validade",qtDiasValidade);
+								xml->addItem("codigo",(char*)cdBonus.arr);
+								xml->addItem("tarifa",vlBonus);
+						  xml->closeTag();	
+						  iContador++;
+				 }
+
+				 if(!iContador)
+				 {
+					//copiando
+					strcpy(cdRetorno,"05");
+					strcpy(msgRetorno,"Nao encontradas ofertas com o Perfil desta Linha");
+				 }
+	
+				EXEC SQL CLOSE crsBonusURA;
+		   }
+	}
+	catch(...)
+	{
+		
+		//copiando
+		strcpy(cdRetorno,"01");
+		strcpy(msgRetorno,"Campo Obrigatório não preenchido");
+		
+	}
+		xml->addItem("cdRetorno",cdRetorno);
+		xml->addItem("msgRetorno",msgRetorno);
+return 1;
+}

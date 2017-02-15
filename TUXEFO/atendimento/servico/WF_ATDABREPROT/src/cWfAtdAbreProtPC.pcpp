@@ -1,0 +1,1001 @@
+/**
+ * 
+ * @modulo  Atendimento
+ * @usecase Protocolo
+ * @author  Cassio Garcia
+ * @version $Revision: 1.1.2.1.102.15.8.2.34.10.4.1 $
+ * @CVS     $Author: a5114878 $ - $Date: 2017/02/02 14:24:21 $
+ **/
+
+#include <tuxfw.h>
+
+#include "../../../commons/cWfAtdProtocoloException.h"
+#include "../include/cWfAtdAbreProtPC.h"
+#include "../../../commons/queryMacro.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+    #include "../include/stWfAtdAbreProt.h"
+EXEC SQL END DECLARE SECTION;
+
+void cWfAtdAbreProtPC::CriarNovoProtocolo(st_DadosEntrada *dados,st_StatusEntrada *status)
+{
+    ULOG_START("cWfAtdAbreProtPC::CriarNovoProtocolo(st_DadosEntrada *dados,st_StatusEntrada *status)");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR      v_idSistemaOrigem[64];
+        short      i_v_idSistemaOrigem = -1;
+        char         v_nrTelefone[16];
+        char         v_DDD[3];
+        
+        char         v_nrTelefone_Psq[16];
+        char         v_DDD_Psq[3];
+    
+        struct st_DadosEntrada *pOraDados = dados;
+        struct st_StatusEntrada *pOraStatus = status;
+
+        VARCHAR varOraNrProtocolo[39];
+        short statOraNrProtocolo = -1;
+
+        VARCHAR varOraTmpVidaProtocolo[39];
+        short statOraTmpVidaProtocolo = -1;
+
+        VARCHAR varOraIdLinhaTelefonica[128];
+        short statOraIdLinhaTelefonica = -1;
+
+        VARCHAR varOraIdPessoaDePara[128];
+        short statOraIdPessoaDePara = -1;
+
+        VARCHAR varOraDataAtendimento[64];
+        short statOraDataAtendimento = -1;
+
+        VARCHAR varOraHoraAtendimento[64];
+        short statOraHoraAtendimento = -1;
+
+		//AMDOCS -BEATRIX
+        VARCHAR varOraCdOrigem[64];
+        short statOraCdOrigem = -1;
+		//AMDOCS -BEATRIX
+        char varOraDsMensagemEnvio[256];
+
+        VARCHAR     V_SGTIPOPESSOA[256];
+        short       i_V_SGTIPOPESSOA = -1;
+        
+        int         V_IDTIPOLINHA;
+        short       i_V_IDTIPOLINHA = -1;
+        
+        int         V_IDSISTEMAORIGEM;
+        short       i_V_IDSISTEMAORIGEM = -1;
+
+        VARCHAR     V_SGUF[256];
+        short       i_V_SGUF = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WfAtdAbreProtPC(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    memset( &V_SGTIPOPESSOA   , 0x0, sizeof(V_SGTIPOPESSOA));
+    memset( &V_SGUF           , 0x0, sizeof(V_SGUF));
+    memset( &v_idSistemaOrigem, 0x0, sizeof(v_idSistemaOrigem) );
+    memset( &varOraCdOrigem   , 0x0, sizeof(varOraCdOrigem) );
+    
+    memset( &varOraIdLinhaTelefonica, 0x0, sizeof(varOraIdLinhaTelefonica) );
+
+	
+	ULOG("         cdAreaRegistro status=%d,dados=%s",pOraStatus->cdAreaRegistro,pOraDados->cdAreaRegistro);
+    ULOG("             nrTelefone status=%d,dados=%s",pOraStatus->nrTelefone,pOraDados->nrTelefone);
+    
+    strcpy( v_nrTelefone_Psq, pOraDados->nrTelefone );
+    strcpy( v_DDD_Psq       , pOraDados->cdAreaRegistro );
+
+    // se estiver abrindo por linha de cliente, obtém dados adicionais
+    if ( strcmp(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA)==0
+       || strcmp(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA_CLIENTE)==0 )
+    {
+        ULOG("vai verificar se a linha informada é de cliente...");
+
+        ULOG("idTipoAberturaProtocolo=%s",pOraDados->idTipoAberturaProtocolo);
+
+        EXEC SQL
+            SELECT
+                LINHATELEFONICA.IDLINHATELEFONICA,
+                PESSOALINHA.IDPESSOADEPARA,
+				SISTEMAORIGEM.CDORIGEM
+            INTO
+                :varOraIdLinhaTelefonica:statOraIdLinhaTelefonica,
+                :varOraIdPessoaDePara:statOraIdPessoaDePara,
+				:varOraCdOrigem:statOraCdOrigem
+            FROM
+                LINHA.LINHATELEFONICA LINHATELEFONICA,
+                LINHA.LINHABASE LINHABASE,
+                CUSTOMER.PESSOALINHA PESSOALINHA,
+                CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+                APOIO.AREAREGISTRO AREAREGISTRO,
+                APOIO.ESTADOLINHA ESTADOLINHA,
+				APOIO.SISTEMAORIGEM SISTEMAORIGEM
+            WHERE
+                LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+			AND LINHATELEFONICA.IDSISTEMAORIGEM=SISTEMAORIGEM.IDSISTEMAORIGEM
+            AND LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+            AND LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA
+            AND NVL(LINHATELEFONICA.DTEXPIRACAO,SYSDATE+1) > TRUNC(SYSDATE)
+            AND PESSOALINHA.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+            AND TIPORELACIONAMENTO.NMTIPORELACIONAMENTO = 'CLIENTE'
+            AND AREAREGISTRO.CDAREAREGISTRO = :pOraDados->cdAreaRegistro
+            AND LINHABASE.NRLINHA = :pOraDados->nrTelefone
+            AND LINHABASE.IDESTADOLINHA = ESTADOLINHA.IDESTADOLINHA
+            AND NVL(ESTADOLINHA.INLINHACANCELADA,0) = 0;
+
+        if ( sqlca.sqlcode )
+        {
+            ULOG("dados da linha não encontrados, vai abrir por linha...");
+
+            if ( strcmp(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA_CLIENTE)==0 )
+            { // se pediu abertura por linha de cliente mas o telefone não existe na base
+              // muda o tipo de abertura para "abertura por linha (de não cliente)"
+                strcpy(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA);
+            }
+        }
+        else
+        {
+            ULOG("linha existe e esta ativa na base do FO, vai abrir por linha de cliente...");
+
+            CONVIND(varOraIdLinhaTelefonica,statOraIdLinhaTelefonica);
+            CONVIND(varOraIdPessoaDePara,statOraIdPessoaDePara);
+
+            strcpy(pOraDados->idLinhaTelefonica,(char*)varOraIdLinhaTelefonica.arr);
+            pOraStatus->idLinhaTelefonica = statOraIdLinhaTelefonica;
+
+            strcpy(pOraDados->idPessoaDePara,(char*)varOraIdPessoaDePara.arr);
+            pOraStatus->idPessoaDePara = statOraIdPessoaDePara;
+
+            if ( strcmp(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA)==0 )
+            { // se pediu abertura por linha mas o telefone existe na base, então
+              // muda o tipo de abertura para "abertura por linha de cliente"
+                strcpy(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA_CLIENTE);
+            }
+        }
+    }
+
+    if ( statOraIdLinhaTelefonica == -1 )   // Testes Nono Digito
+    {
+         EXEC SQL
+            SELECT
+                LINHATELEFONICA.IDLINHATELEFONICA,
+                PESSOALINHA.IDPESSOADEPARA,
+				SISTEMAORIGEM.CDORIGEM
+            INTO
+                :varOraIdLinhaTelefonica:statOraIdLinhaTelefonica,
+                :varOraIdPessoaDePara:statOraIdPessoaDePara,
+				:varOraCdOrigem:statOraCdOrigem
+            FROM
+                LINHA.LINHATELEFONICA LINHATELEFONICA,
+                LINHA.LINHABASE LINHABASE,
+                CUSTOMER.PESSOALINHA PESSOALINHA,
+                CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+                APOIO.AREAREGISTRO AREAREGISTRO,
+                APOIO.ESTADOLINHA ESTADOLINHA,
+				APOIO.SISTEMAORIGEM SISTEMAORIGEM
+            WHERE
+                LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+			AND LINHATELEFONICA.IDSISTEMAORIGEM=SISTEMAORIGEM.IDSISTEMAORIGEM
+            AND LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+            AND LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA
+            AND NVL(LINHATELEFONICA.DTEXPIRACAO,SYSDATE+1) > TRUNC(SYSDATE)
+            AND PESSOALINHA.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+            AND TIPORELACIONAMENTO.NMTIPORELACIONAMENTO = 'CLIENTE'
+            AND AREAREGISTRO.CDAREAREGISTRO = :pOraDados->cdAreaRegistro
+            AND LINHABASE.NRLINHA = :pOraDados->nrTelefone
+            AND LINHABASE.IDESTADOLINHA = ESTADOLINHA.IDESTADOLINHA
+            AND NVL(ESTADOLINHA.INLINHACANCELADA,0) = 0;
+    }
+
+
+    // tenta garantir que nunca vai faltar um telefone para envio de SMS...
+    if ( pOraStatus->cdAreaRegistroSMS == -1 || pOraStatus->nrTelefoneSMS == -1 )
+    {
+    
+        if ( pOraDados->cdAreaRegistro[0] != 0x00 )
+        {
+            strcpy(pOraDados->cdAreaRegistroSMS,pOraDados->cdAreaRegistro);
+            pOraStatus->cdAreaRegistroSMS = 1;
+        }
+
+        if ( pOraDados->nrTelefone[0] != 0x00 )
+        {
+            strcpy(pOraDados->nrTelefoneSMS,pOraDados->nrTelefone);
+            pOraStatus->nrTelefoneSMS = 1;
+        }
+    }
+
+    // Tempo de vida de um protocolo
+    EXEC SQL
+        SELECT
+            DSVALORPARAMETRO
+        INTO
+            :varOraTmpVidaProtocolo:statOraTmpVidaProtocolo
+        FROM
+            APOIO.PARAMETRO
+        WHERE
+            CDPARAMETRO = 'TMPVIDAPROTOCOLO';
+
+    if ( sqlca.sqlcode )
+    {
+        throw new TuxException(ERR_NEGOCIO_TMPVIDAPR_NOTFOUND,CErroAtendimento(ERR_NEGOCIO_TMPVIDAPR_NOTFOUND).outMsg());
+    }
+
+    CONVIND(varOraTmpVidaProtocolo,statOraTmpVidaProtocolo);
+
+    EXEC SQL
+        SELECT ATENDIMENTO.FN_PROTOCOLO INTO :varOraNrProtocolo:statOraNrProtocolo FROM DUAL;
+
+    CONVIND(varOraNrProtocolo,statOraNrProtocolo);
+
+    strcpy(pOraDados->idAtendimentoProtocolo,(char*)varOraNrProtocolo.arr);
+    pOraStatus->idAtendimentoProtocolo = 1;
+    strcpy( dados->idAtendimentoProtocolo,pOraDados->idAtendimentoProtocolo );
+
+    ULOG(" idAtendimentoProtocolo status=%d,dados=%s",pOraStatus->idAtendimentoProtocolo,pOraDados->idAtendimentoProtocolo);
+    ULOG("        idSistemaOrigem status=%d,dados=%s",pOraStatus->idSistemaOrigem,pOraDados->idSistemaOrigem);
+    ULOG("         idPessoaDePara status=%d,dados=%s",pOraStatus->idPessoaDePara,pOraDados->idPessoaDePara);
+    ULOG("                cdConta status=%d,dados=%s",pOraStatus->cdConta,pOraDados->cdConta);
+    ULOG("      idLinhaTelefonica status=%d,dados=%s",pOraStatus->idLinhaTelefonica,pOraDados->idLinhaTelefonica);
+    ULOG("      cdAreaRegistroSMS status=%d,dados=%s",pOraStatus->cdAreaRegistroSMS,pOraDados->cdAreaRegistroSMS);
+    ULOG("          nrTelefoneSMS status=%d,dados=%s",pOraStatus->nrTelefoneSMS,pOraDados->nrTelefoneSMS);
+    ULOG("idTipoAberturaProtocolo status=%d,dados=%s",pOraStatus->idTipoAberturaProtocolo,pOraDados->idTipoAberturaProtocolo);
+    ULOG("     idUsuarioAlteracao status=%d,dados=%s",pOraStatus->idUsuarioAlteracao,pOraDados->idUsuarioAlteracao);
+    ULOG("   tempo vida protocolo status=%d,dados=%s",statOraTmpVidaProtocolo,varOraTmpVidaProtocolo.arr);
+
+    if ( pOraStatus->cdAreaRegistro > 0 && pOraStatus->nrTelefone == -1 )
+    { // se informou código de área sem telefone gera erro
+        throw new TuxException(ERR_NEGINFO_NRTELEFONE_INVALIDO,CErroAtendimento(ERR_NEGINFO_NRTELEFONE_INVALIDO).outMsg());
+    }
+
+    if ( pOraStatus->cdAreaRegistro == -1 && pOraStatus->nrTelefone > 0 )
+    { // se informou telefone sem código de área gera erro
+        throw new TuxException(ERR_NEGINFO_CDAREAREG_INVALIDO,CErroAtendimento(ERR_NEGINFO_CDAREAREG_INVALIDO).outMsg());
+    }
+
+    // // Se fornecer numero de conta o mesmo deve existir na base
+    // if ( pOraStatus->cdConta > 0 )
+    // {
+    //     EXEC SQL
+    //         SELECT
+    //             COUNT(1)
+    //         INTO
+    //             :varOraCount
+    //         FROM
+    //             CUSTOMER.CONTA
+    //         WHERE
+    //             CDCONTA = :pOraDados->cdConta
+    //         AND ROWNUM < 2;
+    // 
+    //     if ( 0==varOraCount )
+    //     {
+    //         throw new TuxException(ERR_NEGINFO_CDCONTA_NOTFOUND,CErroAtendimento(ERR_NEGINFO_CDCONTA_NOTFOUND).outMsg());
+    //     }
+    // }
+
+    ULOG( ">>> Inserindo <<< " );
+    ULOG( ">>> pOraDados->idAtendimentoProtocolo  [%s]",pOraDados->idAtendimentoProtocolo );
+    ULOG( ">>> pOraDados->cdAreaRegistro          [%s]",pOraDados->cdAreaRegistro );
+    ULOG( ">>> pOraDados->nrTelefone (N9)         [%s]",pOraDados->nrTelefone );
+    ULOG( ">>> pOraDados->idSistemaOrigem         [%s]",pOraDados->idSistemaOrigem );
+    ULOG( ">>> pOraDados->idPessoaDePara          [%s]",pOraDados->idPessoaDePara );
+    ULOG( ">>> pOraDados->cdConta                 [%s]",pOraDados->cdConta );
+    ULOG( ">>> pOraDados->idLinhaTelefonica       [%s]",pOraDados->idLinhaTelefonica );
+    ULOG( ">>> pOraDados->idTipoAberturaProtocolo [%s]",pOraDados->idTipoAberturaProtocolo );
+    ULOG( ">>> pOraDados->idUsuarioAlteracao      [%s]",pOraDados->idUsuarioAlteracao );
+    
+    /*--- Funcionou ---
+    EXEC SQL
+        INSERT INTO ATENDIMENTO.ATENDIMENTOPROTOCOLO
+            (
+             QTPROCESSOPENDENTE
+            ,QTPROCESSOABERTO
+            ,IDATENDIMENTOPROTOCOLO
+            ,CDAREAREGISTRO
+            ,NRTELEFONE
+            ,IDSISTEMAORIGEM
+            ,IDPESSOADEPARA
+            ,CDCONTA
+            ,DTABERTURA
+            ,DTENCERRAMENTO
+            ,IDLINHATELEFONICA
+            ,IDTIPOABERTURAPROTOCOLO
+            ,IDUSUARIOALTERACAO
+            ,DTULTIMAALTERACAO
+            )
+        VALUES
+            (
+             0 // QTPROCESSOPENDENTE
+            ,0 // QTPROCESSOABERTO
+            ,:pOraDados->idAtendimentoProtocolo:pOraStatus->idAtendimentoProtocolo
+            ,:pOraDados->cdAreaRegistro:pOraStatus->cdAreaRegistro
+            ,:pOraDados->nrTelefone:pOraStatus->nrTelefone
+            ,:pOraDados->idSistemaOrigem:pOraStatus->idSistemaOrigem
+            ,:pOraDados->idPessoaDePara:pOraStatus->idPessoaDePara
+            ,:pOraDados->cdConta:pOraStatus->cdConta
+            ,SYSTIMESTAMP
+            ,SYSTIMESTAMP+(TO_NUMBER(:varOraTmpVidaProtocolo)/1440)
+            ,:pOraDados->idLinhaTelefonica:pOraStatus->idLinhaTelefonica
+            ,:pOraDados->idTipoAberturaProtocolo:pOraStatus->idTipoAberturaProtocolo
+            ,:pOraDados->idUsuarioAlteracao:pOraStatus->idUsuarioAlteracao
+            ,SYSDATE
+            );
+        */
+
+    strcpy( v_DDD       , (char*)pOraDados->cdAreaRegistro );
+    strcpy( v_nrTelefone, (char*)pOraDados->nrTelefone );
+    
+    EXEC SQL
+    SELECT lb.idsistemaorigem
+      INTO :v_idSistemaOrigem:i_v_idSistemaOrigem
+      FROM linha.linhabase lb, apoio.arearegistro ar
+     WHERE lb.idarearegistro = ar.idarearegistro
+       AND lb.nrlinha = :v_nrTelefone
+       AND ar.cdarearegistro = :v_DDD 
+       AND ROWNUM <= 1;
+
+    CONVIND( v_idSistemaOrigem, i_v_idSistemaOrigem );
+
+    ULOG( ">>> varOraCdOrigem.arr[0] - [%x]\n",
+           varOraCdOrigem.arr[0] );	
+    
+    //tratando dados do CDORIGEM
+    if ( varOraCdOrigem.arr[0] == 0x0 )
+    {
+        ULOG( ">>>>> varOraCdOrigem IS NULL\n" );
+        statOraCdOrigem = -1;
+        //memset( &varOraCdOrigem   , 0x0, sizeof(varOraCdOrigem) );
+    }
+    else
+    {
+        ULOG( ">>>>> varOraCdOrigem IS NOT NULL\n" );
+        CONVIND(varOraCdOrigem,statOraCdOrigem);
+    }
+
+    ULOG( ">>> varOraCdOrigem.arr[0] - [%x]\n", varOraCdOrigem.arr[0] );	    
+    ULOG( ">>> varOraCdOrigem.len    - [%d]\n", varOraCdOrigem.len );	
+    ULOG( ">>> statOraCdOrigem       - [%d]\n", statOraCdOrigem );	
+           
+    ULOG( "*** pOraDados->idAtendimentoProtocolo [%s] - pOraStatus->idAtendimentoProtocolo [%d]\n",
+           pOraDados->idAtendimentoProtocolo, pOraStatus->idAtendimentoProtocolo );
+    ULOG( "*** pOraDados->cdAreaRegistro [%s] - pOraStatus->cdAreaRegistro [%d]\n",
+           pOraDados->cdAreaRegistro, pOraStatus->cdAreaRegistro );
+    ULOG( "*** pOraDados->nrTelefone [%s] - pOraStatus->nrTelefone [%d]\n",
+           pOraDados->nrTelefone, pOraStatus->nrTelefone );
+    ULOG( "*** pOraDados->idSistemaOrigem [%s] - pOraStatus->idSistemaOrigem [%d]\n",
+           pOraDados->idSistemaOrigem, pOraStatus->idSistemaOrigem );
+    ULOG( "*** pOraDados->idPessoaDePara [%s] - pOraStatus->idPessoaDePara [%d]\n",
+           pOraDados->idPessoaDePara, pOraStatus->idPessoaDePara );
+    ULOG( "*** pOraDados->cdConta [%s] - pOraStatus->cdConta [%d]\n",
+           pOraDados->cdConta, pOraStatus->cdConta );
+    ULOG( "*** pOraDados->idLinhaTelefonica [%s] - pOraStatus->idLinhaTelefonica [%d]\n",
+           pOraDados->idLinhaTelefonica, pOraStatus->idLinhaTelefonica );
+    ULOG( "*** pOraDados->idTipoAberturaProtocolo [%s] - pOraStatus->idTipoAberturaProtocolo [%d]\n",
+           pOraDados->idTipoAberturaProtocolo, pOraStatus->idTipoAberturaProtocolo );
+    ULOG( "*** pOraDados->idUsuarioAlteracao [%s] - pOraStatus->idUsuarioAlteracao [%d]\n",
+           pOraDados->idUsuarioAlteracao, pOraStatus->idUsuarioAlteracao );
+    ULOG( "*** varOraCdOrigem [%s] statOraCdOrigem [%d]\n",
+           (char*)varOraCdOrigem.arr, statOraCdOrigem );
+
+    EXEC SQL
+        INSERT INTO ATENDIMENTO.ATENDIMENTOPROTOCOLO
+            (IDATENDIMENTOPROTOCOLO
+            ,CDAREAREGISTRO
+            ,NRTELEFONE
+            ,NRTELEFONE_N9 //N9
+            ,IDSISTEMAORIGEM
+            ,IDPESSOADEPARA
+            ,CDCONTA
+            ,DTABERTURA
+            ,DTENCERRAMENTO
+            ,QTPROCESSOABERTO
+            ,QTPROCESSOPENDENTE
+            ,IDLINHATELEFONICA
+            ,IDTIPOABERTURAPROTOCOLO
+            ,IDUSUARIOALTERACAO
+            ,DTULTIMAALTERACAO
+            ,CDORIGEM
+            )
+        VALUES
+            (:pOraDados->idAtendimentoProtocolo:pOraStatus->idAtendimentoProtocolo
+            ,:pOraDados->cdAreaRegistro:pOraStatus->cdAreaRegistro
+            ,:pOraDados->nrTelefone:pOraStatus->nrTelefone
+            ,:pOraDados->nrTelefone:pOraStatus->nrTelefone //N9
+            ,:pOraDados->idSistemaOrigem:pOraStatus->idSistemaOrigem
+            /*   ,NVL(:v_idSistemaOrigem,7) */
+            ,:pOraDados->idPessoaDePara:pOraStatus->idPessoaDePara
+            ,:pOraDados->cdConta:pOraStatus->cdConta
+            ,SYSTIMESTAMP
+            ,SYSTIMESTAMP+(TO_NUMBER(:varOraTmpVidaProtocolo)/1440)
+            ,0 // QTPROCESSOABERTO
+            ,0 // QTPROCESSOPENDENTE
+            ,:pOraDados->idLinhaTelefonica:pOraStatus->idLinhaTelefonica
+            ,:pOraDados->idTipoAberturaProtocolo:pOraStatus->idTipoAberturaProtocolo
+            ,:pOraDados->idUsuarioAlteracao:pOraStatus->idUsuarioAlteracao
+            ,SYSDATE
+			,:varOraCdOrigem:statOraCdOrigem
+            );
+
+        // Enfileira envio de SMS do protocolo
+        /*
+        if ( strlen(pOraStatus->cdAreaRegistroSMS) > 0 && strlen(pOraStatus->nrTelefoneSMS) > 0
+            && strcmp(pOraDados->cdAreaRegistroSMS,"0") && strcmp(pOraDados->nrTelefoneSMS,"0") )
+        */
+        if ( pOraStatus->cdAreaRegistroSMS == 1 && pOraStatus->nrTelefoneSMS == 1 )
+        {
+            ULOG("vai enfileirar protocolo no SMS...");
+
+            EXEC SQL
+                SELECT
+                    TO_CHAR (SYSDATE,'DD/MM/YYYY'),
+                    TO_CHAR (SYSDATE,'HH24:MI')
+                INTO
+                    :varOraDataAtendimento:statOraDataAtendimento,
+                    :varOraHoraAtendimento:statOraHoraAtendimento
+                FROM
+                    DUAL;
+
+            CONVIND(varOraDataAtendimento,statOraDataAtendimento);
+            CONVIND(varOraHoraAtendimento,statOraHoraAtendimento);
+
+        	sprintf(varOraDsMensagemEnvio,"Vivo: Protocolo %s - %s as %s - Atendimento Vivo",
+                        pOraDados->idAtendimentoProtocolo,
+                        (char*)varOraDataAtendimento.arr,
+                        (char*)varOraHoraAtendimento.arr);
+
+            ULOG(">>> Passou 1");
+
+            /*    Liberar somente para demanda de estimulo de canais
+            EXEC SQL CALL 
+            SOA_OW.PKG_MSGCOMPLEMENTO.PRC_BUSCACHAVEMSGCOMPLEMENTO
+            (
+                :pOraDados->cdAreaRegistroSMS ,
+                :pOraDados->nrTelefoneSMS ,
+                :V_SGTIPOPESSOA ,
+                :V_IDTIPOLINHA ,
+                :V_SGUF 
+            );
+            */
+
+            memset( &v_idSistemaOrigem, 0x0, sizeof(v_idSistemaOrigem) );
+            exec sql
+            select
+               tp.sgtipopessoa ,
+               lt.idtipolinha ,
+               uf.sguf ,
+               lt.idsistemaorigem
+            into
+               :V_SGTIPOPESSOA:i_V_SGTIPOPESSOA ,
+               :V_IDTIPOLINHA:i_V_IDTIPOLINHA ,
+               :V_SGUF:i_V_SGUF,
+               :v_idSistemaOrigem:i_v_idSistemaOrigem
+            from
+               apoio.tipopessoa        tp ,
+               apoio.uf                uf ,
+               customer.pessoa         p ,
+               customer.pessoadepara   pdp ,
+               customer.pessoalinha    pl ,
+               linha.linhabase         lb ,
+               linha.linhatelefonica   lt ,
+               customer.ufoperadora    ufop,
+               apoio.arearegistro      ar
+            where
+               lb.nrlinha = :pOraDados->nrTelefoneSMS
+            and ar.cdarearegistro = :pOraDados->cdAreaRegistroSMS
+            and lb.idarearegistro = ar.idarearegistro
+            and LT.IDLINHABASE = LB.IDLINHABASE
+            and PL.IDLINHATELEFONICA = LT.IDLINHATELEFONICA
+            and PL.IDPESSOADEPARA = PDP.IDPESSOADEPARA
+            and PDP.IDPESSOA = P.IDPESSOA
+            and TP.IDTIPOPESSOA = P.IDTIPOPESSOA
+            and UFOP.IDUFOPERADORA = AR.IDUFOPERADORA
+            and UFOP.IDUF = UF.IDUF
+            and rownum < 2;
+            
+
+            CONVIND(V_SGTIPOPESSOA,i_V_SGTIPOPESSOA);
+            CONVIND(V_SGUF,i_V_SGUF);
+            CONVIND( v_idSistemaOrigem, i_v_idSistemaOrigem );
+
+            ULOG(">>> Passou 2");
+			
+			EXEC SQL
+                INSERT INTO ATENDIMENTO.FILASMSPROTOCOLO
+                    (IDATENDIMENTOPROTOCOLO
+                    ,DTENCERRAMENTO
+                    ,CDAREAREGISTRO
+                    ,NRLINHA
+                    ,DSMENSAGEMENVIO
+                    ,INENVIOSMS
+                    ,SGTIPOPESSOA 
+                    ,IDTIPOLINHA 
+                    ,SGUF 
+                    ,DTULTIMAALTERACAO
+                    ,IDUSUARIOALTERACAO 
+                    ,IDSISTEMAORIGEM 
+                    )
+                    VALUES
+                    (
+                     :pOraDados->idAtendimentoProtocolo:pOraStatus->idAtendimentoProtocolo
+                    ,SYSTIMESTAMP+(TO_NUMBER(:varOraTmpVidaProtocolo)/1440)
+                    ,:pOraDados->cdAreaRegistroSMS:pOraStatus->cdAreaRegistroSMS
+                    ,:pOraDados->nrTelefoneSMS:pOraStatus->nrTelefoneSMS
+                    ,:varOraDsMensagemEnvio
+                    ,1 // INENVIOSMS
+					,NVL(:V_SGTIPOPESSOA,NULL)
+                    ,NVL(:V_IDTIPOLINHA,NULL)
+                    ,NVL(:V_SGUF,NULL)
+                    ,SYSTIMESTAMP // DTULTIMAALTERACAO
+                    ,:pOraDados->idUsuarioAlteracao:pOraStatus->idUsuarioAlteracao
+                    ,NVL( :v_idSistemaOrigem,7 )   // Assume Sistema Origem como FO, caso seja NULL
+                    );
+
+            /*   ANTES DA DEMANDA DE PROTOCOLO
+            EXEC SQL
+                INSERT INTO ATENDIMENTO.FILASMSPROTOCOLO
+                    (IDATENDIMENTOPROTOCOLO
+                    ,DTENCERRAMENTO
+                    ,CDAREAREGISTRO
+                    ,NRLINHA
+                    ,DSMENSAGEMENVIO
+                    ,INENVIOSMS
+                    ,DTULTIMAALTERACAO
+                    ,IDUSUARIOALTERACAO 
+                    )
+                    VALUES
+                    (
+                     :pOraDados->idAtendimentoProtocolo:pOraStatus->idAtendimentoProtocolo
+                    ,SYSTIMESTAMP+(TO_NUMBER(:varOraTmpVidaProtocolo)/1440)
+                    ,:pOraDados->cdAreaRegistroSMS:pOraStatus->cdAreaRegistroSMS
+                    ,:pOraDados->nrTelefoneSMS:pOraStatus->nrTelefoneSMS
+                    ,:varOraDsMensagemEnvio
+                    ,1 // INENVIOSMS
+                    ,SYSTIMESTAMP // DTULTIMAALTERACAO
+                    ,:pOraDados->idUsuarioAlteracao:pOraStatus->idUsuarioAlteracao
+                    );
+            */
+            
+            ULOG("enfileirou com sucesso.");
+        }
+        else
+        {
+            ULOG("não recebeu telefone para enfileirar SMS...");
+        }
+
+    ULOG_END("cWfAtdAbreProtPC::CriarNovoProtocolo(st_DadosEntrada *dados,st_StatusEntrada *status)");
+}
+
+
+
+void cWfAtdAbreProtPC::CriarNovoProtocolo( st_DadosEntrada * dados, st_StatusEntrada * status, char * idLinhaTelefonicaPRM )
+{
+    ULOG_START("cWfAtdAbreProtPC::CriarNovoProtocolo( st_DadosEntrada * dados, st_StatusEntrada * status, char * idLinhaTelefonicaPRM )");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+	    
+        VARCHAR      v_idSistemaOrigem[64];
+        short      i_v_idSistemaOrigem = -1;
+        char         v_nrTelefone[16];
+        char         v_DDD[3];
+
+		char idLinhaTelefonica[256];
+		
+        struct st_DadosEntrada *pOraDados = dados;
+        struct st_StatusEntrada *pOraStatus = status;
+
+        VARCHAR varOraNrProtocolo[39];
+        short statOraNrProtocolo = -1;
+
+        VARCHAR varOraTmpVidaProtocolo[39];
+        short statOraTmpVidaProtocolo = -1;
+
+        VARCHAR varOraIdLinhaTelefonica[39];
+        short statOraIdLinhaTelefonica = -1;
+
+        VARCHAR varOraIdPessoaDePara[39];
+        short statOraIdPessoaDePara = -1;
+
+        VARCHAR varOraDataAtendimento[64];
+        short statOraDataAtendimento = -1;
+
+        VARCHAR varOraHoraAtendimento[64];
+        short statOraHoraAtendimento = -1;
+
+		//AMDOCS -BEATRIX
+        VARCHAR varOraCdOrigem[64];
+        short statOraCdOrigem = -1;
+		//AMDOCS -BEATRIX
+
+        char varOraDsMensagemEnvio[256];
+
+        VARCHAR     V_SGTIPOPESSOA[256];
+        short       i_V_SGTIPOPESSOA = -1;
+        
+        int         V_IDSISTEMAORIGEM;
+        short       i_V_IDSISTEMAORIGEM = -1;
+        
+        int         V_IDTIPOLINHA;
+        short       i_V_IDTIPOLINHA = -1;
+        
+        VARCHAR     V_SGUF[256];
+        short       i_V_SGUF = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WfAtdAbreProtPC(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    memset( &V_SGTIPOPESSOA, 0x0,sizeof(V_SGTIPOPESSOA));
+    memset( &V_SGUF        , 0x0,sizeof(V_SGUF));
+	sprintf( idLinhaTelefonica, "%s", idLinhaTelefonicaPRM );
+    
+    memset( &v_idSistemaOrigem, 0x0, sizeof(v_idSistemaOrigem) );
+
+	
+	ULOG("         cdAreaRegistro status=%d,dados=%s",pOraStatus->cdAreaRegistro,pOraDados->cdAreaRegistro);
+    ULOG("             nrTelefone status=%d,dados=%s",pOraStatus->nrTelefone,pOraDados->nrTelefone);
+
+    // se estiver abrindo por linha de cliente, obtém dados adicionais
+    if ( strcmp(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA)==0
+       || strcmp(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA_CLIENTE)==0 )
+    {
+        ULOG("vai verificar se a linha informada é de cliente...");
+
+        ULOG("idTipoAberturaProtocolo=%s",pOraDados->idTipoAberturaProtocolo);
+
+        EXEC SQL
+            SELECT
+                LINHATELEFONICA.IDLINHATELEFONICA,
+                PESSOALINHA.IDPESSOADEPARA,
+				SISTEMAORIGEM.CDORIGEM
+            INTO
+                :varOraIdLinhaTelefonica:statOraIdLinhaTelefonica,
+                :varOraIdPessoaDePara:statOraIdPessoaDePara,
+				:varOraCdOrigem:statOraCdOrigem
+            FROM
+                LINHA.LINHATELEFONICA LINHATELEFONICA,
+                LINHA.LINHABASE LINHABASE,
+                CUSTOMER.PESSOALINHA PESSOALINHA,
+                CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+                APOIO.AREAREGISTRO AREAREGISTRO,
+                APOIO.ESTADOLINHA ESTADOLINHA,
+				APOIO.SISTEMAORIGEM SISTEMAORIGEM
+            WHERE
+                LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+			AND LINHATELEFONICA.IDSISTEMAORIGEM=SISTEMAORIGEM.IDSISTEMAORIGEM
+            AND LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+            AND LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA
+            AND NVL(LINHATELEFONICA.DTEXPIRACAO,SYSDATE+1) > TRUNC(SYSDATE)
+            AND PESSOALINHA.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+            AND TIPORELACIONAMENTO.NMTIPORELACIONAMENTO = 'CLIENTE'
+            AND AREAREGISTRO.CDAREAREGISTRO = :pOraDados->cdAreaRegistro
+            AND LINHABASE.NRLINHA = :pOraDados->nrTelefone
+			AND LINHATELEFONICA.IDLINHATELEFONICA = :idLinhaTelefonica
+            AND LINHABASE.IDESTADOLINHA = ESTADOLINHA.IDESTADOLINHA
+            AND NVL(ESTADOLINHA.INLINHACANCELADA,0) = 0;
+
+        if ( sqlca.sqlcode )
+        {
+            ULOG("dados da linha não encontrados, vai abrir por linha...");
+
+            if ( strcmp(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA_CLIENTE)==0 )
+            { // se pediu abertura por linha de cliente mas o telefone não existe na base
+              // muda o tipo de abertura para "abertura por linha (de não cliente)"
+                strcpy(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA);
+            }
+        }
+        else
+        {
+            ULOG("linha existe e esta ativa na base do FO, vai abrir por linha de cliente...");
+
+            CONVIND(varOraIdLinhaTelefonica,statOraIdLinhaTelefonica);
+            CONVIND(varOraIdPessoaDePara,statOraIdPessoaDePara);
+
+            strcpy(pOraDados->idLinhaTelefonica,(char*)varOraIdLinhaTelefonica.arr);
+            pOraStatus->idLinhaTelefonica = statOraIdLinhaTelefonica;
+
+            strcpy(pOraDados->idPessoaDePara,(char*)varOraIdPessoaDePara.arr);
+            pOraStatus->idPessoaDePara = statOraIdPessoaDePara;
+
+            if ( strcmp(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA)==0 )
+            { // se pediu abertura por linha mas o telefone existe na base, então
+              // muda o tipo de abertura para "abertura por linha de cliente"
+                strcpy(pOraDados->idTipoAberturaProtocolo,TIPO_ABER_PROT_LINHA_CLIENTE);
+            }
+        }
+    }
+
+    if ( statOraIdLinhaTelefonica == -1 )   // Testes Nono Digito
+    {
+         EXEC SQL
+            SELECT
+                LINHATELEFONICA.IDLINHATELEFONICA,
+                PESSOALINHA.IDPESSOADEPARA,
+				SISTEMAORIGEM.CDORIGEM
+            INTO
+                :varOraIdLinhaTelefonica:statOraIdLinhaTelefonica,
+                :varOraIdPessoaDePara:statOraIdPessoaDePara,
+			    :varOraCdOrigem:statOraCdOrigem
+            FROM
+                LINHA.LINHATELEFONICA LINHATELEFONICA,
+                LINHA.LINHABASE LINHABASE,
+                CUSTOMER.PESSOALINHA PESSOALINHA,
+                CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+                APOIO.AREAREGISTRO AREAREGISTRO,
+                APOIO.ESTADOLINHA ESTADOLINHA,
+				APOIO.SISTEMAORIGEM SISTEMAORIGEM
+            WHERE
+                LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+			AND LINHATELEFONICA.IDSISTEMAORIGEM=SISTEMAORIGEM.IDSISTEMAORIGEM
+            AND LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+            AND LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA
+            AND NVL(LINHATELEFONICA.DTEXPIRACAO,SYSDATE+1) > TRUNC(SYSDATE)
+            AND PESSOALINHA.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+            AND TIPORELACIONAMENTO.NMTIPORELACIONAMENTO = 'CLIENTE'
+            AND AREAREGISTRO.CDAREAREGISTRO = :pOraDados->cdAreaRegistro
+            AND LINHABASE.NRLINHA = :pOraDados->nrTelefone
+            AND LINHABASE.IDESTADOLINHA = ESTADOLINHA.IDESTADOLINHA
+            AND NVL(ESTADOLINHA.INLINHACANCELADA,0) = 0;
+    }
+
+    // tenta garantir que nunca vai faltar um telefone para envio de SMS...
+    if ( pOraStatus->cdAreaRegistroSMS == -1 || pOraStatus->nrTelefoneSMS == -1 )
+    {
+    
+        if ( pOraDados->cdAreaRegistro[0] != 0x00 )
+        {
+            strcpy(pOraDados->cdAreaRegistroSMS,pOraDados->cdAreaRegistro);
+            pOraStatus->cdAreaRegistroSMS = 1;
+        }
+
+        if ( pOraDados->nrTelefone[0] != 0x00 )
+        {
+            strcpy(pOraDados->nrTelefoneSMS,pOraDados->nrTelefone);
+            pOraStatus->nrTelefoneSMS = 1;
+        }
+    }
+
+    // Tempo de vida de um protocolo
+    EXEC SQL
+        SELECT
+            DSVALORPARAMETRO
+        INTO
+            :varOraTmpVidaProtocolo:statOraTmpVidaProtocolo
+        FROM
+            APOIO.PARAMETRO
+        WHERE
+            CDPARAMETRO = 'TMPVIDAPROTOCOLO';
+
+    if ( sqlca.sqlcode )
+    {
+        throw new TuxException(ERR_NEGOCIO_TMPVIDAPR_NOTFOUND,CErroAtendimento(ERR_NEGOCIO_TMPVIDAPR_NOTFOUND).outMsg());
+    }
+
+    CONVIND(varOraTmpVidaProtocolo,statOraTmpVidaProtocolo);
+
+	//tratando dados do CDORIGEM
+	CONVIND(varOraCdOrigem,statOraCdOrigem);
+
+
+    EXEC SQL
+        SELECT ATENDIMENTO.FN_PROTOCOLO INTO :varOraNrProtocolo:statOraNrProtocolo FROM DUAL;
+
+    CONVIND(varOraNrProtocolo,statOraNrProtocolo);
+
+	//tratando dados do CDORIGEM
+	CONVIND(varOraCdOrigem,statOraCdOrigem);
+
+
+    strcpy(pOraDados->idAtendimentoProtocolo,(char*)varOraNrProtocolo.arr);
+    pOraStatus->idAtendimentoProtocolo = 1;
+    strcpy( dados->idAtendimentoProtocolo,pOraDados->idAtendimentoProtocolo );
+
+    ULOG(" idAtendimentoProtocolo status=%d,dados=%s",pOraStatus->idAtendimentoProtocolo,pOraDados->idAtendimentoProtocolo);
+    ULOG("        idSistemaOrigem status=%d,dados=%s",pOraStatus->idSistemaOrigem,pOraDados->idSistemaOrigem);
+    ULOG("         idPessoaDePara status=%d,dados=%s",pOraStatus->idPessoaDePara,pOraDados->idPessoaDePara);
+    ULOG("                cdConta status=%d,dados=%s",pOraStatus->cdConta,pOraDados->cdConta);
+    ULOG("      idLinhaTelefonica status=%d,dados=%s",pOraStatus->idLinhaTelefonica,pOraDados->idLinhaTelefonica);
+    ULOG("      cdAreaRegistroSMS status=%d,dados=%s",pOraStatus->cdAreaRegistroSMS,pOraDados->cdAreaRegistroSMS);
+    ULOG("          nrTelefoneSMS status=%d,dados=%s",pOraStatus->nrTelefoneSMS,pOraDados->nrTelefoneSMS);
+    ULOG("idTipoAberturaProtocolo status=%d,dados=%s",pOraStatus->idTipoAberturaProtocolo,pOraDados->idTipoAberturaProtocolo);
+    ULOG("     idUsuarioAlteracao status=%d,dados=%s",pOraStatus->idUsuarioAlteracao,pOraDados->idUsuarioAlteracao);
+    ULOG("   tempo vida protocolo status=%d,dados=%s",statOraTmpVidaProtocolo,varOraTmpVidaProtocolo.arr);
+
+    if ( pOraStatus->cdAreaRegistro > 0 && pOraStatus->nrTelefone == -1 )
+    { // se informou código de área sem telefone gera erro
+        throw new TuxException(ERR_NEGINFO_NRTELEFONE_INVALIDO,CErroAtendimento(ERR_NEGINFO_NRTELEFONE_INVALIDO).outMsg());
+    }
+
+    if ( pOraStatus->cdAreaRegistro == -1 && pOraStatus->nrTelefone > 0 )
+    { // se informou telefone sem código de área gera erro
+        throw new TuxException(ERR_NEGINFO_CDAREAREG_INVALIDO,CErroAtendimento(ERR_NEGINFO_CDAREAREG_INVALIDO).outMsg());
+    }
+
+    ULOG( ">>> Inserindo <<< " );
+    ULOG( ">>> pOraDados->idAtendimentoProtocolo  [%s]",pOraDados->idAtendimentoProtocolo );
+    ULOG( ">>> pOraDados->cdAreaRegistro          [%s]",pOraDados->cdAreaRegistro );
+    ULOG( ">>> pOraDados->nrTelefone (N9)         [%s]",pOraDados->nrTelefone );
+    ULOG( ">>> pOraDados->idSistemaOrigem         [%s]",pOraDados->idSistemaOrigem );
+    ULOG( ">>> pOraDados->idPessoaDePara          [%s]",pOraDados->idPessoaDePara );
+    ULOG( ">>> pOraDados->cdConta                 [%s]",pOraDados->cdConta );
+    ULOG( ">>> pOraDados->idLinhaTelefonica       [%s]",pOraDados->idLinhaTelefonica );
+    ULOG( ">>> pOraDados->idTipoAberturaProtocolo [%s]",pOraDados->idTipoAberturaProtocolo );
+    ULOG( ">>> pOraDados->idUsuarioAlteracao      [%s]",pOraDados->idUsuarioAlteracao );
+    
+    strcpy( v_DDD       , (char*)pOraDados->cdAreaRegistro );
+    strcpy( v_nrTelefone, (char*)pOraDados->nrTelefone );
+
+    EXEC SQL
+    SELECT lb.idsistemaorigem
+      INTO :v_idSistemaOrigem:i_v_idSistemaOrigem
+      FROM linha.linhabase lb, apoio.arearegistro ar
+     WHERE lb.idarearegistro = ar.idarearegistro
+       AND lb.nrlinha = :v_nrTelefone
+       AND ar.cdarearegistro = :v_DDD 
+       AND ROWNUM <= 1;
+
+    CONVIND( v_idSistemaOrigem, i_v_idSistemaOrigem );
+    
+    EXEC SQL
+        INSERT INTO ATENDIMENTO.ATENDIMENTOPROTOCOLO
+            (IDATENDIMENTOPROTOCOLO
+            ,CDAREAREGISTRO
+            ,NRTELEFONE
+            ,NRTELEFONE_N9 //N9
+            ,IDSISTEMAORIGEM
+            ,IDPESSOADEPARA
+            ,CDCONTA
+            ,DTABERTURA
+            ,DTENCERRAMENTO
+            ,QTPROCESSOABERTO
+            ,QTPROCESSOPENDENTE
+            ,IDLINHATELEFONICA
+            ,IDTIPOABERTURAPROTOCOLO
+            ,IDUSUARIOALTERACAO
+            ,DTULTIMAALTERACAO
+            ,CDORIGEM
+            )
+        VALUES
+            (:pOraDados->idAtendimentoProtocolo:pOraStatus->idAtendimentoProtocolo
+            ,:pOraDados->cdAreaRegistro:pOraStatus->cdAreaRegistro
+            ,:pOraDados->nrTelefone:pOraStatus->nrTelefone
+            ,:pOraDados->nrTelefone:pOraStatus->nrTelefone
+            ,:pOraDados->idSistemaOrigem:pOraStatus->idSistemaOrigem
+            /*   ,NVL(:v_idSistemaOrigem,7) */
+            ,:pOraDados->idPessoaDePara:pOraStatus->idPessoaDePara
+            ,:pOraDados->cdConta:pOraStatus->cdConta
+            ,SYSTIMESTAMP
+            ,SYSTIMESTAMP+(TO_NUMBER(:varOraTmpVidaProtocolo)/1440)
+            ,0 // QTPROCESSOABERTO
+            ,0 // QTPROCESSOPENDENTE
+            ,:pOraDados->idLinhaTelefonica:pOraStatus->idLinhaTelefonica
+            ,:pOraDados->idTipoAberturaProtocolo:pOraStatus->idTipoAberturaProtocolo
+            ,:pOraDados->idUsuarioAlteracao:pOraStatus->idUsuarioAlteracao
+            ,SYSDATE
+			,:varOraCdOrigem
+            );
+
+        // Enfileira envio de SMS do protocolo
+        if ( pOraStatus->cdAreaRegistroSMS == 1 && pOraStatus->nrTelefoneSMS == 1 )
+        {
+            ULOG("vai enfileirar protocolo no SMS...");
+
+            EXEC SQL
+                SELECT
+                    TO_CHAR (SYSDATE,'DD/MM/YYYY'),
+                    TO_CHAR (SYSDATE,'HH24:MI')
+                INTO
+                    :varOraDataAtendimento:statOraDataAtendimento,
+                    :varOraHoraAtendimento:statOraHoraAtendimento
+                FROM
+                    DUAL;
+
+            CONVIND(varOraDataAtendimento,statOraDataAtendimento);
+            CONVIND(varOraHoraAtendimento,statOraHoraAtendimento);
+
+        	sprintf(varOraDsMensagemEnvio,"Vivo: Protocolo %s - %s as %s - Atendimento Vivo",
+                        pOraDados->idAtendimentoProtocolo,
+                        (char*)varOraDataAtendimento.arr,
+                        (char*)varOraHoraAtendimento.arr);
+
+            ULOG(">>> Passou 1");
+
+            memset ( &v_idSistemaOrigem, 0x0, sizeof(v_idSistemaOrigem) );
+            
+            exec sql
+            select
+               tp.sgtipopessoa ,
+               lt.idtipolinha ,
+               uf.sguf ,
+               lt.idsistemaorigem
+            into
+               :V_SGTIPOPESSOA:i_V_SGTIPOPESSOA ,
+               :V_IDTIPOLINHA:i_V_IDTIPOLINHA ,
+               :V_SGUF:i_V_SGUF,
+               :v_idSistemaOrigem:i_v_idSistemaOrigem
+            from
+               apoio.tipopessoa        tp ,
+               apoio.uf                uf ,
+               customer.pessoa         p ,
+               customer.pessoadepara   pdp ,
+               customer.pessoalinha    pl ,
+               linha.linhabase         lb ,
+               linha.linhatelefonica   lt ,
+               customer.ufoperadora    ufop,
+               apoio.arearegistro      ar
+            where
+               lb.nrlinha = :pOraDados->nrTelefoneSMS
+            and ar.cdarearegistro = :pOraDados->cdAreaRegistroSMS
+            and lb.idarearegistro = ar.idarearegistro
+            and LT.IDLINHABASE = LB.IDLINHABASE
+            and PL.IDLINHATELEFONICA = LT.IDLINHATELEFONICA
+            and PL.IDPESSOADEPARA = PDP.IDPESSOADEPARA
+            and PDP.IDPESSOA = P.IDPESSOA
+            and TP.IDTIPOPESSOA = P.IDTIPOPESSOA
+            and UFOP.IDUFOPERADORA = AR.IDUFOPERADORA
+            and UFOP.IDUF = UF.IDUF
+            and rownum < 2;
+            
+
+            CONVIND(V_SGTIPOPESSOA,i_V_SGTIPOPESSOA);
+            CONVIND(V_SGUF,i_V_SGUF);
+            CONVIND( v_idSistemaOrigem, i_v_idSistemaOrigem );
+
+            ULOG(">>> Passou 2");
+			
+			EXEC SQL
+                INSERT INTO ATENDIMENTO.FILASMSPROTOCOLO
+                    (IDATENDIMENTOPROTOCOLO
+                    ,DTENCERRAMENTO
+                    ,CDAREAREGISTRO
+                    ,NRLINHA
+                    ,DSMENSAGEMENVIO
+                    ,INENVIOSMS
+                    ,SGTIPOPESSOA 
+                    ,IDTIPOLINHA 
+                    ,SGUF 
+                    ,DTULTIMAALTERACAO
+                    ,IDUSUARIOALTERACAO 
+                    ,idsistemaorigem
+                    )
+                    VALUES
+                    (
+                     :pOraDados->idAtendimentoProtocolo:pOraStatus->idAtendimentoProtocolo
+                    ,SYSTIMESTAMP+(TO_NUMBER(:varOraTmpVidaProtocolo)/1440)
+                    ,:pOraDados->cdAreaRegistroSMS:pOraStatus->cdAreaRegistroSMS
+                    ,:pOraDados->nrTelefoneSMS:pOraStatus->nrTelefoneSMS
+                    ,:varOraDsMensagemEnvio
+                    ,1 // INENVIOSMS
+					,NVL(:V_SGTIPOPESSOA,NULL)
+                    ,NVL(:V_IDTIPOLINHA,NULL)
+                    ,NVL(:V_SGUF,NULL)
+                    ,SYSTIMESTAMP // DTULTIMAALTERACAO
+                    ,:pOraDados->idUsuarioAlteracao:pOraStatus->idUsuarioAlteracao
+                    ,NVL( :v_idSistemaOrigem, 7 )   // Assume Sistema Origem como FO, caso seja NULL
+                    );
+
+            ULOG("enfileirou com sucesso.");
+        }
+        else
+        {
+            ULOG("não recebeu telefone para enfileirar SMS...");
+        }
+
+    ULOG_END("cWfAtdAbreProtPC::CriarNovoProtocolo( st_DadosEntrada * dados, st_StatusEntrada * status, char * idLinhaTelefonicaPRM )");
+}
+
+
+
+void cWfAtdAbreProtPC::sql_error_WfAtdAbreProtPC(sqlca *sqlca)
+{
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

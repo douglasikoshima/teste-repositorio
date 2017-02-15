@@ -1,0 +1,128 @@
+/*
+ * Serviço de preenchimento da lupa de faturamento do cliente
+ * Versão inicial, 07/06/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/ContaLinhaFaturamento.h";
+
+#include "../include/LupaFaturamIni.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+DECLARE_TUXEDO_SERVICE(LupaFaturamIni);
+
+void implLupaFaturamIni::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+    CContaLinhaFaturamento* poContaLinha;
+    CLinhaFaturamento* poLin;
+    long iNroReg;
+    long iAux;
+    long iAuxLin;
+
+    char *pcIdPessoa;
+    long iIdPessoa = 0;
+    char *pcNrConta;
+    char *pcNrFone;
+
+    ULOG_START( "implLupaFaturamIni::Execute()" );
+    try{
+         // Navega o XML e recupera as informacoes
+         pcIdPessoa = walkTree(dnode, XML_IN_ID_PESSOA, 0);
+         if(pcIdPessoa != NULL && !*pcIdPessoa) {
+             ERROR(NRO_ID_PESSOA_VI);
+             TAG_VALOR_INVALIDO(XML_IN_ID_PESSOA);
+             if (pcIdPessoa) XMLString::release(&pcIdPessoa);
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+
+        iIdPessoa = atol(pcIdPessoa);
+        if(iIdPessoa <= 0) {
+             ERROR(NRO_ID_PESSOA_VI);
+             TAG_VALOR_INVALIDO(XML_IN_ID_PESSOA);
+             if (pcIdPessoa) XMLString::release(&pcIdPessoa);
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+
+         pcNrConta = walkTree(dnode, XML_IN_NR_CONTA, 0);
+         if (pcNrConta != NULL && !*pcNrConta)
+             pcNrConta = NULL;
+
+         pcNrFone = walkTree(dnode, XML_IN_NR_FONE, 0);
+         if (pcNrFone != NULL && !*pcNrFone)
+             pcNrFone = NULL;
+
+         // Checa se ao menos um foi informado
+         if (pcIdPessoa == NULL && pcNrConta == NULL && pcNrFone == NULL) {
+             ERROR(NRO_CHAVE_NAO_INFORMADA);
+
+             if (pcIdPessoa) 
+                XMLString::release(&pcIdPessoa);
+             if (pcNrConta) 
+                XMLString::release(&pcNrConta);
+             if (pcNrFone) 
+                XMLString::release(&pcNrFone);
+
+             throw new TuxBasicSvcException(sNrMsg, MSG_CHAVE_NAO_INFORMADA);
+         }
+
+
+         ULOGI("Antes de CContaLinhaFaturamento::lista" );
+         ULOGI("IdPessoa:[%ld]", iIdPessoa );
+         ULOGI("pcIdPessoa:[%s]", pcIdPessoa);
+         ULOGI("pcNrConta:[%s]", pcNrConta );
+         ULOGI("pcNrFone:[%s]", pcNrFone );
+         // Busca lista de conta/linha
+         poContaLinha = CContaLinhaFaturamento::lista((pcIdPessoa == NULL ? NULL : &iIdPessoa), pcNrConta, pcNrFone, &iNroReg);
+         ULOGI("Depois de CContaLinhaFaturamento::lista" );
+         ULOGI("iNroReg:[%d]", iNroReg );
+         
+         if (pcIdPessoa) 
+            XMLString::release(&pcIdPessoa);
+         if (pcNrConta) 
+            XMLString::release(&pcNrConta);
+         if (pcNrFone) 
+            XMLString::release(&pcNrFone);
+
+         // Monta XML de saída
+         xml_g->createTag(XML_OUT_ROOT);
+         xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+         for (iAux = 0; iAux < iNroReg; iAux++) {
+             xml_g->createTag(XML_OUT_CONTAS_FATURAMENTO);
+             xml_g->addItem(XML_OUT_ID_CONTA, poContaLinha[iAux].getIdConta());
+             xml_g->addItem(XML_OUT_ID_CONTA_SIS_ORIG, poContaLinha[iAux].getIdContaSistemaOrigem());
+             xml_g->addItem(XML_OUT_NR_CONTA, poContaLinha[iAux].getNrConta());
+             xml_g->addItem(XML_OUT_DS_CICLO_FATURA, poContaLinha[iAux].getDsCicloFatura());
+             xml_g->addItem(XML_OUT_DT_VENCTO, poContaLinha[iAux].getDtVencimento());
+
+             for (iAuxLin = 0; iAuxLin < poContaLinha[iAux].getNrLinhas(); iAuxLin++) {
+                 poLin = poContaLinha[iAux].getLinhas();
+
+                 xml_g->createTag(XML_OUT_LINHAS);
+                 xml_g->addItem(XML_OUT_ID_LINHA, poLin[iAuxLin].getIdLinhaFaturamento());
+                 xml_g->addItem(XML_OUT_NR_COD_AREA, poLin[iAuxLin].getNrCodArea());
+                 xml_g->addItem(XML_OUT_NR_LINHA, poLin[iAuxLin].getNrLinha());
+                 xml_g->addItem(XML_OUT_DS_ESTADO_LINHA, poLin[iAuxLin].getDsEstadoLinha());
+                 xml_g->closeTag();
+                 free(poLin);
+             }
+
+             xml_g->closeTag();
+         }
+         xml_g->closeTag();
+
+        //Liberando memoria alocada
+        free(poContaLinha);
+
+    }catch(...){
+        throw;
+    }
+
+    ULOG_END( "implLupaFaturamIni::Execute()" );
+
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}

@@ -1,0 +1,134 @@
+/*
+ * Serviço de cadastro básico de status de correspondencia
+ * Versão inicial, 24/05/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/StatusCorrespondencia.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/StatusUnidade.h";
+
+#include "../include/StatusCorrespondenciaInclui.h"
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include "../../negocio/clienteCmm/include/Global.h"
+#include <tuxfw.h>
+
+DECLARE_TUXEDO_SERVICE(StatCorrInc);
+
+void implStatCorrInc::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+    CStatusCorrespondencia oStatCorr;
+    int iQtDiasValido;
+    int iIdProx;
+    
+    CStatusUnidade oStatusUnidade;
+    int iAux=0;
+    int iIdUnidade;
+    int iRet;
+
+    ULOG_START( "implStatCorrInc::Execute()" );
+    try{
+        // Monta o objeto de StatusCorrespondencia
+        char* p = walkTree(dnode, XML_IN_SG_TIPO, 0);
+
+        oStatCorr.setSgStatus( p );
+
+        if (p)
+            XMLString::release(&p);
+
+        p = walkTree(dnode, XML_IN_DS_TIPO, 0);
+
+        oStatCorr.setDsStatus( p );
+
+        if (p)
+            XMLString::release(&p);
+
+        p = walkTree(dnode, XML_IN_QT_VALIDO, 0);
+
+        if (p == NULL || !p)
+            oStatCorr.setQtDiasValido(NULL);
+        else {
+
+            if ((iQtDiasValido = atoi( p )) <= 0) {
+                ERROR(NRO_STAT_CORR_QT_DIAS_VI);
+                TAG_VALOR_INVALIDO(XML_IN_QT_VALIDO);
+                if (p)
+                    XMLString::release(&p);
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            } else 
+                oStatCorr.setQtDiasValido(&iQtDiasValido);
+
+        }
+
+        if (p)
+            XMLString::release(&p);
+
+        p = walkTree(dnode, XML_IN_ID_PROXIMO, 0);
+
+        if (p == NULL || !p)
+            oStatCorr.setIdProximoStatus(NULL);
+        else {
+
+            if ( !IsNumeric( p ) ) {
+                ERROR(NRO_STAT_CORR_PROX_ID_VI);
+                TAG_VALOR_INVALIDO(XML_IN_ID_PROXIMO);
+                if (p)
+                    XMLString::release(&p);
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            } else {
+                iIdProx = atoi(p);
+                oStatCorr.setIdProximoStatus(&iIdProx);
+            }
+
+            XMLString::release(&p);
+
+        }
+
+        // Atualiza as informações no banco de dados
+        oStatCorr.setUsuarioAlteracao(getUser());
+        iRet = oStatCorr.inclui();
+        switch(iRet)
+        {
+            case DUPLICATE_KEY:
+                xml_g->addItem("FAILED", "DUPLICATE KEY");
+                break;
+            default:
+                // Busca a lista que veio no XML de entrada e insere.
+
+                if (p) XMLString::release(&p);
+
+                while(true) {
+
+                    p = walkTree(dnode, XML_IN_ID_UNIDADE, iAux);
+
+                    if (!p)
+                        break;
+
+                    iIdUnidade = atoi( p );
+                    oStatusUnidade.setIdUnidade(iIdUnidade);
+                    oStatusUnidade.setIdStatusCorrespondencia(oStatCorr.getIdStatusCorrespondencia());
+
+                    // Inclui
+                    oStatusUnidade.setUsuarioAlteracao(getUser());
+                    oStatusUnidade.inclui();
+                    iAux++; 
+
+                    XMLString::release(&p);
+    
+                }
+                break;
+        }
+    }
+    catch(...){
+        throw;  //repassando o erro para nucleo
+    }
+
+    
+    ULOG_END( "implStatCorrInc::Execute()" );
+
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}
+

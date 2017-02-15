@@ -1,0 +1,277 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include"../../../commons/queryMacro.h"
+
+#include "tuxfw.h"
+#include "../include/cWFEstado.h"
+#include "../include/stWFEstado.h"
+
+void sql_error_WFEstado(sqlca*sqlca);
+
+	// Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+		#include "../include/stWFEstado.h"
+    EXEC SQL END DECLARE SECTION;
+
+bool proCIncluirWFEstado(st_Estado* dados, st_vlEstado* status, XMLGen* saida)
+{
+   ULOG_START("proCIncluirWFEstado()");     
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_Estado   oDados;
+		struct st_vlEstado oStatus;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+
+	// Obtem o valor do idEstado
+	EXEC SQL SELECT workflow.EstadoSQ.NEXTVAL INTO :oDados.idEstado FROM DUAL;
+
+	EXEC SQL 
+		INSERT INTO
+			workflow.Estado
+			(
+				idEstado,
+				sgEstado,
+				dsEstado,
+				idUsuarioAlteracao,
+				dtUltimaAlteracao
+			)
+			VALUES
+			(
+				:oDados.idEstado,
+				DECODE(:oStatus.sgEstado, -1, NULL, :oDados.sgEstado),
+				DECODE(:oStatus.dsEstado, -1, NULL, :oDados.dsEstado),
+				DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+				//@cassio DECODE(:oStatus.dtUltimaAlteracao, -1, NULL, TO_DATE(:oDados.dtUltimaAlteracao,'DD/MM/YYYY HH24:MI'))
+                TO_DATE(DECODE(:oStatus.dtUltimaAlteracao, -1, NULL, :oDados.dtUltimaAlteracao),'DD/MM/YYYY HH24:MI')
+			);
+
+	saida->createTag("Registro");
+		saida->addItem("idEstado", oDados.idEstado);
+	saida->closeTag();
+	
+	ULOG_END("proCIncluirWFEstado()");     
+
+	return true;
+}
+
+bool proCAlterarWFEstado(st_Estado* dados, st_vlEstado* status, XMLGen* saida)
+{
+   ULOG_START("proCAlterarWFEstado()");     
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_Estado   oDados;
+		struct st_vlEstado oStatus;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+	sprintf(query,"%s", "UPDATE workflow.Estado SET ");
+
+	bool separa = false;
+
+	if (status->sgEstado != -1) 
+		montaUpdate("sgEstado", oDados.sgEstado, 2);
+
+	if (status->dsEstado != -1)
+		montaUpdate("dsEstado", oDados.dsEstado, 2);
+
+	if (status->inFiltro != -1) 
+		montaUpdate("inFiltro", oDados.inFiltro, TIPO_INT);
+
+	if (status->idUsuarioAlteracao != -1) 
+		montaUpdate("idUsuarioAlteracao", oDados.idUsuarioAlteracao, TIPO_INT);
+
+	if (status->dtUltimaAlteracao != -1) 
+		montaUpdate("dtUltimaAlteracao", oDados.dtUltimaAlteracao, TIPO_DATAHORA);
+
+	sprintf(query, "%s WHERE idEstado = %i", query, dados->idEstado);
+
+	EXEC SQL EXECUTE IMMEDIATE :query;
+	
+	ULOG_END("proCAlterarWFEstado()");     
+
+	return true;
+}
+
+bool proCExcluirWFEstado(st_Estado* dados, st_vlEstado* status, XMLGen* saida)
+{
+   ULOG_START("proCExcluirWFEstado()");     
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idEstado = dados->idEstado;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+
+	EXEC SQL 
+		DELETE
+			workflow.Estado
+		WHERE
+			idEstado = :idEstado;
+			
+   ULOG_END("proCExcluirWFEstado()");     
+   
+	return true;
+}
+
+bool proCConsultaWFEstado(st_Estado* dados, st_vlEstado* status, char* order, XMLGen* saida)
+{
+   ULOG_START("proCConsultaWFEstado()");     
+   
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idEstado;
+		VARCHAR sgEstado[256];
+		VARCHAR dsEstado[256];
+		int inFiltro;
+		int idUsuarioAlteracao;
+		VARCHAR	dtUltimaAlteracao[256];
+
+		short i_idEstado;
+		short i_sgEstado;
+		short i_dsEstado;
+		short i_inFiltro;
+		short i_idUsuarioAlteracao;
+		short i_dtUltimaAlteracao;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE consulta CURSOR FOR
+		SELECT 
+			IDESTADO, 
+			SGESTADO, 
+			DSESTADO,
+			INFILTRO,
+			IDUSUARIOALTERACAO,
+			TO_CHAR(DTULTIMAALTERACAO,'DD/MM/YYYY')
+		FROM 
+			WORKFLOW.ESTADO
+        WHERE 
+            SGESTADO NOT LIKE 'RCE%'
+		ORDER BY
+			IDESTADO;
+
+	EXEC SQL OPEN consulta;
+
+	saida->createTag("WFEstados");
+
+	while (true)
+	{
+		EXEC SQL FETCH consulta INTO 
+									:idEstado:i_idEstado, 
+									:sgEstado:i_sgEstado, 
+									:dsEstado:i_dsEstado, 
+									:inFiltro:i_inFiltro, 
+									:idUsuarioAlteracao:i_idUsuarioAlteracao,
+									:dtUltimaAlteracao:i_dtUltimaAlteracao;
+
+		CONVIND(sgEstado,i_sgEstado);
+		CONVIND(dsEstado,i_dsEstado);
+		CONVIND(dtUltimaAlteracao,i_dtUltimaAlteracao);
+
+		saida->createTag("WFEstadoVO");
+            saida->addItem("idEstado"           ,idEstado);
+            saida->addItem("sgEstado"           ,(char *)sgEstado.arr);
+            saida->addItem("dsEstado"           ,(char *)dsEstado.arr);
+            saida->addItem("inFiltro"           ,inFiltro);
+            saida->addItem("idUsuarioAlteracao",idUsuarioAlteracao);
+            saida->addItem("dtUltimaAlteracao"  ,(char *)dtUltimaAlteracao.arr);
+		saida->closeTag();
+	}
+
+	saida->closeTag();
+
+	EXEC SQL CLOSE consulta;
+	
+	ULOG_END("proCConsultaWFEstado()");     
+
+	return true;
+
+}
+
+bool proCPesquisaTodosWFEstado( char* order, XMLGen* saida)
+{
+   ULOG_START("proCPesquisaTodosWFEstado()");     
+   
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idEstado;
+		VARCHAR sgEstado[256];
+		VARCHAR dsEstado[256];
+
+		char query[1025];
+
+    EXEC SQL END DECLARE SECTION;
+
+   EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+   EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	strcpy(query,"SELECT idEstado, sgEstado, dsEstado FROM workflow.Estado WHERE idEstado > 0");
+
+	bool separa = false;
+
+	if (strlen(order) > 0) 
+		sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+
+	EXEC SQL PREPARE consultaTodosEstado FROM :query;
+	EXEC SQL DECLARE consultaTodos CURSOR FOR consultaTodosEstado;
+
+	EXEC SQL OPEN consultaTodos;
+
+	while (true)
+	{
+		EXEC SQL FETCH consultaTodos INTO :idEstado, :sgEstado, :dsEstado;
+
+		CONV(sgEstado);
+		CONV(dsEstado);
+
+		saida->createTag("WFEstadoVO");
+			saida->addItem("idEstado", idEstado);
+			saida->addItem("sgEstado", (char *)sgEstado.arr);
+			saida->addItem("dsEstado", (char *)dsEstado.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE consultaTodos;
+	
+   ULOG_END("proCPesquisaTodosWFEstado()");     
+   
+	return true;
+
+}
+
+void sql_error_WFEstado(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

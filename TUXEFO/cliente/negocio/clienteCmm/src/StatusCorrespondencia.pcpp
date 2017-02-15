@@ -1,0 +1,719 @@
+// StatusCorrespondencia.pcpp: implementation for the 
+// CStatusCorrespondencia class.
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw.h>
+
+#define MSG_NONE
+#include "../include/Messages.h"
+#undef MSG_NONE
+
+#include "../include/Global.h"
+
+char szAuxLog[512 + 1];
+
+EXEC SQL INCLUDE "../include/StatusCorrespondencia.h";
+
+//
+// Construtor e Destrutor
+CStatusCorrespondencia::CStatusCorrespondencia() {
+	icSgStatus = -1;
+	icDsStatus = -1;
+	iiQtDiasValido = -1;
+	iiIdProximoStatus = -1;
+
+	iNrUnidades = 0;
+	poUnidades = NULL;
+
+	memset(sIdUsuarioAlteracao,0,256);
+}
+
+CStatusCorrespondencia::~CStatusCorrespondencia() {
+	if (poUnidades)
+		free(poUnidades);
+}
+
+// Usuário de alteração
+void CStatusCorrespondencia::setUsuarioAlteracao(char* value) {
+	if (value != NULL) {
+		strncpy(sIdUsuarioAlteracao,value, 255);
+		sIdUsuarioAlteracao[255]='\0';
+	}
+}
+
+//
+// Metodos getter
+int CStatusCorrespondencia::getIdStatusCorrespondencia(){
+	return iIdStatusCorrespondencia;
+}
+
+char* CStatusCorrespondencia::getSgStatus(){
+	if (icSgStatus < 0)
+		return NULL;
+	else
+		return cSgStatus;
+}
+
+char* CStatusCorrespondencia::getDsStatus(){
+	if (icDsStatus < 0)
+		return NULL;
+	else
+		return cDsStatus;
+}
+
+int* CStatusCorrespondencia::getQtDiasValido(){
+	if (iiQtDiasValido < 0)
+		return NULL;
+	else
+		return &iQtDiasValido;
+}
+
+int* CStatusCorrespondencia::getIdProximoStatus(){
+	if (iiIdProximoStatus < 0)
+		return NULL;
+	else
+		return &iIdProximoStatus;
+}
+
+CUnidade* CStatusCorrespondencia::getUnidades(){
+	return poUnidades;
+}
+
+int CStatusCorrespondencia::getNrUnidades(){
+	return iNrUnidades;
+}
+
+int CStatusCorrespondencia::getInDisponibilidade(){
+	return iInDisponibilidade;
+}
+
+//
+// Metodos setter
+void CStatusCorrespondencia::setIdStatusCorrespondencia(int value){
+	iIdStatusCorrespondencia = value;
+}
+
+void CStatusCorrespondencia::setSgStatus(char* value){
+	if (value == NULL)
+		icSgStatus = -1;
+	else {
+		strncpy(cSgStatus, value, 255);
+		cSgStatus[255]='\0';
+		icSgStatus = strlen(value);
+	}
+}
+
+void CStatusCorrespondencia::setDsStatus(char* value){
+	if (value == NULL)
+		icDsStatus = -1;
+	else {
+		strncpy(cDsStatus, value, 255);
+		cDsStatus[255]='\0';
+		icDsStatus = strlen(value);
+	}
+}
+
+void CStatusCorrespondencia::setQtDiasValido(int* value){
+	if (value == NULL)
+		iiQtDiasValido = -1;
+	else {
+		iQtDiasValido = *value;
+		iiQtDiasValido = *value;
+	}
+}
+
+void CStatusCorrespondencia::setIdProximoStatus(int* value){
+	if (value == NULL)
+		iiIdProximoStatus = -1;
+	else {
+		iIdProximoStatus = *value;
+		iiIdProximoStatus = *value;
+	}
+}
+
+void CStatusCorrespondencia::setUnidades(CUnidade* value){
+	poUnidades = value;
+}
+
+void CStatusCorrespondencia::setNrUnidades(int value){
+	iNrUnidades = value;
+}
+
+
+void CStatusCorrespondencia::setInDisponibilidade(int value){
+	iInDisponibilidade = value;
+}
+
+//
+// Métodos de acesso a banco de dados
+int CStatusCorrespondencia::inclui(){
+
+	ULOG_START("CStatusCorrespondencia::inclui()");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iNovoId;
+        int iTemRegistro;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorInc;
+
+
+    //Verificando se o registro existe
+	EXEC SQL SELECT count(1)
+               INTO :iTemRegistro
+               FROM apoio.StatusCorrespondencia
+              WHERE upper(dsstatus) = upper(:cDsStatus)
+                 OR upper(sgstatus) = upper(:cSgStatus);
+
+    if (iTemRegistro)
+    {
+        ULOGE("ERRO ORACLE -> DUPLICATE_KEY");
+        ULOG_END("CStatusCorrespondencia::inclui()");
+        return DUPLICATE_KEY;
+    }
+
+
+	// Busca o novo ID da sequence.
+	EXEC SQL
+		SELECT apoio.StatusCorrespondenciaSQ.NEXTVAL
+		INTO :iNovoId
+		FROM DUAL;
+	if (sqlca.sqlcode)
+	{
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CStatusCorrespondencia::inclui()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+	}
+
+    // Quando esse campo for igual 0 não inserir coluna
+    if ( iIdProximoStatus )
+	    // Insere no banco de dados
+	    EXEC SQL
+	    INSERT INTO apoio.StatusCorrespondencia
+	    (IdStatusCorrespondencia,
+	     SgStatus,
+	     DsStatus,
+	     QtDiasValido,
+	     IdProximoStatus,
+	     IdUsuarioAlteracao,
+	     DtUltimaAlteracao,
+         Indisponibilidade)
+	    VALUES
+	    (:iNovoId,
+	     :cSgStatus:icSgStatus,
+	     :cDsStatus:icDsStatus,
+	     :iQtDiasValido:iiQtDiasValido,
+	     :iIdProximoStatus:iiIdProximoStatus,
+	     :sIdUsuarioAlteracao,
+	     SYSDATE,
+         1);
+    else
+	    // Insere no banco de dados
+	    EXEC SQL
+	    INSERT INTO apoio.StatusCorrespondencia
+	    (IdStatusCorrespondencia,
+	     SgStatus,
+	     DsStatus,
+	     QtDiasValido,
+	     IdUsuarioAlteracao,
+	     DtUltimaAlteracao,
+         Indisponibilidade)
+	    VALUES
+	    (:iNovoId,
+	     :cSgStatus:icSgStatus,
+	     :cDsStatus:icDsStatus,
+	     :iQtDiasValido:iiQtDiasValido,
+	     :sIdUsuarioAlteracao,
+	     SYSDATE,
+         1);
+
+
+	// Inserção OK, coloca o ID no objeto
+	iIdStatusCorrespondencia = iNovoId;
+	
+    ULOG_END("CStatusCorrespondencia::inclui()");
+    
+	return OK;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorInc:
+    {
+        // Tratamento de qq tipo de chave duplicada (PK ou AK)
+        if (sqlca.sqlcode == DUPLICATE_KEY )
+        {
+           ULOGE("ERRO ORACLE -> DUPLICATE_KEY");
+           ULOG_END("CStatusCorrespondencia::inclui()");
+           return DUPLICATE_KEY;
+        }
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("CStatusCorrespondencia::inclui()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+    }
+}
+
+void CStatusCorrespondencia::exclui(){
+    
+    ULOG_START("CStatusCorrespondencia::exclui()");
+
+	struct sqlca sqlca;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorExc;
+
+	// Remove do banco de dados
+	EXEC SQL
+	DELETE apoio.StatusCorrespondencia
+	WHERE IdStatusCorrespondencia = :iIdStatusCorrespondencia;
+
+	// Remoção OK, seta ID do objeto para -1
+	iIdStatusCorrespondencia = -1;
+	
+    ULOG_END("CStatusCorrespondencia::exclui()");
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorExc:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CStatusCorrespondencia::exclui()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CStatusCorrespondencia::altera(){
+
+	ULOG_START("CStatusCorrespondencia::altera()");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        int iTemRegistro;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorAlt;
+
+    //Verificando se o registro existe
+	EXEC SQL SELECT count(1)
+               INTO :iTemRegistro
+               FROM apoio.StatusCorrespondencia
+              WHERE ( upper(dsstatus) = upper(:cDsStatus)
+                      OR upper(sgstatus) = upper(:cSgStatus) )
+                AND idstatuscorrespondencia != :iIdStatusCorrespondencia;;
+
+    if (iTemRegistro)
+        return DUPLICATE_KEY;
+
+
+    // Quando esse campo for igual 0 não inserir coluna
+    if ( iIdProximoStatus )
+	    // Altera no banco de dados para os dados atuais
+	    EXEC SQL
+	    UPDATE apoio.StatusCorrespondencia
+	    SET
+	     SgStatus = :cSgStatus:icSgStatus,
+	     DsStatus = :cDsStatus:icDsStatus,
+	     QtDiasValido = :iQtDiasValido:iiQtDiasValido,
+	     IdProximoStatus = :iIdProximoStatus:iiIdProximoStatus,
+		 InDisponibilidade = :iInDisponibilidade,
+	     IdUsuarioAlteracao = :sIdUsuarioAlteracao,
+	     DtUltimaAlteracao = SYSDATE
+	    WHERE
+	     IdStatusCorrespondencia = :iIdStatusCorrespondencia;
+    else
+	    // Altera no banco de dados para os dados atuais
+	    EXEC SQL
+	    UPDATE apoio.StatusCorrespondencia
+	    SET
+	     SgStatus = :cSgStatus:icSgStatus,
+	     DsStatus = :cDsStatus:icDsStatus,
+	     QtDiasValido = :iQtDiasValido:iiQtDiasValido,
+		 InDisponibilidade = :iInDisponibilidade,
+	     IdUsuarioAlteracao = :sIdUsuarioAlteracao,
+	     DtUltimaAlteracao = SYSDATE
+	    WHERE
+	     IdStatusCorrespondencia = :iIdStatusCorrespondencia;
+
+	ULOG_END("CStatusCorrespondencia::altera()");
+	return OK;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorAlt:
+    {
+        // Tratamento de qq tipo de chave duplicada (PK ou AK)
+        if (sqlca.sqlcode == DUPLICATE_KEY )
+        {
+           ULOGE("ERRO ORACLE -> DUPLICATE_KEY");
+           ULOG_END("CStatusCorrespondencia::inclui()");
+           return DUPLICATE_KEY;
+        }
+           
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CStatusCorrespondencia::altera()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+    }
+}
+
+
+CStatusCorrespondencia* CStatusCorrespondencia::lista(int* iNroObjetos){
+
+    ULOG_START("CStatusCorrespondencia::lista()");
+	struct sqlca sqlca;
+	CStatusCorrespondencia* listaStatCorr = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdStatCorr;
+	char cSgStatCorr[256];
+	char cDsStatCorr[256];
+	int iQtDiasVal;
+	int iIdProx;
+	int iDisp;
+	short icSgStatCorr;
+	short icDsStatCorr;
+	short iiQtDiasVal;
+	short iiIdProx;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE status CURSOR FOR
+	SELECT
+	 IdStatusCorrespondencia,
+	 SgStatus,
+	 DsStatus,
+	 QtDiasValido,
+	 IdProximoStatus,
+	 InDisponibilidade
+	FROM
+	 apoio.StatusCorrespondencia;
+	EXEC SQL OPEN status;
+
+	// Corre os dados e monta a lista de objetos
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) {
+		
+		EXEC SQL FETCH status INTO
+		 :iIdStatCorr,
+		 :cSgStatCorr:icSgStatCorr,
+		 :cDsStatCorr:icDsStatCorr,
+		 :iQtDiasVal:iiQtDiasVal,
+		 :iIdProx:iiIdProx,
+		 :iDisp;
+
+		// Aloca memória para o objeto atual.
+		if ((listaStatCorr = (CStatusCorrespondencia*) realloc((void *)listaStatCorr, (sizeof(CStatusCorrespondencia) * iNroObjLocal))) != NULL) {
+			
+			// Coloca os dados do objeto atual.
+            int index = iNroObjLocal-1;
+			listaStatCorr[index].setIdStatusCorrespondencia(iIdStatCorr);
+			listaStatCorr[index].setSgStatus(icSgStatCorr < 0 ? NULL : cSgStatCorr);
+			listaStatCorr[index].setDsStatus(icDsStatCorr < 0 ? NULL : cDsStatCorr);
+			listaStatCorr[index].setQtDiasValido(iiQtDiasVal < 0 ? NULL : &iQtDiasVal);
+			listaStatCorr[index].setIdProximoStatus(iiIdProx < 0 ? NULL : &iIdProx);
+			listaStatCorr[index].setInDisponibilidade(iDisp);
+
+		} else {
+			if (listaStatCorr)
+				free(listaStatCorr);
+				
+			
+			ULOG_END("CStatusCorrespondencia::lista()");
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG_END("CStatusCorrespondencia::lista()");
+	return listaStatCorr;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CStatusCorrespondencia::lista()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+CStatusCorrespondencia* CStatusCorrespondencia::listaComUnidades(int* iNroObjetos){
+
+	ULOG_START("CStatusCorrespondencia::listaComUnidades()");
+	struct sqlca sqlca;
+
+	CStatusCorrespondencia* poListaStatus = NULL;
+	int iNroObjLocal = 0;
+	int iIdStatusControle = -1;
+	int iUnidadesNoStatus = 0;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdStatCorr;
+	char cSgStatCorr[256];
+	char cDsStatCorr[256];
+	int iQtDiasVal;
+	int iIdProx;
+	int iDisp;
+	int iIdUnidade;
+	char cNmUnidade[256];
+	short icSgStatCorr;
+	short icDsStatCorr;
+	short iiQtDiasVal;
+	short iiIdProx;
+	short iiIdUnidade;
+	short icNmUnidade;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorListaComUnidades;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE cStatFull CURSOR FOR
+		SELECT
+		 IdStatusCorrespondencia,
+		 SgStatus,
+		 DsStatus,
+		 QtDiasValido,
+		 IdProximoStatus,
+		 InDisponibilidade,
+		 IdUnidade,
+		 NmUnidade
+		FROM
+		 Correspondencia.CorrStatUnidadeV01
+		ORDER BY 1;
+
+	EXEC SQL OPEN cStatFull;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;;) 
+    {
+		
+		EXEC SQL FETCH cStatFull INTO
+		 :iIdStatCorr,
+		 :cSgStatCorr:icSgStatCorr,
+		 :cDsStatCorr:icDsStatCorr,
+		 :iQtDiasVal:iiQtDiasVal,
+		 :iIdProx:iiIdProx,
+		 :iDisp,
+		 :iIdUnidade:iiIdUnidade,
+		 :cNmUnidade:icNmUnidade;
+
+        sprintf(szAuxLog, "iIdStatCorr(%d)", iIdStatCorr); ULOG(szAuxLog);
+        sprintf(szAuxLog, "iIdStatusControle(%d)", iIdStatusControle); ULOG(szAuxLog);
+		// Checa se ainda é o mesmo assunto
+		if (iIdStatCorr == iIdStatusControle) {
+			CUnidade* poUnidade = NULL;
+            int index = iNroObjLocal-1;
+            int index1 = iUnidadesNoStatus;
+            sprintf(szAuxLog, "A.index(%d)", index); ULOG(szAuxLog);
+            sprintf(szAuxLog, "A.index1(%d)", index1); ULOG(szAuxLog);
+
+			iUnidadesNoStatus++;
+            sprintf(szAuxLog, "iUnidadesNoStatus(%d)", iUnidadesNoStatus); ULOG(szAuxLog);
+
+			poUnidade = poListaStatus[index].getUnidades();
+			if ((poUnidade = (CUnidade*) realloc((void *)poUnidade, (sizeof(CUnidade) * iUnidadesNoStatus))) != NULL) {
+				// Coloca os dados do objeto atual.
+				poUnidade[index1].setIdUnidade(iIdUnidade);
+				poUnidade[index1].setNmUnidade(cNmUnidade);
+
+				poListaStatus[index].setUnidades(poUnidade);
+				poListaStatus[index].setNrUnidades(iUnidadesNoStatus);
+			} else {
+				ERROR(NRO_MEMORIA);
+				
+				ULOG_END("CStatusCorrespondencia::listaComUnidades()");
+				throw new TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+			}
+		} else {
+			// Aloca memória para o objeto atual.
+			iNroObjLocal++;
+            sprintf(szAuxLog, "iNroObjLocal(%d)", iNroObjLocal); ULOG(szAuxLog);
+
+			if ((poListaStatus = (CStatusCorrespondencia*) realloc((void *)poListaStatus, (sizeof(CStatusCorrespondencia) * iNroObjLocal))) != NULL) {
+				iIdStatusControle = iIdStatCorr;
+                int index = iNroObjLocal-1;
+                sprintf(szAuxLog, "B.index(%d)", index); ULOG(szAuxLog);
+
+				poListaStatus[index].setIdStatusCorrespondencia(iIdStatCorr);
+				poListaStatus[index].setSgStatus(icSgStatCorr < 0 ? NULL : cSgStatCorr);
+				poListaStatus[index].setDsStatus(icDsStatCorr < 0 ? NULL : cDsStatCorr);
+				poListaStatus[index].setQtDiasValido(iiQtDiasVal < 0 ? NULL : &iQtDiasVal);
+				poListaStatus[index].setIdProximoStatus(iiIdProx < 0 ? NULL : &iIdProx);
+				poListaStatus[index].setInDisponibilidade(iDisp);
+
+                sprintf(szAuxLog, "iiIdUnidade(%d)", iiIdUnidade); ULOG(szAuxLog);
+				if(iiIdUnidade >= 0) {
+					// Monta novo objeto de lista de subassuntos.
+					CUnidade* poUnidade;
+					poUnidade = (CUnidade*) malloc(sizeof(CUnidade));
+                    sprintf(szAuxLog, "iIdUnidade(%d)", iIdUnidade); ULOG(szAuxLog);
+					poUnidade->setIdUnidade(iIdUnidade);
+                    sprintf(szAuxLog, "cNmUnidade[%s]", cNmUnidade); ULOG(szAuxLog);
+					poUnidade->setNmUnidade(cNmUnidade);
+					iUnidadesNoStatus = 1;
+					poListaStatus[index].setUnidades(poUnidade);
+					poListaStatus[index].setNrUnidades(iUnidadesNoStatus);
+				} 
+                else
+                {
+					poListaStatus[index].setUnidades(NULL);
+					poListaStatus[index].setNrUnidades(0);
+                }
+			} else {
+				if (poListaStatus)
+					free(poListaStatus);
+					
+				ERROR(NRO_MEMORIA);
+				
+				ULOG_END("CStatusCorrespondencia::listaComUnidades()");
+				throw new TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+			}
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal;
+	ULOG_END("CStatusCorrespondencia::listaComUnidades()");
+	return poListaStatus;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorListaComUnidades:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CStatusCorrespondencia::listaComUnidades()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CStatusCorrespondencia::checaExclusaoPossivel() {
+
+	ULOG_START("CStatusCorrespondencia::checaExclusaoPossivel()");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iQtReg;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorChecaExc;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	// Conta os elementos
+	EXEC SQL
+		SELECT 
+		 count(1)
+		INTO
+		 :iQtReg
+		FROM
+		 Correspondencia.HistoricoStatus
+		WHERE
+		 idStatusCorrespondencia = :iIdStatusCorrespondencia;
+
+	ULOG_END("CStatusCorrespondencia::checaExclusaoPossivel()");
+	return iQtReg;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorChecaExc:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CStatusCorrespondencia::checaExclusaoPossivel()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CStatusCorrespondencia::getIdStatusAberto() {
+	return 1;
+}
+
+int CStatusCorrespondencia::getIdStatusEncerrado() {
+	return 6;
+}
+
+
+CStatusCorrespondencia* CStatusCorrespondencia::listaPorTipoUnidade(int* iNroObjetos, char* pTpUnid){
+
+	ULOG_START("CStatusCorrespondencia::listaPorTipoUnidade()");
+	struct sqlca sqlca;
+	CStatusCorrespondencia* listaStatCorr = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+    char *pOraTpUnidade = pTpUnid;
+	int iIdStatCorr;
+	char cSgStatCorr[256];
+	char cDsStatCorr[256];
+	int iQtDiasVal;
+	int iIdProx;
+	int iDisp;
+	short icSgStatCorr;
+	short icDsStatCorr;
+	short iiQtDiasVal;
+	short iiIdProx;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorListaPorTipoUnidade;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE cPorTipoUnidade CURSOR FOR
+	SELECT
+	    STATUSCORRESPONDENCIA.IDSTATUSCORRESPONDENCIA,
+	    STATUSCORRESPONDENCIA.SGSTATUS,
+	    STATUSCORRESPONDENCIA.DSSTATUS,
+	    STATUSCORRESPONDENCIA.QTDIASVALIDO,
+	    STATUSCORRESPONDENCIA.IDPROXIMOSTATUS,
+	    STATUSCORRESPONDENCIA.INDISPONIBILIDADE
+	FROM 
+	    APOIO.STATUSCORRESPONDENCIA STATUSCORRESPONDENCIA,
+	    CORRESPONDENCIA.STATUSUNIDADE STATUSUNIDADE,
+	    ACESSO.UNIDADE UNIDADE
+	WHERE STATUSUNIDADE.IDUNIDADE = UNIDADE.IDUNIDADE
+	AND   STATUSUNIDADE.IDSTATUSCORRESPONDENCIA = STATUSCORRESPONDENCIA.IDSTATUSCORRESPONDENCIA
+	AND   UNIDADE.CDUNIDADE = :pOraTpUnidade;
+
+	EXEC SQL OPEN cPorTipoUnidade;
+
+	// Corre os dados e monta a lista de objetos
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) {
+		
+		EXEC SQL 
+		FETCH 
+			cPorTipoUnidade 
+		INTO
+			:iIdStatCorr,
+			:cSgStatCorr:icSgStatCorr,
+			:cDsStatCorr:icDsStatCorr,
+			:iQtDiasVal:iiQtDiasVal,
+			:iIdProx:iiIdProx,
+			:iDisp;
+
+		// Aloca memória para o objeto atual.
+		if ((listaStatCorr = (CStatusCorrespondencia*) realloc((void *)listaStatCorr, (sizeof(CStatusCorrespondencia) * iNroObjLocal))) != NULL) {
+			
+			// Coloca os dados do objeto atual.
+            int index = iNroObjLocal-1;
+			listaStatCorr[index].setIdStatusCorrespondencia(iIdStatCorr);
+			listaStatCorr[index].setSgStatus(icSgStatCorr < 0 ? NULL : cSgStatCorr);
+			listaStatCorr[index].setDsStatus(icDsStatCorr < 0 ? NULL : cDsStatCorr);
+			listaStatCorr[index].setQtDiasValido(iiQtDiasVal < 0 ? NULL : &iQtDiasVal);
+			listaStatCorr[index].setIdProximoStatus(iiIdProx < 0 ? NULL : &iIdProx);
+			listaStatCorr[index].setInDisponibilidade(iDisp);
+
+		} else {
+			if (listaStatCorr)
+				free(listaStatCorr);
+            EXEC SQL CLOSE cPorTipoUnidade;
+            ULOG_END("CStatusCorrespondencia::listaPorTipoUnidade()");
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG_END("CStatusCorrespondencia::listaPorTipoUnidade()");
+	return listaStatCorr;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorListaPorTipoUnidade:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CStatusCorrespondencia::listaPorTipoUnidade()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

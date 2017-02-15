@@ -1,0 +1,202 @@
+#include "CreatorPlugInBE.h"
+
+#include <tuxfw.h>
+#include "../../PlugInBE/include/Util.h"
+
+#include <sqlca.h>
+
+#include <cstring>
+
+using namespace std;
+
+
+// Faz uma consulta no banco de dados para saber qual o sistema legado a consultar
+int CreatorPlugInBE::chooseSystem(char* pcLinha, char* pcIdLinhaSisOrig, int iIdLinhaSisOrigLen,char*sgSistemaOrigem)
+{
+	tuxfw_getlogger()->debug("CreatorPlugInBE::chooseSystem");
+
+	// Alteração para assumir ATLYS se a linha nao for passada.
+	if ((pcLinha == NULL) || (*pcLinha == '\0'))
+	{
+		memset(pcIdLinhaSisOrig, '\0', iIdLinhaSisOrigLen);
+		strcpy(sgSistemaOrigem,"ATY");
+		return ATLYS;
+	}
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int  iOraIdSisOrg;
+		char vcOraDDD[3];
+		char vcOraNrFone[10];
+		char vcOraIdLinhaSisOrig[256];
+		char vcOraSgSistemaOrigem[256];
+	EXEC SQL END DECLARE SECTION;
+
+
+	memset(vcOraDDD, '\0', sizeof(vcOraDDD));
+	memset(vcOraNrFone, '\0', sizeof(vcOraNrFone));
+	memset(vcOraIdLinhaSisOrig, '\0', sizeof(vcOraIdLinhaSisOrig));
+	memset(vcOraSgSistemaOrigem,'\0',sizeof(vcOraSgSistemaOrigem));
+
+	sprintf( vcOraDDD, "%.2s", pcLinha );
+	sprintf(vcOraNrFone, "%s", (char*)&pcLinha[2] );
+	
+	
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+
+	// Faz a consulta no banco de dados
+	EXEC SQL
+		SELECT
+			lin.idSistemaOrigem, lin.idLinhaSistemaOrigem,
+			sistemaorigem.sgsistemaorigem
+		INTO
+			:iOraIdSisOrg,
+			:vcOraIdLinhaSisOrig,
+			:vcOraSgSistemaOrigem
+		FROM 
+			linha.linhabase  linB,
+			linha.linhatelefonica  lin,
+			apoio.arearegistro  areaReg,
+			apoio.sistemaorigem  sistemaorigem
+		WHERE
+			linB.idlinhabase = lin.idlinhabase
+			AND
+			linB.idarearegistro = areaReg.idarearegistro
+			AND
+			sistemaorigem.idsistemaorigem = lin.idsistemaorigem
+			AND
+			linB.nrLinha = :vcOraNrFone
+			AND
+			areaReg.cdAreaRegistro = :vcOraDDD;
+
+
+	Util::trim(vcOraIdLinhaSisOrig);
+	Util::trim(vcOraSgSistemaOrigem);
+
+	if (strlen(vcOraIdLinhaSisOrig) < iIdLinhaSisOrigLen)
+	{
+		tuxfw_getlogger()->debug("idLinhaSistemaOrigem: %s", vcOraIdLinhaSisOrig);
+
+		strcpy(pcIdLinhaSisOrig, vcOraIdLinhaSisOrig);
+		strcpy(sgSistemaOrigem, vcOraSgSistemaOrigem);
+	}
+	else
+		return SYS_NOT_SUPORTED;
+
+
+	tuxfw_getlogger()->debug("idSistemaOrigem: %i %s", iOraIdSisOrg,sgSistemaOrigem);
+
+	return iOraIdSisOrg;
+
+
+	OraNoDataFound:
+		return SYS_NOT_FOUND;
+
+	OraException:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+int CreatorPlugInBE::getDadosLinha(char* pcLinha, char* pcIdLinhaSisOrig, int iIdLinhaSisOrigLen,char*sgSistemaOrigem, char* pcIdLinhaControle, char* sgTipoLinha)
+{
+	tuxfw_getlogger()->debug("CreatorPlugInBE::getDadosLinha");
+
+	// Alteração para assumir ATLYS se a linha nao for passada.
+	if ((pcLinha == NULL) || (*pcLinha == '\0'))
+	{
+		memset(pcIdLinhaSisOrig, '\0', iIdLinhaSisOrigLen);
+		strcpy(sgSistemaOrigem,"ATY");
+		return ATLYS;
+	}
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int  iOraIdSisOrg;
+		char vcOraDDD[3];
+		char vcOraNrFone[10];
+		char vcOraIdLinhaSisOrig[256];
+		char vcOraSgSistemaOrigem[256];
+		char vcOraIdLinhaControle[256];
+		char vcOraSgTipoLinha[256];
+	EXEC SQL END DECLARE SECTION;
+
+
+	memset(vcOraDDD, '\0', sizeof(vcOraDDD));
+	memset(vcOraNrFone, '\0', sizeof(vcOraNrFone));
+	memset(vcOraIdLinhaSisOrig, '\0', sizeof(vcOraIdLinhaSisOrig));
+	memset(vcOraSgSistemaOrigem,'\0',sizeof(vcOraSgSistemaOrigem));
+	memset(vcOraIdLinhaControle,'\0',sizeof(vcOraIdLinhaControle));
+	memset(vcOraSgTipoLinha,'\0',sizeof(vcOraSgTipoLinha));
+
+	sprintf( vcOraDDD, "%.2s", pcLinha );
+	sprintf( vcOraNrFone, "%s", (char*)&pcLinha[2] );
+	
+	
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+
+	// Faz a consulta no banco de dados
+	EXEC SQL
+		SELECT
+			LINHATELEFONICA.IDSISTEMAORIGEM, 
+			LINHATELEFONICA.IDLINHASISTEMAORIGEM,
+			SISTEMAORIGEM.SGSISTEMAORIGEM,
+			NVL(LINHABASE.IDLINHACONTROLE,' ') AS IDLINHACONTROLE,
+			TIPOLINHA.SGTIPOLINHA
+		INTO
+			:iOraIdSisOrg,
+			:vcOraIdLinhaSisOrig,
+			:vcOraSgSistemaOrigem,
+			:vcOraIdLinhaControle,
+			:vcOraSgTipoLinha
+		FROM 
+			LINHA.LINHABASE LINHABASE,
+			LINHA.LINHATELEFONICA LINHATELEFONICA,
+			APOIO.AREAREGISTRO AREAREGISTRO,
+			APOIO.SISTEMAORIGEM SISTEMAORIGEM,
+			APOIO.TIPOLINHA TIPOLINHA
+		WHERE
+			LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE
+			AND LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+			AND SISTEMAORIGEM.IDSISTEMAORIGEM = LINHATELEFONICA.IDSISTEMAORIGEM
+			AND LINHATELEFONICA.IDTIPOLINHA = TIPOLINHA.IDTIPOLINHA
+			AND LINHABASE.NRLINHA = :vcOraNrFone
+			AND AREAREGISTRO.CDAREAREGISTRO = :vcOraDDD;
+
+
+	Util::trim(vcOraIdLinhaSisOrig);
+	Util::trim(vcOraSgSistemaOrigem);
+	Util::trim(vcOraIdLinhaControle);
+	Util::trim(vcOraSgTipoLinha);
+
+	if (strlen(vcOraIdLinhaSisOrig) < iIdLinhaSisOrigLen)
+	{
+		tuxfw_getlogger()->debug("idLinhaSistemaOrigem: %s", vcOraIdLinhaSisOrig);
+
+		strcpy(pcIdLinhaSisOrig, vcOraIdLinhaSisOrig);
+		strcpy(sgSistemaOrigem, vcOraSgSistemaOrigem);
+		strcpy(pcIdLinhaControle,vcOraIdLinhaControle);
+		strcpy(sgTipoLinha,vcOraSgTipoLinha);
+	}
+	else
+		return SYS_NOT_SUPORTED;
+
+
+	tuxfw_getlogger()->debug("idSistemaOrigem: %i %s idlinhacontrole=%s sgtipolinha=%s", iOraIdSisOrg,sgSistemaOrigem,pcIdLinhaControle,sgTipoLinha);
+
+	return iOraIdSisOrg;
+
+
+	OraNoDataFound:
+		return SYS_NOT_FOUND;
+
+	OraException:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

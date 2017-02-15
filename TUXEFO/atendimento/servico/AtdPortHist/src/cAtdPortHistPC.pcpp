@@ -1,0 +1,189 @@
+
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <tuxfw.h>
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include<ctype.h>
+
+
+
+#include "../../../commons/SmallString.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+
+void sqlError(sqlca*sqlca);
+
+
+
+bool proCConsultaHistPortabilidade( char * s_cdAreaPrm, char * s_nrLinhaPrm, XMLGen * saida )
+{
+    ULOG_START( "proCConsultaHistPortabilidade()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+    char sProtocolo[40];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char sCdAreaRegistro[5];
+        char sNrLinha[16];
+        char sNrLinhaContato[16];
+
+        VARCHAR nrProtocoloPortabilidade[40];
+        VARCHAR sgTipoPortabilidade[256];
+        VARCHAR dtabertura[32];
+        VARCHAR sgOperadoraSolicitante[256];
+        VARCHAR dtJanelaPortout[32];
+        VARCHAR Estado[256];
+        VARCHAR dtLabel[32];
+        VARCHAR sObservacao[256];
+
+        short i_nrProtocoloPortabilidade = -1;
+        short i_sgTipoPortabilidade = -1;
+        short i_dtabertura = -1;
+        short i_sgOperadoraSolicitante = -1;
+        short i_dtJanelaPortout = -1;
+        short i_Estado = -1;
+        short i_dtLabel = -1;
+        short i_sObservacao = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memset( sCdAreaRegistro, 0x0, sizeof(sCdAreaRegistro) );
+    memset( sNrLinha, 0x0, sizeof(sNrLinha) );
+    memset( sNrLinhaContato, 0x0, sizeof(sNrLinhaContato) );
+    strcpy( sCdAreaRegistro, s_cdAreaPrm );
+    strcpy( sNrLinha, s_nrLinhaPrm );
+    sprintf( sNrLinhaContato, "%s%s", s_cdAreaPrm, s_nrLinhaPrm );
+
+
+    EXEC SQL WHENEVER SQLERROR  DO sqlError( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    /*
+    EXEC SQL DECLARE crsrHistoricoProtocolo CURSOR FOR
+    SELECT distinct
+           atendimento.nrprotocoloportabilidade nrprotocoloportabilidade,
+           atendimento.sgtipoportabilidade sgtipoportabilidade,
+           TO_CHAR (atendimento.dtabertura, 'DD/MM/YYYY HH:MM') dtabertura,
+           atendimento.sgoperadorasolicitante sgoperadorasolicitante,
+           TO_CHAR (atendimento.dtjanelaportout,
+                    'DD/MM/YYYY HH:MM'
+                   ) dtjanelaportout,
+           PESSOAPORTABILIDADEHIST.DSACAOPORTABILIDADE Estado,
+           TO_CHAR (atendimento.dtabertura, 'DD/MM/YYYY HH:MM') dtLabel,
+           atendimentoobservacao.dsobservacao dsobservacao
+      FROM atendimento.atendimento atendimento,
+           atendimento.atendimentoobservacao atendimentoobservacao,
+           CUSTOMER.PESSOAPORTABILIDADEHIST PESSOAPORTABILIDADEHIST
+     WHERE atendimento.idatendimento = atendimentoobservacao.idatendimento
+     and PESSOAPORTABILIDADEHIST.CDAREAREGISTRO = :sCdAreaRegistro
+     and PESSOAPORTABILIDADEHIST.NRLINHA = :sNrLinha
+     and atendimento.idatendimento in
+     (
+    SELECT idatendimento
+      FROM atendimento.atendimentocontato
+     WHERE cdarearegistro = :sCdAreaRegistro AND nrtelefonecontato = :sNrLinhaContato
+     )
+     and atendimento.nrprotocoloportabilidade is not null;
+     */
+     
+
+    EXEC SQL DECLARE crsrHistoricoProtocolo CURSOR FOR
+    SELECT 
+       pessoaportabilidadehist.nrprotocoloportabilidade nrprotocoloportabilidade,
+       pessoaportabilidadehist.sgtipoportabilidade sgtipoportabilidade,
+       TO_CHAR (pessoaportabilidadehist.dtultimaalteracao,'DD/MM/YYYY HH24:MI') dtabertura,
+       pessoaportabilidadehist.sgoperadorasolicitante sgoperadorasolicitante,
+       TO_CHAR (pessoaportabilidadehist.dtjanelaportout,'DD/MM/YYYY HH24:MI') dtjanelaportout,
+       pessoaportabilidadehist.dsacaoportabilidade estado,
+       TO_CHAR (pessoaportabilidadehist.dtultimaalteracao,'DD/MM/YYYY HH24:MI') dtlabel,
+       pessoaportabilidadehist.dsobservacao dsobservacao
+    FROM 
+       customer.pessoaportabilidadehist pessoaportabilidadehist
+    WHERE 
+       pessoaportabilidadehist.cdarearegistro = :sCdAreaRegistro
+    AND 
+       pessoaportabilidadehist.nrlinha = :sNrLinha
+    AND
+       UPPER(pessoaportabilidadehist.dsacaoportabilidade) IN (UPPER('Aguardando Autorização'),UPPER('Aguardando Janela'),UPPER('Processando Autorização'),
+                  UPPER('Em Processo'),UPPER('Processando Estorno'),UPPER('Autorização Negada'),UPPER('Aguardando Habilitação com Autorização'),
+                  UPPER('Cancelamento Solicitado'),UPPER('Estornado'),UPPER('Reagendamento Solicitado'),UPPER('Pendente Favoritos'),
+                  UPPER('Concluído'),UPPER('Estorno Negado'),UPPER('Cancelado'),UPPER('Pendente Retorno'),UPPER('Analise de Fraude'),
+                  UPPER('Aguardando Habilitação'),UPPER('Aguardando Habilitação com Autorização Negada'),UPPER('Desconexão Cancelada'),
+                  UPPER('Aguardando Habilitação com Autorização Negada - LV'),UPPER('Reagendamento Automático'),UPPER('Retenção') )
+    ORDER BY pessoaportabilidadehist.dtultimaalteracao;
+
+    EXEC SQL OPEN crsrHistoricoProtocolo;
+
+
+    saida->createTag("PortabilidadeVO");
+    saida->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+
+    int ct = 0;
+    while (true)
+    {
+        EXEC SQL FETCH crsrHistoricoProtocolo INTO  :nrProtocoloPortabilidade:i_nrProtocoloPortabilidade ,
+                                                    :sgTipoPortabilidade:i_sgTipoPortabilidade ,
+                                                    :dtabertura:i_dtabertura ,
+                                                    :sgOperadoraSolicitante:i_sgOperadoraSolicitante ,
+                                                    :dtJanelaPortout:i_dtJanelaPortout ,
+                                                    :Estado:i_Estado ,
+                                                    :dtLabel:i_dtLabel ,
+                                                    :sObservacao:i_sObservacao ;
+            
+
+            CONVIND( nrProtocoloPortabilidade,i_nrProtocoloPortabilidade );
+            CONVIND( sgTipoPortabilidade,i_sgTipoPortabilidade );
+            CONVIND( dtabertura,i_dtabertura );
+            CONVIND( sgOperadoraSolicitante,i_sgOperadoraSolicitante );
+            CONVIND( dtJanelaPortout,i_dtJanelaPortout );
+            CONVIND( Estado,i_Estado );
+            CONVIND( dtLabel,i_dtLabel );
+            CONVIND( sObservacao,i_sObservacao );
+
+            if ( strcmp(sProtocolo,(char*)nrProtocoloPortabilidade.arr) )
+           	{
+           		strcpy( sProtocolo,(char*)nrProtocoloPortabilidade.arr );
+	            saida->addItem( "nrBilhetePortabilidade",(char*)nrProtocoloPortabilidade.arr );
+	            saida->addItem( "tpPortabilidade",(char*)sgTipoPortabilidade.arr );
+	            saida->addItem( "nmOperadora",(char*)sgOperadoraSolicitante.arr );
+	            saida->addItem( "dtSolicitacao",(char*)dtLabel.arr );
+	            saida->addItem( "dtJanela",(char*)dtJanelaPortout.arr );
+	        }   
+            saida->createTag("Historico");
+               saida->addItem( "idHistorico",ct++ );
+               saida->addItem( "dsEstado",(char*)Estado.arr );
+	            saida->addItem( "dtAbertura",(char*)dtLabel.arr );
+               saida->addItem( "dsObservacao",(char*)sObservacao.arr );
+		    saida->closeTag();
+
+    }
+    saida->closeTag();
+
+
+    EXEC SQL CLOSE crsrHistoricoProtocolo;
+
+    ULOG_END( "proCConsultaHistPortabilidade()" );
+
+    return true;
+}
+
+
+
+void sqlError( sqlca * sqlca )
+{
+    ULOGE("SqlError -> sqlcode=%d,sqlerrmc=%.70s",sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc);
+	throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

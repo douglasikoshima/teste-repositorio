@@ -1,0 +1,71 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <tuxfw.h>
+
+int ConsultaCanalGrupoSel( const char *whereClause,XMLGen *Saida )
+{
+   ULOG_START("ConsultaCanalGrupoSel()");
+	struct sqlca sqlca;
+	
+	int ret = 1 ;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR ORA_dsGrupo[256];
+		int     ORA_idGrupo;
+		int     ORA_where;
+	EXEC SQL END DECLARE SECTION;
+
+	sqlca.sqlcode=0;
+	
+
+   ORA_where = atoi( whereClause );
+   memset( (char *)ORA_dsGrupo.arr , 0x0 , sizeof(ORA_dsGrupo.arr) );
+
+   EXEC SQL DECLARE ReadCanalGrupoSel CURSOR FOR 
+      Select 
+         b.nmCanal, b.idCanal
+      From 
+         Contatoadm.CanalGrupo a,
+         Apoio.Canal           b
+      Where 
+         a.idCanal = b.idCanal 
+      AND 
+         a.idGrupo = :ORA_where
+      ORDER BY b.nmCanal;
+
+   EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+   EXEC SQL WHENEVER NOT FOUND DO break;
+   EXEC SQL OPEN ReadCanalGrupoSel;
+   
+	if( sqlca.sqlcode )
+		ret = 0;
+	else
+	{
+		for( ;; )
+		{
+		   EXEC SQL FETCH ReadCanalGrupoSel INTO :ORA_dsGrupo , :ORA_idGrupo;
+         Saida->createTag( "CanalVO" );
+            Saida->addProp( "xmlns","workflow.fo.vivo.com.br/vo" );
+            Saida->addItem( "idCanal",ORA_idGrupo );
+            ORA_dsGrupo.arr[ ORA_dsGrupo.len ] = 0x0;
+            Saida->addItem( "descricao",(char*)ORA_dsGrupo.arr );
+         Saida->closeTag();
+         memset( (char *)ORA_dsGrupo.arr , 0x0 , sizeof(ORA_dsGrupo.arr) );
+		}
+		EXEC SQL CLOSE ReadCanalGrupoSel;
+	}
+	
+	ULOG_END("ConsultaCanalGrupoSel()");
+	return ret ;
+
+UndefinedError:
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+
+}
+

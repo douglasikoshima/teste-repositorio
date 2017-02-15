@@ -1,0 +1,2902 @@
+/*****************************************************************************
+ *
+ * Modulo:    CImn
+ * Arquivo:   CImn.cpp
+ * Proposito: Funcao de Negocios 
+ * Historico:
+ * Data        Autor                 Descricao
+ * ----------  --------------------  -----------------------------------------
+ * 18/05/2004  C_RECOliveira         Criacao
+ * 18/05/2004  C_EDMartins           Criacao
+ *
+ ****************************************************************************/
+/**************************************************************************
+ * Notas:
+ *
+ **************************************************************************/
+
+/*****************************************************************************
+ * Definicao Global
+ ****************************************************************************/
+#define CImnCPP
+
+/*****************************************************************************
+ * Header
+ ****************************************************************************/
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+#include "CImn.h"
+#include "CSafePointer.h"
+
+char* CImn::RTrim(char *pszString)
+{
+    ULOG_START("CImn::RTrim()");
+    
+    int iLen;
+
+    iLen=strlen(pszString);
+
+    for(;;)
+    {
+        if(pszString[iLen-1] != ' ')
+            break;
+
+        iLen--;
+
+        if(iLen == 0)
+            break;
+    }
+    pszString[iLen] = 0x00;
+    
+    ULOG_END("CImn::RTrim()");
+	return pszString;
+}
+
+/**************************************************************************
+ * Classe:
+ **************************************************************************/ 
+int CImn::ImnMover(  char* cidItemMenu
+				    ,int   inMoveUp
+					,char* cLogUser )
+{
+	ULOG_START("CImn::ImnMover()");
+	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stidItemMenuPai[21+1];
+		short iRegidItemMen;
+		VARCHAR stidSubSistema[21+1];
+		short iidSubSistema;
+		VARCHAR  cRegidItemMen[21+1];
+		char* cAuxLogUser     = cLogUser;
+		char* cAuxidItemMenu  = cidItemMenu;
+		int   inMoverParaCima = 0;//default: para cima
+		int   inMoverParaCimaAux;
+		int   iCont;
+		int   iIntemMenuAtual = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	memset( &stidItemMenuPai, 0, sizeof( stidItemMenuPai ) );
+	memset( &stidSubSistema, 0, sizeof( stidSubSistema ) );
+	if( strlennull( cidItemMenu ) <= 0 )
+	{
+		ULOG_END("CImn::ImnMover( )");
+		return 1;
+	}
+
+	if( strlennull( cLogUser ) <= 0 )
+	{
+	    ULOG_END("CImn::ImnMover( )");
+	    return 2;
+	}
+
+	if( inMoveUp <= 0 )
+	{
+		inMoverParaCima = 1;//Dependendo do parametro de entrada, muda para baixo
+	}
+	
+	sqlca.sqlcode=0;
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	//Recupera o id do pai
+	EXEC SQL
+		SELECT
+			IDITEMMENUPAI,
+			IDSUBSISTEMA
+		INTO
+			:stidItemMenuPai:iRegidItemMen,
+			:stidSubSistema:iidSubSistema
+		FROM
+			ACESSO.ITEMMENUHIERARQUIAV01
+		WHERE
+			IDITEMMENU = :cAuxidItemMenu;
+
+	//Verifica se tem pai, se nao tem, entao eh raiz, ai nao faz nada, mas nao da erro
+	//Apenas warning
+	if( stidItemMenuPai.len <= 0 )
+	{
+	    ULOG_END("CImn::ImnMover(  )");
+		return 3;
+	}
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	//Crusor para recuperar todos os itens do mesmo nivel
+	EXEC SQL
+		DECLARE 
+			CursorImnMover CURSOR FOR
+		SELECT 
+			IDITEMMENU
+		FROM
+		(
+			SELECT 
+				ITEMMENUHIERARQUIAV01.IDITEMMENU,
+				ITEMMENUHIERARQUIAV01.SQAPRESENTACAO,
+                LEVEL NIVEL
+			FROM 
+				ACESSO.ITEMMENUHIERARQUIAV01
+			WHERE 
+				ITEMMENUHIERARQUIAV01.IDSUBSISTEMA = :stidSubSistema
+			START WITH 
+				ACESSO.ITEMMENUHIERARQUIAV01.IDITEMMENUPAI = :stidItemMenuPai
+			CONNECT BY 
+				ACESSO.ITEMMENUHIERARQUIAV01.IDITEMMENUPAI = PRIOR ACESSO.ITEMMENUHIERARQUIAV01.IDITEMMENU
+		)
+        WHERE
+            NIVEL <= 1
+		ORDER BY 
+			SQAPRESENTACAO;
+
+	EXEC SQL OPEN CursorImnMover;
+	
+	//Recupera todos os itens do mesmo nivel que o item passado como paramentro
+	//E re-ordena, para garantir a integridade
+	for(iCont = 0;;iCont++)
+	{
+		memset( &cRegidItemMen, 0, sizeof( cRegidItemMen ) );
+		EXEC SQL FETCH CursorImnMover INTO :cRegidItemMen:iRegidItemMen;
+		if( strcmp( (char*)cRegidItemMen.arr, cAuxidItemMenu ) == 0 )
+			iIntemMenuAtual = iCont;//Salva a posicao
+		Add( (char*)cRegidItemMen.arr
+			,iCont );
+	}
+	EXEC SQL CLOSE CursorImnMover;
+
+	if( Quantidade() <= 1 )
+	{
+	    ULOG_END("CImn::ImnMover()");
+		return 4;//Nao ha registros para relizar as modificacoes de posicoes
+	}
+
+//	if( ( iIntemMenuAtual == Quantidade() ) && ( !inMoverParaCima ) )
+//	{
+//	}
+//	if( ( iIntemMenuAtual == 0 ) && ( inMoverParaCima ) )
+//	{
+//	}
+//	else
+	if( !( ( ( iIntemMenuAtual == (Quantidade()-1) ) && ( inMoverParaCima ) ) 
+	    || ( ( iIntemMenuAtual == 0 ) && ( !inMoverParaCima ) ) ) )
+	{
+		//Troca a numeracao, dependendo da escolha
+		if( !inMoverParaCima )
+			inMoverParaCima = -1;
+		Registro(iIntemMenuAtual)->isqApresentacao = Registro(iIntemMenuAtual)->isqApresentacao + inMoverParaCima;
+		inMoverParaCimaAux = inMoverParaCima*(-1);
+		Registro(iIntemMenuAtual+inMoverParaCima)->isqApresentacao = Registro(iIntemMenuAtual)->isqApresentacao + inMoverParaCimaAux;
+	}
+	else
+	{
+	    ULOG_END("CImn::ImnMover()");
+		return 5;
+	}
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	//Acerta todas as sequencias do mesmo nivel que o idPassado com parametro
+	for(iCont = 0;iCont < Quantidade();iCont++)
+	{
+		cAuxidItemMenu = Registro(iCont)->cidItemMenu;
+		iIntemMenuAtual = Registro(iCont)->isqApresentacao;
+
+		EXEC SQL 
+			UPDATE
+				ACESSO.ITEMMENU 
+			SET 	
+				SQAPRESENTACAO     = TO_NUMBER(:iIntemMenuAtual),
+				IDUSUARIOALTERACAO = :cAuxLogUser, 
+				DTULTIMAALTERACAO  =  SYSDATE
+			WHERE 	
+				IDITEMMENU = :cAuxidItemMenu;
+
+		AcertaPath( cAuxidItemMenu, cAuxLogUser );
+		
+	}
+	ULOG_END("CImn::ImnMover( )");
+	return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CImn::ImnRemover(DOMNode*dnode, 
+					 XMLGen*xml_g,
+				     char* cLogUser)
+{
+	ULOG_START("CImn::ImnRemover()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidItemMenu;
+		int   iCont = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	//Se o ID nao for numerico entao retornar com codigo de erro
+	cAuxidItemMenu = oSafePointer.getTag(dnode,"idItemMenu",0);
+	if( strlennull( cAuxidItemMenu ) <= 0 )
+	{
+	    ULOG_END("CImn::ImnRemover()");
+		return 1;
+	}
+
+	sqlca.sqlcode=0;
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	//Dado um item de menu, VERIFICA se eh uma raiz
+	EXEC SQL 
+		SELECT 
+			COUNT(ITEMMENUHIERARQUIA.IDITEMMENUPAI)
+		INTO
+			:iCont
+		FROM
+			ACESSO.ITEMMENU ITEMMENU,
+			ACESSO.ITEMMENUHIERARQUIA ITEMMENUHIERARQUIA
+		WHERE
+			ITEMMENU.IDITEMMENU = ITEMMENUHIERARQUIA.IDITEMMENU
+		AND
+			ITEMMENU.IDITEMMENU = :cAuxidItemMenu;
+
+	if( iCont <= 0 )
+	{
+	    ULOG_END("CImn::ImnRemover()");
+		return 2;//Warning, item eh raiz nao pode ser apagado
+	}
+
+	//Verifica se este item esta ou nao relacionada a algum grupo
+	EXEC SQL
+		SELECT
+			COUNT( IDITEMMENU )
+		INTO
+			:iCont
+		FROM
+			ACESSO.GRUPOITEMMENU
+		WHERE
+			IDITEMMENU = :cAuxidItemMenu;
+		
+	if( iCont > 0 )
+	{
+	    ULOG_END("CImn::ImnRemover()");
+		return 5;//Warning, item tem grupo relacionado
+	}
+
+	//Verifica se este item esta ou nao relacionada a algum usuario
+	EXEC SQL
+		SELECT
+			COUNT( IDITEMMENU )
+		INTO
+			:iCont
+		FROM
+			ACESSO.USUARIOITEMMENU
+		WHERE
+			IDITEMMENU = :cAuxidItemMenu;
+		
+	if( iCont > 0 )
+	{
+	    ULOG_END("CImn::ImnRemover()");
+		return 6;//Warning, item tem usuario relacionado
+	}
+
+	//Verifica se o item tem filhos
+	iCont = 0;
+	EXEC SQL
+		SELECT 
+			COUNT(ITEMMENUHIERARQUIA.IDITEMMENU)
+		INTO
+			:iCont
+		FROM 
+			ACESSO.ITEMMENUHIERARQUIA ITEMMENUHIERARQUIA
+		WHERE 
+			ITEMMENUHIERARQUIA.IDITEMMENUPAI = :cAuxidItemMenu;
+	if( iCont > 0 )
+	{
+	    ULOG_END("CImn::ImnRemover()");
+		return 3;//Warning, tem filhos nao pode ser apagada
+	}
+		
+	//Apaga a relacao com as paginas
+	EXEC SQL 
+		DELETE FROM 
+			ACESSO.ITEMMENUPAGINA 
+		WHERE 
+			IDITEMMENU = :cAuxidItemMenu;
+
+	//Apaga a relacao com a arvore
+	EXEC SQL 
+		DELETE FROM 
+			ACESSO.ITEMMENUHIERARQUIA 
+		WHERE 
+			IDITEMMENU = :cAuxidItemMenu;
+
+	//Apaga o item menu
+	EXEC SQL 
+		DELETE FROM 
+			ACESSO.ITEMMENU 
+		WHERE 
+			IDITEMMENU = :cAuxidItemMenu;
+
+	ULOG_END("CImn::ImnRemover()");
+	return 0;		
+	
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	if( sqlca.sqlcode == -2292 )
+	{
+	    ULOG_END("CImn::ImnRemover()");
+		return 4;
+	}
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CImn::ImnLista(DOMNode*dnode,XMLGen*xml_g)
+{
+	ULOG_START("CImn::ImnLista()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		struct Tstruct {
+			int idItemMenu; 
+			int idSubSistema; 
+			char cnmItem[256];
+			char vcdsHint[256];
+			int isqApresentacao;
+			int inVisibilidade; 
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidItemMenu, sidSubSistema, snmItem, sdsHint, ssqApresentacao, sinVisibilidade;
+		} tstructindicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct) );
+	
+		sqlca.sqlcode=0;
+		
+		EXEC SQL DECLARE tsqlcursor41 CURSOR FOR
+		SELECT idItemMenu, idSubsistema, nmItem, dsHint, sqApresentacao, inVisibilidade
+		FROM acesso.ItemMenu
+		ORDER BY nmItem;
+	
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		EXEC SQL OPEN tsqlcursor41;
+	
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CImn::ImnLista()");
+			return 4;
+		}
+		else
+		{
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			xml_g->createTag("ItemMenusUsuarioVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+			for(;;) {
+				EXEC SQL FETCH tsqlcursor41 INTO :tstruct INDICATOR :tstructindicator;
+				xml_g->createTag("ItemMenuUsuarioVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idItemMenu",tstruct.idItemMenu);
+				xml_g->addItem("idSubsistema",tstruct.idSubSistema);
+				xml_g->addItem("nmItem",tstruct.cnmItem);
+				xml_g->addItem("dsHint",tstruct.vcdsHint);
+				xml_g->addItem("sqApresentacao",tstruct.isqApresentacao);
+				xml_g->addItem("inVisibilidade",tstruct.inVisibilidade);
+				xml_g->closeTag();
+			}
+			EXEC SQL CLOSE tsqlcursor41;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CImn::ImnLista()");
+	return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CImn::ImnInserir(DOMNode*dnode,
+					 XMLGen*xml_g,
+				     char* cLogUser)
+{
+	ULOG_START("CImn::ImnInserir()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cLogUserOra = cLogUser;
+		VARCHAR stinVisibilidade[21+1];
+		int   iTemRaiz = 0;
+		int   iTemPai = 0;
+		int   iCont;
+		int   iFolha = 0;
+		struct 
+		{
+			VARCHAR stidItemMenuPagina[21+1];
+			VARCHAR stidItemMenu[21+1];
+			char cidSubSistema[21+1]; 
+			char cidItemMenuPai[21+1];
+			char cidPagina[21+1];
+			char cnmItem[255+1];
+			char cdsHint[255+1];
+			char csqApresentacao[21+1];
+			char cinVisibilidade[21+1];
+		} stItemMenuReg;
+
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		/************************************************************************
+		 * Processamento Principal
+		 ************************************************************************/
+		//Zera a estrutura
+		memset( &stItemMenuReg, 0, sizeof(stItemMenuReg) );
+
+		strcpy( stItemMenuReg.cnmItem, oSafePointer.getTag(dnode,"nmMenu",0) );
+		if ( strlen ( stItemMenuReg.cnmItem ) == 0 ) 
+		{
+	        ULOG_END("CImn::ImnInserir()");
+			return 1;
+	    }
+
+		strcpy( stItemMenuReg.cidSubSistema, oSafePointer.getTag( dnode, "idSubSistema", 0 ) );
+		if( strlen( stItemMenuReg.cidSubSistema ) == 0 )
+		{
+			ULOG_END("CImn::ImnInserir()");
+			return 2;
+		}
+
+		strcpy( stItemMenuReg.cdsHint, oSafePointer.getTag(dnode,"dsHint",0) );
+		if ( strlen ( stItemMenuReg.cdsHint ) == 0 ) 
+		{
+			ULOG_END("CImn::ImnInserir()");
+			return 3;
+		}
+
+		strcpy( stItemMenuReg.cinVisibilidade, oSafePointer.getTag( dnode, "inVisibilidade", 0 ) );
+		if( strlen( stItemMenuReg.cinVisibilidade ) == 0 )
+		{
+			ULOG_END("CImn::ImnInserir()");
+			return 4;
+		}
+
+		//Se for pai vem vazio
+		strcpy( stItemMenuReg.cidItemMenuPai, oSafePointer.getTag( dnode, "idItemMenuPai", 0) );
+		if( strlen( stItemMenuReg.cidItemMenuPai ) > 0 )
+			iTemPai = 1;
+
+		//Se for pasta vem vazio
+		strcpy( stItemMenuReg.cidPagina, oSafePointer.getTag( dnode, "idPagina", 0) );
+		strcpy( stItemMenuReg.csqApresentacao, "0" );
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Se nao vier um pai, entao tem que verificar se o ja eh raiz ou ja eh um item daquele subsistema
+		if( iTemPai == 0 )
+		{
+			EXEC SQL
+				SELECT COUNT(DISTINCT IDSUBSISTEMA)
+				  INTO :iTemRaiz
+				  FROM ACESSO.ITEMMENU ITEMMENU
+				 WHERE ITEMMENU.IDSUBSISTEMA = :stItemMenuReg.cidSubSistema AND
+					   ( ITEMMENU.IDITEMMENU NOT IN
+						 ( SELECT IDITEMMENU
+							 FROM ACESSO.ITEMMENUHIERARQUIA ITEMMENUHIERARQUIA
+							WHERE ITEMMENU.IDITEMMENU = ITEMMENUHIERARQUIA.IDITEMMENUPAI) 
+					   );
+			//Se for mair que zero, entao este subsistema ja tem raiz
+			if( iTemRaiz > 0 )
+			{
+			    ULOG_END("CImn::ImnInserir()");
+				return 5;
+			}
+		}
+		else
+		{
+			//Caso tenha id pai, tem que verificar se o pai nao eh uma folha
+			EXEC SQL
+				SELECT 
+					COUNT(IDITEMMENUPAGINA)
+				INTO
+					:iFolha
+				FROM 
+					ACESSO.ITEMMENUPAGINA 
+				WHERE 
+					IDITEMMENU = :stItemMenuReg.cidItemMenuPai;
+
+			//Verifica se eh folha, se for folha nao pode inserir
+			if( iFolha > 0 )
+				return 8;
+
+		}
+
+
+		//Se deu algum erro oracle, entao retorna
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CImn::ImnInserir()");
+			return 6; 
+		}
+		
+		//Verifica se o nome passado ja existe no mesmo nivel
+		EXEC SQL
+			SELECT 
+				 COUNT(IDITEMMENU)
+			INTO
+				:iCont
+			FROM
+			(
+				 SELECT 
+					   HIERARQUIA.IDITEMMENU
+					  ,HIERARQUIA.NMITEM
+					  ,LEVEL NIVEL
+					  ,IDSUBSISTEMA
+				 FROM 
+					  ACESSO.ITEMMENUHIERARQUIAV01 HIERARQUIA
+				 START WITH HIERARQUIA.IDITEMMENUPAI = :stItemMenuReg.cidItemMenuPai
+				 CONNECT BY HIERARQUIA.IDITEMMENUPAI = PRIOR HIERARQUIA.IDITEMMENU
+			)
+			WHERE
+				 NIVEL = 1
+			AND
+				UPPER(NMITEM) = UPPER(:stItemMenuReg.cnmItem)
+			AND
+				IDSUBSISTEMA = :stItemMenuReg.cidSubSistema;
+
+		//Caso existe o mesmo nome cadastrado, nao perminte, retorna em forma de warning
+		if( iCont > 0 )
+		{
+		    ULOG_END("CImn::ImnInserir()");
+			return 7;
+		}
+
+
+		//Verifica se tem pai, se tem pai, entao tem que cadastrar com uma certa sequencia
+		//que sera utilizada para ordenar a exibicao
+		if( iTemPai )
+		{
+			EXEC SQL
+				SELECT 
+					 COUNT(IDITEMMENU)
+				INTO
+					:iCont
+				FROM
+				(
+					 SELECT 
+						   HIERARQUIA.IDITEMMENU
+						  ,LEVEL NIVEL
+						  ,IDSUBSISTEMA
+					 FROM 
+						  ACESSO.ITEMMENUHIERARQUIAV01 HIERARQUIA
+					 START WITH HIERARQUIA.IDITEMMENUPAI = :stItemMenuReg.cidItemMenuPai
+					 CONNECT BY HIERARQUIA.IDITEMMENUPAI = PRIOR HIERARQUIA.IDITEMMENU
+				)
+				WHERE
+					 NIVEL = 1
+				AND
+					IDSUBSISTEMA = :stItemMenuReg.cidSubSistema;
+		}
+		else
+			iCont = 0;//Se eh raiz, a sequencia eh sempre zero
+
+		//Recupera a sequencia
+		EXEC SQL
+			SELECT 
+				ACESSO.ITEMMENUSQ.NEXTVAL
+			INTO 
+				:stItemMenuReg.stidItemMenu
+			FROM DUAL;
+
+		//Recupera a inVisibilidade do pai
+		EXEC SQL
+			SELECT
+				INVISIBILIDADE
+			INTO
+				:stinVisibilidade
+			FROM
+				ACESSO.ITEMMENU
+			WHERE
+				IDITEMMENU = :stItemMenuReg.cidItemMenuPai;
+
+		//Soh verifica se retornou algo
+		if( stinVisibilidade.len > 0 )
+		{
+			//Se o pai estiver indisponivel, tambem cria a folha indisponivel
+			if( strcmp( (char*)stinVisibilidade.arr, "1" ) != 0 )
+				strcpy( stItemMenuReg.cinVisibilidade, "0" );
+		}		
+		
+		//Insere o menu
+		EXEC SQL 
+			INSERT INTO ACESSO.ITEMMENU 
+			  ( IDITEMMENU, 
+				IDSUBSISTEMA, 
+				NMITEM, 
+				DSHINT, 
+				SQAPRESENTACAO, 
+				INVISIBILIDADE, 
+				IDUSUARIOALTERACAO, 
+				DTULTIMAALTERACAO)
+			VALUES
+			  (	 
+			     :stItemMenuReg.stidItemMenu
+				,:stItemMenuReg.cidSubSistema
+				,TRIM(SUBSTR(:stItemMenuReg.cnmItem,1,255))
+				,TRIM(SUBSTR(:stItemMenuReg.cdsHint,1,255))
+				,:iCont
+				,:stItemMenuReg.cinVisibilidade
+				,:cLogUserOra
+				,SYSDATE
+			  );
+
+		//Se deu algum erro oracle, entao retorna
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CImn::ImnInserir()");
+			return 6; 
+		}
+
+		//Se tem pai entao tem que catastrar na hierarquia
+		if( iTemPai )
+		{
+			EXEC SQL
+				INSERT INTO ACESSO.ITEMMENUHIERARQUIA
+				( IDITEMMENUPAI, 
+				  IDITEMMENU, 
+				  IDUSUARIOALTERACAO, 
+				  DTULTIMAALTERACAO)
+				VALUES
+				( :stItemMenuReg.cidItemMenuPai,
+				  :stItemMenuReg.stidItemMenu,
+				  :cLogUserOra,
+				  SYSDATE);
+		}
+
+		AcertaPath( (char*)stItemMenuReg.stidItemMenu.arr, cLogUserOra );
+
+		//Se deu algum erro oracle, entao retorna
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CImn::ImnInserir()");
+			return 6; 
+		}
+
+		//Se tem pagina, entao
+		if( strlen( stItemMenuReg.cidPagina ) > 0 )
+		{
+			EXEC SQL
+				SELECT ACESSO.ITEMMENUPAGINASQ.NEXTVAL
+				INTO :stItemMenuReg.stidItemMenuPagina
+				FROM DUAL;
+
+			EXEC SQL
+				INSERT INTO ACESSO.ITEMMENUPAGINA
+				  (IDITEMMENUPAGINA,
+				   IDPAGINA,
+				   IDITEMMENU,
+				   IDUSUARIOALTERACAO,
+				   DTULTIMAALTERACAO)
+				VALUES
+				  (:stItemMenuReg.stidItemMenuPagina,
+				   :stItemMenuReg.cidPagina,
+				   :stItemMenuReg.stidItemMenu,
+				   :cLogUserOra,
+				   SYSDATE);
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	if(sqlca.sqlcode) 
+	{
+	    ULOG_END("CImn::ImnInserir()");
+		return 6; 
+	}
+	else
+	{
+	    ULOG_END("CImn::ImnInserir()");
+		return 0;
+	}
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CImn::ImnEditar(DOMNode*dnode,XMLGen*xml_g,
+				    char* cLogUser)
+{
+	ULOG_START("CImn::ImnEditar()");
+	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stidSubSistema[255+1];
+		VARCHAR stinVisibilidade[21+1];
+		VARCHAR stidItemMenuPai[21+1];
+		char* cLogUserOra = cLogUser;
+		int iTemPagina = 0;
+		int iCont;
+		struct 
+		{
+			VARCHAR stidItemMenuPagina[21+1];
+			char* cidItemMenu; 
+			char* cidSubSistema; 
+			char* cnmMenu;
+			char* cdsHint;
+			char* csqApresentacao;
+			char* cinVisibilidade; 
+			char* cidPagina; 
+		} stItemMenu;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{	
+		memset( &stItemMenu, 0, sizeof(stItemMenu) );
+		memset( &stidSubSistema, 0, sizeof(stidSubSistema) );
+		memset( &stinVisibilidade, 0, sizeof(stinVisibilidade) );
+		memset( &stidItemMenuPai, 0, sizeof(stidItemMenuPai) );
+
+		stItemMenu.cnmMenu = oSafePointer.getTag(dnode,"nmMenu",0);
+		if ( strlen ( stItemMenu.cnmMenu ) == 0 ) 
+		{
+			ULOG_END("CImn::ImnEditar()");
+			return 2;
+		}
+
+		stItemMenu.cdsHint = oSafePointer.getTag(dnode,"dsHint",0);
+		if ( strlen ( stItemMenu.cdsHint ) == 0 ) 
+		{
+			ULOG_END("CImn::ImnEditar()");
+			return 3;
+		}
+
+		stItemMenu.cinVisibilidade = oSafePointer.getTag( dnode, "inVisibilidade", 0 );
+		if ( strlen ( stItemMenu.cinVisibilidade ) == 0 ) 
+		{
+			ULOG_END("CImn::ImnEditar()");
+			return 5;
+		}
+
+		stItemMenu.cidItemMenu = oSafePointer.getTag( dnode, "idItemMenu", 0 );
+		if ( strlen ( stItemMenu.cidItemMenu ) == 0 ) 
+	    {
+		    ULOG_END("CImn::ImnEditar()");
+			return 6;
+		}
+
+		stItemMenu.cidPagina = oSafePointer.getTag( dnode, "idPagina", 0);
+		if ( strlen ( stItemMenu.cidPagina ) > 0 ) 
+			iTemPagina = 1;
+
+		sqlca.sqlcode=0;
+
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Recupera o id de subsistema
+		EXEC SQL
+			SELECT
+				IDSUBSISTEMA
+			INTO
+				:stidSubSistema
+			FROM 
+				ACESSO.ITEMMENU
+			WHERE
+				IDITEMMENU = :stItemMenu.cidItemMenu;
+
+		//Verifica se o nome passado ja existe
+		EXEC SQL
+			SELECT 
+				 COUNT(IDITEMMENU)
+			INTO
+				:iCont
+			FROM
+			(
+				 SELECT 
+					   HIERARQUIA.IDITEMMENU
+					  ,HIERARQUIA.NMITEM
+					  ,LEVEL NIVEL
+					  ,IDSUBSISTEMA
+				 FROM 
+					  ACESSO.ITEMMENUHIERARQUIAV01 HIERARQUIA
+				 START WITH HIERARQUIA.IDITEMMENUPAI = (
+							SELECT
+								IDITEMMENUPAI
+							FROM
+								ACESSO.ITEMMENUHIERARQUIA
+							WHERE
+								IDITEMMENU = :stItemMenu.cidItemMenu
+							AND
+								ROWNUM <= 1
+														)
+				 CONNECT BY HIERARQUIA.IDITEMMENUPAI = PRIOR HIERARQUIA.IDITEMMENU
+			)
+			WHERE
+				 NIVEL = 1
+			AND
+				UPPER(NMITEM) = UPPER(:stItemMenu.cnmMenu)
+			AND
+				IDSUBSISTEMA = :stItemMenu.cidSubSistema
+			AND
+				IDITEMMENU <> :stItemMenu.cidItemMenu;
+		
+		//Caso existe o mesmo nome cadastrado, nao perminte, retorna em forma de warning
+		if( iCont > 0 )
+		{
+		    ULOG_END("CImn::ImnEditar()");
+			return 7;
+		}
+		if( iTemPagina )
+		{
+			//Remove a relacao com a pagina antiga
+			EXEC SQL
+				DELETE FROM 
+					ACESSO.ITEMMENUPAGINA
+				WHERE 
+					IDITEMMENU = :stItemMenu.cidItemMenu;
+
+			sqlca.sqlcode=0;
+			//Recupera uma id da sequence
+			EXEC SQL
+				SELECT ACESSO.ITEMMENUPAGINASQ.NEXTVAL
+				  INTO :stItemMenu.stidItemMenuPagina
+				  FROM DUAL;
+
+			if(sqlca.sqlcode)
+			{
+			    ULOG_END("CImn::ImnEditar()");
+				return 1; 
+			}
+
+			//Insere uma relacao coma a nova pagina
+			EXEC SQL
+				INSERT INTO ACESSO.ITEMMENUPAGINA
+				  (IDITEMMENUPAGINA,
+				   IDPAGINA,
+				   IDITEMMENU,
+				   IDUSUARIOALTERACAO,
+				   DTULTIMAALTERACAO)
+				VALUES
+				  (:stItemMenu.stidItemMenuPagina,
+				   :stItemMenu.cidPagina,
+				   :stItemMenu.cidItemMenu,
+				   :cLogUserOra,
+				   SYSDATE);
+
+			if(sqlca.sqlcode)
+			{
+			    ULOG_END("CImn::ImnEditar()");
+				return 1; 
+			}
+
+		}
+
+		//Recupera o id do pai
+		EXEC SQL
+			SELECT
+				IDITEMMENUPAI
+			INTO
+				:stidItemMenuPai
+			FROM
+				ACESSO.ITEMMENUHIERARQUIA
+			WHERE
+				IDITEMMENU = :stItemMenu.cidItemMenu;
+
+		//Só verifica a visibilidade do pai se ouver algum
+		if( stidItemMenuPai.len > 0 )
+		{
+			//Recupera a inVisibilidade do pai
+			EXEC SQL
+				SELECT
+					INVISIBILIDADE
+				INTO
+					:stinVisibilidade
+				FROM
+					ACESSO.ITEMMENU
+				WHERE
+					IDITEMMENU = :stidItemMenuPai;
+
+			//Soh verifica se retornou algo
+			if( stinVisibilidade.len > 0 )
+			{
+				//Se o pai estiver indisponivel, tambem cria a folha indisponivel
+				if( strcmp( (char*)stinVisibilidade.arr, "1" ) != 0 )
+					strcpy( stItemMenu.cinVisibilidade, "0" );
+			}
+		}//if( stidItemMenuPai.len > 0 )
+
+		//Finalmente atualiza os dados do itemmenu
+       	// o campo SQAPRESENTACAO nao eh editavel
+		EXEC SQL 
+			UPDATE 	ACESSO.ITEMMENU 
+			SET 	NMITEM = :stItemMenu.cnmMenu,
+       				DSHINT = :stItemMenu.cdsHint,
+       				INVISIBILIDADE = :stItemMenu.cinVisibilidade,
+					IDUSUARIOALTERACAO = :cLogUserOra, 
+					DTULTIMAALTERACAO  = SYSDATE
+			WHERE 	IDITEMMENU = :stItemMenu.cidItemMenu;
+
+		AcertaPath( stItemMenu.cidItemMenu, cLogUserOra );
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CImn::ImnEditar()");
+	if(sqlca.sqlcode)
+		return 1; 
+	return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CImn::ImnPgnRelaciona(DOMNode*dnode, XMLGen*xml_g,
+				          char* cLogUser)
+{
+	ULOG_START("CImn::ImnPgnRelaciona()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cLogUserOra = cLogUser;
+
+		struct Tstruct {
+			int idItemMenuPagina;
+			int idItemMenu;
+			int idPagina;
+		} tstruct;
+
+		struct Tstruct2 {
+			int idPagina;
+			char cnmPagina[256];
+		} tstruct2;
+
+		struct Tstructindicator {
+			short sidItemMenuPagina, sidItemMenu, sidPagina;
+		} tstructindicator;
+
+		struct Tstructindicator2 {
+			short sidPagina, snmPagina;
+		} tstructindicator2;
+
+		int iAcumulador;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct) );
+		memset( &tstruct2, 0, sizeof(Tstruct2) );
+		memset( &tstructindicator, 0, sizeof(Tstructindicator) );
+		memset( &tstructindicator2, 0, sizeof(Tstructindicator2) );
+	
+		//Pega o idItemMenu que sera utilizado na ralacao
+		if ( ( tstruct.idItemMenu = atoi( oSafePointer.getTag( dnode, "idItemMenu", 0  ) ) )  <= 0 ) 
+		{
+		    ULOG_END("CImn::ImnPgnRelaciona()");
+			return 3;//idItemMenu esta nulo
+		}
+	
+		sqlca.sqlcode=0;
+	
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+		EXEC SQL 
+		SELECT COUNT(idItemMenu)
+		INTO :iAcumulador
+		FROM acesso.ItemMenuPagina
+		WHERE idItemMenu = :tstruct.idItemMenu;
+	
+		//Antes de inserir as novas relacoes, deve-se apagar todas, se existirem
+		if (iAcumulador>0) {
+			EXEC SQL 
+			DELETE FROM acesso.ItemMenuPagina 
+			WHERE idItemMenu = :tstruct.idItemMenu;
+		}
+	
+		//Verifica se o comando DELETE obteve sucesso
+		if(sqlca.sqlcode == 0 )
+		{
+			char* pc;
+	
+			//Pega todos os idPagina que existem no XML e insere
+			for(int indice=0;;indice++) 
+			{
+	
+				pc = oSafePointer.getTag( dnode, "idPagina", indice  );
+				if ( strlen( pc ) == 0 )
+					break;
+	
+				tstruct.idPagina = atoi( pc );
+	
+				sqlca.sqlcode=0;
+	
+				EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+				EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+				//Pega um id unico e sequencia para a insercao
+				EXEC SQL
+				SELECT acesso.ItemMenuPaginasq.nextval
+				INTO :tstruct.idItemMenuPagina
+				FROM dual;
+	
+				//Insere item a item
+				EXEC SQL 
+					INSERT INTO ACESSO.ITEMMENUPAGINA 
+					( 
+						  IDITEMMENUPAGINA
+						, IDITEMMENU
+						, IDPAGINA
+						, IDUSUARIOALTERACAO
+						, DTULTIMAALTERACAO 
+					)
+				VALUES
+					( 
+						  :tstruct.idItemMenuPagina
+						, :tstruct.idItemMenu
+						, :tstruct.idPagina
+						, :cLogUserOra
+						, SYSDATE 
+					);
+	
+				//Se der algum erro, desfaz tudo
+				if(sqlca.sqlcode)
+				{
+				    ULOG_END("CImn::ImnPgnRelaciona()");
+					return 2; //Falha ao tentar inserir a pagina relacionada
+				}
+			}//for( indice=1;;indice++) 
+		}// if(sqlca.sqlcode == 0 )
+		else// else if(sqlca.sqlcode == 0 )
+		{
+		    ULOG_END("CImn::ImnPgnRelaciona()");
+			return 1;//Falha ao tentar limpar as paginas relacionadas
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CImn::ImnPgnRelaciona()");
+	return 0;//Sucesso
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CImn::ImnListaPar(DOMNode*dnode,XMLGen*xml_g)
+{
+	ULOG_START("CImn::ImnListaPar()");
+	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		struct Tstruct {
+			int idItemMenu; 
+			int idSubSistema; 
+			char cnmItem[256];
+			char vcdsHint[256];
+			int isqApresentacao;
+			int inVisibilidade; 
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidItemMenu, sidSubSistema, snmItem, sdsHint, ssqApresentacao, sinVisibilidade;
+		} tstructindicator;
+
+		char vcLike[256];
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct) );
+	
+		if ( ( tstruct.idSubSistema = atoi( oSafePointer.getTag( dnode, "idSubSistema", 0  ) ) )<=0 ) 
+		{
+		    ULOG_END("CImn::ImnListaPar()");
+			return 2;
+		}
+	
+		strcpy(tstruct.vcdsHint , oSafePointer.getTag(dnode,"dsHint",0) );
+	
+		if ( ( tstruct.isqApresentacao = atoi( oSafePointer.getTag( dnode, "sqApresentacao", 0  ) ) )<=0 ) 
+		{
+		    ULOG_END("CImn::ImnListaPar()");
+			return 2;
+		}
+	
+		if ( ( tstruct.inVisibilidade = atoi( oSafePointer.getTag( dnode, "inVisibilidade", 0  ) ) )<=0 ) 
+		{
+		    ULOG_END("CImn::ImnListaPar()");
+			return 2;
+		}
+	
+		char *pc = oSafePointer.getTag(dnode,"nmItem",0);
+		if ( pc == NULL ) {
+			strcpy( tstruct.cnmItem, "" );
+		} else {
+			strcpy( tstruct.cnmItem, pc);
+		}
+		
+		sqlca.sqlcode=0;
+		
+		if ( strlen(tstruct.cnmItem)==0 ) {
+	
+			EXEC SQL DECLARE tsqlcursor52 CURSOR FOR
+			SELECT idItemMenu, idSubSistema, nmItem, dsHint, sqApresentacao, inVisibilidade
+			FROM acesso.ItemMenu
+			ORDER BY nmItem;
+	
+			EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+			EXEC SQL OPEN tsqlcursor52;
+	
+			if(sqlca.sqlcode)
+			{
+			    ULOG_END("int CImn::ImnListaPar(DOMNode*dnode,XMLGen*xml_g)");
+				return 4;
+			}
+			else
+			{
+				EXEC SQL WHENEVER NOT FOUND DO break;
+				xml_g->createTag("ItemMenusUsuarioVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+				for(;;) {
+					EXEC SQL FETCH tsqlcursor52 INTO :tstruct INDICATOR :tstructindicator;
+					xml_g->createTag("ItemMenuUsuarioVO");
+					xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+					xml_g->addItem("idItemMenu",tstruct.idItemMenu);
+					xml_g->addItem("idSubSistema",tstruct.idSubSistema);
+					xml_g->addItem("nmItem",tstruct.cnmItem);
+					xml_g->addItem("dsHint",tstruct.vcdsHint);
+					xml_g->addItem("sqApresentacao",tstruct.isqApresentacao);
+					xml_g->addItem("inVisibilidade",tstruct.inVisibilidade);
+					xml_g->closeTag();
+				}
+				EXEC SQL CLOSE tsqlcursor52;
+			}
+	
+		} else {
+			sprintf( vcLike, "%s%s", tstruct.cnmItem, "%" ); 
+		
+			EXEC SQL DECLARE tsqlcursor63 CURSOR FOR
+			SELECT idItemMenu, idSubSistema, nmItem, dsHint, sqApresentacao, inVisibilidade
+			FROM acesso.ItemMenu
+			WHERE nmItem LIKE :vcLike
+			ORDER BY nmItem;
+	
+			EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+			EXEC SQL OPEN tsqlcursor63;
+	
+			if(sqlca.sqlcode)
+			{
+			    ULOG_END("CImn::ImnListaPar()");
+				return 4;
+			}
+			else
+			{
+				EXEC SQL WHENEVER NOT FOUND DO break;
+				xml_g->createTag("ItemMenusUsuarioVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+				for(;;) {
+					EXEC SQL FETCH tsqlcursor63 INTO :tstruct INDICATOR :tstructindicator;
+					xml_g->createTag("ItemMenuUsuarioVO");
+					xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+					xml_g->addItem("idItemMenu",tstruct.idItemMenu);
+					xml_g->addItem("idSubSistema",tstruct.idSubSistema);
+					xml_g->addItem("nmItem",tstruct.cnmItem);
+					xml_g->addItem("dsHint",tstruct.vcdsHint);
+					xml_g->addItem("sqApresentacao",tstruct.isqApresentacao);
+					xml_g->addItem("inVisibilidade",tstruct.inVisibilidade);
+					xml_g->closeTag();
+				}
+				EXEC SQL CLOSE tsqlcursor63;
+			}
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+    ULOG_END("CImn::ImnListaPar()");
+	return 0;
+
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CImn::ImnListaId(DOMNode*dnode, XMLGen*xml_g)
+{
+	ULOG_START("CImn::ImnListaId()");
+	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		int aux;
+
+		struct TItemMenu_struct {
+			int idItemMenu; 
+			int idSubSistema;
+			char cnmItem[256];
+			char vcdsHint[256];
+			int isqApresentacao;
+			int inVisibilidade;
+		} tstruct;
+
+		struct TindicatorItemMenu_struct {
+			short sidItemMenu, sidSubSistema, snmItem, sdsHint, ssqApresentacao, sinVisibilidade;
+		} tindicatorItemMenu;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{
+		memset( &tstruct, 0, sizeof(TItemMenu_struct) );
+	
+		if ( strlen( oSafePointer.getTag( dnode, "idItemMenu", 0 ) ) == 0 ) 
+		{
+		    ULOG_END("CImn::ImnListaId()");
+			return 3;
+		}
+	
+		if ( ( tstruct.idItemMenu = atoi( oSafePointer.getTag( dnode, "idItemMenu", 0  ) ) )<=0 ) 
+		{
+			ULOG_END("CImn::ImnListaId()");
+			return 2;
+		}
+	
+		sqlca.sqlcode=0;
+	
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+		aux = tstruct.idItemMenu;
+	
+		EXEC SQL DECLARE tcursor1 CURSOR FOR
+		SELECT idItemMenu, idSubSistema, nmItem, dsHint, sqApresentacao, inVisibilidade
+		FROM acesso.ItemMenu
+		WHERE idItemMenu = :aux;
+	
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		EXEC SQL OPEN tcursor1;
+	
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CImn::ImnListaId()");
+			return 4;
+		}
+		else
+		{
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			xml_g->createTag("ItemMenusUsuarioVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+			for(;;) {
+				EXEC SQL FETCH tcursor1 INTO :tstruct INDICATOR :tindicatorItemMenu;
+				xml_g->createTag("ItemMenuUsuarioVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idItemMenu",tstruct.idItemMenu);
+				xml_g->addItem("idSubSistema",tstruct.idSubSistema);
+				xml_g->addItem("nmItem",tstruct.cnmItem);
+				xml_g->addItem("dsHint",tstruct.vcdsHint);
+				xml_g->addItem("sqApresentacao",tstruct.isqApresentacao);
+				xml_g->addItem("inVisibilidade",tstruct.inVisibilidade);
+				xml_g->closeTag();
+			}
+			EXEC SQL CLOSE tcursor1;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CImn::ImnListaId()");
+	return 0;
+
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CImn::ImnPgnRelacao(DOMNode*dnode, XMLGen*xml_g)
+{
+	ULOG_START("CImn::ImnPgnRelacao()");
+	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		int idGrupo;
+
+		struct Tstruct {
+			int idRole;
+			char cnmRole[256];
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidRole, snmRole;
+		} tstructindicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct));
+		memset( &tstructindicator, 0, sizeof(Tstructindicator));
+	
+		char *pc = oSafePointer.getTag(dnode,"idGrupo",0);
+	
+		//Se o ID estiver vazio entao retornar com codigo de erro
+		if ( strlen( pc ) <= 0 ) {
+			ULOG_END("CImn::ImnPgnRelacao()");
+			return 2;
+		}
+	
+		//Le a descricao de Grupo
+		idGrupo = atoi( pc );
+	
+		sqlca.sqlcode=0;
+	
+		EXEC SQL DECLARE tvcursorrelacionados CURSOR FOR
+		SELECT ROLE.IDROLE,
+		       ROLE.NMROLE
+		FROM  ACESSO.GRUPOROLE,
+		       APOIO.TIPOGRUPO,
+		       ACESSO.ROLE,
+		       ACESSO.GRUPO
+		WHERE  ROLE.IDROLE = GRUPOROLE.IDROLE
+		       AND TIPOGRUPO.IDTIPOGRUPO = GRUPO.IDTIPOGRUPO
+		       AND GRUPO.IDGRUPO = GRUPOROLE.IDGRUPO
+		       AND GRUPO.IDGRUPO = :idGrupo
+		ORDER BY ROLE.nmRole;
+		
+	
+		EXEC SQL DECLARE tvcursorexistentes CURSOR FOR
+		SELECT acesso.Role.idRole, acesso.Role.nmRole
+        FROM acesso.Role
+        WHERE acesso.Role.idRole	
+        NOT IN (     
+             	  SELECT ROLE.IDROLE
+                  FROM   ACESSO.GRUPOROLE,
+                         APOIO.TIPOGRUPO,
+                         ACESSO.ROLE,
+                         ACESSO.GRUPO
+                  WHERE  ROLE.IDROLE = GRUPOROLE.IDROLE
+                         AND TIPOGRUPO.IDTIPOGRUPO = GRUPO.IDTIPOGRUPO
+                         AND GRUPO.IDGRUPO = GRUPOROLE.IDGRUPO
+                         AND GRUPO.IDGRUPO = :idGrupo
+        	   )
+        ORDER BY acesso.Role.nmRole; 
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CImn::ImnPgnRelacao()");
+			return 4;
+		}
+		else
+		{
+			xml_g->createTag("RelacionarItemMenuPaginaVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+			xml_g->addItem("idGrupo",idGrupo);
+			EXEC SQL OPEN tvcursorexistentes;
+			for(;;) {
+				EXEC SQL FETCH tvcursorexistentes INTO :tstruct INDICATOR :tstructindicator;
+				xml_g->createTag("PaginasExistentesVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idPerfil",tstruct.idRole);
+				xml_g->addItem("nmPerfil",tstruct.cnmRole);
+				xml_g->closeTag();
+			}
+			EXEC SQL CLOSE tvcursorexistentes;
+			EXEC SQL OPEN tvcursorrelacionados;
+			for(;;) {
+				EXEC SQL FETCH tvcursorrelacionados INTO :tstruct INDICATOR :tstructindicator;
+				xml_g->createTag("PerfisRelacionadosVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idPerfil",tstruct.idRole);
+				xml_g->addItem("nmPerfil",tstruct.cnmRole);
+				xml_g->closeTag();
+			}
+			EXEC SQL CLOSE tvcursorrelacionados;
+			xml_g->closeTag();
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CImn::ImnPgnRelacao()");
+	return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+/************************************************************************
+ * Metodos criados pelo Eder
+ ************************************************************************/
+
+CImn::CImn()
+{
+	ULOG_START("CImn::CImn()");
+	iListAll = 0;
+	memset( _cPath, 0, sizeof( _cPath ) );
+	memset( _cNivel, 0, sizeof( _cNivel ) );
+	memset( _cidItemMenuRaiz, 0, sizeof( _cidItemMenuRaiz ) );
+	ULOG_END("CImn::CImn()");
+}
+
+CImn::~CImn()
+{
+}
+
+void CImn::AcertaPath( char* cidItemMenu, char* cidUser )
+{
+	ULOG_START("CImn::AcertaPath( )");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidItemMenu = cidItemMenu;
+		char* cAuxidUser = cidUser;
+		char* cdsOrdem;
+		char* cnrNivel;
+		char* cidItemMenuRaiz;
+		VARCHAR stIdItemMenu[21+1];
+		short iIdItemMenu;
+		VARCHAR stidSubSistema[21+1];
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		memset( &stidSubSistema, 0, sizeof(stidSubSistema) );
+	
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoAcertaPath;
+		memset( &sqlca, 0, sizeof(sqlca) );
+		
+		EXEC SQL
+		SELECT
+			IDSUBSISTEMA
+		INTO
+			:stidSubSistema
+		FROM
+			ACESSO.ITEMMENU ITEMMENU
+		WHERE
+			IDITEMMENU = :cAuxidItemMenu;
+		
+		//Busca a raiz
+		cidItemMenuRaiz = ItemMenuRaiz( (char*)stidSubSistema.arr );
+		
+		//Recupera o path do menu pai
+		Path( cAuxidItemMenu, cidItemMenuRaiz );
+		cdsOrdem = getPath();
+		cnrNivel = getNivel();
+		
+		//Atualiza o menu pai
+		EXEC SQL 
+		UPDATE
+			ACESSO.ITEMMENU 
+		SET 	
+			DSORDEM = :cdsOrdem,
+			NRNIVEL = :cnrNivel,
+			IDUSUARIOALTERACAO = :cAuxidUser, 
+			DTULTIMAALTERACAO  =  SYSDATE
+		WHERE 	
+			IDITEMMENU = :cAuxidItemMenu;
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+
+		//Cursor para recuperar o menu em forma de arvore, ordenado por sequencia, dentro
+		//de cada nivel
+	   	EXEC SQL 
+			DECLARE 
+				CursorAcertaPath CURSOR FOR
+			SELECT 
+				ITEMMENUHIERARQUIAV01.IDITEMMENU
+			FROM 
+				ACESSO.ITEMMENUHIERARQUIAV01
+			START WITH 
+				ACESSO.ITEMMENUHIERARQUIAV01.IDITEMMENUPAI = :cAuxidItemMenu
+			CONNECT BY 
+				ACESSO.ITEMMENUHIERARQUIAV01.IDITEMMENUPAI = PRIOR ACESSO.ITEMMENUHIERARQUIAV01.IDITEMMENU;
+	
+		EXEC SQL OPEN CursorAcertaPath;
+		
+		//Laco que recupera o menu, item a item, ja em forma de arvore
+		for(;;)
+		{
+			memset( &stIdItemMenu, 0, sizeof(stIdItemMenu) );
+			EXEC SQL FETCH CursorAcertaPath INTO :stIdItemMenu:iIdItemMenu;
+
+			Path( (char*)stIdItemMenu.arr, cidItemMenuRaiz );
+			cdsOrdem = getPath();
+			cnrNivel = getNivel();
+
+			//Altera os filhos
+			EXEC SQL 
+			UPDATE
+				ACESSO.ITEMMENU 
+			SET 	
+				DSORDEM = :cdsOrdem,
+				NRNIVEL = :cnrNivel,
+				IDUSUARIOALTERACAO = :cAuxidUser, 
+				DTULTIMAALTERACAO  =  SYSDATE
+			WHERE 	
+				IDITEMMENU = :stIdItemMenu;
+
+		}
+		EXEC SQL CLOSE CursorAcertaPath;
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+	ULOG_END("CImn::AcertaPath( )");
+	return;
+
+GotoAcertaPath:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CImn::ListId( char* cidsubsistema )
+{
+	ULOG_START("CImn::ListId()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidOra = cidsubsistema;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stHint[255+1];
+			VARCHAR stApresentacao[21+1];
+			VARCHAR stVisibilidade[21+1];
+			int     iLevel;
+			VARCHAR stIdItemMenuPai[21+1];
+			VARCHAR stinFolha[21+1];
+		} stItemMenuRegistro;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stHint[255+1];
+			VARCHAR stApresentacao[21+1];
+			VARCHAR stVisibilidade[21+1];
+		} stItemMenuPai;		
+		struct
+		{
+			short iId;
+			short iNome;
+			short iHint;
+			short iApresentacao;
+			short iVisibilidade;
+			short iLevel;
+			short iIdItemMenuPai;
+			short iinFolha;
+		} stItemMenuIndicator;
+		struct
+		{
+			short iId;
+			short iNome;
+			short iHint;
+			short iApresentacao;
+			short iVisibilidade;
+		} stItemMenuPaiIndicator;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraItemMenu();
+		iListAll = 0;
+	
+		memset( &stItemMenuPai, 0, sizeof(stItemMenuPai) );
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+	
+		//Recupera o ID do menu principal
+		EXEC SQL
+			SELECT ITEMMENU.IDITEMMENU, 
+			       ITEMMENU.NMITEM, 
+			       ITEMMENU.DSHINT,
+				   ITEMMENU.SQAPRESENTACAO, 
+				   ITEMMENU.INVISIBILIDADE
+			  INTO :stItemMenuPai:stItemMenuPaiIndicator
+			  FROM ACESSO.ITEMMENU
+			 WHERE ITEMMENU.IDITEMMENU NOT IN ( SELECT ITEMMENUHIERARQUIA.IDITEMMENU FROM ACESSO.ITEMMENUHIERARQUIA )
+			   AND ITEMMENU.IDSUBSISTEMA = :cidOra
+	           AND ROWNUM <= 1;
+			   
+		//Adiciona o menu pai
+		Add( (char*)stItemMenuPai.stId.arr, 
+		     (char*)stItemMenuPai.stNome.arr,
+		     (char*)stItemMenuPai.stHint.arr,
+		     (char*)stItemMenuPai.stApresentacao.arr,
+		     (char*)stItemMenuPai.stVisibilidade.arr,
+		     (char*)"",
+		     0,
+		     (char*)"",
+			 (char*)"0"
+		   );
+			   
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		sqlca.sqlcode=0;
+	
+		//Cursor para recuperar o menu em forma de arvore, ordenado por sequencia, dentro
+		//de cada nivel
+	   	EXEC SQL 
+			DECLARE 
+				CursorItemMenuId CURSOR FOR
+			SELECT 
+				IDITEMMENU,
+				NMITEM,
+				DSHINT,
+				SQAPRESENTACAO,
+				INVISIBILIDADE,
+				NIVEL, 
+				IDITEMMENUPAI,
+				INFOLHA
+			FROM
+			(
+				SELECT 
+					ITEMMENUHIERARQUIAV01.IDITEMMENU,
+					ITEMMENUHIERARQUIAV01.NMITEM,
+					ITEMMENUHIERARQUIAV01.DSHINT,
+					ITEMMENUHIERARQUIAV01.SQAPRESENTACAO,
+					ITEMMENUHIERARQUIAV01.INVISIBILIDADE,
+					LEVEL NIVEL,
+					ITEMMENUHIERARQUIAV01.IDITEMMENUPAI,
+					DECODE(ITEMMENUHIERARQUIAV01.IDPAGINA, NULL, 0, 1 ) INFOLHA,
+   					SYS_CONNECT_BY_PATH(LEVEL||'  '||SQAPRESENTACAO, '/') LPATH
+				FROM 
+					ACESSO.ITEMMENUHIERARQUIAV01
+				WHERE 
+					ITEMMENUHIERARQUIAV01.IDSUBSISTEMA = :cidOra
+				START WITH 
+					ACESSO.ITEMMENUHIERARQUIAV01.IDITEMMENUPAI = :stItemMenuPai.stId
+				CONNECT BY 
+					ACESSO.ITEMMENUHIERARQUIAV01.IDITEMMENUPAI = PRIOR ACESSO.ITEMMENUHIERARQUIAV01.IDITEMMENU
+			)
+			ORDER BY LPATH;
+	
+		EXEC SQL OPEN CursorItemMenuId;
+	
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CImn::ListId()");
+			return 0;
+		}
+		else
+		{
+			//Laco que recupera o menu, item a item, ja em forma de arvore
+			for(;;)
+			{
+				memset( &stItemMenuRegistro, 0, sizeof(stItemMenuRegistro) );
+				EXEC SQL FETCH CursorItemMenuId INTO :stItemMenuRegistro:stItemMenuIndicator;
+	
+				Add( (char*)stItemMenuRegistro.stId.arr, 
+				     (char*)stItemMenuRegistro.stNome.arr,
+				     (char*)stItemMenuRegistro.stHint.arr,
+				     (char*)stItemMenuRegistro.stApresentacao.arr,
+				     (char*)stItemMenuRegistro.stVisibilidade.arr,
+				     (char*)cidOra,
+				     stItemMenuRegistro.iLevel,
+				     (char*)stItemMenuRegistro.stIdItemMenuPai.arr,
+				     (char*)stItemMenuRegistro.stinFolha.arr
+				   );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorItemMenuId;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CImn::ListId()");
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+int CImn::ListUser( char* cidsubsistema, char* cidusuario )
+{
+	ULOG_START("CImn::ListUser()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidsubsistema = cidsubsistema;
+		char* cAuxidusuario = cidusuario;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stHint[255+1];
+			VARCHAR stApresentacao[21+1];
+			VARCHAR stVisibilidade[21+1];
+			int     iLevel;
+			VARCHAR stIdItemMenuPai[21+1];
+			VARCHAR stinFolha[21+1];
+		} stItemMenuRegistro;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stHint[255+1];
+			VARCHAR stApresentacao[21+1];
+			VARCHAR stVisibilidade[21+1];
+		} stItemMenuPai;		
+		struct
+		{
+			short iId;
+			short iNome;
+			short iHint;
+			short iApresentacao;
+			short iVisibilidade;
+			short iLevel;
+			short iIdItemMenuPai;
+			short iinFolha;
+		} stItemMenuIndicator;
+		struct
+		{
+			short iId;
+			short iNome;
+			short iHint;
+			short iApresentacao;
+			short iVisibilidade;
+		} stItemMenuPaiIndicator;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraItemMenu();
+		iListAll = 0;
+	
+		memset( &stItemMenuPai, 0, sizeof(stItemMenuPai) );
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListUser;
+	
+		//Recupera o ID do menu principal
+		EXEC SQL
+			SELECT 
+				ITEMMENU.IDITEMMENU, 
+				ITEMMENU.NMITEM, 
+				ITEMMENU.DSHINT,
+				ITEMMENU.SQAPRESENTACAO, 
+				ITEMMENU.INVISIBILIDADE
+			INTO 
+				:stItemMenuPai:stItemMenuPaiIndicator
+			FROM 
+				ACESSO.ITEMMENU
+			WHERE 
+				ITEMMENU.IDITEMMENU NOT IN 
+				( 
+					SELECT 
+						ITEMMENUHIERARQUIA.IDITEMMENU 
+					FROM 
+						ACESSO.ITEMMENUHIERARQUIA 
+				)
+				AND ITEMMENU.IDSUBSISTEMA = :cAuxidsubsistema
+				AND ROWNUM <= 1;
+			   
+		//Adiciona o menu pai
+		Add( (char*)stItemMenuPai.stId.arr, 
+		     (char*)stItemMenuPai.stNome.arr,
+		     (char*)stItemMenuPai.stHint.arr,
+		     (char*)stItemMenuPai.stApresentacao.arr,
+		     (char*)stItemMenuPai.stVisibilidade.arr,
+		     cAuxidsubsistema,
+		     0,
+		     (char*)"",
+			 (char*)"0"
+		   );
+			   
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		sqlca.sqlcode=0;
+	
+		//Cursor para recuperar o menu em forma de arvore
+	   	EXEC SQL 
+		DECLARE 
+			CursorListUser CURSOR FOR
+        SELECT
+            IDITEMMENU,
+            NMITEM,
+            DSHINT,
+            SQAPRESENTACAO,
+            INVISIBILIDADE,
+            NRNIVEL,
+            IDITEMMENUPAI,
+            INFOLHA
+        FROM 
+        (
+			SELECT
+				IDITEMMENU,
+				NMITEM,
+				DSHINT,
+				SQAPRESENTACAO,
+				INVISIBILIDADE,
+                NRNIVEL,
+				IDITEMMENUPAI,
+				INFOLHA,
+                DSORDEM
+			FROM 
+			(    
+            
+				SELECT
+					ITEMMENUFOLHA.IDITEMMENU,
+					ITEMMENUFOLHA.NMITEM NMITEM,
+					ITEMMENUFOLHA.DSHINT,
+					ITEMMENUFOLHA.SQAPRESENTACAO,
+					ITEMMENUFOLHA.INVISIBILIDADE,
+					ITEMMENUFOLHA.NRNIVEL,
+					ITEMMENUHIERARQUIA.IDITEMMENUPAI,
+					DECODE(ITEMMENUPAGINA.IDPAGINA, NULL, 0, 1 ) INFOLHA,
+                    ITEMMENUFOLHA.DSORDEM DSORDEM
+				FROM 
+					ACESSO.ITEMMENU ITEMMENUPAI,
+					ACESSO.ITEMMENU ITEMMENUFOLHA,
+					ACESSO.ITEMMENUHIERARQUIA ITEMMENUHIERARQUIA,
+					ACESSO.ITEMMENUPAGINA ITEMMENUPAGINA
+				WHERE 
+					ITEMMENUHIERARQUIA.IDITEMMENUPAI = ITEMMENUPAI.IDITEMMENU
+				AND 
+					ITEMMENUHIERARQUIA.IDITEMMENU = ITEMMENUFOLHA.IDITEMMENU
+				AND 
+					ITEMMENUFOLHA.IDITEMMENU = ITEMMENUPAGINA.IDITEMMENU (+)
+				START WITH 
+                    ITEMMENUHIERARQUIA.IDITEMMENUPAI = :stItemMenuPai.stId
+				CONNECT BY PRIOR 
+                    ITEMMENUHIERARQUIA.IDITEMMENU = ITEMMENUHIERARQUIA.IDITEMMENUPAI
+			)
+			ORDER BY DSORDEM
+        );
+
+		EXEC SQL OPEN CursorListUser;
+	
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CImn::ListUser()");
+			return 0;
+		}
+		else
+		{
+			//Laco que recupera o menu, item a item, ja em forma de arvore
+			for(;;)
+			{
+				memset( &stItemMenuRegistro, 0, sizeof(stItemMenuRegistro) );
+				EXEC SQL FETCH CursorListUser INTO :stItemMenuRegistro:stItemMenuIndicator;
+	
+				Add( (char*)stItemMenuRegistro.stId.arr, 
+				     (char*)stItemMenuRegistro.stNome.arr,
+				     (char*)stItemMenuRegistro.stHint.arr,
+				     (char*)stItemMenuRegistro.stApresentacao.arr,
+				     (char*)stItemMenuRegistro.stVisibilidade.arr,
+				     cAuxidsubsistema,
+				     stItemMenuRegistro.iLevel,
+				     (char*)stItemMenuRegistro.stIdItemMenuPai.arr,
+				     (char*)stItemMenuRegistro.stinFolha.arr
+				   );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorListUser;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CImn::ListUser()");
+	return iCont;
+
+GotoListUser:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+int CImn::ListUserMenu( char* cidsubsistema, char* cidusuario )
+{
+	ULOG_START("CImn::ListUserMenu()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidsubsistema = cidsubsistema;
+		char* cAuxidusuario = cidusuario;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stHint[255+1];
+			VARCHAR stApresentacao[21+1];
+			VARCHAR stVisibilidade[21+1];
+			int     iLevel;
+			VARCHAR stIdItemMenuPai[21+1];
+			VARCHAR stinFolha[21+1];
+		} stItemMenuRegistro;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stHint[255+1];
+			VARCHAR stApresentacao[21+1];
+			VARCHAR stVisibilidade[21+1];
+		} stItemMenuPai;		
+		struct
+		{
+			short iId;
+			short iNome;
+			short iHint;
+			short iApresentacao;
+			short iVisibilidade;
+			short iLevel;
+			short iIdItemMenuPai;
+			short iinFolha;
+		} stItemMenuIndicator;
+		struct
+		{
+			short iId;
+			short iNome;
+			short iHint;
+			short iApresentacao;
+			short iVisibilidade;
+		} stItemMenuPaiIndicator;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraItemMenu();
+		iListAll = 0;
+	
+		memset( &stItemMenuPai, 0, sizeof(stItemMenuPai) );
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListUserMenu;
+	
+		//Recupera o ID do menu principal
+		EXEC SQL
+			SELECT 
+				ITEMMENU.IDITEMMENU, 
+				ITEMMENU.NMITEM, 
+				ITEMMENU.DSHINT,
+				ITEMMENU.SQAPRESENTACAO, 
+				ITEMMENU.INVISIBILIDADE
+			INTO 
+				:stItemMenuPai:stItemMenuPaiIndicator
+			FROM 
+				ACESSO.ITEMMENU
+			WHERE 
+				ITEMMENU.IDITEMMENU NOT IN 
+				( 
+					SELECT 
+						ITEMMENUHIERARQUIA.IDITEMMENU 
+					FROM 
+						ACESSO.ITEMMENUHIERARQUIA 
+				)
+				AND ITEMMENU.IDSUBSISTEMA = :cAuxidsubsistema
+				AND ROWNUM <= 1;
+			   
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		sqlca.sqlcode=0;
+	
+		//Cursor para recuperar o menu em forma de arvore
+	   	EXEC SQL 
+			DECLARE 
+				CursorListUserMenu CURSOR FOR
+			SELECT 
+				 IDITEMMENU
+				,NMITEM
+				,DSHINT
+				,SQAPRESENTACAO
+				,INVISIBILIDADE
+				,NIVEL
+				,IDITEMMENUPAI
+				,0 INFOLHA
+			FROM 
+			(
+				SELECT 
+					 IDITEMMENU
+					,NMITEM
+					,DSHINT
+					,SQAPRESENTACAO
+					,INVISIBILIDADE
+					,LEVEL NIVEL
+					,IDITEMMENUPAI
+					,SYS_CONNECT_BY_PATH(REPLACE(SQAPRESENTACAO||REPLACE(NMITEM,' ','_')||'  '||IDITEMMENU, '/', '\' ), '/') LPATH
+				FROM 
+				(
+					SELECT DISTINCT 
+						IDITEMMENU,
+						NMITEM,
+						DSHINT,
+						SQAPRESENTACAO,
+						INVISIBILIDADE,
+						IDITEMMENUPAI
+					FROM 
+					(    
+						SELECT
+							ITEMMENUFOLHA.IDITEMMENU,
+							ITEMMENUFOLHA.NMITEM,
+							ITEMMENUFOLHA.DSHINT,
+							ITEMMENUFOLHA.SQAPRESENTACAO,
+							ITEMMENUFOLHA.INVISIBILIDADE,
+							ITEMMENUHIERARQUIA.IDITEMMENUPAI
+						FROM 
+							ACESSO.ITEMMENU ITEMMENUPAI,
+							ACESSO.ITEMMENU ITEMMENUFOLHA,
+							ACESSO.ITEMMENUHIERARQUIA ITEMMENUHIERARQUIA
+						WHERE 
+							ITEMMENUHIERARQUIA.IDITEMMENUPAI = ITEMMENUPAI.IDITEMMENU
+						AND 
+							ITEMMENUHIERARQUIA.IDITEMMENU = ITEMMENUFOLHA.IDITEMMENU
+						AND 
+							ITEMMENUFOLHA.IDSUBSISTEMA = :cAuxidsubsistema
+						START WITH 
+							ITEMMENUFOLHA.IDITEMMENU IN 
+							(
+								SELECT ITEMMENU.IDITEMMENU
+								  FROM ACESSO.USUARIOGRUPO,
+									   ACESSO.GRUPO,
+									   ACESSO.GRUPOITEMMENU,
+									   ACESSO.ITEMMENU
+								 WHERE GRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+									   AND GRUPO.IDGRUPO = GRUPOITEMMENU.IDGRUPO
+									   AND ITEMMENU.IDITEMMENU = GRUPOITEMMENU.IDITEMMENU
+									   AND USUARIOGRUPO.IDPESSOAUSUARIO = :cAuxidusuario
+									   AND ITEMMENU.IDSUBSISTEMA = :cAuxidsubsistema
+								UNION
+								SELECT ITEMMENU.IDITEMMENU
+								  FROM ACESSO.USUARIOITEMMENU,
+									   ACESSO.ITEMMENU
+								 WHERE ITEMMENU.IDITEMMENU = USUARIOITEMMENU.IDITEMMENU
+									   AND USUARIOITEMMENU.IDPESSOAUSUARIO = :cAuxidusuario
+									   AND ITEMMENU.IDSUBSISTEMA = :cAuxidsubsistema
+							)
+						CONNECT BY PRIOR ITEMMENUHIERARQUIA.IDITEMMENUPAI = ITEMMENUFOLHA.IDITEMMENU
+					)
+				)
+				START WITH IDITEMMENUPAI = :stItemMenuPai.stId
+				CONNECT BY IDITEMMENUPAI = PRIOR IDITEMMENU
+			)
+			ORDER BY LPATH;
+
+		EXEC SQL OPEN CursorListUserMenu;
+	
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CImn::ListUserMenu()");
+			return 0;
+		}
+		else
+		{
+			//Laco que recupera o menu, item a item, ja em forma de arvore
+			for(;;)
+			{
+				memset( &stItemMenuRegistro, 0, sizeof(stItemMenuRegistro) );
+				EXEC SQL FETCH CursorListUserMenu INTO :stItemMenuRegistro:stItemMenuIndicator;
+	
+				Add( (char*)stItemMenuRegistro.stId.arr, 
+				     (char*)stItemMenuRegistro.stNome.arr,
+				     (char*)stItemMenuRegistro.stHint.arr,
+				     (char*)stItemMenuRegistro.stApresentacao.arr,
+				     (char*)stItemMenuRegistro.stVisibilidade.arr,
+				     cAuxidsubsistema,
+				     stItemMenuRegistro.iLevel,
+				     (char*)stItemMenuRegistro.stIdItemMenuPai.arr,
+				     (char*)stItemMenuRegistro.stinFolha.arr
+				   );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorListUserMenu;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CImn::ListUserMenu()");
+	return iCont;
+
+GotoListUserMenu:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CImn::ListUserMenuRapida( char* cidsubsistema, char* cidusuario )
+{
+	ULOG_START("CImn::ListUserMenuRapida()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidsubsistema = cidsubsistema;
+		char* cAuxidusuario = cidusuario;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stHint[255+1];
+			VARCHAR stApresentacao[21+1];
+			VARCHAR stVisibilidade[21+1];
+			int     iLevel;
+			VARCHAR stIdItemMenuPai[21+1];
+			VARCHAR stinFolha[21+1];
+		} stItemMenuRegistro;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stHint[255+1];
+			VARCHAR stApresentacao[21+1];
+			VARCHAR stVisibilidade[21+1];
+		} stItemMenuPai;		
+		struct
+		{
+			short iId;
+			short iNome;
+			short iHint;
+			short iApresentacao;
+			short iVisibilidade;
+			short iLevel;
+			short iIdItemMenuPai;
+			short iinFolha;
+		} stItemMenuIndicator;
+		struct
+		{
+			short iId;
+			short iNome;
+			short iHint;
+			short iApresentacao;
+			short iVisibilidade;
+		} stItemMenuPaiIndicator;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraItemMenu();
+		iListAll = 0;
+	
+		memset( &stItemMenuPai, 0, sizeof(stItemMenuPai) );
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListUserMenuRapida;
+	
+		//Recupera o ID do menu principal
+		EXEC SQL
+			SELECT 
+				ITEMMENU.IDITEMMENU, 
+				ITEMMENU.NMITEM, 
+				ITEMMENU.DSHINT,
+				ITEMMENU.SQAPRESENTACAO, 
+				ITEMMENU.INVISIBILIDADE
+			INTO 
+				:stItemMenuPai:stItemMenuPaiIndicator
+			FROM 
+				ACESSO.ITEMMENU ITEMMENU
+			WHERE 
+				ITEMMENU.IDITEMMENU NOT IN 
+				( 
+					SELECT 
+						ITEMMENUHIERARQUIA.IDITEMMENU 
+					FROM 
+						ACESSO.ITEMMENUHIERARQUIA
+				)
+				AND ITEMMENU.IDSUBSISTEMA = :cAuxidsubsistema
+				AND ROWNUM <= 1;
+			   
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		sqlca.sqlcode=0;
+	
+		//Cursor para recuperar o menu em forma de arvore
+	   	EXEC SQL 
+			DECLARE 
+				CursorListUserMenuRapida CURSOR FOR
+			SELECT
+				 ITEMMENU.IDITEMMENU
+				,ITEMMENU.NMITEM
+				,ITEMMENU.DSHINT
+				,ITEMMENU.SQAPRESENTACAO
+				,ITEMMENU.INVISIBILIDADE
+				,ITEMMENU.NRNIVEL
+				,ITEMMENUHIERARQUIA.IDITEMMENUPAI
+				,DECODE(ITEMMENUPAGINA.IDITEMMENUPAGINA, NULL, 0, 1 )
+			FROM
+				ACESSO.ITEMMENU ITEMMENU,
+				ACESSO.ITEMMENUHIERARQUIA ITEMMENUHIERARQUIA,
+				ACESSO.ITEMMENUPAGINA ITEMMENUPAGINA
+			WHERE
+				ITEMMENU.IDITEMMENU = ITEMMENUHIERARQUIA.IDITEMMENU
+			AND
+				ITEMMENU.IDITEMMENU = ITEMMENUPAGINA.IDITEMMENU (+)
+            AND
+                ITEMMENU.INVISIBILIDADE != 0
+			AND
+				ITEMMENU.IDSUBSISTEMA = :cAuxidsubsistema
+			AND
+				(
+					ITEMMENU.IDITEMMENU IN
+					(
+						SELECT 
+							IDITEMMENU
+						FROM
+							ACESSO.ITEMMENUV01
+						WHERE
+							IDPESSOAUSUARIO = :cAuxidusuario
+						AND
+							IDSUBSISTEMA = :cAuxidsubsistema
+					)
+					OR
+						ITEMMENUPAGINA.IDITEMMENUPAGINA IS NULL
+				)
+			ORDER BY
+				ITEMMENU.DSORDEM;
+
+		EXEC SQL OPEN CursorListUserMenuRapida;
+	
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CImn::ListUserMenuRapida()");
+			return 0;
+		}
+		else
+		{
+			//Laco que recupera o menu, item a item, ja em forma de arvore
+			for(;;)
+			{
+				memset( &stItemMenuRegistro, 0, sizeof(stItemMenuRegistro) );
+				EXEC SQL FETCH CursorListUserMenuRapida INTO :stItemMenuRegistro:stItemMenuIndicator;
+	
+				Add( (char*)stItemMenuRegistro.stId.arr, 
+				     (char*)stItemMenuRegistro.stNome.arr,
+				     (char*)stItemMenuRegistro.stHint.arr,
+				     (char*)stItemMenuRegistro.stApresentacao.arr,
+				     (char*)stItemMenuRegistro.stVisibilidade.arr,
+				     cAuxidsubsistema,
+				     stItemMenuRegistro.iLevel,
+				     (char*)stItemMenuRegistro.stIdItemMenuPai.arr,
+				     (char*)stItemMenuRegistro.stinFolha.arr
+				   );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorListUserMenuRapida;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CImn::ListUserMenuRapida()");
+	return iCont;
+
+GotoListUserMenuRapida:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+int CImn::ListAll( void )
+{
+	ULOG_START("CImn::ListAll()");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stinFolha[21+1];
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stHint[255+1];
+			VARCHAR stApresentacao[21+1];
+			VARCHAR stVisibilidade[21+1];
+			VARCHAR stIdSubSistema[21+1];
+			VARCHAR stIdPai[21+1];
+		} stItemMenuRegistro;
+		struct
+		{
+			short iId;
+			short iNome;
+			short iHint;
+			short iApresentacao;
+			short iVisibilidade;
+			short iIdSubSistema;
+			short iIdPai;
+		} stItemMenuIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		ZeraItemMenu();
+		iListAll = 1;
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorItemMenuAll CURSOR FOR
+			SELECT ITEMMENU.IDITEMMENU,
+			       ITEMMENU.NMITEM,
+			       ITEMMENU.DSHINT,
+			       ITEMMENU.SQAPRESENTACAO,
+			       ITEMMENU.INVISIBILIDADE,
+			       SUBSISTEMA.IDSUBSISTEMA,
+			       ITEMMENU.IDITEMMENU       
+			FROM   ACESSO.ITEMMENU,
+			       ACESSO.SISTEMA,
+			       ACESSO.SUBSISTEMA
+			WHERE  SISTEMA.IDSISTEMA = SUBSISTEMA.IDSISTEMA
+			       AND SUBSISTEMA.IDSUBSISTEMA = ITEMMENU.IDSUBSISTEMA
+			ORDER BY ITEMMENU.NMITEM;
+			  
+	
+		EXEC SQL OPEN CursorItemMenuAll;
+	
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CImn::ListAll()");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stItemMenuRegistro, 0, sizeof(stItemMenuRegistro) );
+				memset( &stinFolha, 0, sizeof(stinFolha) );
+				EXEC SQL FETCH CursorItemMenuAll INTO :stItemMenuRegistro:stItemMenuIndicator;
+
+				EXEC SQL
+					SELECT 
+						DECODE(COUNT(IDITEMMENUPAGINA), 0, 0, 1 ) INFOLHA 
+					INTO
+						:stinFolha
+					FROM 
+						ACESSO.ITEMMENUPAGINA WHERE IDITEMMENU = :stItemMenuRegistro.stId;
+
+				Add( (char*)stItemMenuRegistro.stId.arr, 
+				     (char*)stItemMenuRegistro.stNome.arr,
+				     (char*)stItemMenuRegistro.stHint.arr,
+				     (char*)stItemMenuRegistro.stApresentacao.arr,
+				     (char*)stItemMenuRegistro.stVisibilidade.arr,
+				     (char*)stItemMenuRegistro.stIdSubSistema.arr,
+				     0,
+				     (char*)stItemMenuRegistro.stIdPai.arr,
+					 (char*)stinFolha.arr
+				   );
+				   
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorItemMenuAll;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CImn::ListAll()");
+	return iCont;
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CImn::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	ULOG_START("CImn::GetXml()");
+	int iNivel;
+	int iContTag;
+	if( Quantidade() > 0 )
+	{
+		if( iListAll )
+		{
+			for( int x = 0; x < Quantidade(); x++ )
+			{
+				if( strlen( cNomeTag ) > 0 )
+				{
+					xml->createTag(cNomeTag);
+					xml->addProp(	"xmlns", "usuario.fo.vivo.com.br/vo" );
+				}
+				if( Registro( x ) != NULL )
+				{
+					xml->addItem("idItemMenu"    , Registro(x)->cidItemMenu     );
+					xml->addItem("nmItemMenu"    , Registro(x)->cnmItemMenu     );
+					xml->addItem("dsHint"        , Registro(x)->cdsHint         );
+					xml->addItem("sqApresentacao", Registro(x)->csqApresentacao );
+					xml->addItem("inVisibilidade", Registro(x)->cinVisibilidade );
+					xml->addItem("idSubSistema"  , Registro(x)->cidSubSistema   );
+					xml->addItem("Level"         , Registro(x)->iLevel          );
+					xml->addItem("sqSequencia"   , Registro(x)->csqApresentacao );
+					xml->addItem("inFolha"       , Registro(x)->cinFolha );
+				}
+				if( strlen( cNomeTag ) > 0 )
+					xml->closeTag();
+			}// for( int x = 0; x < Quantidade(); x++ )
+		}// if( iListAll )
+		else
+		{
+			iNivel   = 0;
+			iContTag = 0;
+			
+			//Monta o menu raiz
+			if( strlen( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			else
+				xml->createTag("ItemMenuVO");
+			xml->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			xml->addItem("idItemMenu"    , Registro(0)->cidItemMenu );
+			xml->addItem("nmMenu"        , Registro(0)->cnmItemMenu );
+			xml->addItem("dsHint"        , Registro(0)->cdsHint );
+			xml->addItem("nrNivel"       , Registro(0)->iLevel );
+			xml->addItem("idItemmenuPai" , Registro(0)->cidItemMenuPai );
+			xml->addItem("inVisibilidade", Registro(0)->cinVisibilidade );
+			xml->addItem("sqSequencia"   , Registro(0)->csqApresentacao );
+			xml->addItem("inFolha"       , Registro(0)->cinFolha );
+			
+			//O laco continua apos o raiz
+			for( int x = 1; x < Quantidade(); x++ )
+			{
+				if( Registro( x ) != NULL )
+				{
+
+					if( Registro(x)->iLevel > iNivel )
+					{
+						iNivel = Registro(x)->iLevel;
+						if( strlen( cNomeTag ) > 0 )
+							xml->createTag(cNomeTag);
+						else
+							xml->createTag("ItemMenuVO");
+						xml->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+						iContTag++;
+					}//if( Registro(x)->iLevel > iNivel )
+					else
+					{
+						xml->closeTag();
+						if( Registro(x)->iLevel < iNivel )
+						{
+							while( iNivel > Registro(x)->iLevel )
+							{
+								xml->closeTag();
+								iNivel--;
+							}
+							iNivel = Registro(x)->iLevel;
+						}
+						if( strlen( cNomeTag ) > 0 )
+							xml->createTag(cNomeTag);
+						else
+							xml->createTag("ItemMenuVO");
+						xml->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+					}// else if( Registro(x)->iLevel > iNivel )
+
+					xml->addItem("idItemMenu"    , Registro(x)->cidItemMenu );
+					xml->addItem("nmMenu"        , Registro(x)->cnmItemMenu );
+					xml->addItem("dsHint"        , Registro(x)->cdsHint );
+					xml->addItem("nrNivel"       , Registro(x)->iLevel );
+					xml->addItem("idItemmenuPai" , Registro(x)->cidItemMenuPai );
+					xml->addItem("inVisibilidade", Registro(x)->cinVisibilidade );
+					xml->addItem("sqSequencia"   , Registro(x)->csqApresentacao );
+					xml->addItem("inFolha"       , Registro(x)->cinFolha );
+					
+				}// if( Registro( x ) != NULL )
+			}// for( int x = 0; x < Quantidade(); x++ )
+			// Fecha todas as tags
+			while( iContTag > 0 )
+			{
+				xml->closeTag();
+				iContTag--;
+			}
+		}// else if( iListAll )
+	}// if( Quantidade() > 0 )
+	ULOG_END("CImn::GetXml()");
+}
+
+int CImn::FindMenu( char* cIdItemMenu )
+{
+	ULOG_START("CImn::FindMenu( )");
+	int iRet = 0;
+	int x;
+	if( Quantidade() > 0 )
+	{
+		for( x = 0; x < Quantidade(); x++ )
+		{
+			if( Registro( x ) != NULL )
+			{
+				if( strcmp( Registro(x)->cidItemMenu, cIdItemMenu ) == 0 )
+				{
+					iRet = x+1;
+					break;
+				}
+			}
+		}
+	}
+	ULOG_END("CImn::FindMenu( )");
+	return iRet;
+}
+
+
+int CImn::MontaMenu( CImn& oItemMenu )
+{
+	ULOG_START("CImn::MontaMenu( )");
+	struct
+	{
+		int nTotal;
+		int nMenuPos[20];
+	}stRegistro;
+	int x = 0;
+	int y = 0;
+	int z = 0;
+
+	ZeraItemMenu();
+
+    for( x = 0; x < oItemMenu.Quantidade(); x++ )
+	{
+		memset( &stRegistro, 0, sizeof( stRegistro ) );
+		if( strcmp( oItemMenu.Registro(x)->cinFolha, "1" ) == 0 )
+		{
+			//Salva a folha
+			stRegistro.nMenuPos[stRegistro.nTotal] = x;
+			stRegistro.nTotal++;
+			z = x;
+			//Laco enquanto tiver pai, quando nao achar o pai  porque chegou na raiz
+			while( ( y = oItemMenu.FindMenu( oItemMenu.Registro(z)->cidItemMenuPai ) ) > 0 )
+			{
+				z = y - 1;//FindMenu devolve a posicao do registro mais 1
+				stRegistro.nMenuPos[stRegistro.nTotal] = z;
+				stRegistro.nTotal++;
+			}
+			for( y = stRegistro.nTotal-1; y >= 0; y-- )
+			{
+				if( FindMenu( oItemMenu.Registro(stRegistro.nMenuPos[y])->cidItemMenu ) == 0 )
+				{
+					Add( oItemMenu.Registro(stRegistro.nMenuPos[y])->cidItemMenu,
+						 oItemMenu.Registro(stRegistro.nMenuPos[y])->cnmItemMenu,
+						 oItemMenu.Registro(stRegistro.nMenuPos[y])->cdsHint,
+						 oItemMenu.Registro(stRegistro.nMenuPos[y])->csqApresentacao,
+						 oItemMenu.Registro(stRegistro.nMenuPos[y])->cinVisibilidade,
+						 oItemMenu.Registro(stRegistro.nMenuPos[y])->cidSubSistema,
+						 oItemMenu.Registro(stRegistro.nMenuPos[y])->iLevel,
+						 oItemMenu.Registro(stRegistro.nMenuPos[y])->cidItemMenuPai,
+						 oItemMenu.Registro(stRegistro.nMenuPos[y])->cinFolha );
+				}
+			}
+		}
+	}
+	ULOG_END("CImn::MontaMenu( )");
+	return Quantidade();
+}
+
+void CImn::Path( char* cidItemMenu, char* cidItemMenuRaiz )
+{
+	ULOG_START("CImn::Path( )");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stPath[2000+1];
+			VARCHAR stNivel[21+1];
+		} stItemMenuRegistro;
+		struct
+		{
+			short iPath;
+			short iNivel;
+		} stItemMenuIndicator;
+		VARCHAR stnmSubSistema[255+1];
+		short   inmSubSistema;
+		char* cAuxidItemMenu = cidItemMenu;
+		char* cAuxidItemMenuRaiz = cidItemMenuRaiz;
+	EXEC SQL END DECLARE SECTION;
+
+	memset( &sqlca, 0, sizeof( struct sqlca ) );
+	memset( &stItemMenuRegistro, 0, sizeof( stItemMenuRegistro ) );
+	memset( &stnmSubSistema, 0, sizeof( stnmSubSistema ) );
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoPath;
+
+	//Recupera o nome do subsistema
+	EXEC SQL
+	SELECT
+		NMSUBSISTEMA
+	INTO
+		:stnmSubSistema:inmSubSistema
+	FROM
+		ACESSO.ITEMMENU ITEMMENU,
+		ACESSO.SUBSISTEMA SUBSISTEMA
+	WHERE
+		ITEMMENU.IDSUBSISTEMA = SUBSISTEMA.IDSUBSISTEMA
+	AND
+		ITEMMENU.IDITEMMENU = :cAuxidItemMenuRaiz;
+
+	//Recupera o path para ordenacao
+	EXEC SQL
+	SELECT 
+		:stnmSubSistema||PATH,
+		NIVEL
+	INTO
+		:stItemMenuRegistro:stItemMenuIndicator
+	FROM 
+	(
+		SELECT 
+			 IDITEMMENU
+			,SYS_CONNECT_BY_PATH(REPLACE(SQAPRESENTACAO||REPLACE(NMITEM,' ','_')||'  '||IDITEMMENU, '/', '\' ), '/') PATH
+			,LEVEL nivel
+		FROM 
+		(
+			SELECT DISTINCT 
+				IDITEMMENU,
+				IDITEMMENUPAI,
+				NMITEM,
+				SQAPRESENTACAO
+			FROM 
+			(    
+				SELECT 
+					ITEMMENU.IDITEMMENU,
+					ITEMMENUHIERARQUIA.IDITEMMENUPAI,
+					ITEMMENU.NMITEM,
+					ITEMMENU.SQAPRESENTACAO
+				FROM 
+					ACESSO.ITEMMENU ITEMMENU,
+					ACESSO.ITEMMENUHIERARQUIA ITEMMENUHIERARQUIA
+				WHERE
+					ITEMMENU.IDITEMMENU = ITEMMENUHIERARQUIA.IDITEMMENU
+				START WITH 
+					ITEMMENU.IDITEMMENU = :cAuxidItemMenu
+				CONNECT BY PRIOR 
+					ITEMMENUHIERARQUIA.IDITEMMENUPAI = ITEMMENUHIERARQUIA.IDITEMMENU
+			)
+		)
+		START WITH 
+			IDITEMMENUPAI = :cAuxidItemMenuRaiz
+		CONNECT BY 
+			IDITEMMENUPAI = PRIOR IDITEMMENU
+	)
+	WHERE 
+		IDITEMMENU = :cAuxidItemMenu
+	AND
+		ROWNUM <= 1;
+
+	setPathNivel( (char*)stItemMenuRegistro.stPath.arr, (char*)stItemMenuRegistro.stNivel.arr );
+
+	ULOG_END("CImn::Path( )");
+	return;
+
+GotoPath:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+char* CImn::ItemMenuRaiz( char* cidSubSistema )
+{
+
+	ULOG_START("CImn::ItemMenuRaiz( )");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stidItemMenu[21+1];
+		short iidItemMenu;
+		char* cAuxidSubSistema = cidSubSistema;
+	EXEC SQL END DECLARE SECTION;
+
+	memset( &sqlca, 0, sizeof( struct sqlca ) );
+	memset( &stidItemMenu, 0, sizeof( stidItemMenu ) );
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoItemMenuPai;
+	
+	EXEC SQL
+	SELECT
+		ITEMMENU.IDITEMMENU
+	INTO
+		:stidItemMenu:iidItemMenu
+	FROM 
+		ACESSO.ITEMMENU ITEMMENU
+	WHERE
+		ITEMMENU.IDSUBSISTEMA = :cAuxidSubSistema
+	AND
+		ITEMMENU.IDITEMMENU NOT IN
+		(
+			SELECT 
+				IDITEMMENU
+			FROM
+				ACESSO.ITEMMENUHIERARQUIA ITEMMENUHIERARQUIA
+		)
+	AND
+		ROWNUM < 2;
+
+	setRaiz( (char*)stidItemMenu.arr );
+    ULOG_END("CImn::ItemMenuRaiz(  )");
+	return getRaiz();
+
+GotoItemMenuPai:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CImn::setRaiz( char* cidItemMenuRaiz )
+{
+	ULOG_START("CImn::setRaiz( )");
+	memset( _cidItemMenuRaiz, 0, sizeof( _cidItemMenuRaiz ) );
+	if( strlennull( cidItemMenuRaiz ) <= 21 )
+		strcpy( _cidItemMenuRaiz, cidItemMenuRaiz );
+	else
+		strncpy( _cidItemMenuRaiz, &cidItemMenuRaiz[0], 21 );
+    ULOG_END("CImn::setRaiz( )");
+}
+
+char* CImn::getRaiz( void )
+{
+	ULOG_START("CImn::getRaiz( )");
+    ULOG_END("CImn::getRaiz( )");
+	return _cidItemMenuRaiz;
+}
+
+void CImn::setPathNivel( char* cPath, char* cNivel )
+{
+	ULOG_START("CImn::setPathNivel( )");
+	memset( _cPath, 0, sizeof( _cPath ) );
+	if( strlennull( cPath ) <= 2000 )
+		strcpy( _cPath, cPath );
+	else
+		strncpy( _cPath, &cPath[0], 2000 );
+
+	memset( _cNivel, 0, sizeof( _cNivel ) );
+	if( strlennull( cNivel ) <= 21 )
+		strcpy( _cNivel, cNivel );
+	else
+		strncpy( _cNivel, &cNivel[0], 21 );
+	ULOG_END("CImn::setPathNivel(  )");
+}
+
+char* CImn::getPath( void )
+{
+	ULOG_START("CImn::getPath(  )");
+	ULOG_END("CImn::getPath(  )");
+	return _cPath;
+}
+
+char* CImn::getNivel( void )
+{
+	ULOG_START("CImn::getNivel( )");
+	ULOG_END("CImn::getNivel( )");
+	return _cNivel;
+}

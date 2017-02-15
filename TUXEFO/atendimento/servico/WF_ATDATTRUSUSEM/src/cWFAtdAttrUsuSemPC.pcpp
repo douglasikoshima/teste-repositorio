@@ -1,0 +1,2214 @@
+ /**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1.2.3.6.2 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/06 12:36:43 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/SmallString.h"
+
+#include "../include/stWFAtdAttrUsuSem.h"
+
+#include "../../Andamento/include/cWFAndamento.h"
+#include "../../AtendimentoCPFila/include/cWFAtendimentoCPFila.h"
+#include "../../AtendimentoGrupoAtual/include/cWFAtendimentoGrupoAtual.h"
+#include "../../AtendimentoUsuarioAtual/include/cWFAtendimentoUsuarioAtual.h"
+
+void WFAtdAttrUsuSem(sqlca*sqlca);
+bool proCExisteCPrevio( long _idAtendimento );
+bool AtualizarGrupoUsuarioAtual(long _idAtendimento,int _idGrupoAtual,int _idGrupoEncaminhamento,long _idPessoaUsuarioAtual ,char *sDataBKO,int _idUsuario,st_AtdAttrUsuSem *dados,XMLDPR *xmlDpr);
+bool prCIncluir_MSG_Usuario_old(unsigned long _idAndamento,int _idUsuario, long _idPessoaUsuarioAtual);
+int proCObterIdStatusUsuario( int _idUsuario );
+
+bool proCBuscarEncAutoObs( char *_observacao, size_t sizeofObservacao )
+{
+    ULOG_START("proCBuscarEncAutoObs()"); 
+
+    struct sqlca sqlca;
+
+    if ( !_observacao )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        ULOG_END("proCBuscarEncAutoObs()"); 
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( 0 > sizeofObservacao )
+    {
+        ULOGE("%s",bufferDestInsuficiente());
+        ULOG_END("proCBuscarEncAutoObs()"); 
+        throw new TuxBasicSvcException("04E9999",bufferDestInsuficiente());
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR observacao[256];
+
+        short i_observacao = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+    EXEC SQL 
+        SELECT
+            DSVALORPARAMETRO
+        INTO 
+            :observacao:i_observacao
+        FROM 
+            APOIO.PARAMETRO
+        WHERE
+            UPPER(CDPARAMETRO) = 'ENCAUTOOBS';
+
+    if ( i_observacao != -1 )
+    {
+        CONV(observacao);
+
+        sprintf(_observacao,"%.*s",sizeofObservacao-1,observacao.arr);
+
+        ULOG("observacao='%s'",observacao.arr);
+
+    }
+    else
+    {
+        ULOG("Parametro 'ENCAUTOOBS' nao cadastrado em APOIO.PARAMETRO.");
+    }
+
+    ULOG_END("proCBuscarEncAutoObs()"); 
+
+    return i_observacao == -1 ? false : true;
+}
+
+bool proCObterAtdFilaAlerta( int _idUsuario, long &_idAtendimento )
+{
+    ULOG_START("proCObterAtdFilaAlerta()"); 
+
+    struct sqlca sqlca;
+    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuario = _idUsuario;
+        long idAtendimento = -1;
+        short i_idAtendimento =-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    // Se usuário não esta ativo, não pode receber processo
+    //if ( proCObterIdStatusUsuario( idUsuario ) != 1 )
+    //{
+    //    return false;
+    //}
+
+    EXEC SQL 
+        SELECT
+            IDATENDIMENTO
+        INTO 
+            :idAtendimento:i_idAtendimento
+        FROM 
+        (
+            SELECT IDATENDIMENTO
+            FROM
+            (
+                SELECT 
+                    APA.IDATENDIMENTO,
+                    APA.NRCRITICIDADE
+                FROM 
+                    ATENDIMENTO.ATDPROXATENDIMENTO APA
+                    // Não deve levar em consideração a ufoperadora do grupo
+                    // pois vários processos estavam ficando sem serem tratados
+                    // por falha na montagem das regras de encaminhamento pelo
+                    // usuário Vivo. - Março, 2006 - Cassio
+                    //CONTATOADM.UFOPERADORAGRUPO UFOG
+                WHERE
+                    APA.IDPESSOAUSUARIO = :idUsuario
+                AND
+                    APA.IDSUSPEITO IS NULL
+                //AND
+                    //UFOG.IDGRUPO = APA.IDGRUPO
+            )
+            ORDER BY 
+                NRCRITICIDADE DESC, IDATENDIMENTO
+        )
+        WHERE
+            ROWNUM < 2;
+
+    if ( i_idAtendimento != -1 )
+    {
+        _idAtendimento = idAtendimento;
+
+        ULOG("idAtendimento=%ld",idAtendimento);
+    }
+
+    ULOG_END("proCObterAtdFilaAlerta()"); 
+
+    return i_idAtendimento == -1 ? false : true;
+}
+
+//Fila para quando o idUsuario existe na tabela de Skill (ACESSO.USUARIOGRUPOSKILL) mas nao tem processo, 
+//entao verifica os demais grupos sem skill
+bool proCObterAtdFilaAlertaNotSkill( int _idUsuario, long &_idAtendimento )
+{
+    ULOG_START("proCObterAtdFilaAlertaNotSkill()"); 
+
+    struct sqlca sqlca;
+    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuario = _idUsuario;
+        long idAtendimento = -1;
+        short i_idAtendimento =-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+	EXEC SQL
+        SELECT
+            IDATENDIMENTO
+        INTO
+            :idAtendimento:i_idAtendimento
+        FROM
+        (
+            SELECT
+                IDATENDIMENTO
+            FROM
+            (
+                SELECT
+                    APA.IDATENDIMENTO,APA.NRCRITICIDADE
+                FROM
+                    ATENDIMENTO.ATDPROXATENDIMENTO APA
+                    // Não deve levar em consideração a ufoperadora do grupo
+                    // pois vários processos estavam ficando sem serem tratados
+                    // por falha na montagem das regras de encaminhamento pelo
+                    // usuário Vivo. - Março, 2006 - Cassio
+                    //CONTATOADM.UFOPERADORAGRUPO UFOG
+                WHERE
+                    APA.IDPESSOAUSUARIO = :idUsuario
+                AND
+                    APA.IDSUSPEITO IS NULL
+                AND
+                APA.IDGRUPO NOT IN
+                (
+                    SELECT GRUPOSKILL.IDGRUPO
+                    FROM ACESSO.GRUPOSKILL
+                    WHERE GRUPOSKILL.IDGRUPOSKILL IN
+                    (
+                        SELECT USUARIOGRUPOSKILL.IDGRUPOSKILL 
+                        FROM ACESSO.USUARIOGRUPOSKILL USUARIOGRUPOSKILL
+                        WHERE USUARIOGRUPOSKILL.IDPESSOAUSUARIO = APA.IDPESSOAUSUARIO
+                    )
+                )
+            )
+            ORDER BY NRCRITICIDADE DESC,IDATENDIMENTO
+        )
+        WHERE
+            ROWNUM < 2;
+
+    if ( i_idAtendimento != -1 )
+    {
+        _idAtendimento = idAtendimento;
+
+        ULOG("idAtendimento=%d",idAtendimento);
+    }
+
+    ULOG_END("proCObterAtdFilaAlertaNotSkill()"); 
+
+    return i_idAtendimento == -1 ? false : true;
+}
+
+//Fila para quando o idUsuario existe na tabela de Skill (ACESSO.USUARIOGRUPOSKILL)
+bool proCObterAtdFilaAlertaSkill( int _idUsuario, long &_idAtendimento )
+{
+    ULOG_START("proCObterAtdFilaAlertaSkill()"); 
+
+    struct sqlca sqlca;
+//    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuario = _idUsuario;
+        long idAtendimento = -1;
+        short i_idAtendimento =-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    // Se usuário não esta ativo, não pode receber processo
+    //if ( proCObterIdStatusUsuario( idUsuario ) != 1 )
+    //{
+    //    return false;
+    //}
+
+    EXEC SQL
+    SELECT
+        IDATENDIMENTO
+    INTO 
+        :idAtendimento:i_idAtendimento
+    FROM 
+    (
+        SELECT IDATENDIMENTO 
+        FROM 
+        (
+            SELECT 
+                ATDPROXATENDIMENTO.IDATENDIMENTO 
+               ,ATDPROXATENDIMENTO.NRCRITICIDADE
+            FROM 
+                ATENDIMENTO.ATDPROXATENDIMENTO ATDPROXATENDIMENTO,
+                ATENDIMENTO.ATENDIMENTOPRIORIZACAO ATENDIMENTOPRIORIZACAO
+            WHERE 
+                ATDPROXATENDIMENTO.IDATENDIMENTO = ATENDIMENTOPRIORIZACAO.IDATENDIMENTO
+            AND
+                ATDPROXATENDIMENTO.IDPESSOAUSUARIO = :idUsuario
+            AND 
+                ATDPROXATENDIMENTO.IDSUSPEITO IS NULL
+            AND
+            	-- // GRUPO
+                ATDPROXATENDIMENTO.IDGRUPO = 
+                ( 
+                	SELECT GRUPOSKILL.IDGRUPO 
+					FROM ACESSO.GRUPOSKILL GRUPOSKILL
+					    ,ACESSO.USUARIOGRUPOSKILL USUARIOGRUPOSKILL
+						,ACESSO.GRUPO GRUPO
+					WHERE USUARIOGRUPOSKILL.IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL 
+					AND   USUARIOGRUPOSKILL.IDPESSOAUSUARIO = ATDPROXATENDIMENTO.IDPESSOAUSUARIO
+					AND   GRUPOSKILL.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+					AND   ROWNUM < 2
+				)
+            AND
+                -- // CONTATO
+                ATENDIMENTOPRIORIZACAO.IDCONTATO = 
+                (
+				    SELECT IDCONTATO 
+					FROM ACESSO.GRUPOSKILL GS, 
+					     ACESSO.USUARIOGRUPOSKILL UGS, 
+					     ACESSO.CONTATOGRUPOSKILL CGS 
+					WHERE GS.IDGRUPOSKILL = UGS.IDGRUPOSKILL
+					AND   GS.IDGRUPOSKILL = CGS.IDGRUPOSKILL
+                	AND   GS.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+					AND   UGS.IDPESSOAUSUARIO = ATDPROXATENDIMENTO.IDPESSOAUSUARIO 
+					AND   CGS.IDCONTATO = ATENDIMENTOPRIORIZACAO.IDCONTATO 
+					AND   ROWNUM < 2
+                )
+            AND
+                -- // 1 CANAL
+                ATENDIMENTOPRIORIZACAO.IDCANAL = 
+                ( 
+                	SELECT IDCANAL 
+                	FROM ACESSO.GRUPOSKILL, ACESSO.USUARIOGRUPOSKILL, ACESSO.CANALGRUPOSKILL 
+                	WHERE GRUPOSKILL.IDGRUPOSKILL = CANALGRUPOSKILL.IDGRUPOSKILL 
+                	AND   GRUPOSKILL.IDGRUPOSKILL = USUARIOGRUPOSKILL.IDGRUPOSKILL
+                	AND   GRUPOSKILL.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+                	AND   USUARIOGRUPOSKILL.IDPESSOAUSUARIO = ATDPROXATENDIMENTO.IDPESSOAUSUARIO 
+			        AND   ATENDIMENTOPRIORIZACAO.IDCANAL = CANALGRUPOSKILL.IDCANAL
+					AND   ROWNUM < 2
+                )
+            AND
+                -- // 2 PROCEDENCIA
+                ATENDIMENTOPRIORIZACAO.IDPROCEDENCIA = 
+                (
+                	SELECT IDPROCEDENCIA 
+                	FROM ACESSO.GRUPOSKILL, ACESSO.USUARIOGRUPOSKILL, ACESSO.PROCEDENCIAGRUPOSKILL 
+                	WHERE GRUPOSKILL.IDGRUPOSKILL = PROCEDENCIAGRUPOSKILL.IDGRUPOSKILL 
+                	AND   GRUPOSKILL.IDGRUPOSKILL = USUARIOGRUPOSKILL.IDGRUPOSKILL
+                	AND   GRUPOSKILL.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+                	AND   USUARIOGRUPOSKILL.IDPESSOAUSUARIO = ATDPROXATENDIMENTO.IDPESSOAUSUARIO 
+			        AND   ATENDIMENTOPRIORIZACAO.IDPROCEDENCIA = PROCEDENCIAGRUPOSKILL.IDPROCEDENCIA
+					AND   ROWNUM < 2
+                )
+            AND
+                -- // 3 TIPOCARTEIRA
+                ATENDIMENTOPRIORIZACAO.IDTIPOCARTEIRA = 
+                (
+                	SELECT IDTIPOCARTEIRA 
+                	FROM ACESSO.GRUPOSKILL, ACESSO.USUARIOGRUPOSKILL, ACESSO.TIPOCARTEIRAGRUPOSKILL 
+                	WHERE GRUPOSKILL.IDGRUPOSKILL = TIPOCARTEIRAGRUPOSKILL.IDGRUPOSKILL 
+                	AND   GRUPOSKILL.IDGRUPOSKILL = USUARIOGRUPOSKILL.IDGRUPOSKILL
+                	AND   GRUPOSKILL.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+                	AND   USUARIOGRUPOSKILL.IDPESSOAUSUARIO = ATDPROXATENDIMENTO.IDPESSOAUSUARIO 
+			        AND   TIPOCARTEIRAGRUPOSKILL.IDTIPOCARTEIRA = ATENDIMENTOPRIORIZACAO.IDTIPOCARTEIRA
+					AND   ROWNUM < 2
+                )
+            AND
+                -- // 4 SEGMENTACAO
+                ATENDIMENTOPRIORIZACAO.IDSEGMENTACAO = 
+                (
+                	SELECT IDSEGMENTACAO 
+                	FROM ACESSO.GRUPOSKILL, ACESSO.USUARIOGRUPOSKILL, ACESSO.SEGMENTACAOGRUPOSKILL 
+                	WHERE GRUPOSKILL.IDGRUPOSKILL = SEGMENTACAOGRUPOSKILL.IDGRUPOSKILL 
+                	AND   GRUPOSKILL.IDGRUPOSKILL = USUARIOGRUPOSKILL.IDGRUPOSKILL
+                	AND   GRUPOSKILL.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+                	AND   USUARIOGRUPOSKILL.IDPESSOAUSUARIO = ATDPROXATENDIMENTO.IDPESSOAUSUARIO 
+			        AND   ATENDIMENTOPRIORIZACAO.IDSEGMENTACAO = SEGMENTACAOGRUPOSKILL.IDSEGMENTACAO
+					AND   ROWNUM < 2
+                )
+            AND
+                -- // 5 GRUPOABERTURA
+                ATENDIMENTOPRIORIZACAO.IDGRUPOABERTURA = 
+                (
+                	SELECT GRUPOABERTURAGRUPOSKILL.IDGRUPO 
+                	FROM ACESSO.GRUPOSKILL, ACESSO.USUARIOGRUPOSKILL, ACESSO.GRUPOABERTURAGRUPOSKILL 
+                	WHERE GRUPOSKILL.IDGRUPOSKILL = GRUPOABERTURAGRUPOSKILL.IDGRUPOSKILL 
+                	AND   GRUPOSKILL.IDGRUPOSKILL = USUARIOGRUPOSKILL.IDGRUPOSKILL
+                	AND   GRUPOSKILL.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+                	AND   USUARIOGRUPOSKILL.IDPESSOAUSUARIO = ATDPROXATENDIMENTO.IDPESSOAUSUARIO 
+			        AND   ATENDIMENTOPRIORIZACAO.IDGRUPOABERTURA = GRUPOABERTURAGRUPOSKILL.IDGRUPO
+					AND   ROWNUM < 2
+                )
+            AND
+                -- // 6 TIPORELACIONAMENTO
+                ATENDIMENTOPRIORIZACAO.IDTIPORELACIONAMENTO = 
+                (
+                	SELECT IDTIPORELACIONAMENTO 
+                    FROM ACESSO.GRUPOSKILL, ACESSO.USUARIOGRUPOSKILL, ACESSO.TPRELACIONAMENTOGRUPOSKILL
+                    WHERE GRUPOSKILL.IDGRUPOSKILL = TPRELACIONAMENTOGRUPOSKILL.IDGRUPOSKILL 
+                    AND   GRUPOSKILL.IDGRUPOSKILL = USUARIOGRUPOSKILL.IDGRUPOSKILL
+	                AND   GRUPOSKILL.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+	                AND   USUARIOGRUPOSKILL.IDPESSOAUSUARIO = ATDPROXATENDIMENTO.IDPESSOAUSUARIO 
+			        AND   ATENDIMENTOPRIORIZACAO.IDTIPORELACIONAMENTO =  TPRELACIONAMENTOGRUPOSKILL.IDTIPORELACIONAMENTO
+                    AND ROWNUM < 2
+                )
+                    AND
+                -- // 7 TIPOLINHA
+                ATENDIMENTOPRIORIZACAO.IDTIPOLINHA = 
+                (
+                	SELECT IDTIPOLINHA
+                	FROM ACESSO.GRUPOSKILL, ACESSO.USUARIOGRUPOSKILL, ACESSO.TIPOLINHAGRUPOSKILL 
+                	WHERE GRUPOSKILL.IDGRUPOSKILL = TIPOLINHAGRUPOSKILL.IDGRUPOSKILL 
+                	AND   GRUPOSKILL.IDGRUPOSKILL = USUARIOGRUPOSKILL.IDGRUPOSKILL
+                	AND   GRUPOSKILL.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+                	AND   USUARIOGRUPOSKILL.IDPESSOAUSUARIO = ATDPROXATENDIMENTO.IDPESSOAUSUARIO 
+			        AND   ATENDIMENTOPRIORIZACAO.IDTIPOLINHA =  TIPOLINHAGRUPOSKILL.IDTIPOLINHA
+					AND   ROWNUM < 2
+                )
+                    AND
+                -- // 8 UFOPERADORA
+                ATENDIMENTOPRIORIZACAO.IDUFOPERADORA = 
+                (
+                	SELECT IDUFOPERADORA
+                	FROM ACESSO.GRUPOSKILL, ACESSO.USUARIOGRUPOSKILL, ACESSO.UFOPERADORAGRUPOSKILL 
+                	WHERE GRUPOSKILL.IDGRUPOSKILL = UFOPERADORAGRUPOSKILL.IDGRUPOSKILL 
+                	AND   GRUPOSKILL.IDGRUPOSKILL = USUARIOGRUPOSKILL.IDGRUPOSKILL
+                	AND   GRUPOSKILL.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+                	AND   USUARIOGRUPOSKILL.IDPESSOAUSUARIO = ATDPROXATENDIMENTO.IDPESSOAUSUARIO 
+			        AND   ATENDIMENTOPRIORIZACAO.IDUFOPERADORA = UFOPERADORAGRUPOSKILL.IDUFOPERADORA 
+					AND   ROWNUM < 2
+                )
+                    AND 
+                -- // 9 TIPOPESSOA
+                ATENDIMENTOPRIORIZACAO.IDTIPOPESSOA =
+                (
+                	SELECT IDTIPOPESSOA
+                	FROM ACESSO.GRUPOSKILL, ACESSO.USUARIOGRUPOSKILL, ACESSO.TIPOPESSOAGRUPOSKILL 
+                	WHERE GRUPOSKILL.IDGRUPOSKILL = TIPOPESSOAGRUPOSKILL.IDGRUPOSKILL 
+                	AND   GRUPOSKILL.IDGRUPOSKILL = USUARIOGRUPOSKILL.IDGRUPOSKILL
+                	AND   GRUPOSKILL.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+			        AND   ATENDIMENTOPRIORIZACAO.IDTIPOPESSOA = TIPOPESSOAGRUPOSKILL.IDTIPOPESSOA 
+					AND   ROWNUM < 2
+                )
+        )
+        ORDER BY NRCRITICIDADE DESC, IDATENDIMENTO 
+    )
+    WHERE
+        ROWNUM < 2;
+
+    if ( i_idAtendimento != -1 )
+    {
+        _idAtendimento = idAtendimento;
+
+        ULOG("idAtendimento=%d",idAtendimento);
+    }
+
+    ULOG_END("proCObterAtdFilaAlertaSkill()"); 
+
+    return i_idAtendimento == -1 ? false : true;
+}
+
+// Quando um processo é aberto sem numero de linha, busca o próximo atendimento na
+// fila sem levar em consideração o idPessoaLinhaHistorico.
+/*
+bool proCObterAtdFilaAlertaSkillSemLinha( int _idUsuario, long &_idAtendimento )
+{
+    tuxfw_getlogger()->debug(mensagemSimples("> proCObterAtdFilaAlertaSkillSemLinha()");
+
+    struct sqlca sqlca;
+    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuario = _idUsuario;
+        long idAtendimento = -1;
+        short i_idAtendimento =-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    EXEC SQL
+    SELECT
+        IDATENDIMENTO
+    INTO 
+        :idAtendimento:i_idAtendimento
+    FROM 
+    (
+        SELECT IDATENDIMENTO 
+        FROM 
+        (
+            SELECT 
+                ATDPROXATENDIMENTO.IDATENDIMENTO 
+               ,ATDPROXATENDIMENTO.NRCRITICIDADE
+            FROM 
+                ATENDIMENTO.ATDPROXATENDIMENTO ATDPROXATENDIMENTO,
+                CONTATOADM.UFOPERADORAGRUPO UFOPERADORAGRUPO,
+                CONTATOADM.CONTATOUFOPERADORA CONTATOUFOPERADORA,
+                ACESSO.UFOPERADORAGRUPOSKILL UFOPERADORAGRUPOSKILL,
+                ACESSO.GRUPOSKILL GRUPOSKILL,
+                ACESSO.CONTATOFOLHAUSUARIO CONTATOFOLHAUSUARIO,
+                ACESSO.CANALGRUPOSKILL CANALGRUPOSKILL,
+                ACESSO.PROCEDENCIAGRUPOSKILL PROCEDENCIAGRUPOSKILL,
+                ACESSO.TIPOCARTEIRAGRUPOSKILL TIPOCARTEIRAGRUPOSKILL,
+                ACESSO.SEGMENTACAOGRUPOSKILL SEGMENTACAOGRUPOSKILL,
+                ACESSO.GRUPOABERTURAGRUPOSKILL GRUPOABERTURAGRUPOSKILL
+            WHERE 
+                ATDPROXATENDIMENTO.IDPESSOAUSUARIO = :idUsuario
+            AND 
+                ATDPROXATENDIMENTO.IDSUSPEITO IS NULL
+            AND
+                CONTATOFOLHAUSUARIO.IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL
+            AND
+                CONTATOFOLHAUSUARIO.IDPESSOAUSUARIO = ATDPROXATENDIMENTO.IDPESSOAUSUARIO
+            AND
+                ATDPROXATENDIMENTO.IDGRUPO = GRUPOSKILL.IDGRUPO 
+            AND
+                ATDPROXATENDIMENTO.IDLINHATELEFONICA IS NULL
+            AND
+                -- // CONTATO 
+                ATDPROXATENDIMENTO.IDCONTATO = CONTATOFOLHAUSUARIO.IDCONTATO
+            AND
+                -- // 1 CANAL 
+                CONTATOFOLHAUSUARIO.IDGRUPOSKILL = CANALGRUPOSKILL.IDGRUPOSKILL
+            AND
+                ATDPROXATENDIMENTO.IDCANAL = CANALGRUPOSKILL.IDCANAL
+            AND
+                -- // 2 PROCEDENCIA 
+                CONTATOFOLHAUSUARIO.IDGRUPOSKILL = PROCEDENCIAGRUPOSKILL.IDGRUPOSKILL
+            AND
+                ATDPROXATENDIMENTO.IDPROCEDENCIA = PROCEDENCIAGRUPOSKILL.IDPROCEDENCIA 
+            AND
+                -- // 3 TIPOCARTEIRA 
+                CONTATOFOLHAUSUARIO.IDGRUPOSKILL = TIPOCARTEIRAGRUPOSKILL.IDGRUPOSKILL
+            AND
+                ATDPROXATENDIMENTO.IDTIPOCARTEIRA = TIPOCARTEIRAGRUPOSKILL.IDTIPOCARTEIRA
+            AND
+                -- // 4 SEGMENTACAO 
+                CONTATOFOLHAUSUARIO.IDGRUPOSKILL = SEGMENTACAOGRUPOSKILL.IDGRUPOSKILL
+            AND
+                ATDPROXATENDIMENTO.IDSEGMENTACAO = SEGMENTACAOGRUPOSKILL.IDSEGMENTACAO
+            AND
+                -- // 5 GRUPOABERTURA 
+                CONTATOFOLHAUSUARIO.IDGRUPOSKILL = GRUPOABERTURAGRUPOSKILL.IDGRUPOSKILL
+            AND
+                ATDPROXATENDIMENTO.IDGRUPOABERTURA = GRUPOABERTURAGRUPOSKILL.IDGRUPO
+            AND
+                -- // UF OPERADORA A QUAL O CONTATO PODE ATENDER
+                ATDPROXATENDIMENTO.IDCONTATO = CONTATOUFOPERADORA.IDCONTATO
+            AND
+                (CONTATOUFOPERADORA.DTINICIOVIGENCIA IS NULL OR CONTATOUFOPERADORA.DTINICIOVIGENCIA <= SYSDATE)
+            AND
+                (CONTATOUFOPERADORA.DTFIMVIGENCIA IS NULL OR CONTATOUFOPERADORA.DTFIMVIGENCIA > SYSDATE)
+            AND
+                -- // UFOPERADORA QUE CONFIGURADA PARA O GRUPO
+                UFOPERADORAGRUPO.IDGRUPO = ATDPROXATENDIMENTO.IDGRUPO
+            AND
+                UFOPERADORAGRUPO.IDUFOPERADORA = CONTATOUFOPERADORA.IDUFOPERADORA
+            AND
+                -- // UFOPERADORA QUE O GRUPO DE SKILL PODE ATENDER
+                UFOPERADORAGRUPOSKILL.IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL
+            AND
+                UFOPERADORAGRUPOSKILL.IDUFOPERADORA = CONTATOUFOPERADORA.IDUFOPERADORA
+        )
+        ORDER BY NRCRITICIDADE DESC, IDATENDIMENTO 
+    )
+    WHERE
+        ROWNUM < 2;
+
+    if ( i_idAtendimento != -1 )
+    {
+        _idAtendimento = idAtendimento;
+
+        ULOG("idAtendimento=%d",idAtendimento);
+    }
+
+    tuxfw_getlogger()->debug(mensagemSimples("< proCObterAtdFilaAlertaSkillSemLinha()");
+
+    return i_idAtendimento == -1 ? false : true;
+}
+*/
+
+bool proCObterAtdFilaCri( int _idUsuario, long &_idAtendimento )
+{
+    ULOG_START("proCObterAtdFilaCri()"); 
+
+    struct sqlca sqlca;
+    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuario = _idUsuario;
+        long idAtendimento = -1;
+        short i_idAtendimento =-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    // Se usuário não esta ativo, não pode receber processo
+    //if ( proCObterIdStatusUsuario( idUsuario ) != 1 )
+    //{
+    //    return false;
+    //}
+
+    EXEC SQL SELECT
+                   IDATENDIMENTO
+             INTO 
+                   :idAtendimento:i_idAtendimento
+             FROM 
+                   (SELECT
+				          IDATENDIMENTO
+			          FROM
+				          ATENDIMENTO.ATDPROXATENDIMENTOCRIV01
+			         WHERE
+				          IDPESSOAUSUARIO = :idUsuario
+				      // AND IDATENDIMENTOCRI IS NULL
+                      // AND IDATENDIMENTO > 0
+			      ORDER BY NRCRITICIDADE DESC, IDATENDIMENTO
+                   )
+             WHERE ROWNUM < 2;
+
+    if ( i_idAtendimento != -1 )
+    {
+	   _idAtendimento = idAtendimento;
+	
+	
+	    ULOG("idAtendimento=%d",idAtendimento);
+    }
+    ULOG_END("proCObterAtdFilaCri()"); 
+
+    return i_idAtendimento == -1 ? false : true;
+}
+
+bool proCObterAtdFilaCriLinha( int _idUsuario, long &_idAtendimento, long _idPessoaLinhaHistorico )
+{
+    ULOG_START("proCObterAtdFilaCriLinha()"); 
+
+    struct sqlca sqlca;
+    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuario = _idUsuario;
+        long idPessoaLinhaHistorico = _idPessoaLinhaHistorico;
+        long idAtendimento = -1;
+        short i_idAtendimento =-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    // Se usuário não esta ativo, não pode receber processo
+    //if ( proCObterIdStatusUsuario( idUsuario ) != 1 )
+    //{
+    //    return false;
+    //}
+
+    EXEC SQL 
+        SELECT
+            IDATENDIMENTO
+        INTO 
+            :idAtendimento:i_idAtendimento
+        FROM 
+            (SELECT
+                IDATENDIMENTO
+			 FROM
+                ATENDIMENTO.ATDPROXATENDIMENTOCRIV01
+			  WHERE 	
+                    IDPESSOAUSUARIO = :idUsuario
+                AND IDPESSOALINHAHISTORICO = :idPessoaLinhaHistorico 
+                //AND IDATENDIMENTOCRI IS NULL
+                //AND IDATENDIMENTO > 0
+		      ORDER BY NRCRITICIDADE DESC, IDATENDIMENTO
+            )
+            WHERE ROWNUM < 2;
+
+    if ( i_idAtendimento != -1 )
+    {
+	   _idAtendimento = idAtendimento;
+	
+	
+	    ULOG("idAtendimento=%d",idAtendimento);
+    }
+    ULOG_END("proCObterAtdFilaCriLinha()"); 
+
+    return i_idAtendimento == -1 ? false : true;
+}
+
+bool proCObterGruposAssociados( int _idUsuario )
+{
+    ULOG_START("proCObterGruposAssociados()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuario = _idUsuario;
+        int nRegistros = 0;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+	EXEC SQL 
+	    SELECT
+		    COUNT(1)
+        INTO
+            :nRegistros
+	    FROM
+		    ACESSO.USUARIOGRUPO
+	    WHERE
+		    IDPESSOAUSUARIO = :idUsuario
+		AND
+			ROWNUM < 2;
+
+    ULOG_END("proCObterGruposAssociados()"); 
+
+    return nRegistros > 0 ? true : false;
+}
+
+bool proCObterGruposAssociadosCri( int _idUsuario )
+{
+    ULOG_START("proCObterGruposAssociadosCri()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int nRegistros=0;
+        int idUsuario = _idUsuario;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+    EXEC SQL 
+        SELECT
+            COUNT(1)
+        INTO
+            :nRegistros
+        FROM
+            ACESSO.USUARIOGRUPO USUARIOGRUPO
+           ,ACESSO.GRUPO GRUPO
+           ,APOIO.TIPOGRUPO TIPOGRUPO
+        WHERE
+            IDPESSOAUSUARIO = :idUsuario
+        AND
+            USUARIOGRUPO.IDGRUPO = GRUPO.IDGRUPO
+        AND
+            GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+        AND
+            TIPOGRUPO.CDTIPOGRUPO = 'CRI';
+
+    ULOG_END("proCObterGruposAssociadosCri()"); 
+
+    return nRegistros > 0 ? true : false;
+}
+
+bool proCObterGruposAssociadosRC( int _idUsuario )
+{
+    ULOG_START("proCObterGruposAssociadosRC()"); 
+    ULOG("> _idUsuario = [%d]",_idUsuario);
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int nRegistros=0;
+        int idUsuario = _idUsuario;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+	EXEC SQL
+        SELECT
+            COUNT(1)
+        INTO
+            :nRegistros
+        FROM
+            ACESSO.USUARIOGRUPO USUARIOGRUPO
+           ,ACESSO.GRUPO GRUPO
+           ,APOIO.TIPOGRUPO TIPOGRUPO
+        WHERE
+            IDPESSOAUSUARIO = :idUsuario
+        AND
+            USUARIOGRUPO.IDGRUPO = GRUPO.IDGRUPO
+        AND
+            GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+        AND
+            TIPOGRUPO.CDTIPOGRUPO = 'RC';
+            
+            
+    ULOG("< retorno da view -> nRegistros [%d]",nRegistros);
+    ULOG_END("proCObterGruposAssociadosRC()"); 
+
+    return nRegistros > 0 ? true : false;
+}
+
+bool proCBuscarDataHoraSS( st_AtdAttrUsuSem *dados )
+{
+    ULOG_START("proCBuscarDataHoraSS()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR dataAndamento[256];
+        short i_dataAndamento;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+    EXEC SQL SELECT TO_CHAR(SYSDATE, 'DD/MM/YYYY HH24:MI:SS') 
+               INTO :dataAndamento:i_dataAndamento 
+               FROM DUAL;
+
+    CONVIND(dataAndamento,i_dataAndamento);
+
+    sprintf(dados->dataAndamento,"%.*s",sizeof(dados->dataAndamento)-1,dataAndamento.arr);
+
+    ULOG("dataAndamento='%s'",dados->dataAndamento);
+
+    ULOG_END("proCBuscarDataHoraSS()"); 
+
+    return true;
+}
+
+bool proCBuscarDataHora( st_AtdAttrUsuSem *dados )
+{
+    ULOG_START("proCBuscarDataHora()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR dataAtual[256];
+        short i_dataAtual;
+        VARCHAR dataAndamento[256];
+        short i_dataAndamento;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    EXEC SQL
+        SELECT
+            TO_CHAR(SYSDATE,'DD/MM/YYYY HH24:MI'),
+            TO_CHAR(SYSDATE,'DD/MM/YYYY HH24:MI:SS')
+        INTO
+            :dataAtual:i_dataAtual,
+            :dataAndamento:i_dataAndamento
+        FROM
+            DUAL;
+
+    CONVIND(dataAtual,i_dataAtual);
+    CONVIND(dataAndamento,i_dataAndamento);
+
+    SAFE_STRNCPY(dados->dataAtual,(char*)dataAtual.arr);
+    SAFE_STRNCPY(dados->dataAndamento,(char*)dataAndamento.arr);
+
+    ULOG("dataAndamento='%s'",dados->dataAndamento);
+    ULOG("    dataAtual='%s'",dados->dataAtual);
+
+    ULOG_END("proCBuscarDataHora()"); 
+
+    return true;
+}
+
+int proCQtdeRegsAtdFilaUsuario( int _idUsuario )
+{
+    ULOG_START("proCQtdeRegsAtdFilaUsuario()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int registros = 0;
+        int idUsuario = _idUsuario;
+        short i_registros = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+    EXEC SQL SELECT count(1) REGISTROS
+               INTO :registros:i_registros
+               FROM ATENDIMENTO.ATDFILAUSUARIOV01 
+              WHERE IDPESSOAUSUARIO = :idUsuario;
+
+    ULOG("registros='%d'",registros);
+
+    ULOG_END("proCQtdeRegsAtdFilaUsuario()"); 
+
+    return registros;
+}
+
+int proCQtdeRegsAtdFilaUsuarioCri( int _idUsuario )
+{
+    ULOG_START("proCQtdeRegsAtdFilaUsuarioCri()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int registros;
+        int idUsuario = _idUsuario;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL 
+    //     SELECT
+    //         COUNT(1)
+    //     INTO 
+    //         :registros:i_registros
+    //     FROM
+    //         ATENDIMENTO.TRATAMENTOCRI TRATAMENTOCRI,
+    //         ATENDIMENTO.ATENDIMENTOUSUARIOATUAL ATENDIMENTOUSUARIOATUAL
+    //     WHERE 
+    //         TRATAMENTOCRI.IDATENDIMENTO = ATENDIMENTOUSUARIOATUAL.IDATENDIMENTO (+)
+    //     AND TRATAMENTOCRI.IDPESSOAUSUARIO = :idUsuario
+    //     AND ATENDIMENTOUSUARIOATUAL.IDPESSOAUSUARIO = :idUsuario
+    //     AND (ATENDIMENTOUSUARIOATUAL.DTFIMPAUSAATENDIMENTO <= SYSDATE OR ATENDIMENTOUSUARIOATUAL.DTFIMPAUSAATENDIMENTO IS NULL);
+
+    EXEC SQL
+        SELECT
+            COUNT(1)
+        INTO 
+            :registros
+        FROM
+            ATENDIMENTO.TRATAMENTOCRI TRATAMENTOCRI,
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO ATENDIMENTOPRIORIZACAO,
+            ATENDIMENTO.ATENDIMENTOPAUSA ATENDIMENTOPAUSA
+        WHERE 
+            TRATAMENTOCRI.IDATENDIMENTO = ATENDIMENTOPRIORIZACAO.IDATENDIMENTO
+        AND TRATAMENTOCRI.IDATENDIMENTO = ATENDIMENTOPAUSA.IDATENDIMENTO (+)
+        AND TRATAMENTOCRI.IDPESSOAUSUARIO = :idUsuario
+        AND (ATENDIMENTOPAUSA.DTFIMPAUSAATENDIMENTO <= SYSDATE 
+                OR ATENDIMENTOPAUSA.DTFIMPAUSAATENDIMENTO IS NULL);
+
+    ULOG("registros='%d'",registros);
+
+    ULOG_END("proCQtdeRegsAtdFilaUsuarioCri()"); 
+
+    return registros;
+}
+
+int proCObterInDisponivelWF( int _idUsuario )
+{
+    ULOG_START("proCObterInDisponivelWF()"); 
+    ULOG("> _idUsuario = [%d]",_idUsuario);
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int inDisponivelWF=0;
+        int idUsuario = _idUsuario;
+        short i_inDisponivelWF=-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+    EXEC SQL SELECT INDISPONIVELWF
+               INTO :inDisponivelWF:i_inDisponivelWF
+               FROM ACESSO.USUARIO
+              WHERE IDPESSOAUSUARIO = :idUsuario;
+
+    ULOG("inDisponivelWF='%d'",inDisponivelWF);
+
+    ULOG_END("proCObterInDisponivelWF()");
+
+    // Se não encontrou o usuario, retorna indisponível por default
+    return i_inDisponivelWF != -1 ? inDisponivelWF : 0;
+}
+
+int proCObterIdStatusUsuario( int _idUsuario )
+{
+    ULOG_START("proCObterIdStatusUsuario()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idStatusUsuario=0;
+        int idUsuario = _idUsuario;
+        short i_idStatusUsuario=-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+    EXEC SQL SELECT IDSTATUSUSUARIO
+               INTO :idStatusUsuario:i_idStatusUsuario
+               FROM ACESSO.USUARIO
+              WHERE IDPESSOAUSUARIO = :idUsuario;
+
+    ULOG("idStatusUsuario='%d'",idStatusUsuario);
+
+    ULOG_END("proCObterIdStatusUsuario()"); 
+
+    return idStatusUsuario;
+}
+
+
+int proCQtdeRegsAtdFilaUsuarioRC( int _idUsuario )
+{
+    ULOG_START("proCQtdeRegsAtdFilaUsuarioRC()"); 
+    ULOG("_idUsuario = [%d]",_idUsuario);
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int registros;
+        int idUsuario = _idUsuario;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL
+    //     SELECT COUNT(1) 
+    //       INTO 
+    //            :registros:i_registros
+    //       FROM 
+    //            ATENDIMENTO.ATENDIMENTOFILAUSUARIOWFRCV01 AFURC
+    //           ,ATENDIMENTO.ATENDIMENTOUSUARIOATUAL AUA
+    //           ,ATENDIMENTO.ATENDIMENTOSUSPEITO ASP
+    //      WHERE 
+    //            AFURC.IDPESSOAUSUARIO   = :idUsuario
+    //        AND AFURC.IDATENDIMENTO     = AUA.IDATENDIMENTO
+    //        AND (AUA.INPAUSAATENDIMENTO = 0 OR AUA.DTFIMPAUSAATENDIMENTO < SYSDATE)
+    //        AND AUA.IDATENDIMENTO       = ASP.IDATENDIMENTO (+)
+    //        AND ASP.DTSUSPEITO IS NULL;
+
+    EXEC SQL
+        SELECT 
+            COUNT(1) 
+        INTO 
+            :registros
+        FROM 
+            ATENDIMENTO.ATENDIMENTOFILAUSUARIOWFRCV01 AFURC,
+            ATENDIMENTO.ATENDIMENTOSUSPEITO ATENDIMENTOSUSPEITO,
+            ATENDIMENTO.ATENDIMENTOPAUSA ATENDIMENTOPAUSA
+        WHERE 
+            AFURC.IDPESSOAUSUARIO = :idUsuario
+        AND AFURC.IDATENDIMENTO = ATENDIMENTOPAUSA.IDATENDIMENTO (+)
+        AND AFURC.IDATENDIMENTO = ATENDIMENTOSUSPEITO.IDATENDIMENTO (+)
+        AND (ATENDIMENTOPAUSA.DTFIMPAUSAATENDIMENTO < SYSDATE 
+                OR ATENDIMENTOPAUSA.DTFIMPAUSAATENDIMENTO IS NULL)
+        AND ATENDIMENTOSUSPEITO.DTSUSPEITO IS NULL;
+
+    ULOG("registros='%d'",registros);
+
+    ULOG_END("proCQtdeRegsAtdFilaUsuarioRC()"); 
+
+    return registros;
+}
+
+bool procCProcessoAssociadoUsuario(long idAtendimento)
+{
+    ULOG_START( "procCProcessoAssociadoUsuario()" );
+
+    bool retorno;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long varOraIdAtendimento = idAtendimento;
+        VARCHAR varOraIdPessoaUsuarioAtual[39];
+        short statOraIdPessoaUsuarioAtual = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    ULOG( "idAtendimento=%d",idAtendimento );
+
+    EXEC SQL
+        SELECT
+            NVL(IDPESSOAUSUARIOATUAL,0) AS IDPESSOAUSUARIOATUAL
+        INTO
+            :varOraIdPessoaUsuarioAtual:statOraIdPessoaUsuarioAtual
+        FROM
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO ATENDIMENTOPRIORIZACAO
+        WHERE
+            ATENDIMENTOPRIORIZACAO.IDATENDIMENTO = :varOraIdAtendimento
+        AND ATENDIMENTOPRIORIZACAO.IDPESSOAUSUARIOATUAL IS NULL
+        AND 0 = ( SELECT COUNT(1)
+                    FROM ATENDIMENTO.ATENDIMENTOPAUSA ATENDIMENTOPAUSA
+                   WHERE ATENDIMENTOPAUSA.IDATENDIMENTO = ATENDIMENTOPRIORIZACAO.IDATENDIMENTO
+                     AND ATENDIMENTOPAUSA.DTFIMPAUSAATENDIMENTO >= SYSDATE );
+
+    CONVIND(varOraIdPessoaUsuarioAtual,statOraIdPessoaUsuarioAtual);
+
+    if ( sqlca.sqlcode || 0 == varOraIdPessoaUsuarioAtual.len )
+    { // não tem usuário associado a este processo
+        retorno = false; 
+    }
+    else
+    {
+        ULOG("idUsuarioAtual=%s",(char*)varOraIdPessoaUsuarioAtual.arr);
+        retorno = true; 
+    }
+
+    ULOG("retorno=%d",retorno);
+
+    ULOG_END( "procCProcessoAssociadoUsuario()" );
+
+    return retorno;
+}
+
+bool proCObterAtdFilaAlertaRC( int _idUsuario, long &_idAtendimento )
+{
+    ULOG_START("proCObterAtdFilaAlertaRC()"); 
+
+    struct sqlca sqlca;
+    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuario = _idUsuario;
+        long idAtendimento = -1;
+        short i_idAtendimento =-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+
+    EXEC SQL
+        SELECT
+              IDATENDIMENTO
+          INTO 
+              :idAtendimento:i_idAtendimento
+          FROM 
+              (SELECT IDATENDIMENTO 
+                 FROM ATENDIMENTO.ATDPROXATENDIMENTORC
+                WHERE IDPESSOAUSUARIO = :idUsuario
+                  AND IDSUSPEITO IS NULL
+             ORDER BY NRCRITICIDADE DESC,IDATENDIMENTO
+             )
+         WHERE ROWNUM < 2;
+
+    if ( i_idAtendimento != -1 )
+    {
+	   _idAtendimento = idAtendimento;
+
+	    ULOG("idAtendimento=%d",idAtendimento);
+    }
+
+    ULOG_END("proCObterAtdFilaAlertaRC()"); 
+
+    return i_idAtendimento == -1 ? false : true;
+}
+
+bool proCObterAtdFilaAlertaCPrevio(int _idUsuario, long &_idAtendimento,st_AtdAttrUsuSem *dados,XMLDPR *xmlDpr)
+{
+    ULOG_START("proCObterAtdFilaAlertaCPrevio()"); 
+
+    struct sqlca sqlca;
+    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct FetchResultado dFetchResultado;
+
+        int idGrupoEncaminhamento = 0;
+        short iidGrupoEncaminhamento = -1 ;
+
+        long idAtendimento = 0;
+        long idPessoaUsuarioAtual	= -1;
+        int idGrupoAtual			= 0;
+        VARCHAR dtCalculada[64];
+        int idUsuario = _idUsuario;
+        int idContato;
+        int idCanal;
+        int idProcedencia ;
+        int idSegmentacao;
+        int idTipoCarteira ;
+        int idUFOperadora;
+
+        short iidAtendimento = -1 ;
+        short iidPessoaUsuarioAtual = -1 ;
+        short idtCalculada = -1;
+        short iidContato= -1;
+        short iidCanal= -1 ;
+        short iidProcedencia = -1;
+        short iidSegmentacao= -1;
+        short iidTipoCarteira = -1;
+        short iidGrupoAtual = -1;
+        short iidUFOperadora= -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memset (&dFetchResultado , 0, sizeof(FetchResultado)); 
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+    
+    /* retorna um processo considerando as variaveis */
+
+    EXEC SQL
+        SELECT
+             IDATENDIMENTO
+            ,IDGRUPOATUAL  
+            ,TO_CHAR(DTPRAZOFINALCPREVIO,'DD/MM/YYYY HH24:MI') AS DATACALCULADA
+            ,IDCONTATO 
+            ,IDCANAL 
+            ,IDPROCEDENCIA
+            ,IDSEGMENTACAO
+            ,IDTIPOCARTEIRA
+            ,IDPESSOAUSUARIOATUAL
+            ,IDUFOPERADORA
+            ,IDGRUPO
+          INTO
+             :idAtendimento:iidAtendimento
+            ,:idGrupoAtual:iidGrupoAtual
+            ,:dtCalculada:idtCalculada
+            ,:idContato:iidContato
+            ,:idCanal:iidCanal
+            ,:idProcedencia:iidProcedencia
+            ,:idSegmentacao:iidSegmentacao
+            ,:idTipoCarteira:iidTipoCarteira
+            ,:idPessoaUsuarioAtual:iidPessoaUsuarioAtual
+            ,:idUFOperadora:iidUFOperadora
+            ,:idGrupoEncaminhamento:iidGrupoEncaminhamento
+		 FROM 
+            (
+		        SELECT 
+					     ATDPROXATENDIMENTOCPREVIOV01.IDATENDIMENTO
+			            ,ATDPROXATENDIMENTOCPREVIOV01.IDGRUPOATUAL
+			            ,ATDPROXATENDIMENTOCPREVIOV01.DTPRAZOFINALCPREVIO
+			            ,ATDPROXATENDIMENTOCPREVIOV01.IDCONTATO 
+			            ,ATDPROXATENDIMENTOCPREVIOV01.IDCANAL 
+			            ,ATDPROXATENDIMENTOCPREVIOV01.IDPROCEDENCIA
+			            ,ATDPROXATENDIMENTOCPREVIOV01.IDSEGMENTACAO
+			            ,ATDPROXATENDIMENTOCPREVIOV01.IDTIPOCARTEIRA
+			            ,ATDPROXATENDIMENTOCPREVIOV01.IDPESSOAUSUARIOATUAL
+			            ,ATDPROXATENDIMENTOCPREVIOV01.IDGRUPO
+			            ,ATDPROXATENDIMENTOCPREVIOV01.IDUFOPERADORA
+			     FROM   ATENDIMENTO.ATDPROXATENDIMENTOCPREVIOV01  ATDPROXATENDIMENTOCPREVIOV01
+				       ,ATENDIMENTO.ATDRELGRUPORCV01 ARG
+                       ,CONTATOADM.UFOPERADORAGRUPO UFOG
+		        WHERE 
+		              ARG.IDCONTATO = ATDPROXATENDIMENTOCPREVIOV01.idContato
+                AND  
+                      ATDPROXATENDIMENTOCPREVIOV01.IDGRUPOATUAL <> 0
+		        AND
+		              ARG.IDCANAL = ATDPROXATENDIMENTOCPREVIOV01.idCanal
+		        AND
+		              ARG.IDPROCEDENCIA = ATDPROXATENDIMENTOCPREVIOV01.idProcedencia
+		        AND
+		              ARG.IDSEGMENTACAO = ATDPROXATENDIMENTOCPREVIOV01.idSegmentacao
+		        AND
+		              ARG.IDTIPOCARTEIRA = ATDPROXATENDIMENTOCPREVIOV01.idTipoCarteira
+		        AND 
+		              UFOG.IDUFOPERADORA = ATDPROXATENDIMENTOCPREVIOV01.idUFOperadora
+		        AND 
+		              UFOG.IDGRUPO = ARG.IDGRUPO
+				and 
+				     ATDPROXATENDIMENTOCPREVIOV01.IDGRUPO IN (SELECT IDGRUPO FROM  ACESSO.USUARIOGRUPO UG  WHERE IDPESSOAUSUARIO = :idUsuario	)
+			    ORDER BY ATDPROXATENDIMENTOCPREVIOV01.NRCRITICIDADE DESC, ATDPROXATENDIMENTOCPREVIOV01.IDATENDIMENTO
+			)
+         WHERE 
+            ROWNUM < 2 ;
+
+    if (-1 == iidGrupoEncaminhamento)
+    {
+        /* retorna um processo considerando o primeiro grupo */
+        EXEC SQL
+            SELECT
+             IDATENDIMENTO
+            ,IDGRUPOATUAL
+            ,TO_CHAR(DTPRAZOFINALCPREVIO,'DD/MM/YYYY HH24:MI')
+            ,IDCONTATO 
+            ,IDCANAL 
+            ,IDPROCEDENCIA
+            ,IDSEGMENTACAO
+            ,IDTIPOCARTEIRA
+            ,IDPESSOAUSUARIOATUAL
+            ,IDGRUPOATUAL
+            ,IDUFOPERADORA
+            ,IDGRUPO
+          INTO
+             :idAtendimento:iidAtendimento
+            ,:idGrupoAtual:iidGrupoAtual
+            ,:dtCalculada:idtCalculada
+            ,:idContato:iidContato
+            ,:idCanal:iidCanal
+            ,:idProcedencia:iidProcedencia
+            ,:idSegmentacao:iidSegmentacao
+            ,:idTipoCarteira:iidTipoCarteira
+            ,:idPessoaUsuarioAtual:iidPessoaUsuarioAtual
+            ,:idGrupoAtual:iidGrupoAtual
+            ,:idUFOperadora:iidUFOperadora
+            ,:idGrupoEncaminhamento:iidGrupoEncaminhamento
+         FROM 
+            (
+                SELECT 
+                    ATDPROXATENDIMENTOCPREVIOV01.IDATENDIMENTO,
+                    ATDPROXATENDIMENTOCPREVIOV01.IDGRUPOATUAL,
+                    ATDPROXATENDIMENTOCPREVIOV01.DTPRAZOFINALCPREVIO,
+                    ATDPROXATENDIMENTOCPREVIOV01.IDCONTATO,
+                    ATDPROXATENDIMENTOCPREVIOV01.IDCANAL,
+                    ATDPROXATENDIMENTOCPREVIOV01.IDPROCEDENCIA,
+                    ATDPROXATENDIMENTOCPREVIOV01.IDSEGMENTACAO,
+                    ATDPROXATENDIMENTOCPREVIOV01.IDTIPOCARTEIRA,
+                    ATDPROXATENDIMENTOCPREVIOV01.IDPESSOAUSUARIOATUAL,
+                    ATDPROXATENDIMENTOCPREVIOV01.IDGRUPO,
+                    ATDPROXATENDIMENTOCPREVIOV01.IDUFOPERADORA
+                FROM
+                    ATENDIMENTO.ATDPROXATENDIMENTOCPREVIOV01  ATDPROXATENDIMENTOCPREVIOV01,
+                    CONTATOADM.CONTATOGRUPORC CONTATOGRUPORC1
+                WHERE
+                    CONTATOGRUPORC1.SQORDEM = 1
+                AND ATDPROXATENDIMENTOCPREVIOV01.IDGRUPOATUAL <> 0
+                AND ATDPROXATENDIMENTOCPREVIOV01.IDGRUPO = CONTATOGRUPORC1.IDGRUPO
+                AND ATDPROXATENDIMENTOCPREVIOV01.IDGRUPO IN (SELECT IDGRUPO 
+                                                               FROM ACESSO.USUARIOGRUPO UG 
+                                                              WHERE IDPESSOAUSUARIO = :idUsuario
+                                                            )
+                ORDER BY
+                    ATDPROXATENDIMENTOCPREVIOV01.NRCRITICIDADE DESC,
+                    ATDPROXATENDIMENTOCPREVIOV01.IDATENDIMENTO 
+            )
+         WHERE 
+            ROWNUM < 2 ;
+    } // if (-1 == iidGrupoEncaminhamento)
+
+    CONVIND(dtCalculada,idtCalculada);
+    
+    ULOG("idAtendimento        = [%d]",idAtendimento);
+    ULOG("idGrupoAtual         = [%d]",idGrupoAtual );
+    ULOG("dtCalculada          = [%s]",(char*)dtCalculada.arr);
+    ULOG("idContato            = [%d]",idContato);
+    ULOG("idCanal              = [%d]",idCanal);
+    ULOG("idProcedencia        = [%d]",idProcedencia);
+    ULOG("idSegmentacao        = [%d]",idSegmentacao);
+    ULOG("idTipoCarteira       = [%d]",idTipoCarteira);
+    ULOG("idPessoaUsuarioAtual = [%ld]",idPessoaUsuarioAtual);
+    ULOG("idGrupoEncaminhamento= [%d]",idGrupoEncaminhamento);
+    ULOG("idUFOperadora        = [%d]",idUFOperadora);
+
+    struct st_AtendimentoCPFila  st_Dados;
+    struct st_vlAtendimentoCPFila st_Status;
+
+    memset (&st_Dados , 0, sizeof( st_AtendimentoCPFila)); 
+    memset (&st_Status , -1, sizeof( st_vlAtendimentoCPFila)); 
+
+    cWFAtendimentoCPFila oWFAtendimentoCPFila(&st_Dados,&st_Status);
+
+  
+   // este codigo foi retirado pos nao atende a todos os casos da regra de CPREVIO
+   // if ( oWFAtendimentoCPFila.obterGrupoRCConfigurado(idAtendimento,idContato,idCanal,
+   //                              idProcedencia,idSegmentacao,idTipoCarteira,idUFOperadora,
+   //                              idGrupoEncaminhamento,idUsuario) == false )
+   // {
+   //     if ( oWFAtendimentoCPFila.obterAtendimentoGrupoRCConfigurado(dFetchResultado,idGrupoEncaminhamento,idUsuario) == true )
+   //     {
+   //          idAtendimento=  dFetchResultado.idAtendimento;
+   //          idGrupoAtual =  dFetchResultado.idGrupoAtual;
+   //          idUsuario    =  dFetchResultado.idUsuario;
+   //          idContato    =  dFetchResultado.idContato;
+   //          idCanal      =  dFetchResultado.idCanal;
+   //          idProcedencia=  dFetchResultado.idProcedencia;
+   //          idSegmentacao=  dFetchResultado.idSegmentacao;
+   //          idTipoCarteira= dFetchResultado.idTipoCarteira;
+   //          idUFOperadora=  dFetchResultado.idUFOperadora;
+   //          idPessoaUsuarioAtual=dFetchResultado.idPessoaUsuarioAtual;
+   //          strcpy( (char*)dtCalculada.arr,dFetchResultado.dtCalculada);
+   //     }
+   //     else
+   //     {
+   //         ULOG_END("proCObterAtdFilaAlertaCPrevio()");
+   //         return false;
+   //     }
+   // }
+
+    st_Dados.idAtendimento=idAtendimento ;
+    st_Dados.idGrupoOrigem=idGrupoAtual;
+    st_Dados.idPessoaUsuarioOrigem=idPessoaUsuarioAtual;
+    dados->idPessoaUsuarioAtual=idPessoaUsuarioAtual;
+    st_Dados.inContatoPrevioRealizado=0;
+    st_Dados.nrTentativas=0;
+    strcpy(st_Dados.dtCalculada,(char*)dtCalculada.arr);
+    st_Dados.idUsuarioAlteracao=idUsuario;
+    strcpy(st_Dados.dtUltimaAlteracao,dados->dataAtual);
+
+    // verifica se este atendimento ja existe na fila
+    if ( oWFAtendimentoCPFila.ExistAtendimento(idAtendimento) == false )
+    {
+        // INCLUIR NA TABELA ATENDIMENTO.ATENDIMENTOCPFILA CASO SEJA A PRIMEIRA TENTATIVA DE CPREVIO
+        ULOG(" INICIO -> INCLUIR NA TABELA ATENDIMENTO.ATENDIMENTOCPFILA");
+        
+        oWFAtendimentoCPFila.incluir(&st_Dados,&st_Status);
+
+        ULOG(" FIM  -> INCLUIR NA TABELA ATENDIMENTO.ATENDIMENTOCPFILA");
+    }
+    else
+    {
+        ULOG(" INICIO -> ALTERAR NA TABELA  ATENDIMENTO.ATENDIMENTOCPFILA");
+
+        oWFAtendimentoCPFila.alterar(&st_Dados);
+
+        ULOG(" FIM -> ALTERAR NA TABELA  ATENDIMENTO.ATENDIMENTOCPFILA");
+    }    
+
+    if ( iidAtendimento != -1 )
+    {
+        _idAtendimento = idAtendimento;
+
+        if( AtualizarGrupoUsuarioAtual(idAtendimento,idGrupoAtual,idGrupoEncaminhamento
+                                    ,idPessoaUsuarioAtual
+                                    ,(char*)dtCalculada.arr
+                                    ,idUsuario,dados
+                                    ,xmlDpr) == false )
+        {
+            ULOG("Erro de banco andamento =%d",idAtendimento);
+        }
+
+
+        ULOG("idAtendimento=%d",idAtendimento);
+    }
+
+    ULOG_END("proCObterAtdFilaAlertaCPrevio()"); 
+
+    return iidAtendimento == -1 ? false : true;
+}
+
+
+// ------------------------------------------------------------------------------
+// Encaminha
+// ------------------------------------------------------------------------------
+
+/*
+bool obterGrupoRCConfigurado(long _idAtendimento ,int _idContato ,int _idCanal
+                             ,int _idProcedencia ,int _idSegmentacao ,int _idTipoCarteira
+                             ,int _idUFOperadora ,int &idGrupoEncaminhar
+                            )
+{
+    ULOG("> obterGrupoRCConfigurado()");
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = _idAtendimento;
+        int idContato = _idContato;
+        int idCanal = _idCanal;
+        int idProcedencia = _idProcedencia;
+        int idSegmentacao = _idSegmentacao;
+        int idTipoCarteira = _idTipoCarteira;
+        int idUFOperadora = _idUFOperadora;
+        int idGrupo;
+        short i_idGrupo = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+//    EXEC SQL WHENEVER SQLERROR DO ContatoPrevioSQLError(&sqlca,__LINE__,0);  
+    EXEC SQL WHENEVER NOTFOUND CONTINUE;  
+
+    EXEC SQL 
+        SELECT 
+              ARG.IDGRUPO
+        INTO  
+              :idGrupo:i_idGrupo
+        FROM 
+              ATENDIMENTO.ATDRELGRUPORCV01 ARG
+             ,CONTATOADM.UFOPERADORAGRUPO UFOG
+        WHERE 
+              ARG.IDCONTATO = :idContato
+        AND
+              ARG.IDCANAL = :idCanal
+        AND
+              ARG.IDPROCEDENCIA = :idProcedencia
+        AND
+              ARG.IDSEGMENTACAO = :idSegmentacao
+        AND
+              ARG.IDTIPOCARTEIRA = :idTipoCarteira
+        AND 
+              UFOG.IDUFOPERADORA = :idUFOperadora
+        AND 
+              UFOG.IDGRUPO = ARG.IDGRUPO
+        AND
+              ROWNUM < 2;
+    //
+    // se não encontrar nenhum grupo que atenda as variáveis configuradas,
+    // assume o primeiro grupo de resposta ao cliente associado ao contato
+    // que pertença a UF operadora do atendimento
+    //
+    if (sqlca.sqlcode == 1403)
+    {
+        EXEC SQL 
+            SELECT 
+                  ARG.IDGRUPO
+            INTO
+                  :idGrupo:i_idGrupo
+            FROM 
+                  ATENDIMENTO.ATDRELGRUPORCV01 ARG
+                 ,CONTATOADM.UFOPERADORAGRUPO UFOG
+                 ,ACESSO.USUARIOUFOPERADORA UUFOP
+            WHERE 
+                  ARG.IDCONTATO = :idContato
+            AND 
+                  UFOG.IDUFOPERADORA = :idUFOperadora
+            AND 
+                  UFOG.IDGRUPO = ARG.IDGRUPO
+            AND
+                  ROWNUM < 2;
+        
+        //
+        // se não existe grupo associado a UF operadora então pega o primeiro
+        // grupo associado ao contato que for encontrado
+        //
+        if (sqlca.sqlcode == 1403)
+        {
+            EXEC SQL 
+                SELECT 
+                      ARG.IDGRUPO
+                INTO
+                      :idGrupo:i_idGrupo
+                FROM 
+                      ATENDIMENTO.ATDRELGRUPORCV01 ARG
+                WHERE 
+                      ARG.IDCONTATO = :idContato
+                AND
+                      ROWNUM < 2;
+
+            //
+            // nenhum grupo associado ? então falha a busca
+            //
+            if (sqlca.sqlcode == 1403)
+            {
+                return false;
+            }
+        }
+    }
+
+    idGrupoEncaminhar = idGrupo;
+
+    ULOG("< obterGrupoRCConfigurado()");
+
+    return true;
+}
+
+
+bool obterAtendimentoGrupoRCConfigurado( FetchResultado &_dFetchResultado,int &idGrupoEncaminhamento)
+{
+    ULOG("> obterAtendimentoGrupoRCConfigurado");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento;
+        long idPessoaUsuarioAtual ;
+        int idGrupoAtual;
+        VARCHAR dtCalculada[64];
+        int idContato;
+        int idCanal;
+        int idProcedencia ;
+        int idSegmentacao;
+        int idTipoCarteira ;
+        int idUFOperadora;
+
+        short iidAtendimento = -1 ;
+        short iidPessoaUsuarioAtual = -1 ;
+        short idtCalculada = -1;
+        short iidContato= -1;
+        short iidCanal= -1 ;
+        short iidProcedencia = -1;
+        short iidSegmentacao= -1;
+        short iidTipoCarteira = -1;
+        short iidGrupoAtual = -1;
+        short iidUFOperadora= -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+
+
+    EXEC SQL WHENEVER NOT FOUND DO break;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    EXEC SQL DECLARE cursorContatoPrevio CURSOR FOR
+      SELECT 
+
+        SELECT
+             IDATENDIMENTO
+            ,IDGRUPOATUAL
+            ,DTPRAZOFINALCPREVIO
+            ,IDCONTATO 
+            ,IDCANAL 
+            ,IDPROCEDENCIA
+            ,IDSEGMENTACAO
+            ,IDTIPOCARTEIRA
+            ,IDPESSOAUSUARIOATUAL
+            ,IDUFOPERADORA
+         FROM 
+            ATENDIMENTO.ATDPROXATENDIMENTOCPREVIOV01
+         WHERE ROWNUM < 100;
+
+    EXEC SQL OPEN cursorContatoPrevio;
+
+
+
+    bool retorna = false ;
+
+    if (sqlca.sqlcode < 0) 
+    {
+       ULOG("< obterAtendimentoGrupoRCConfigurado");
+       return retorna;
+    }
+
+
+    for(;;)
+    {
+
+          EXEC SQL FETCH cursorContatoPrevio 
+              INTO 
+                       :idAtendimento:iidAtendimento
+                      ,:idGrupoAtual:iidGrupoAtual
+                      ,:dtCalculada:idtCalculada
+                      ,:idContato:iidContato
+                      ,:idCanal:iidCanal
+                      ,:idProcedencia:iidProcedencia
+                      ,:idSegmentacao:iidSegmentacao
+                      ,:idTipoCarteira:iidTipoCarteira
+                      ,:idPessoaUsuarioAtual:iidPessoaUsuarioAtual
+                      ,:idUFOperadora:iidUFOperadora;
+
+        if (sqlca.sqlcode < 0) 
+        {
+            ULOG("< obterAtendimentoGrupoRCConfigurado()");
+            return retorna;
+        }
+
+
+        CONVIND(dtCalculada,idtCalculada);
+
+        // verifica se o processo tem grupo contato previo
+        retorna = obterGrupoRCConfigurado(idAtendimento,idContato,idCanal,
+                                 idProcedencia,idSegmentacao,idTipoCarteira,idUFOperadora,
+                                 idGrupoEncaminhamento) ;
+        if ( retorna == true )
+        { 
+             _dFetchResultado.idAtendimento=  idAtendimento;  
+             _dFetchResultado.idGrupoAtual=   idGrupoAtual;   
+             _dFetchResultado.idContato=      idContato;      
+             _dFetchResultado.idCanal=        idCanal;        
+             _dFetchResultado.idProcedencia=  idProcedencia ; 
+             _dFetchResultado.idSegmentacao=  idSegmentacao;  
+             _dFetchResultado.idTipoCarteira= idTipoCarteira ;
+             _dFetchResultado.idUFOperadora=  idUFOperadora;  
+             _dFetchResultado.idPessoaUsuarioAtual=idPessoaUsuarioAtual;
+             strcpy(_dFetchResultado.dtCalculada, (char*)dtCalculada.arr);
+            ULOG("< obterAtendimentoGrupoRCConfigurado()");
+            return retorna;
+        }
+
+    }
+    ULOG("< obterAtendimentoGrupoRCConfigurado()");
+    return retorna;
+
+}
+*/
+
+// ------------------------------------------------------------------------------
+// Atualiza grupo e usuario atual
+// ------------------------------------------------------------------------------
+bool AtualizarGrupoUsuarioAtual(long _idAtendimento,int _idGrupoAtual,int _idGrupoEncaminhamento
+                               ,long _idPessoaUsuarioAtual ,char *sDataBKO,int _idUsuario
+                               ,st_AtdAttrUsuSem *dados
+                               ,XMLDPR *xmlDpr)
+{
+    ULOG_START("AtualizarGrupoUsuarioAtual()"); 
+
+    // struct sqlca sqlca;
+
+    // EXEC SQL BEGIN DECLARE SECTION;
+    // 
+    //     char * auxsDataBKO = sDataBKO ;
+    //     long idAtendimento = _idAtendimento;
+    //     int idGrupoEncaminhamento = _idGrupoEncaminhamento;
+    //     int idPessoaUsuarioAtual = _idPessoaUsuarioAtual;
+    //     // int idAgrupamentoEstadoTpProc;
+    //     // int idPessoaUsuario;
+    //     // int idAndamento;
+    //     int idUsuario = _idUsuario ;
+    // 
+    // EXEC SQL END DECLARE SECTION;
+    // EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+    // EXEC SQL WHENEVER NOTFOUND CONTINUE;
+
+    // ==> nao e necessario criar um andamento neste ponto incidencia 3452
+    //
+    // Atualiza Andamento
+    //
+    // EXEC SQL 
+    //     SELECT
+    //          ANDAMENTO.IDAGRUPAMENTOESTADOTPPROC
+    //         ,ANDAMENTO.IDPESSOAUSUARIO
+    //     INTO
+    //         :idAgrupamentoEstadoTpProc
+    //        ,:idPessoaUsuario
+    //     FROM
+    //          ANDAMENTO.ANDAMENTO ANDAMENTO,
+    //          ATENDIMENTO.ATENDIMENTOANDAMENTOATUAL ATENDIMENTOANDAMENTOATUAL
+    //     WHERE 
+    //          ATENDIMENTOANDAMENTOATUAL.IDATENDIMENTO = :idAtendimento
+    //      AND 
+    //          ANDAMENTO.IDANDAMENTO = ATENDIMENTOANDAMENTOATUAL.IDANDAMENTO;
+
+    // if (sqlca.sqlcode == 1403)
+    // { // não encontrou andamento atual para o processo ? isso não pode ocorrer
+    //   // assume o ultimo andamento como o + atual
+    // 
+    //     EXEC SQL 
+    //         SELECT  ANDAMENTO.IDAGRUPAMENTOESTADOTPPROC
+    //                ,ANDAMENTO.IDPESSOAUSUARIO
+    //         INTO
+    //             :idAgrupamentoEstadoTpProc
+    //            ,:idPessoaUsuario
+    //         FROM
+    //             ANDAMENTO.ANDAMENTO ANDAMENTO,
+    //             (
+    //                 SELECT MAX(ANDAMENTOWRK.IDANDAMENTO) AS IDANDAMENTO
+    //                       ,ANDAMENTOWRK.IDATENDIMENTO 
+    //                    FROM ANDAMENTO.ANDAMENTO ANDAMENTOWRK 
+    //                   WHERE ANDAMENTOWRK.IDATENDIMENTO = :idAtendimento
+    //                  GROUP BY ANDAMENTOWRK.IDATENDIMENTO
+    //             ) TEMP
+    //         WHERE
+    //              TEMP.IDANDAMENTO = ANDAMENTO.IDANDAMENTO
+    //           AND
+    //              TEMP.IDATENDIMENTO = ANDAMENTO.IDATENDIMENTO;
+    // 
+    //     if (sqlca.sqlcode == 1403)
+    //     {
+    //         return false;
+    //     }
+    // }
+    //
+    // Insere o registro do andamento
+    //
+    // st_Andamento m_stDados;
+    // st_vlAndamento m_vlDados;
+
+    // memset(&m_stDados,0,sizeof(m_stDados));
+    // memset(&m_vlDados,-1,sizeof(m_vlDados));
+
+    // m_stDados.idAtividade = 34;
+    // m_stDados.idAgrupamentoEstadoTpProc = idAgrupamentoEstadoTpProc;
+    // m_stDados.idAtendimento = idAtendimento;
+    // m_stDados.idPessoaUsuario = idUsuario;
+    // m_stDados.idGrupo = idGrupoEncaminhamento;
+    // m_stDados.idUsuarioAlteracao = idUsuario;
+    // sprintf(m_stDados.dtAndamento,"%.*s",sizeof(m_stDados.dtAndamento)-1,dados->dataAtual);
+    // sprintf(m_stDados.dtUltimaAlteracao,"%.*s",sizeof(m_stDados.dtAndamento)-1,dados->dataAtual);
+
+    // m_vlDados.idAtividade = -1;
+    // m_vlDados.idAgrupamentoEstadoTpProc = -1;
+    // m_vlDados.idAtendimento = -1;
+    // m_vlDados.idPessoaUsuario = -1;
+    // m_vlDados.idGrupo = -1;
+    // m_vlDados.idUsuarioAlteracao = -1;
+    // m_vlDados.dtAndamento = -1;
+    // m_vlDados.dtUltimaAlteracao = -1;
+
+    // cWFAndamento cwfandamento;
+    // idAndamento = cwfandamento.incluir(&m_stDados,&m_vlDados); 
+    
+    // returno o id do andamento incidencia 3452
+	// m_stDados.idAndamento = idAndamento;
+    // m_vlDados.idAndamento = -1;
+    
+    // dados->idAndamento = idAndamento;
+    // <== nao e necessario criar um andamento neste ponto incidencia 3452
+
+    //
+    // Atualiza Atendimento Grupo Atual
+    //
+    ULOG("Atualiza Atendimento Grupo Atual");
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // if ( _idGrupoAtual )
+    // {
+    //     EXEC SQL 
+    //         UPDATE
+    //              ATENDIMENTO.ATENDIMENTOGRUPOATUAL
+    //         SET  
+    //              IDGRUPO = :idGrupoEncaminhamento 
+    //             ,DTULTIMAALTERACAO = SYSDATE
+    //             ,IDUSUARIOALTERACAO = :idUsuario
+    //             ,INCRI = 0
+    //         WHERE
+    //              IDATENDIMENTO = :idAtendimento;
+    // } 
+    // else
+    // {
+    //     EXEC SQL 
+    //         INSERT INTO ATENDIMENTO.ATENDIMENTOGRUPOATUAL
+    //         (
+    //              DTENTRADABKO
+    //             ,DTENTRADAFILA
+    //             ,DTULTIMAALTERACAO
+    //             ,IDATENDIMENTO
+    //             ,IDGRUPO
+    //             ,IDUSUARIOALTERACAO
+    //             ,INCRI
+    //         )
+    //         VALUES 
+    //         ( 
+    //              TO_DATE(:auxsDataBKO,'DD/MM/YYYY')
+    //             , SYSDATE
+    //             , SYSDATE
+    //             ,:idAtendimento
+    //             ,:idGrupoEncaminhamento
+    //             ,:idUsuario
+    //             ,0
+    //         );
+    // }
+
+	struct st_AtendimentoGrupoAtual dadosGrpAtual;
+    struct st_vlAtendimentoGrupoAtual statusGrpAtual;
+	XMLGen xmlGen;
+
+    memset (&dadosGrpAtual,   0, sizeof(st_AtendimentoGrupoAtual)); 
+    memset (&statusGrpAtual, -1, sizeof(st_vlAtendimentoGrupoAtual)); 
+
+    dadosGrpAtual.idAtendimento      = _idAtendimento; 
+    dadosGrpAtual.idGrupo            = _idGrupoEncaminhamento; 
+    dadosGrpAtual.idUsuarioAlteracao = _idUsuario; 
+
+    statusGrpAtual.idAtendimento = 1;
+    statusGrpAtual.idGrupo = 1;
+	statusGrpAtual.idUsuarioAlteracao = 1;
+
+    cWFAtendimentoGrupoAtual cwfatendimentogrupoatual(&dadosGrpAtual, &statusGrpAtual, &xmlGen);
+
+    cwfatendimentogrupoatual.alterar(xmlDpr);
+
+    if (_idPessoaUsuarioAtual > -1)
+    {
+        //
+        //  ULOG("Envia mensagem do processamento ao usuario");
+        //
+        //  EXEC SQL 
+        //      INSERT INTO ATENDIMENTO.ANDAMENTOmensagem
+        //      (
+        //           IDANDAMENTO
+        //          ,DTMENSAGEM
+        //          ,IDUSUARIOALTERACAO
+        //          ,DTULTIMAALTERACAO
+        //          ,IDPESSOAUSUARIODESTINO
+        //          ,IDPESSOAUSUARIO
+        //          ,INORIGEM
+        //      )
+        //      VALUES 
+        //      ( 
+        //           :idAndamento
+        //          ,SYSDATE
+        //          ,:idUsuario
+        //          ,SYSDATE
+        //          ,:idPessoaUsuarioAtual
+        //          ,:idUsuario
+        //         ,1 // ==> 1 = CONTATO PRÉVIO
+        //      );
+
+        //
+        // Remove o processo da responsabilidade do usuario bko
+        //
+        ULOG("Remove o processo da responsabilidade do usuario bko");
+
+	    st_AtendimentoUsuarioAtual   dadosUsuAtual; 
+        st_vlAtendimentoUsuarioAtual statusUsuAtual;
+
+        memset (&dadosUsuAtual,   0, sizeof(st_AtendimentoUsuarioAtual)); 
+        memset (&statusUsuAtual, -1, sizeof(st_vlAtendimentoUsuarioAtual)); 
+
+        dadosUsuAtual.idAtendimento = _idAtendimento;
+        statusUsuAtual.idAtendimento = 1;
+
+        cWFAtendimentoUsuarioAtual cwfatendimentousuarioatual(&dadosUsuAtual, &statusUsuAtual, &xmlGen);
+
+        cwfatendimentousuarioatual.excluir(xmlDpr);
+
+        // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+        // EXEC SQL 
+        //     DELETE
+        //          ATENDIMENTO.ATENDIMENTOUSUARIOATUAL
+        //     WHERE
+        //          IDATENDIMENTO = :idAtendimento;
+    } 
+
+    ULOG_END("AtualizarGrupoUsuarioAtual()"); 
+
+    return  true;
+}
+
+bool prCIncluir_MSG_Usuario_old(unsigned long _idAndamento,int _idUsuario, long _idPessoaUsuarioAtual)
+{
+    ULOG_START("prCIncluir_MSG_Usuario_old()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        unsigned long idAndamento = _idAndamento;
+        long idPessoaUsuarioAtual = _idPessoaUsuarioAtual;
+        int idUsuario = _idUsuario ;
+
+    EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+	
+	ULOG("Envia mensagem do processamento ao usuario");
+
+	EXEC SQL 
+		INSERT INTO ATENDIMENTO.ANDAMENTOMENSAGEM
+		(
+			 IDANDAMENTO
+			,DTMENSAGEM
+			,IDUSUARIOALTERACAO
+			,DTULTIMAALTERACAO
+			,IDPESSOAUSUARIODESTINO
+			,IDPESSOAUSUARIO
+			,INORIGEM
+		)
+		VALUES 
+		( 
+			 :idAndamento
+			,SYSDATE
+			,:idUsuario
+			,SYSDATE
+			,:idPessoaUsuarioAtual
+			,:idUsuario
+			,1 // ==> 1 = CONTATO PRÉVIO
+		);
+		
+	ULOG_END("prCIncluir_MSG_Usuario_old()"); 
+	return  true;
+}
+
+//
+// Funcao especifica para Skill
+int proCSkillQtdeRegsAtdFilaUsuario( int _idUsuario )
+{
+    ULOG_START("proCSkillQtdeRegsAtdFilaUsuario()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int registros = 0;
+        int idUsuario = _idUsuario;
+        short i_registros = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+    EXEC SQL SELECT count(1) REGISTROS
+               INTO :registros:i_registros
+               FROM ATENDIMENTO.ATDSKLFILAUSUARIOV01 
+              WHERE IDPESSOAUSUARIO = :idUsuario;
+
+    ULOG("registros='%d'",registros);
+
+    ULOG_END("proCSkillQtdeRegsAtdFilaUsuario()"); 
+
+    return registros;
+}
+
+
+
+//
+// Funcoes para o tratamento do Skill
+//
+/*
+bool proCSkillObterAtdFilaAlertaCPrevio(int _idUsuario, unsigned long &_idAtendimento,st_AtdAttrUsuSem *dados )
+{
+    ULOG("> proCSkillObterAtdFilaAlertaCPrevio()");
+
+    struct sqlca sqlca;
+    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        
+        long idAtendimento = 0;
+        int idGrupoEncaminhamento = 0;
+        VARCHAR idPessoaUsuarioAtual[32];
+        int idGrupoAtual= 0;
+        VARCHAR dtCalculada[64];
+        int idUsuario = _idUsuario;
+        int idContato;
+        int idCanal;
+        int idProcedencia ;
+        int idSegmentacao;
+        int idTipoCarteira ;
+        int idUFOperadora;
+
+        short iidAtendimento = -1 ;
+        short iidGrupoEncaminhamento = -1 ;
+        short iidPessoaUsuarioAtual = -1 ;
+        short idtCalculada = -1;
+        short iidContato= -1;
+        short iidCanal= -1 ;
+        short iidProcedencia = -1;
+        short iidSegmentacao= -1;
+        short iidTipoCarteira = -1;
+        short iidGrupoAtual = -1;
+        short iidUFOperadora= -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    EXEC SQL
+        SELECT
+             IDATENDIMENTO
+            ,IDGRUPOATUAL
+            ,DTPRAZOFINALCPREVIO
+            ,IDCONTATO 
+            ,IDCANAL 
+            ,IDPROCEDENCIA
+            ,IDSEGMENTACAO
+            ,IDTIPOCARTEIRA
+            ,IDPESSOAUSUARIOATUAL
+            ,IDGRUPOATUAL
+            ,IDUFOPERADORA
+          INTO 
+               :idAtendimento:iidAtendimento
+              ,:idGrupoAtual:iidGrupoAtual
+              ,:dtCalculada:idtCalculada
+              ,:idContato:iidContato
+              ,:idCanal:iidCanal
+              ,:idProcedencia:iidProcedencia
+              ,:idSegmentacao:iidSegmentacao
+              ,:idTipoCarteira:iidTipoCarteira
+              ,:idPessoaUsuarioAtual:iidPessoaUsuarioAtual
+              ,:idGrupoAtual:iidGrupoAtual
+              ,:idUFOperadora:iidUFOperadora
+         FROM 
+               ATENDIMENTO.ATDSKLPROXATDCPREVIOV01
+         WHERE ROWNUM < 2;
+
+    CONVIND(dtCalculada,idtCalculada);
+
+    cWFAtendimentoCPFila oWFAtendimentoCPFila(&st_Dados,&st_Status);
+
+    if ( oWFAtendimentoCPFila.obterGrupoRCConfigurado(idAtendimento,idContato,idCanal,
+                                                     idProcedencia,idSegmentacao,idTipoCarteira,idUFOperadora,
+                                                     idGrupoEncaminhamento) == false )
+    {
+        // INSERIR O CURSOR
+        return false ;
+    }    
+
+    // verifica se este atendiemento ja existe na fila
+    if ( proCExisteCPrevio(idAtendimento) == false )
+    {
+        // INCLUIR NA TABELA ATENDIMENTO.ATENDIMENTOCPFILA CASO SEJA A PRIMEIRA TENTATIVA DE CPREVIO
+        tuxfw_getlogger()->
+            debug(mensagemSimples(" INICIO -> INCLUIR NA TABELA ATENDIMENTO.ATENDIMENTOCPFILA");
+        
+        EXEC SQL 
+            INSERT INTO ATENDIMENTO.ATENDIMENTOCPFILA
+            (
+                 IDATENDIMENTO
+                ,IDGRUPOORIGEM
+                ,IDPESSOAUSUARIOORIGEM
+                ,INCONTATOPREVIOREALIZADO
+                ,NRTENTATIVAS
+                ,IDUSUARIOALTERACAO
+                ,DTULTIMAALTERACAO
+                ,DTCALCULADA
+            )
+            VALUES 
+            ( 
+                 :idAtendimento
+                ,:idGrupoAtual
+                ,:idPessoaUsuarioAtual
+                ,0
+                ,0
+                ,:idUsuario
+                , SYSDATE
+                ,TO_DATE(:dtCalculada,'DD/MM/YYYY')
+            );
+        ULOG(" FIM  -> INCLUIR NA TABELA ATENDIMENTO.ATENDIMENTOCPFILA");
+    }
+    else
+    {
+        ULOG(" INICIO -> ALTERAR NA TABELA  ATENDIMENTO.ATENDIMENTOCPFILA");
+        EXEC SQL 
+            UPDATE
+                 ATENDIMENTO.ATENDIMENTOCPFILA
+            SET  
+                 IDGRUPOORIGEM = DECODE(:idGrupoAtual,0,NULL,:idGrupoAtual)
+                ,IDPESSOAUSUARIOORIGEM = DECODE(:idPessoaUsuarioAtual,0,NULL,:idPessoaUsuarioAtual)
+                ,IDUSUARIOALTERACAO = :idUsuario
+                ,DTULTIMAALTERACAO = SYSDATE
+            WHERE
+                 IDATENDIMENTO = :idAtendimento;
+
+        ULOG(" FIM -> ALTERAR NA TABELA  ATENDIMENTO.ATENDIMENTOCPFILA");
+    }    
+
+    if ( iidAtendimento != -1 )
+    {
+        _idAtendimento = idAtendimento;
+
+        if( AtualizarGrupoUsuarioAtual(idAtendimento,idGrupoAtual,idGrupoEncaminhamento
+                                    ,atol((char*)idPessoaUsuarioAtual.arr)
+                                    ,(char*)dtCalculada.arr
+                                    ,idUsuario,dados) == false )
+        {
+            LOG("Erro de banco andamento =%ld",idAtendimento);
+        }
+
+
+        ULOG("idAtendimento=%ld",idAtendimento);
+    }
+
+    ULOG("< proCSkillObterAtdFilaAlertaCPrevio()");
+
+    return iidAtendimento == -1 ? false : true;
+}
+*/
+
+bool proCSkillObterAtdFilaCri( int _idUsuario, long &_idAtendimento )
+{
+    ULOG_START("proCSkillObterAtdFilaCri()"); 
+
+    struct sqlca sqlca;
+    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuario = _idUsuario;
+        long idAtendimento = -1;
+        short i_idAtendimento =-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+    EXEC SQL SELECT
+                   IDATENDIMENTO
+             INTO 
+                   :idAtendimento:i_idAtendimento
+             FROM 
+                   (SELECT
+				          IDATENDIMENTO
+			          FROM
+				          ATENDIMENTO.ATDSKLPROXATDCRIV01
+			         WHERE
+				          IDPESSOAUSUARIO = :idUsuario
+				      // AND IDATENDIMENTOCRI IS NULL
+                      // AND IDATENDIMENTO > 0
+			      ORDER BY NRCRITICIDADE DESC, IDATENDIMENTO
+                   )
+             WHERE ROWNUM < 2;
+
+    if ( i_idAtendimento != -1 )
+    {
+	   _idAtendimento = idAtendimento;
+	
+	
+	    ULOG("idAtendimento=%d",idAtendimento);
+    }
+    ULOG_END("proCSkillObterAtdFilaCri()"); 
+
+    return i_idAtendimento == -1 ? false : true;
+}
+
+
+bool proCSkillObterAtdFilaCriLinha( int _idUsuario, long &_idAtendimento, long _idPessoaLinhaHistorico )
+{
+    ULOG_START("proCSkillObterAtdFilaCriLinha()"); 
+
+    struct sqlca sqlca;
+    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuario = _idUsuario;
+        long idPessoaLinhaHistorico = _idPessoaLinhaHistorico;
+        long idAtendimento = -1;
+        short i_idAtendimento =-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+
+
+    EXEC SQL SELECT
+                   IDATENDIMENTO
+             INTO 
+                   :idAtendimento:i_idAtendimento
+             FROM 
+                (SELECT
+				        IDATENDIMENTO
+			       FROM
+        			    ATENDIMENTO.ATDSKLPROXATDCRIV01
+			      WHERE 	
+				        IDPESSOAUSUARIO = :idUsuario
+				    AND IDPESSOALINHAHISTORICO = :idPessoaLinhaHistorico 
+				    //AND IDATENDIMENTOCRI IS NULL
+                    //AND IDATENDIMENTO > 0
+			   ORDER BY NRCRITICIDADE DESC, IDATENDIMENTO
+                )
+             WHERE ROWNUM < 2;
+
+    if ( i_idAtendimento != -1 )
+    {
+	   _idAtendimento = idAtendimento;
+	
+	
+	    ULOG("idAtendimento=%d",idAtendimento);
+    }
+    ULOG_END("proCSkillObterAtdFilaCriLinha()"); 
+
+    return i_idAtendimento == -1 ? false : true;
+}
+
+
+/*
+int proCSkillQtdeRegsAtdFilaUsuarioRC( int _idUsuario )
+{
+    ULOG("> proCSkillQtdeRegsAtdFilaUsuarioRC()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int registros = 0;
+        int idUsuario = _idUsuario;
+        short i_registros = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdAttrUsuSem(&sqlca);
+    EXEC SQL
+        SELECT COUNT(1) 
+          INTO 
+               :registros:i_registros
+          FROM 
+               ATENDIMENTO.ATENDIMENTOSKLFILAUSUARCV01 AFURC
+              ,ATENDIMENTO.ATENDIMENTOUSUARIOATUAL AUA
+              ,ATENDIMENTO.ATENDIMENTOSUSPEITO ASP
+         WHERE 
+               AFURC.IDPESSOAUSUARIO   = :idUsuario
+           AND AFURC.IDATENDIMENTO     = AUA.IDATENDIMENTO
+           AND (AUA.INPAUSAATENDIMENTO = 0 OR AUA.DTFIMPAUSAATENDIMENTO < SYSDATE)
+           AND AUA.IDATENDIMENTO       = ASP.IDATENDIMENTO (+)
+           AND ASP.DTSUSPEITO IS NULL;
+
+    ULOG("registros='%d'",registros);
+
+    ULOG("< proCSkillQtdeRegsAtdFilaUsuarioRC()");
+
+    return registros;
+}
+*/
+
+void WFAtdAttrUsuSem(sqlca*sqlca)
+{
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOGE("WFAtdAttrUsuSem:sqlcode=%d,sqlerrmc=%.70s"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

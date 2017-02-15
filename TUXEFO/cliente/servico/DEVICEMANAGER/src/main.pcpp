@@ -1,0 +1,387 @@
+#include "../../negocio/clienteCmm/include/Exception.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include "../../negocio/clienteCmm/include/LogDeviceManager.h"
+
+#include "../include/DEVICEMANAGER.h"
+
+DECLARE_TUXEDO_SERVICE(DEVICEMANAGER);
+
+void implDEVICEMANAGER::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    TuxRemoteService* remoteService = NULL;
+    TuxMessage* inputMessage = NULL;
+    const char *pMemBufId = "inputInfo";
+    char* ret = NULL;
+    MemBufInputSource *pMemBuf = NULL;
+    XercesDOMParser* pParser = NULL;
+    DOMNode* pDoc = NULL;
+    char *fullRet = NULL;
+    XMLGen *pclXmlGen = NULL;
+    DOMNode *pDNAparelho = NULL;
+    DOMNode *pDNParametro = NULL;
+
+    LogDeviceManager *pclLogDeviceManager = NULL;
+    char *pPointer = NULL;
+    int iFlagErro=0;
+    bool bFlagEstadoConsulta=false;
+    char szErrorCode[LEN_ERRORCODE + 1];
+    char szErrorDescription[LEN_ERRORDESCRIPTION + 1];
+
+    int iIndexParametro=0;
+    int iIndexAparelho=0;
+    char szAux[256 + 1];
+
+    ULOG_START("implDEVICEMANAGER::Execute");
+
+    try
+    {
+        /* Dados Entrada */    
+        TDadosEntrada tDadosEntrada;
+        memset(&tDadosEntrada, 0x00, sizeof(TDadosEntrada));
+
+        /* Dados Entrada DeviceManager */    
+        TDadosEntradaDeviceManager tDadosEntradaDeviceManager;
+        memset(&tDadosEntradaDeviceManager, 0x00, sizeof(TDadosEntradaDeviceManager));
+
+        /* Retorno do Device Manager */
+        memset(szErrorCode, 0x00, sizeof(szErrorCode));
+        memset(szErrorDescription, 0x00, sizeof(szErrorDescription));
+
+        pclLogDeviceManager = new LogDeviceManager;
+
+        /* Referente a tpOperacao */
+        pPointer = walkTree(pDnode, "tpOperacao", 0); ULOG("tpOperacao[%s]", pPointer?pPointer:"..NULL..");
+        strcpy(tDadosEntrada.szTipoOperacao, pPointer?pPointer:"");
+        if(!pPointer) {
+            ERROR(NRO_TIPOOPERACAO_NE); TAG_INEXISTENTE("tpOperacao"); iFlagErro=1;
+        }
+        else if(!*pPointer) {
+            ERROR(NRO_TIPOOPERACAO_VV); TAG_VALOR_VAZIO("tpOperacao"); iFlagErro=1;
+        }
+        else if(!IsNumeric(pPointer)){
+            ERROR(NRO_TIPOOPERACAO_VI); TAG_VALOR_INVALIDO("tpOperacao"); iFlagErro=1;
+        }
+        if(pPointer) XMLString::release(&pPointer);
+        if(iFlagErro) {
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        /* referente a idUsuarioAlteracao */
+        strcpy(tDadosEntrada.szIdUsuarioAlteracao, getUser());
+
+
+        /* Referente a nrLinha */
+        pPointer = walkTree(pDnode, "nrLinha", 0); ULOG("nrLinha[%s]", pPointer?pPointer:"..NULL..");
+        strcpy(tDadosEntrada.szMSISDN, pPointer?pPointer:"");
+        if(!pPointer) {
+            ERROR(NRO_MSIDN_NE); TAG_INEXISTENTE("nrLinha"); iFlagErro=1;
+        }
+        else if(!*pPointer) {
+            ERROR(NRO_MSIDN_VV); TAG_VALOR_VAZIO("nrLinha"); iFlagErro=1;
+        }
+        else if(!IsNumeric(pPointer)){
+            ERROR(NRO_MSIDN_VI); TAG_VALOR_INVALIDO("nrLinha"); iFlagErro=1;
+        }
+        if(pPointer) XMLString::release(&pPointer);
+        if(iFlagErro) {
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+
+        if(!strcmp(tDadosEntrada.szTipoOperacao, ID_CONSULTA_APARELHO))
+        {
+            strcpy(szErrorDescription, "Não foi possível recuperar as informações, funcionalidade indisponível no momento.");
+            strcpy(szErrorCode, "-1");
+        }
+        else if(!strcmp(tDadosEntrada.szTipoOperacao, ID_CONSULTA_HISTORICO))
+        {
+            strcpy(szErrorDescription, "Não foi possível recuperar as informações, funcionalidade indisponível no momento.");
+            strcpy(szErrorCode, "-1");
+        }
+        else if(!strcmp(tDadosEntrada.szTipoOperacao, ID_ATUALIZA_APARELHO))
+        {
+            strcpy(szErrorDescription, "Não foi possível realizar a atualização do parâmetro por problemas de comunicação com a plataforma Device Manager.");
+            strcpy(szErrorCode, "-1");
+
+            /* Referente a IdLinhaTelefonica */
+            pPointer = walkTree(pDnode, "idLinhaTelefonica", 0); ULOG("idLinhaTelefonica[%s]", pPointer?pPointer:"..NULL..");
+            strcpy(tDadosEntrada.szIdLinhaTelefonica, pPointer?pPointer:"");
+            if(!pPointer) {
+                ERROR(NRO_IDLINHATELEFONICA_NE); TAG_INEXISTENTE("idLinhaTelefonica"); iFlagErro=1;
+            }
+            else if(!*pPointer) {
+                ERROR(NRO_IDLINHATELEFONICA_VV); TAG_VALOR_VAZIO("idLinhaTelefonica"); iFlagErro=1;
+            }
+            else if(!IsNumeric(pPointer)){
+                ERROR(NRO_IDLINHATELEFONICA_VI); TAG_VALOR_INVALIDO("idLinhaTelefonica"); iFlagErro=1;
+            }
+            if(pPointer) XMLString::release(&pPointer);
+            if(iFlagErro) {
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+
+            /* Referente a nrIP */
+            pPointer = walkTree(pDnode, "nrIP", 0); ULOG("nrIP[%s]", pPointer?pPointer:"..NULL..");
+            strcpy(tDadosEntrada.szIP, pPointer?pPointer:"");
+            if(!pPointer) {
+                ERROR(NRO_NR_IP_NE); TAG_INEXISTENTE("nrIP"); iFlagErro=1;
+            }
+            else if(!*pPointer) {
+                ERROR(NRO_NR_IP_VV); TAG_VALOR_VAZIO("nrIP"); iFlagErro=1;
+            }
+            if(pPointer) XMLString::release(&pPointer);
+            if(iFlagErro) {
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+
+            /* Referente a nmParametro */
+            pPointer = walkTree(pDnode, "nmParametro", 0); ULOG("nmParametro[%s]", pPointer?pPointer:"..NULL..");
+            strcpy(tDadosEntrada.szAparelhoParametrosNome, pPointer?pPointer:"");
+            if(pPointer) XMLString::release(&pPointer);
+        }
+        else
+        {
+            ERROR(NRO_TIPOOPERACAO_VI); TAG_VALOR_INVALIDO("tpOperacao");iFlagErro=1;
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+
+        /* cria xml para envio ao device manager */
+        pclXmlGen = new XMLGen;
+
+        strcpy(szAux, "55");
+        strcat(szAux, tDadosEntrada.szMSISDN);
+
+        pclXmlGen->addItem("MSISDN", szAux);
+        pclXmlGen->addItem("TipoOperacao", tDadosEntrada.szTipoOperacao);
+        if(!strcmp(tDadosEntrada.szTipoOperacao, ID_ATUALIZA_APARELHO)) {
+            pclXmlGen->addItem("Parametro", tDadosEntrada.szAparelhoParametrosNome);
+        }
+
+
+        /* Inicio do acesso ao Device Manager */
+        try {
+            remoteService = new TuxRemoteService();
+            inputMessage = new TuxMessage();
+        
+            inputMessage->setUser(getUser());
+            inputMessage->setService("DEVMANAGER");
+            inputMessage->setMessageBody(pclXmlGen);
+        
+            remoteService->setServiceName("DEVMANAGER");
+            remoteService->setInputMessage(inputMessage);
+        
+            if(remoteService->remoteCall() != TUXFWRET_OK) {
+                ULOG("LOCAL 1");
+                throw new TuxBasicSvcException("13E0001", szErrorDescription);
+            }
+
+            ULOG("remoteService->getOutputMessage()->getStatusCode()[%s]", remoteService->getOutputMessage()->getStatusCode()?remoteService->getOutputMessage()->getStatusCode():"...NULL...");
+            if (remoteService->getOutputMessage()->getStatusCode() != NULL) {
+                if(strlen(remoteService->getOutputMessage()->getStatusCode()) >= 3) {
+                    if(remoteService->getOutputMessage()->getStatusCode()[2] !='I') {
+                        ULOG("LOCAL 2");
+                        throw new TuxBasicSvcException("13E0013", szErrorDescription);
+                    }
+                }
+            }
+
+            ret = remoteService->getOutputMessage()->getMessageBody();
+            ULOG("XML recebido do Device Manager[%s]", ret);
+        }
+        catch(TuxException* tE) {
+            ULOG("LOCAL 3");
+            throw tE;
+        }
+
+
+        if((fullRet = (char*) malloc(strlen(ret) + 100)) == NULL) {
+            iFlagErro=1; throw new TuxBasicSvcException("13E0113", "Erro alocando memoria");
+        }
+        sprintf(fullRet, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>%s", ret);
+        
+        pParser = new XercesDOMParser;
+        pMemBuf = new MemBufInputSource((const XMLByte*)fullRet, strlen(fullRet), pMemBufId);
+
+        pParser->parse(*pMemBuf);
+        pDoc = pParser->getDocument();
+
+
+        /* Referente a errorCode (retorno do device manager) */
+        pPointer = walkTree(pDoc, "errorCode", 0); ULOG("errorCode[%s]", pPointer?pPointer:"..NULL..");
+        strcpy(szErrorCode, pPointer?pPointer:"");
+        if(!pPointer) {
+            ERROR(NRO_CODIGO_NE); TAG_INEXISTENTE("errorCode"); iFlagErro=1;
+        }
+        else if(!*pPointer) {
+            ERROR(NRO_CODIGO_VV); TAG_VALOR_VAZIO("errorCode"); iFlagErro=1;
+        }
+        if(pPointer) XMLString::release(&pPointer);
+        if(iFlagErro) {
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+
+        pXmlG->createTag("LupaLinhaAbasGSMVO");
+        pXmlG->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+        pXmlG->addItem("codErro", szErrorCode);
+
+
+        /* verifica se ocorreu erro */
+        if(!strcmp(szErrorCode, "0"))
+        {
+            bFlagEstadoConsulta=true;
+
+            /* limpa mensagem de erro */
+            memset(szErrorDescription, 0x00, sizeof(szErrorDescription));
+
+            if(!strcmp(tDadosEntrada.szTipoOperacao, ID_CONSULTA_APARELHO))
+            {
+                pXmlG->createTag("abaParametro");
+
+                iIndexAparelho=0;
+                while((pDNAparelho = walkDOM(pDoc, "Aparelho", iIndexAparelho)) != NULL)
+                {
+                    ULOG("pDNAparelho(%p)iIndexAparelho(%d)", pDNAparelho, iIndexAparelho);
+
+                    /* Referente a Aparelho/Tecnologia retorno do device manager */
+                    pPointer = walkTree(pDNAparelho, "Tecnologia", 0); ULOG("Tecnologia[%s]", pPointer?pPointer:"..NULL..");
+                    pXmlG->addItem("dsTecnologia", pPointer?pPointer:""); if(pPointer) XMLString::release(&pPointer);
+
+                    /* Referente a Aparelho/Modelo retorno do device manager */
+                    pPointer = walkTree(pDNAparelho, "Modelo", 0); ULOG("Modelo[%s]", pPointer?pPointer:"..NULL..");
+                    pXmlG->addItem("dsModelo", pPointer?pPointer:""); if(pPointer) XMLString::release(&pPointer);
+
+                    /* Referente a Aparelho/Fabricante retorno do device manager */
+                    pPointer = walkTree(pDNAparelho, "Fabricante", 0); ULOG("Fabricante[%s]", pPointer?pPointer:"..NULL..");
+                    pXmlG->addItem("dsFabricante", pPointer?pPointer:""); if(pPointer) XMLString::release(&pPointer);
+
+
+                    iIndexParametro=0;
+                    while((pDNParametro = walkDOM(pDNAparelho, "Parametros", iIndexParametro)) != NULL)
+                    {
+                        ULOG("pDNParametro(%p)iIndexParametro(%d)", pDNParametro, iIndexParametro);
+
+                        pXmlG->createTag("listaParametro");
+
+                         /* Referente a Aparelho/Parametro/Nome retorno do device manager */
+                        pPointer = walkTree(pDNParametro, "Nome", 0); ULOG("Nome[%s]", pPointer?pPointer:"..NULL..");
+                        pXmlG->addItem("nmParametro", pPointer?pPointer:""); if(pPointer) XMLString::release(&pPointer);
+
+                        pXmlG->closeTag();
+
+                        iIndexParametro++;
+                    }
+
+                    iIndexAparelho++;
+                }
+                pXmlG->closeTag(); //abaParametro
+            }// ID_CONSULTA_APARELHO
+            else if(!strcmp(tDadosEntrada.szTipoOperacao, ID_CONSULTA_HISTORICO)) {
+
+                pXmlG->createTag("abaHistorico");
+
+                iIndexAparelho=0;
+                while((pDNAparelho = walkDOM(pDoc, "Aparelho", iIndexAparelho)) != NULL)
+                {
+                    ULOG("pDNAparelho(%p)iIndexAparelho(%d)", pDNAparelho, iIndexAparelho);
+
+                    pXmlG->createTag("listaHistorico");
+
+                    /* Referente a Aparelho/DtAssociacao retorno do device manager */
+                    pPointer = walkTree(pDNAparelho, "DtAssociacao", 0); ULOG("DtAssociacao[%s]", pPointer?pPointer:"..NULL..");
+                    pXmlG->addItem("dtAssociacao", pPointer?pPointer:""); if(pPointer) XMLString::release(&pPointer);
+
+                    /* Referente a Aparelho/Modelo retorno do device manager */
+                    pPointer = walkTree(pDNAparelho, "Modelo", 0); ULOG("Modelo[%s]", pPointer?pPointer:"..NULL..");
+                    pXmlG->addItem("dsAparelho", pPointer?pPointer:""); if(pPointer) XMLString::release(&pPointer);
+
+                    /* Referente a Aparelho/Fabricante retorno do device manager */
+                    pPointer = walkTree(pDNAparelho, "Fabricante", 0); ULOG("Fabricante[%s]", pPointer?pPointer:"..NULL..");
+                    pXmlG->addItem("dsFabricante", pPointer?pPointer:""); if(pPointer) XMLString::release(&pPointer);
+
+                    /* Referente a Aparelho/Tecnologia retorno do device manager */
+                    pPointer = walkTree(pDNAparelho, "Tecnologia", 0); ULOG("Tecnologia[%s]", pPointer?pPointer:"..NULL..");
+                    pXmlG->addItem("dsTecnologia", pPointer?pPointer:""); if(pPointer) XMLString::release(&pPointer);
+
+                    pXmlG->closeTag(); //listaHistorico
+
+
+                    iIndexAparelho++;
+                }
+
+                pXmlG->closeTag(); //abaHistorico
+            }//ID_CONSULTA_HISTORICO
+        }// if(!strcmp(szErrorCode, "0"))
+        else
+        {
+            /* Referente a description (retorno do device manager) */
+            pPointer = walkTree(pDoc, "description", 0); ULOG("description[%s]", pPointer?pPointer:"..NULL..");
+            // strcpy(szErrorDescription, pPointer?pPointer:"");
+            if(pPointer) XMLString::release(&pPointer);
+        }
+
+        pXmlG->addItem("msgErro", szErrorDescription);
+
+        pXmlG->closeTag(); //LupaLinhaAbasGSMVO
+
+
+        ULOG("Log tDadosEntrada.szTipoOperacao[%s]", tDadosEntrada.szTipoOperacao);
+        if(!strcmp(tDadosEntrada.szTipoOperacao, ID_ATUALIZA_APARELHO)) {
+            /* grava log */
+            ULOG("Inicio LogDeviceManager");
+            pclLogDeviceManager->setIP(tDadosEntrada.szIP);
+            pclLogDeviceManager->setIdUsuarioAlteracao(tDadosEntrada.szIdUsuarioAlteracao);
+            pclLogDeviceManager->setNomeParametroAtualizado(strlen(tDadosEntrada.szAparelhoParametrosNome)?tDadosEntrada.szAparelhoParametrosNome:"TODOS PARAMETROS");
+            pclLogDeviceManager->setEstadoConsulta(bFlagEstadoConsulta?"OK":"ERRO");
+            pclLogDeviceManager->setIdLinhaTelefonica(tDadosEntrada.szIdLinhaTelefonica);
+            if(pclLogDeviceManager->insereLogDeviceManager() == false) {
+                iFlagErro=1;
+                throw new TuxBasicSvcException("13E0013", "Erro atualizando base.");
+            }
+            ULOG("Final LogDeviceManager");
+        }
+    }
+    catch(...)
+    {
+        ULOG("Exception!");
+        ULOG("iFlagErro(%d)", iFlagErro);
+        if(iFlagErro)
+        {
+            if(fullRet) free(fullRet);
+            if(pParser) delete pParser;
+            if(pMemBuf) delete pMemBuf;
+            if(remoteService) delete remoteService;
+            if(inputMessage) delete inputMessage;
+            if(pclXmlGen) delete pclXmlGen;
+            if(pclLogDeviceManager) delete pclLogDeviceManager;
+
+            throw;
+        }
+        else
+        {
+            ULOG("szErrorCode[%s] szErrorDescription[%s]", szErrorCode, szErrorDescription);
+            pXmlG->createTag("LupaLinhaAbasGSMVO");
+            pXmlG->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+                pXmlG->addItem("codErro", szErrorCode);
+                pXmlG->addItem("msgErro", szErrorDescription);
+            pXmlG->closeTag();
+        }
+    }
+
+    ULOG("local D");
+    if(fullRet) free(fullRet);
+    if(pParser) delete pParser;
+    if(pMemBuf) delete pMemBuf;
+    if(remoteService) delete remoteService;
+    if(inputMessage) delete inputMessage;
+    if(pclXmlGen) delete pclXmlGen;
+    if(pclLogDeviceManager) delete pclLogDeviceManager;
+
+    ULOG_END("implDEVICEMANAGER::Execute");
+
+	INFORMATION(NRO_OK);
+	setStatusCode(sNrMsg, MSG_OK);
+}

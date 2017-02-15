@@ -1,0 +1,910 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../include/LogSIMLock.h"
+#include <tuxfw.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+/*******************************************************************************************************/
+LogSIMLock::LogSIMLock(void)
+{
+    ULOG_START("LogSIMLock::LogSIMLock");
+    memset(&tLogSIMLock, 0x00, sizeof(TLogSIMLock));
+    memset(m_szValorQueryObrigatoria, 0x00, sizeof(m_szValorQueryObrigatoria));
+    memset(m_szValorQueryOpcional, 0x00, sizeof(m_szValorQueryOpcional));
+    m_iIdQueryObrigatorio=m_iIdQueryOpcional=0;
+    ULOG_END("LogSIMLock::LogSIMLock");
+}
+
+/*******************************************************************************************************/
+LogSIMLock::~LogSIMLock(void)
+{
+    ULOG_START("LogSIMLock::~LogSIMLock");
+    ULOG_END("LogSIMLock::~LogSIMLock");
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::clearLogSIMLock(void)
+{
+    memset(&tLogSIMLock, 0x00, sizeof(TLogSIMLock));
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setIP(char *pszIP)
+{
+    strcpy(tLogSIMLock.szIP, pszIP);
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setIMEI(char *pszIMEI)
+{
+    strcpy(tLogSIMLock.szIMEI, pszIMEI);
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setEstadoConsulta(char *pszEstadoConsulta)
+{
+    strcpy(tLogSIMLock.szEstadoConsulta, pszEstadoConsulta);
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setIdTipoDocumento(char *pszIdTipoDocumento)
+{
+    strcpy(tLogSIMLock.szIdTipoDocumento, pszIdTipoDocumento);
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setNrDocumento(char *pszNrDocumento)
+{
+    strcpy(tLogSIMLock.szNrDocumento, pszNrDocumento);
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setIdPessoaLinhaHistorico(char *pszIdPessoaLinhaHistorico)
+{
+    strcpy(tLogSIMLock.szIdPessoaLinhaHistorico, pszIdPessoaLinhaHistorico);
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setIdPessoa(char *pszIdPessoa)
+{
+    strcpy(tLogSIMLock.szIdPessoa, pszIdPessoa);
+}
+
+/******************************************************************************************************/
+void LogSIMLock::setIdUsuarioAlteracao(char *pszIdUsuarioAlteracao)
+{
+    strcpy(tLogSIMLock.szIdUsuarioAlteracao, pszIdUsuarioAlteracao);
+}
+
+/*******************************************************************************************************/
+int LogSIMLock::buscaQtdLogSIMLockPcDinamica(void)
+{
+    ULOG_START("LogSIMLock::buscaQtdLogSIMLockPcDinamica");
+
+    struct sqlca sqlca;
+    char szQueryAux[1000 + LEN_EOS];
+    int iCount=0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int oiCount;
+        char oszPesquisa[5000];
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+    strcpy(oszPesquisa,
+            "SELECT  "
+              "count(1) "
+            "FROM "
+              "customer.logsimlock clsl, "
+              "acesso.usuario au, "
+              "customer.pessoalinhahistorico cplh, "
+              "customer.pessoa cp, "
+              "apoio.tipodocumento atd, "
+              "customer.tiporelacionamento ctr "
+            "WHERE "
+              "clsl.idtipodocumento = atd.idtipodocumento "
+            "AND "
+              "clsl.idpessoalinhahistorico = cplh.idpessoalinhahistorico "
+            "AND "
+              "clsl.idpessoa = cp.idpessoa "
+            "AND "
+              "cplh.idtiporelacionamento = ctr.idtiporelacionamento "
+            "AND "
+              "clsl.idusuarioalteracao = au.idpessoausuario ");
+
+    /* aqui entra a parte dinamica obrigatoria */
+    if(this->getIdQueryObrigatoria() == ID_QUERY_OBRIGATORIA_IMEI) {
+        sprintf(szQueryAux, 
+            "AND "
+               "clsl.imei = '%s' ", this->getValorQueryObrigatoria());
+    }
+    else if(this->getIdQueryObrigatoria() == ID_QUERY_OBRIGATORIA_LOGIN) {
+        sprintf(szQueryAux, 
+            "AND "
+                "au.nmloginusuario = '%s' ", this->getValorQueryObrigatoria());
+    }
+    else if(this->getIdQueryObrigatoria() == ID_QUERY_OBRIGATORIA_PERIODO) {
+        sprintf(szQueryAux, 
+            "AND "
+                 "to_char(clsl.dtultimaalteracao, 'YYYYMMDD') >= to_char(to_date('%.10s', 'DD/MM/YYYY'), 'YYYYMMDD') "
+            "AND "
+                 "to_char(clsl.dtultimaalteracao, 'YYYYMMDD') <= to_char(to_date('%.10s', 'DD/MM/YYYY'), 'YYYYMMDD') ",
+            this->getValorQueryObrigatoria(), (this->getValorQueryObrigatoria())+10);
+    }
+    ULOG("Obrigatorio ->szQueryAux[%s]", szQueryAux);
+    strcat(oszPesquisa, szQueryAux);
+
+
+    /* parte dinamica opcional */
+    szQueryAux[0] = 0x00;
+    if(this->getIdQueryOpcional() == ID_QUERY_OPCIONAL_LINHA) {
+        sprintf(szQueryAux,
+            "AND "
+                 "cplh.nrlinha = '%s' "
+            "AND "
+                 "cplh.cdarearegistro = '%.2s' ",
+                (this->getValorQueryOpcional())+2, this->getValorQueryOpcional());
+    }
+    else if(this->getIdQueryOpcional() == ID_QUERY_OPCIONAL_DOCUMENTO) {
+        sprintf(szQueryAux,
+            "AND "
+                 "clsl.nrdocumento = '%s' ",
+                this->getValorQueryOpcional());
+    }
+    ULOG("Opcional ->szQueryAux[%s]", szQueryAux);
+    strcat(oszPesquisa, szQueryAux);
+
+    ULOGI("Pesquisa[%s]", oszPesquisa);
+    EXEC SQL PREPARE qPesquisa FROM :oszPesquisa;
+    EXEC SQL DECLARE cCountSIMLockDinamic CURSOR FOR qPesquisa;
+
+    EXEC SQL OPEN cCountSIMLockDinamic;
+    EXEC SQL FETCH cCountSIMLockDinamic INTO :oiCount;
+    EXEC SQL CLOSE cCountSIMLockDinamic;
+
+    ULOG("oiCount(%d)", oiCount);
+    iCount = oiCount;
+
+    ULOGI("Finalizando LogSIMLock::buscaQtdLogSIMLockPcDinamica");
+    ULOG_END("FilaSetClientInfo::LogSIMLock::buscaQtdLogSIMLockPcDinamica");
+    return iCount;
+
+    erro:
+        ULOGE("Finalizando LogSIMLock::buscaQtdLogSIMLockPcDinamica <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::insereLogSIMLock(void)
+{
+    ULOG_START("LogSIMLock::insereLogSIMLock");
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLogSIMLock[LEN_IDLOGSIMLOCK];
+        VARCHAR oszIP[LEN_IP];
+        VARCHAR oszIMEI[LEN_IMEI];
+        VARCHAR oszEstadoConsulta[LEN_ESTADOCONSULTA];
+        VARCHAR oszIdTipoDocumento[LEN_IDTIPODOCUMENTO];
+        VARCHAR oszNrDocumento[LEN_NRDOCUMENTOSL];
+        VARCHAR oszIdPessoaLinhaHistorico[LEN_IDPESSOALINHAHISTORICO];
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+    EXEC SQL END DECLARE SECTION;
+
+    STRCPY_TO_ORA(oszIP, tLogSIMLock.szIP); ULOG("oszIP[%.*s]", oszIP.len, oszIP.arr);
+    STRCPY_TO_ORA(oszIMEI, tLogSIMLock.szIMEI); ULOG("oszIMEI[%.*s]", oszIMEI.len, oszIMEI.arr);
+    STRCPY_TO_ORA(oszEstadoConsulta, tLogSIMLock.szEstadoConsulta); ULOG("oszEstadoConsulta[%.*s]", oszEstadoConsulta.len, oszEstadoConsulta.arr);
+    STRCPY_TO_ORA(oszIdTipoDocumento, tLogSIMLock.szIdTipoDocumento); ULOG("oszIdTipoDocumento[%.*s]", oszIdTipoDocumento.len, oszIdTipoDocumento.arr);
+    STRCPY_TO_ORA(oszNrDocumento, tLogSIMLock.szNrDocumento); ULOG("oszNrDocumento[%.*s]", oszNrDocumento.len, oszNrDocumento.arr);
+    STRCPY_TO_ORA(oszIdPessoaLinhaHistorico, tLogSIMLock.szIdPessoaLinhaHistorico); ULOG("oszIdPessoaLinhaHistorico[%.*s]", oszIdPessoaLinhaHistorico.len, oszIdPessoaLinhaHistorico.arr);
+    STRCPY_TO_ORA(oszIdPessoa, tLogSIMLock.szIdPessoa); ULOG("oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+    STRCPY_TO_ORA(oszIdUsuarioAlteracao, tLogSIMLock.szIdUsuarioAlteracao); ULOG("oszIdUsuarioAlteracao[%.*s]", oszIdUsuarioAlteracao.len, oszIdUsuarioAlteracao.arr);
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+    EXEC SQL SELECT customer.logsimlocksq.nextval
+       INTO :oszIdLogSIMLock
+       FROM DUAL;
+
+    ULOG("oszIdLogSIMLock[%.*s]", oszIdLogSIMLock.len, oszIdLogSIMLock.arr);
+
+    EXEC SQL INSERT INTO customer.LogSIMLock
+                       ( idlogsimlock
+                       , ip
+                       , imei
+                       , estadoconsulta
+                       , idtipodocumento
+                       , nrdocumento
+                       , dtultimaalteracao
+                       , idpessoalinhahistorico
+                       , idpessoa
+                       , idusuarioalteracao)
+                VALUES ( :oszIdLogSIMLock
+                       , :oszIP
+                       , :oszIMEI
+                       , :oszEstadoConsulta
+                       , :oszIdTipoDocumento
+                       , :oszNrDocumento
+                       , SYSDATE
+                       , :oszIdPessoaLinhaHistorico
+                       , :oszIdPessoa
+                       , :oszIdUsuarioAlteracao);
+
+    ULOGI("Finalizando LogSIMLock::insereLogSIMLock <OK>");
+    ULOG_END("LogSIMLock::insereLogSIMLock");
+    return;
+
+    erro:
+        ULOGE("Finalizando LogSIMLock::insereLogSIMLock <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************************************/
+bool LogSIMLock::buscaPLHLogSIMLock(TDadosPesq1 *ptDadosPesq1)
+{
+    ULOG_START("LogSIMLock::buscaPLHLogSIMLock");
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoaLinhaHistorico[LEN_IDPESSOALINHAHISTORICO];
+
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+        VARCHAR oszIdTipoRelacionamento[LEN_IDTIPORELACIONAMENTO];
+        VARCHAR oszNrLinha[LEN_NRLINHA];
+        VARCHAR oszCdAreaRegistro[LEN_CDAREAREGISTRO];
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszIdPessoa, ptDadosPesq1->szIdPessoa); ULOG("IN->oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+    STRCPY_TO_ORA(oszIdTipoRelacionamento, ptDadosPesq1->szIdTipoRelacionamento);   ULOG("IN->oszIdTipoRelacionamento[%.*s]", oszIdTipoRelacionamento.len, oszIdTipoRelacionamento.arr);
+    STRCPY_TO_ORA(oszNrLinha, ptDadosPesq1->szNrLinha);                             ULOG("IN->oszNrLinha[%.*s]", oszNrLinha.len, oszNrLinha.arr);
+    STRCPY_TO_ORA(oszCdAreaRegistro, ptDadosPesq1->szCdAreaRegistro);               ULOG("IN->oszCdAreaRegistro[%.*s]", oszCdAreaRegistro.len, oszCdAreaRegistro.arr);
+
+    EXEC SQL
+		SELECT
+			  idpessoalinhahistorico
+		INTO
+			  :oszIdPessoaLinhaHistorico
+		FROM
+			(
+				SELECT
+						plh.idpessoalinhahistorico idpessoalinhahistorico,
+						plh.DTULTIMAALTERACAO DTULTIMAALTERACAO
+				FROM
+					    customer.pessoalinhahistorico plh,
+						customer.pessoadepara pdp,
+						customer.pessoa p
+				WHERE
+						p.idpessoa = pdp.idpessoa
+					AND
+					    plh.idpessoadepara = pdp.idpessoadepara
+				    AND
+						p.idpessoa = :oszIdPessoa
+					AND
+						plh.nrlinha = :oszNrLinha
+					AND
+					   plh.cdarearegistro = :oszCdAreaRegistro
+					AND
+					   plh.idtiporelacionamento = :oszIdTipoRelacionamento
+				ORDER BY
+			  		   plh.DTULTIMAALTERACAO DESC
+			)
+			WHERE
+				 ROWNUM < 2;
+
+
+
+    STRCPY_FROM_ORA(ptDadosPesq1->szIdPessoaLinhaHistorico, oszIdPessoaLinhaHistorico); ULOG("OUT->oszIdPessoaLinhaHistorico[%.*s]", oszIdPessoaLinhaHistorico.len, oszIdPessoaLinhaHistorico.arr);
+
+
+    ULOGI("Finalizando LogSIMLock::buscaPLHLogSIMLock <FOUND>");
+    ULOG_END("LogSIMLock::buscaPLHLogSIMLock");
+    return true;
+
+    naoexiste:
+        ULOGE("Finalizando LogSIMLock::buscaPLHLogSIMLock <NOT FOUND>");
+        return false;
+
+    erro:
+        ULOGE("Finalizando LogSIMLock::buscaPLHLogSIMLock <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************************************/
+bool LogSIMLock::buscaPDLogSIMLock(TDadosPesq2 *ptDadosPesq2)
+{
+    ULOG_START("LogSIMLock::buscaPDLogSIMLock");
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdTipoDocumento[LEN_IDTIPODOCUMENTO];
+        VARCHAR oszNrDocumento[LEN_NRDOCUMENTO];
+
+        VARCHAR oszIdPessoa[LEN_IDPESSOA];
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszIdPessoa, ptDadosPesq2->szIdPessoa); ULOG("IN->oszIdPessoa[%.*s]", oszIdPessoa.len, oszIdPessoa.arr);
+
+    EXEC SQL
+        SELECT
+            d.nrdocumento,
+            d.idtipodocumento
+        INTO
+            :oszNrDocumento,
+            :oszIdTipoDocumento
+        FROM
+            customer.pessoadocumento pd,
+            customer.documento d,
+          apoio.tipodocumento  td
+        WHERE
+            pd.iddocumento = d.iddocumento
+        AND
+          d.idtipodocumento = td.idtipodocumento
+        AND
+          NVL(td.nrprioridade, 9999) = ( SELECT MIN(NVL(tipodocumento.nrprioridade, 9999))
+                                                         FROM customer.pessoadocumento pessoadocumento
+                                                            , customer.documento documento
+                                                            , apoio.tipodocumento tipodocumento
+                                                        WHERE pessoadocumento.idpessoa = :oszIdPessoa
+                                                          AND pessoadocumento.iddocumento = documento.iddocumento
+                                                          AND documento.idtipodocumento = tipodocumento.idtipodocumento)
+        AND
+            pd.idpessoa = :oszIdPessoa
+        AND
+            ROWNUM < 2;
+
+
+    STRCPY_FROM_ORA(ptDadosPesq2->szIdTipoDocumento, oszIdTipoDocumento); ULOG("OUT->oszIdTipoDocumento[%.*s]", oszIdTipoDocumento.len, oszIdTipoDocumento.arr);
+    STRCPY_FROM_ORA(ptDadosPesq2->szNrDocumento, oszNrDocumento); ULOG("OUT->oszNrDocumento[%.*s]", oszNrDocumento.len, oszNrDocumento.arr);
+
+
+    ULOGI("Finalizando LogSIMLock::buscaPDLogSIMLock <FOUND>");
+    ULOG_END("LogSIMLock::buscaPLHLogSIMLock");
+    return true;
+
+    naoexiste:
+        ULOGE("Finalizando LogSIMLock::buscaPDLogSIMLock <NOT FOUND>");
+        return false;
+
+    erro:
+        ULOGE("Finalizando LogSIMLock::buscaPDLogSIMLock <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/************************************************************************************************************/
+char *LogSIMLock::obtemParametro(char *pCdParametro)
+{
+    ULOG_START("LogSIMLock::obtemParametro");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszCdParametro[LEN_CDPARAMETRO];
+        VARCHAR oszDsValorParametro[LEN_DSPARAMETRO];
+    EXEC SQL END DECLARE SECTION;
+
+    static char szDsValorParametro[LEN_DSPARAMETRO + LEN_EOS];
+    struct sqlca sqlca;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszCdParametro, pCdParametro); ULOG("IN->oszCdParametro[%.*s]", oszCdParametro.len, oszCdParametro.arr);
+
+    EXEC SQL 
+        SELECT dsvalorparametro
+          INTO :oszDsValorParametro
+          FROM apoio.parametro
+         WHERE parametro.cdparametro = :oszCdParametro;
+
+    STRCPY_FROM_ORA(szDsValorParametro, oszDsValorParametro); ULOG("OUT->oszDsValorParametro[%.*s]", oszDsValorParametro.len, oszDsValorParametro.arr);
+
+    return szDsValorParametro;
+
+    naoexiste:
+        ULOGE("Finalizando LogSIMLock::obtemParametro <NOT FOUND>");
+        return NULL;
+
+    erro:
+        ULOGE("Finalizando LogSIMLock::obtemParametro <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************************************/
+bool LogSIMLock::buscaProcedenciaLogSIMLock(TDadosPesq3 *ptDadosPesq3)
+{
+    ULOG_START("LogSIMLock::buscaProcedenciaLogSIMLock");
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdProcedencia[LEN_IDPROCEDENCIA];
+        short iIdProcedencia=0;
+        VARCHAR oszIdGrupo[LEN_IDGRUPO];
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszIdGrupo, ptDadosPesq3->szIdGrupo); ULOG("IN->oszIdGrupo[%.*s]", oszIdGrupo.len, oszIdGrupo.arr);
+
+    EXEC SQL
+        SELECT MIN(idProcedencia) as idProcedencia
+            INTO: oszIdProcedencia:iIdProcedencia
+        FROM
+            contatoadm.procedenciagrupo
+        WHERE
+            idgrupo = :oszIdGrupo;
+
+
+    ULOG("iIdProcedencia(%d)", iIdProcedencia);
+
+    if(iIdProcedencia == -1) {
+        ULOGE("Finalizando LogSIMLock::buscaProcedenciaLogSIMLock <NOT FOUND>");
+        ULOG_END("LogSIMLock::buscaPLHLogSIMLock");
+        return false;
+    }
+
+    STRCPY_FROM_ORA(ptDadosPesq3->szIdProcedencia, oszIdProcedencia); ULOG("OUT->oszIdProcedencia[%.*s]", oszIdProcedencia.len, oszIdProcedencia.arr);
+
+    ULOGI("Finalizando LogSIMLock::buscaProcedenciaLogSIMLock <FOUND>");
+    ULOG_END("LogSIMLock::buscaPLHLogSIMLock");
+    return true;
+
+    naoexiste:
+        ULOGE("Finalizando LogSIMLock::buscaProcedenciaLogSIMLock <NOT FOUND>");
+        ULOG_END("LogSIMLock::buscaPLHLogSIMLock");
+        return false;
+
+    erro:
+        ULOGE("Finalizando LogSIMLock::buscaProcedenciaLogSIMLock <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************************************/
+bool LogSIMLock::buscaCanalLogSIMLock(TDadosPesq4 *ptDadosPesq4)
+{
+    ULOG_START("LogSIMLock::buscaCanalLogSIMLock");
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdCanal[LEN_IDCANAL];
+        VARCHAR oszIdGrupo[LEN_IDGRUPO];
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszIdGrupo, ptDadosPesq4->szIdGrupo); ULOG("IN->oszIdGrupo[%.*s]", oszIdGrupo.len, oszIdGrupo.arr);
+
+    EXEC SQL
+        SELECT MIN(idCanal) as idCanal
+            INTO: oszIdCanal
+        FROM
+            acesso.grupocanal
+        WHERE
+            idgrupo = :oszIdGrupo;
+
+
+    STRCPY_FROM_ORA(ptDadosPesq4->szIdCanal, oszIdCanal); ULOG("OUT->oszIdCanal[%.*s]", oszIdCanal.len, oszIdCanal.arr);
+
+    ULOGI("Finalizando LogSIMLock::buscaCanalLogSIMLock <FOUND>");
+    ULOG_END("LogSIMLock::buscaCanalLogSIMLock");
+    return true;
+
+    naoexiste:
+        ULOGE("Finalizando LogSIMLock::buscaCanalLogSIMLock <NOT FOUND>");
+        return false;
+
+    erro:
+        ULOGE("Finalizando LogSIMLock::buscaCanalLogSIMLock <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************************************/
+bool LogSIMLock::buscaContatoLogSIMLock(TDadosPesq5 *ptDadosPesq5)
+{
+    ULOG_START("LogSIMLock::buscaContatoLogSIMLock");
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdContato[LEN_IDCONTATO];
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    EXEC SQL
+        SELECT idcontato
+            INTO: oszIdContato
+        FROM
+            contatoadm.contato 
+        WHERE
+            nmpath = 'VIVO/SERVIÇOS/APARELHOS/DESBLOQUEIO DE APARELHO GSM'
+	    AND
+			ROWNUM < 2;
+
+
+    STRCPY_FROM_ORA(ptDadosPesq5->szIdContato, oszIdContato); ULOG("OUT->oszIdContato[%.*s]", oszIdContato.len, oszIdContato.arr);
+
+    ULOGI("Finalizando LogSIMLock::buscaContatoLogSIMLock <FOUND>");
+    ULOG_END("LogSIMLock::buscaContatoLogSIMLock");
+    return true;
+
+    naoexiste:
+        ULOGE("Finalizando LogSIMLock::buscaContatoLogSIMLock <NOT FOUND>");
+        return false;
+
+    erro:
+        ULOGE("Finalizando LogSIMLock::buscaContatoLogSIMLock <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setValorQueryOpcional(char *pszValorQueryOpcional)
+{
+    strcpy(this->m_szValorQueryOpcional, pszValorQueryOpcional);
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setValorQueryObrigatoria(char *pszValorQueryObrigatoria)
+{
+    strcpy(this->m_szValorQueryObrigatoria, pszValorQueryObrigatoria);
+}
+
+/*******************************************************************************************************/
+char *LogSIMLock::getValorQueryOpcional(void)
+{
+    static char szValorQueryOpcional[LEN_VALOR_OPCIONAL + LEN_EOS];
+
+    strcpy(szValorQueryOpcional, this->m_szValorQueryOpcional);
+    return szValorQueryOpcional;
+}
+
+/*******************************************************************************************************/
+char *LogSIMLock::getValorQueryObrigatoria(void)
+{
+    static char szValorQueryObrigatoria[LEN_VALOR_OBRIGATORIO + LEN_EOS];
+
+    strcpy(szValorQueryObrigatoria, this->m_szValorQueryObrigatoria);
+    return szValorQueryObrigatoria;
+}
+
+/*******************************************************************************************************/
+int LogSIMLock::getIdQueryObrigatoria(void)
+{
+    return (this->m_iIdQueryObrigatorio);
+}
+
+/*******************************************************************************************************/
+int LogSIMLock::getIdQueryOpcional(void)
+{
+    return (this->m_iIdQueryOpcional);
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setIdQueryOpcional(int iIdQueryOpcional)
+{
+    if(iIdQueryOpcional == 0 || iIdQueryOpcional == ID_QUERY_OPCIONAL_LINHA || iIdQueryOpcional == ID_QUERY_OPCIONAL_DOCUMENTO)
+    {
+        this->m_iIdQueryOpcional = iIdQueryOpcional;
+    }
+    else
+    {
+        throw new TuxBasicSvcException("13E1313", "IdQueryOpcional invalido!");
+    }
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setIdQueryObrigatoria(int iIdQueryOBrigatoria)
+{
+    if(iIdQueryOBrigatoria == ID_QUERY_OBRIGATORIA_PERIODO || iIdQueryOBrigatoria == ID_QUERY_OBRIGATORIA_IMEI || iIdQueryOBrigatoria == ID_QUERY_OBRIGATORIA_LOGIN)
+    {
+        this->m_iIdQueryObrigatorio = iIdQueryOBrigatoria;
+    }
+    else
+    {
+        throw new TuxBasicSvcException("13E1313", "IdQueryOBrigatoria invalido!");
+    }
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setRegIni(int iRegIni)
+{
+    this->m_iRegIni = iRegIni;
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::setRegFim(int iRegFim)
+{
+    this->m_iRegFim = iRegFim;
+}
+
+/*******************************************************************************************************/
+int LogSIMLock::getRegIni(void)
+{
+    return this->m_iRegIni;
+}
+
+/*******************************************************************************************************/
+int LogSIMLock::getRegFim(void)
+{
+    return this->m_iRegFim;
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::controleAlocacao(void)
+{
+    m_iQtdElementosAlocados=QTD_ELEMENTOS_SIMLOCK;
+    m_iQtdElementosObtidos=0;
+
+    ULOG("m_iQtdElementosAlocados(%d)", m_iQtdElementosAlocados);
+    ULOG("sizeof(TDadosRelatorio)(%d)", sizeof(TDadosRelatorio));
+
+    if((m_ptDadosRelatorio = (TDadosRelatorio *) malloc((sizeof(TDadosRelatorio) * (m_iQtdElementosAlocados)))) == NULL ) {
+        throw new TuxBasicSvcException("13E0001", "Erro alocando memoria!");
+    }
+    ULOG("Memoria alocada m_ptDadosRelatorio (%p)", m_ptDadosRelatorio);
+}
+
+/*******************************************************************************************************/
+TDadosRelatorio *LogSIMLock::buscaLogSIMLockDinamica(void)
+{
+    static int iFlag=0;
+    static TDadosRelatorio tDadosRelatorioAux;
+    static TDadosRelatorio *ptDadosRelatorioAux;
+    static int iCount=0;
+
+    ULOG_START("LogSIMLock::buscaLogSIMLockDinamica");
+
+    if(iFlag == 0) {
+        this->controleAlocacao();
+        this->buscaLogSIMLockPcDinamica();
+        ptDadosRelatorioAux=m_ptDadosRelatorio;
+        iFlag=1;
+    }
+
+    ULOG("m_ptDadosRelatorio(%p)ptDadosRelatorioAux(%p)", m_ptDadosRelatorio, ptDadosRelatorioAux);
+    ULOG("m_iQtdElementosAlocados(%d)m_iQtdElementosObtidos(%d)iCount(%d)", m_iQtdElementosAlocados, m_iQtdElementosObtidos, iCount);
+
+    if(iCount < m_iQtdElementosObtidos)
+    {
+        memcpy(&tDadosRelatorioAux, ptDadosRelatorioAux, sizeof(TDadosRelatorio));
+        iCount++;
+        ptDadosRelatorioAux++;
+
+        ULOG_END("LogSIMLock::buscaLogSIMLockDinamica <NOT NULL>");
+        return &tDadosRelatorioAux;
+    }
+    else
+    {
+        ULOG("Desalocando memoria ->m_ptDadosRelatorio(%p)", m_ptDadosRelatorio);
+        free(m_ptDadosRelatorio);
+        m_ptDadosRelatorio=NULL;
+        iFlag=0;
+        iCount=0;
+        m_iQtdElementosObtidos=0;
+
+        ULOG_END("LogSIMLock::buscaLogSIMLockDinamica <NULL>");
+        return NULL;
+    }
+}
+
+/*******************************************************************************************************/
+void LogSIMLock::buscaLogSIMLockPcDinamica(void)
+{
+    ULOG_START("LogSIMLock::buscaLogSIMLockPcDinamica");
+
+    struct sqlca sqlca;
+    int iCount;
+    TDadosRelatorio *ptDadosRelatorioAux;
+
+    char szQueryAux[1000 + LEN_EOS];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszDtUltimaAlteracao[LEN_DATA_HORA];
+        VARCHAR oszIMEI[LEN_IMEI];
+        VARCHAR oszNmLoginUsuario[LEN_NMLOGINUSUARIO];
+        VARCHAR oszIP[LEN_IP];
+        VARCHAR oszEstadoConsulta[LEN_ESTADOCONSULTA];
+        VARCHAR oszNrLinha[LEN_NRLINHA];
+        VARCHAR oszNmTipoRelacionamento[LEN_NMTIPORELACIONAMENTO];
+        VARCHAR oszSgTipoDocumento[LEN_SGTIPODOCUMENTO];
+        VARCHAR oszNrDocumento[LEN_NRDOCUMENTO];
+        VARCHAR oszNmPessoa[LEN_NMPESSOA];
+
+        char oszPesquisa[5000];
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG("oiRegIni(%d)", this->getRegIni());
+    ULOG("oiRegFim(%d)", this->getRegFim());
+
+    strcpy(oszPesquisa,
+        "SELECT "
+          "dtultimaalteracao, "
+          "imei, "
+          "nmloginusuario, "
+          "ip, "
+          "estadoconsulta, "
+          "nrlinha, "
+          "nmtiporelacionamento, "
+          "sgtipodocumento, "
+          "nrdocumento, "
+          "nmpessoa "
+        "FROM "
+        "( "
+          "SELECT "
+            "dtultimaalteracao, "
+            "imei, "
+            "nmloginusuario, "
+            "ip, "
+            "estadoconsulta, "
+            "nrlinha, "
+            "nmtiporelacionamento, "
+            "sgtipodocumento, "
+            "nrdocumento, "
+            "nmpessoa, "
+            "ROWNUM AS linha "
+          "FROM( "
+            "SELECT  "
+              "to_char(clsl.dtultimaalteracao, 'DD/MM/YYYY HH:MI:SS') as dtultimaalteracao, "
+              "clsl.imei, "
+              "au.nmloginusuario, "
+              "clsl.ip, "
+              "clsl.estadoconsulta, "
+              "cplh.cdarearegistro || cplh.nrlinha as nrlinha, "
+              "ctr.nmtiporelacionamento, "
+              "atd.sgtipodocumento, "
+              "clsl.nrdocumento, "
+              "cp.nmpessoa "
+            "FROM "
+              "customer.logsimlock clsl, "
+              "acesso.usuario au, "
+              "customer.pessoalinhahistorico cplh, "
+              "customer.pessoa cp, "
+              "apoio.tipodocumento atd, "
+              "customer.tiporelacionamento ctr "
+            "WHERE "
+              "clsl.idtipodocumento = atd.idtipodocumento "
+            "AND "
+              "clsl.idpessoalinhahistorico = cplh.idpessoalinhahistorico "
+            "AND "
+              "clsl.idpessoa = cp.idpessoa "
+            "AND "
+              "cplh.idtiporelacionamento = ctr.idtiporelacionamento "
+            "AND "
+              "clsl.idusuarioalteracao = au.idpessoausuario ");
+
+    /* aqui entra a parte dinamica obrigatoria */
+    if(this->getIdQueryObrigatoria() == ID_QUERY_OBRIGATORIA_IMEI) {
+        sprintf(szQueryAux, 
+            "AND "
+               "clsl.imei = '%s' ", this->getValorQueryObrigatoria());
+    }
+    else if(this->getIdQueryObrigatoria() == ID_QUERY_OBRIGATORIA_LOGIN) {
+        sprintf(szQueryAux, 
+            "AND "
+                "au.nmloginusuario = '%s' ", this->getValorQueryObrigatoria());
+    }
+    else if(this->getIdQueryObrigatoria() == ID_QUERY_OBRIGATORIA_PERIODO) {
+        sprintf(szQueryAux, 
+            "AND "
+                 "to_char(clsl.dtultimaalteracao, 'YYYYMMDD') >= to_char(to_date('%.10s', 'DD/MM/YYYY'), 'YYYYMMDD') "
+            "AND "
+                 "to_char(clsl.dtultimaalteracao, 'YYYYMMDD') <= to_char(to_date('%.10s', 'DD/MM/YYYY'), 'YYYYMMDD') ",
+            this->getValorQueryObrigatoria(), (this->getValorQueryObrigatoria())+10);
+    }
+    ULOG("Obrigatorio ->szQueryAux[%s]", szQueryAux);
+    strcat(oszPesquisa, szQueryAux);
+
+
+    /* parte dinamica opcional */
+    szQueryAux[0] = 0x00;
+    if(this->getIdQueryOpcional() == ID_QUERY_OPCIONAL_LINHA) {
+        sprintf(szQueryAux,
+            "AND "
+                 "cplh.nrlinha = '%s' "
+            "AND "
+                 "cplh.cdarearegistro = '%.2s' ",
+                (this->getValorQueryOpcional())+2, this->getValorQueryOpcional());
+    }
+    else if(this->getIdQueryOpcional() == ID_QUERY_OPCIONAL_DOCUMENTO) {
+        sprintf(szQueryAux,
+            "AND "
+                 "clsl.nrdocumento = '%s' ",
+                this->getValorQueryOpcional());
+    }
+    ULOG("Opcional ->szQueryAux[%s]", szQueryAux);
+    strcat(oszPesquisa, szQueryAux);
+
+
+    /* parte final da query dinamica */
+    sprintf(szQueryAux,
+            "ORDER BY "
+              "clsl.dtultimaalteracao "
+          ") "
+          "WHERE "
+            "ROWNUM <= %d "
+        ") "
+        "WHERE "
+          "linha >= %d", this->getRegFim(), this->getRegIni());
+    ULOG("Paginacao ->szQueryAux[%s]", szQueryAux);
+
+
+    strcat(oszPesquisa, szQueryAux);
+    ULOGI("Pesquisa[%s]", oszPesquisa);
+
+    EXEC SQL PREPARE qPesquisa FROM :oszPesquisa;
+    EXEC SQL DECLARE cSIMLockDinamic CURSOR FOR qPesquisa;
+
+    EXEC SQL OPEN cSIMLockDinamic;
+
+    for(iCount=0, ptDadosRelatorioAux=m_ptDadosRelatorio;;iCount++, ptDadosRelatorioAux++, m_iQtdElementosObtidos++)
+    {
+        EXEC SQL FETCH cSIMLockDinamic INTO
+            :oszDtUltimaAlteracao,
+            :oszIMEI,
+            :oszNmLoginUsuario,
+            :oszIP,
+            :oszEstadoConsulta,
+            :oszNrLinha,
+            :oszNmTipoRelacionamento,
+            :oszSgTipoDocumento,
+            :oszNrDocumento,
+            :oszNmPessoa;
+
+        ULOG("m_iQtdElementosAlocados(%d)iCount(%d)", m_iQtdElementosAlocados, iCount);
+
+        /* Verifica se precisa realocar espaco */
+        if(iCount >= m_iQtdElementosAlocados) {
+            m_iQtdElementosAlocados++;
+
+            ULOG("Realocando memoria [%p]", m_ptDadosRelatorio);
+            m_ptDadosRelatorio = (TDadosRelatorio *) realloc(m_ptDadosRelatorio, sizeof(TDadosRelatorio) * (m_iQtdElementosAlocados));
+            ULOG("Memoria realocada [%p] bloco(%d)", m_ptDadosRelatorio, sizeof(TDadosRelatorio) * (m_iQtdElementosAlocados));
+
+            /* Atribui o novo endereco obtido e posiciona o ponteiro na posicao do ultimo registro obtido antes da realocacao */
+            ptDadosRelatorioAux = m_ptDadosRelatorio+iCount;
+        }
+
+        /* copia as informacoes obtidas para o ponteiro */
+        memset(ptDadosRelatorioAux, 0x00, sizeof(TDadosRelatorio));
+        STRCPY_FROM_ORA(ptDadosRelatorioAux->szDtUltimaAlteracao,    oszDtUltimaAlteracao);
+        STRCPY_FROM_ORA(ptDadosRelatorioAux->szIMEI,                 oszIMEI);
+        STRCPY_FROM_ORA(ptDadosRelatorioAux->szNmLoginUsuario,       oszNmLoginUsuario);
+        STRCPY_FROM_ORA(ptDadosRelatorioAux->szIP,                   oszIP);
+        STRCPY_FROM_ORA(ptDadosRelatorioAux->szEstadoConsulta,       oszEstadoConsulta);
+        STRCPY_FROM_ORA(ptDadosRelatorioAux->szNrLinha,              oszNrLinha);
+        STRCPY_FROM_ORA(ptDadosRelatorioAux->szNmTipoRelacionamento, oszNmTipoRelacionamento);
+        STRCPY_FROM_ORA(ptDadosRelatorioAux->szSgTipoDocumento,      oszSgTipoDocumento);
+        STRCPY_FROM_ORA(ptDadosRelatorioAux->szNrDocumento,          oszNrDocumento);
+        STRCPY_FROM_ORA(ptDadosRelatorioAux->szNmPessoa,             oszNmPessoa);
+    }
+
+    EXEC SQL CLOSE cSIMLockDinamic;
+
+    ULOG("iCount(%d) m_iQtdElementosAlocados(%d) m_iQtdElementosObtidos(%d)", iCount, m_iQtdElementosAlocados, m_iQtdElementosObtidos);
+
+    ULOGI("Finalizando LogSIMLock::buscaLogSIMLockPcDinamica");
+    ULOG_END("FilaSetClientInfo::LogSIMLock::buscaLogSIMLockPcDinamica");
+    return;
+
+    erro:
+        ULOGE("Finalizando LogSIMLock::buscaLogSIMLockPcDinamica <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

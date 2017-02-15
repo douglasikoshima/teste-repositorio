@@ -1,0 +1,109 @@
+/**
+  * @modulo  Cliente
+  * @usecase Escolaridade
+  * @author  Robinson Vieira
+  * @version $Revision: 1.1 $
+  * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:17 $
+  **/
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw.h>
+#include "../include/Global.h"
+EXEC SQL INCLUDE "../include/Escolaridade.h";
+
+//
+// Construtor e Destrutor
+CEscolaridade::CEscolaridade() {
+}
+
+CEscolaridade::~CEscolaridade() {
+}
+//
+// Metodos getter
+int CEscolaridade::getId(){
+	return iId;
+}
+
+char* CEscolaridade::getDs(){
+	if (iId < 0)
+		return NULL;
+	else
+		return cDs;
+}
+
+//
+// Metodos setter
+void CEscolaridade::setId(int value){
+	iId = value;
+}
+
+void CEscolaridade::setDs(char* value){
+	if (value != NULL) {
+		strncpy(cDs, value, 255);
+		cDs[255]='\0';
+	}
+}
+// Metodos para acessar a base de dados
+CEscolaridade* CEscolaridade::lista(int* iNroObjetos)
+{
+    ULOG_START("CEscolaridade::lista()");
+	struct sqlca sqlca;
+	CEscolaridade* listaTipo = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iIdt;
+		char cDst[256];
+	EXEC SQL END DECLARE SECTION;
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE tabTemp CURSOR FOR
+	SELECT
+	 IdValorPossivel,
+	 DsValorPossivel
+	FROM
+	 customer.ValorPossivel
+	WHERE
+	 IdAtributo=90
+	ORDER BY 2;
+
+	EXEC SQL OPEN tabTemp;
+
+	// Corre os dados e monta a lista de objetos
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) {
+		
+		EXEC SQL FETCH tabTemp INTO
+		 :iIdt,
+		 :cDst;
+
+		// Aloca memória para o objeto atual.
+		if ((listaTipo = (CEscolaridade*) realloc((void *)listaTipo, 
+			(sizeof(CEscolaridade) * iNroObjLocal))) != NULL) {
+			// Coloca os dados do objeto atual.
+			listaTipo[iNroObjLocal-1].setId(iIdt);
+			listaTipo[iNroObjLocal-1].setDs(cDst);
+		} else {
+			if (listaTipo)
+				free(listaTipo);
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	
+	ULOG_END("CEscolaridade::lista()");
+	
+	return listaTipo;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CEscolaridade::lista()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

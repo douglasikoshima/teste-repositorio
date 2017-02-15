@@ -1,0 +1,262 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Fonte   : main.cpp
+//* Servico : PesquisaPessoa
+//* Servidor: PesquisaTI
+//*
+//* Ficheiro: TUXEFO/cliente/PesquisaTI/PesquisaPessoa/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson Martins
+//*
+//* Fecha primeira version:13/06/2004
+//*
+//* Version actual: 01.00
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Monta XML de retorno com os dados da pesquisa informados na Tela Inicial.
+//*
+//* Review:
+//*
+//* Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+//*
+//* 
+//*//-------------------------------------------------------------------------------
+//---------------------------------------------------------------------
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+#include "../include/PesquisaPessoa.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/BuscaDocumentoPessoa.h";
+
+DECLARE_TUXEDO_SERVICE(PesquisaPessoa);
+
+void implPesquisaPessoa::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    char *pParam=0;
+    char *pNmMeio=0;
+    char *pSbNome=0;
+    char *pPesq=0;
+    int iNroReg = 0;
+    int iAux;
+    CBuscaDocumentoPessoa* poObj = 0;
+    DOMNode *dnPaginacao = walkDOM( pDnode, "Paginacao", 0 );
+    char* pzcAux;
+    char cpageNumber[5+1];
+    
+    memset(&cpageNumber, 0, sizeof(cpageNumber));
+
+    ULOG_START( "implPesquisaPessoa::Execute()" );
+
+    ULOG("PesquisaPessoa - local 1");
+
+    try{
+        pPesq=walkTree(pDnode, XML_IN_PESQUISA, 0);
+        if(!pPesq){
+            ERROR(NRO_PESQUISA_NE);
+            TAG_INEXISTENTE(XML_IN_PESQUISA);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !*pPesq){
+            ERROR(NRO_PESQUISA_VV);
+            TAG_VALOR_VAZIO(XML_IN_PESQUISA);
+            XMLString::release(&pPesq);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        ULOG("1. pPesq[%s]", pPesq);
+        upper(pPesq);
+        ULOG("2. pPesq[%s]", pPesq);
+
+        pParam=walkTree(pDnode, XML_IN_VALOR, 0);
+        if(!pParam){
+            ERROR(NRO_VALOR_NE);
+            TAG_INEXISTENTE(XML_IN_VALOR);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !*pParam){
+            ERROR(NRO_VALOR_VV);
+            TAG_VALOR_VAZIO(XML_IN_VALOR);
+            if (pPesq) XMLString::release(&pPesq);
+            XMLString::release(&pParam);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        
+        //Rotinas para paginação
+  		strcpy( cpageNumber, "1" );//Assume como primeira pagina
+        if( dnPaginacao != NULL )
+        {
+        	pzcAux = walkTree( dnPaginacao, "pageNumber", 0 );	
+        	if( pzcAux != NULL )
+        		strcpy( cpageNumber, pzcAux );//Caso venha alguma número, assumimos o que vier, senão fica como 1 mesmo
+        		
+        	XMLString::release(&pzcAux);
+        }
+   		ULOG("pageNumber[%s]", cpageNumber );
+        
+        if (!strcmp("RAZAO", pPesq))
+        {
+            ULOG("Local RAZAO");
+            poObj = CBuscaDocumentoPessoa::buscarDocPorNomePJ(&iNroReg, pParam, cpageNumber);
+        }
+        else if ( !strcmp("NOME", pPesq) )
+        {
+            /* Guardando o nome do meio - opcional */
+            pNmMeio=walkTree(pDnode, XML_IN_NMMEIO, 0);
+
+            /* Guardando o sobre nome - obrigatorio */
+            pSbNome=walkTree(pDnode, XML_IN_NMSOBRENOME, 0);
+            if(!pSbNome){
+                ERROR(NRO_SOB_NM_PESSOA_NE);
+                TAG_INEXISTENTE(XML_IN_NMSOBRENOME);
+                
+                if ( pNmMeio ) XMLString::release(&pNmMeio);
+
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+            if ( !*pSbNome){
+                ERROR(NRO_SOB_NM_PESSOA_VV);
+                TAG_VALOR_VAZIO(XML_IN_NMSOBRENOME);
+                
+                if ( pNmMeio ) XMLString::release(&pNmMeio);
+
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+
+            poObj = CBuscaDocumentoPessoa::buscarDocPorNome(&iNroReg, pParam, pNmMeio, pSbNome, cpageNumber);
+
+            XMLString::release(&pSbNome);
+            if ( pNmMeio ) XMLString::release(&pNmMeio);
+
+        }
+        else if ( !strcmp("CELULAR", pPesq) )
+        {
+            if ( !IsNumeric(pParam) ){
+                ERROR(NRO_ID_PESSOA_VI);
+                TAG_VALOR_INVALIDO(XML_IN_VALOR);
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+
+            poObj = CBuscaDocumentoPessoa::buscarDocPorNrLinha(&iNroReg, pParam, cpageNumber);
+        }
+        else if(!strcmp("PROTOCOLO", pPesq))
+        {
+            if ( !IsNumeric(pParam) ){
+                ERROR(NRO_ID_PESSOA_VI);
+                TAG_VALOR_INVALIDO(XML_IN_VALOR);
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+
+           // poObj = CBuscaDocumentoPessoa::buscarProspect(&iNroReg, pParam, cpageNumber);
+
+            ULOG("iNroReg(%d)", iNroReg);
+            if(iNroReg == 0) {
+                poObj = CBuscaDocumentoPessoa::buscarNrLinhaPorProtocolo(&iNroReg, pParam, cpageNumber);
+            }
+        }
+        else if (!strcmp("CONTA", pPesq) )
+        {
+            if ( !IsNumeric(pParam) ){
+                ERROR(NRO_ID_PESSOA_VI);
+                TAG_VALOR_INVALIDO(XML_IN_VALOR);
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+
+            poObj = CBuscaDocumentoPessoa::buscarDocPorNrConta(&iNroReg, pParam, cpageNumber);
+        }
+        else if (!strcmp("CPF", pPesq) || !strcmp("RG", pPesq) ||
+                 !strcmp("PASS", pPesq)|| !strcmp("PAS", pPesq)||
+                 !strcmp("CPR", pPesq) || !strcmp("CN", pPesq) ||
+                 !strcmp("CNPJ", pPesq)|| !strcmp("IE", pPesq) ||
+                 !strcmp("EM", pPesq)  || !strcmp("CNH", pPesq)||
+                 !strcmp("RNE", pPesq) || !strcmp("IM", pPesq) )
+        {
+            poObj = CBuscaDocumentoPessoa::buscarDocPorTipDocumento(&iNroReg, pPesq, pParam, cpageNumber);
+        }
+
+        pXmlG->createTag(XML_VO_ROOT);
+        pXmlG->addProp("xmlns",XML_PROP);
+        for (iAux=0; iAux < iNroReg; iAux++) 
+        {
+            pXmlG->createTag(XML_VO_NO_CLIENTE);
+                pXmlG->addItem(XML_VO_IDPESSOA,         poObj[iAux].getIdPessoa());
+                pXmlG->addItem(XML_VO_NMNOME,           poObj[iAux].getNmNome());
+                pXmlG->addItem(XML_VO_DSTIPODOCUMENTO,  poObj[iAux].getDsTipoDocumento());
+                pXmlG->addItem(XML_VO_NRDOCUMENTO,      poObj[iAux].getNrDocumento());
+                pXmlG->addItem(XML_VO_DSTIPOPESSOA,     poObj[iAux].getDsTipoPessoa());
+                pXmlG->addItem(XML_VO_NRLINHA,          poObj[iAux].getNrLinha());
+                pXmlG->addItem(XML_VO_INCLIENTEUSUARIO, poObj[iAux].getSgTipoRelacionamento());
+				pXmlG->addItem(XML_VO_ISPROTOCOLOATIVO,	poObj[iAux].getIsProtocoloAtivo());
+            pXmlG->closeTag();
+        }
+
+		if( dnPaginacao != NULL )
+		{
+			//TAGs de paginacao
+	    	pXmlG->createTag("Paginacao");
+		        pXmlG->addItem("pageNumber", cpageNumber);
+		    	if( iNroReg > 0 )
+		    	{
+	            	//estamos pegando poObj[0] porque a forma de buscar os dados e tosca e mudar para a paginacao
+	            	//seria muito trabalhoso e perigoso. O valor de ultima pagina sempre vem no primeiro registro.
+    				ULOG( "poObj[0].getUltimaPagina()[%d]", poObj[0].getUltimaPagina() );
+	            	if( poObj[0].getUltimaPagina() == 1 ) 
+	            		pXmlG->addItem("hasNext", 0);
+	            	else
+	            		pXmlG->addItem("hasNext", 1);
+				}
+				else
+					pXmlG->addItem("hasNext", 0);
+			pXmlG->closeTag();//Paginacao
+		}//if( dnPaginacao != NULL )
+		
+        pXmlG->closeTag();
+
+        XMLString::release(&pPesq);
+        pPesq = 0;
+
+        XMLString::release(&pParam);
+        pParam = 0;
+
+        //Liberando memoria alocada
+        if ( poObj ) free(poObj);
+    }
+    catch(...){
+        if ( pSbNome ) XMLString::release(&pSbNome);
+        if ( pNmMeio ) XMLString::release(&pNmMeio);
+        if ( pPesq ) XMLString::release(&pPesq);
+        if ( pParam ) XMLString::release(&pParam);
+        throw;  //repassando o erro para nucleo
+    }
+
+    ULOG_END( "implPesquisaPessoa::Execute()" );
+
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}
+
+
+

@@ -1,0 +1,127 @@
+///////////////////////////////////////////////////////////////////////////////
+/**
+ * @modulo  PrePago
+ * @usecase Pesquisa Dados de Pessoa Fisica Por Documento
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:23 $
+ **/
+///////////////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include <Global.h>
+#include "../include/PsqPFDocDdsCttpc.h"
+EXEC SQL END DECLARE SECTION;
+
+// EXEC SQL BEGIN DECLARE SECTION;
+// #include "../include/PsqPFDocDdsCttpc.h"
+// //#include "../include/PsqPFDocDdsDocpc.h"
+// EXEC SQL END DECLARE SECTION;
+
+/************************************************************************************/
+bool proCBuscarPFPorDoc(const char *ptIdPessoa,
+                        DadosPFDocumento *ptDadosPFDocumento,
+                        StatusPFDocumento *ptStatusPFDocumento,
+                        XMLGen *xml_g)
+{
+    ULOG_START("proCBuscarPFPorDoc");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        const char *ptSqlIdPessoa = ptIdPessoa;
+        struct DadosPFDocumento *ptSqlDadosPFDocumento = ptDadosPFDocumento;
+        struct StatusPFDocumento *ptSqlStatusPFDocumento = ptStatusPFDocumento;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    EXEC SQL
+	    DECLARE 
+		    cursorDoc CURSOR FOR 
+        SELECT 
+            DOCUMENTO.IDDOCUMENTO,
+			TIPODOCUMENTO.IDTIPOPESSOA,
+			TIPODOCUMENTO.NRPRIORIDADE, 
+            TIPODOCUMENTO.IDTIPODOCUMENTO,
+            DOCUMENTO.NRDOCUMENTO,
+            TIPODOCUMENTO.SGCLASSIFICACAO,
+            TIPODOCUMENTO.DSTIPODOCUMENTO,
+            TO_CHAR(DOCUMENTO.DTEMISSAO,'DD/MM/YYYY') AS DTEMISSAO,
+            DOCUMENTO.SGORGAOEXPEDIDOR,
+            DOCUMENTO.IDUF
+        FROM
+            CUSTOMER.PESSOADOCUMENTO PESSOADOCUMENTO,
+            CUSTOMER.DOCUMENTO DOCUMENTO,
+            APOIO.TIPODOCUMENTO TIPODOCUMENTO
+        WHERE
+            PESSOADOCUMENTO.IDPESSOA IN (SELECT PESSOADEPARA.IDPESSOAORIGEM 
+                                           FROM CUSTOMER.PESSOADEPARA 
+                                          WHERE PESSOADEPARA.IDPESSOA = :ptSqlIdPessoa)
+        AND PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO
+        AND NVL(PESSOADOCUMENTO.DTEXPIRACAO,SYSDATE) >= SYSDATE
+        AND DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO;
+
+	EXEC SQL OPEN cursorDoc;
+
+	if(sqlca.sqlcode)
+    {
+		goto erro;
+    }
+	else
+	{
+        int it=0;
+
+		EXEC SQL WHENEVER NOT FOUND DO BREAK;
+		for(;;)
+		{
+            memset(ptSqlDadosPFDocumento,0,sizeof(ptSqlDadosPFDocumento));
+            memset(ptSqlStatusPFDocumento,0,sizeof(ptSqlStatusPFDocumento));
+
+			EXEC SQL FETCH cursorDoc INTO :ptSqlDadosPFDocumento:ptSqlStatusPFDocumento;
+
+            it++;
+
+			xml_g->createTag("Doc");
+			    xml_g->addItem( "idDoc", ptSqlDadosPFDocumento->oszIDDOCUMENTO );
+			    xml_g->addItem( "sgDoc", ptSqlDadosPFDocumento->oszSGCLASSIFICACAO );
+			    xml_g->addItem( "nrDoc", ptSqlDadosPFDocumento->oszNRDOCUMENTO );
+			    xml_g->addItem( "idTipoDoc", ptSqlDadosPFDocumento->oszIDTIPODOCUMENTO );
+			    xml_g->addItem( "dsTipoDoc", ptSqlDadosPFDocumento->oszDSTIPODOCUMENTO );
+			    xml_g->addItem( "dtExpedicaoDoc", ptSqlDadosPFDocumento->oszDTEMISSAO );
+			    xml_g->addItem( "dsOrgaoEmissorDoc", ptSqlDadosPFDocumento->oszSGORGAOEXPEDIDOR );
+			    xml_g->addItem( "idUFDoc", ptSqlDadosPFDocumento->oszIDUF );
+			xml_g->closeTag();//Doc
+		}
+
+        bool fimVazio = it == 0 ? true : false;
+	    EXEC SQL CLOSE cursorDoc;
+
+        if ( fimVazio )
+        {
+            goto naoexiste;
+        }
+	}
+
+    ULOGI("Finalizando proCBuscarPFPorDoc <FOUND>");
+    ULOG_END("proCBuscarPFPorDoc");
+    return true;
+
+    naoexiste:
+        ULOGI("Finalizando proCBuscarPFPorDoc <NOT FOUND>");
+        ULOG_END("proCBuscarPFPorDoc");
+        return false;
+
+    erro:
+        ULOGE("Finalizando proCBuscarPFPorDoc <ERROR>");
+        ULOGE("sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

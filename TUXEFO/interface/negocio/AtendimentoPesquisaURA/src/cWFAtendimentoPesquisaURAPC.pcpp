@@ -1,0 +1,167 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "queryMacro.h"
+
+
+#include "../include/cWFAtendimentoPesquisaURA.h"
+#include "../include/stWFAtendimentoPesquisaURA.h"
+
+void sql_error_WFAtendimentoPesquisaURA(sqlca*sqlca);
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+
+#include "../include/stWFAtendimentoPesquisaURA.h"
+EXEC SQL END DECLARE SECTION;
+
+bool proCIncluirWFAtendimentoPesquisaURA(st_AtendimentoPesquisaURA* dados, st_vlAtendimentoPesquisaURA* status, XMLGen* saida) {
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AtendimentoPesquisaURA   oDados;
+		struct st_vlAtendimentoPesquisaURA oStatus;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoPesquisaURA(&sqlca);
+
+	EXEC SQL 
+		INSERT INTO
+			ATENDIMENTO.ATENDIMENTOPESQUISAURA
+			(
+				IDATENDIMENTO,
+				VLNOTA,
+                DTULTIMAALTERACAO,
+                IDUSUARIOALTERACAO
+			)
+			VALUES
+			(
+				:oDados.idAtendimento,
+				:oDados.vlNota,
+                SYSDATE,
+                NULL
+			);
+
+	saida->createTag("Registro");
+		saida->addItem("idAtendimento", oDados.idAtendimento);
+	saida->closeTag();
+
+	return true;
+}
+
+bool proCAlterarWFAtendimentoPesquisaURA(st_AtendimentoPesquisaURA* dados, st_vlAtendimentoPesquisaURA* status, XMLGen* saida) {
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AtendimentoPesquisaURA   oDados;
+		struct st_vlAtendimentoPesquisaURA oStatus;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoPesquisaURA(&sqlca);
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+	sprintf(query,"%s", "UPDATE atendimento.AtendimentoPesquisaURA SET ");
+
+	bool separa = false;
+
+	if (status->vlNota != -1) 
+		montaUpdate("vlNota", oDados.vlNota, 1);
+
+	sprintf(query, "%s WHERE idAtendimento = %i", query, dados->idAtendimento);
+
+	EXEC SQL EXECUTE IMMEDIATE :query;
+
+	return true;
+}
+
+bool proCExcluirWFAtendimentoPesquisaURA(st_AtendimentoPesquisaURA* dados, st_vlAtendimentoPesquisaURA* status, XMLGen* saida) {
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idAtendimento = dados->idAtendimento;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoPesquisaURA(&sqlca);
+
+	EXEC SQL 
+		DELETE
+			atendimento.AtendimentoPesquisaURA
+		WHERE
+			idAtendimento = :idAtendimento;
+
+	return true;
+}
+
+bool proCConsultaWFAtendimentoPesquisaURA(st_AtendimentoPesquisaURA* dados, st_vlAtendimentoPesquisaURA* status, char* order, XMLGen* saida) {
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idAtendimento;
+		int vlNota;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	sprintf(query,"SELECT idAtendimento, vlNota FROM atendimento.AtendimentoPesquisaURA ");
+
+	bool separa = false;
+
+	if (status->idAtendimento != -1) 
+		montaWhere("idAtendimento", dados->idAtendimento, 1);
+
+	if (status->vlNota != -1)
+		montaWhere("vlNota", dados->vlNota, 1);
+
+	if (strlen(order) > 0) 
+		sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoPesquisaURA(&sqlca);
+
+	EXEC SQL PREPARE consultaAtendimentoPesquisaURA FROM :query;
+	EXEC SQL DECLARE consulta CURSOR FOR consultaAtendimentoPesquisaURA;
+
+	EXEC SQL OPEN consulta;
+
+	while (true)
+	{
+		EXEC SQL FETCH consulta INTO :idAtendimento, :vlNota;
+
+		saida->createTag("WFAtendimentoPesquisaURAVO");
+			saida->addItem("idAtendimento", idAtendimento);
+			saida->addItem("vlNota", vlNota);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE consulta;
+
+	return true;
+
+}
+
+void sql_error_WFAtendimentoPesquisaURA(sqlca*sqlca) {
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

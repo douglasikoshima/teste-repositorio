@@ -1,0 +1,3678 @@
+//
+// $Id: final_retencao.pcpp,v 1.1 2009/07/31 15:34:49 a5110702 Exp $
+//
+
+// #include"../../../../commons/queryMacro.h"
+// #include"../../../../commons/msgPadrao.h"
+#include "../../negocio/fidutil/include/queryMacro.h"
+#include "../../negocio/fidutil/include/msgPadrao.h"
+#include "tuxfw.h"
+
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+#include  "../../negocio/fidutil/include/CallTux.h"
+#include  "../../negocio/fidutil/include/TString.h"
+
+#include <string.h>
+#include <ctype.h>
+
+#include <string>
+using namespace std;
+
+
+
+void conv_Numero( char *pNumero);
+void rte_pegaidmatrizoferta(char *pszsgoferta,char* pIDmatriz);
+void GetCaracteristicaOferta( char * sNomeColunaPrm, char * idCaractOfertaPrm, char * sNomePropriedadePrm );
+void trim1(string& str);
+
+
+#define AGENDOU           1
+#define NAO_RETIDO        2 
+#define RETIDO            3
+#define LIGACAO_INDEVIDA  4  //operção padrao
+#define VAI_PENSAR        5
+#define RETIDO_ARGUMENTO  6  //operção padrao
+#define RTE               666
+#define TRANSFERENCIA     8
+#define RETIDO_RESTRICAO  9  // Retido po restricao  obs tem ou nao que ser criado
+#define ANALISECRDB      10  // Analise de credito/debito
+#define ANALISEENDERECO  11  // Analise de Endereco
+
+#define CODIGO_SUCESSO_SERVICO  "04I0000"
+
+#define NRPARAMETROS       30
+#define TAMPARAM          256
+
+#define TXPB_REGCON_SERVICE                             "REGCONTATOA"
+
+typedef struct _stDadosContato 
+{
+    TString idChamadaTelefonica   ; 
+    TString idGrupoAbertura       ; //variavel de encaminhamento
+    TString inResponsavelAbertura ; //variavel de encaminhamento
+    TString nmContato             ; 
+    TString observacao            ; 
+    TString nrTelefone            ; 
+    TString tpOperacao            ; 
+    TString idProcedencia         ; //variavel de encaminhamento
+    TString idCanal               ; //variavel de encaminhamento
+    TString idConta               ;
+    TString idPessoaLinhaHistorico; 
+    TString idPessoa              ; // Buscar
+    TString idContato             ;
+    TString AtendimentoTipoComunicacaoVO;
+    TString idSegmentacao		  ; //variavel de encaminhamento
+    TString idTipoCarteira        ; //variavel de encaminhamento
+	TString idUfOperadora         ; //variavel de encaminhamento
+	TString idTipoLinha			  ; //variavel de encaminhamento
+	TString inTipoPessoa		  ; //variavel de encaminhamento
+	TString nrTelefoneSMS         ;
+} stDadosContato;
+
+
+
+typedef struct _stParametros
+{
+    char   sgOfertaAceita[21];
+    char   idRetencao[31];
+    char   idPessoaDePara[31];
+    char   idRespostaIntencao[31];
+    char   idRespostaDestino[31];
+    char   idTipoEncerramento[31];
+    char   idUsuario[31];
+    char   idGrupo[31];
+    char   idUFOperadora[31];
+    char   idSegmentacao[31];
+    char   qtPontos[20];
+    char   dtInicio[65];
+    char   dtFim[65];
+    char   idMatrizPlano[31];
+    char   idPlano[31];
+    char   nmNovoPlano[129];
+    char   nmPlanoAtual[21];
+    char   idMatrizBonus[31];
+    char   nmBonus[256];
+    char   dtFimVigencia[65];
+    char   dtInicioVigencia[65];
+    char   idMatrizMigracao[31];
+    char   vlSaldo[31];
+    char   qtValidade[31];
+    char   dsLinhaAtual[256];
+    char   dsLinhaPre[256];
+    char   sNomeCampo[1025];
+    char   sValorCampo[5025];
+    char   nmLoginUsuario[256];
+    char   cdAreaRegistro[3];
+    char   nmPessoa[256];
+    char   idTipoPessoa[3];
+    char   inExcecao[2];
+    short  inFidelizacao;
+    char   nmRespostaIntencao[256];
+    char   nmRespostaDestino[256];
+    short  inOfertaAceita ;
+    char   dsEndereco[71];                        //  ENDERECO ALTERADO PELO ATENDENTE RETENCAO
+    char   nrNumero[11];                          //  NUMERO ALTERADO PELO ATENDENTE RETENCAO
+    char   dsComplemento[21];                     //  NUMERO ALTERADO PELO ATENDENTE RETENCAO
+    char   dsBairro[41];                         //  NUMERO ALTERADO PELO ATENDENTE RETENCAO
+    char   dsCidade[41];                          //  NUMERO ALTERADO PELO ATENDENTE RETENCAO
+    char   dsEstado[3];                           //  NUMERO ALTERADO PELO ATENDENTE RETENCAO
+    char   dsCep[71];                             //  CEP ALTERADO PELO ATENDENTE RETENCAO
+    short  idMotivoAlteracaoEndereco;             //  CHAVE ESTRANGEIRA   
+    short  idNovaRetencao;                        //  CHAVE ESTRANGEIRA   
+    char   dsRetornoConsulta[3000+1];             // -- TEXTO DE RETONO DO LEGADO (ATLYS)
+    char   nrDocumento[20+1];                     // -- NUMERO DO CPF
+    char   nrConta[20+1];                         // -- NUMERO DA CONTA
+    char   nrLinha[12+1];                         // -- NUMERO DA LINHA
+    char   dtConsulta[64+1];                      // -- DATA DA CONSULTA AO LEGADO
+    char   vlDebito[22+1];                       // -- VALOR DO DEBITO EM ABERTO
+    char   idContaInadimplente[20+1];             // -- IDENTIFICACAO DA CONTA INADIMPLENTE
+    char   dtVencDebito[64+1];                    // -- DATA DO VENCIMENTO DO DEBITO
+    char   dtInterrupcao[64+1];                   // -- DATA DA FALHA DE COMUNICACAO COM O LEGADO
+    char   idRegional[22+1];                      // -- IDENTIFICACAO DA REGIONAL
+    char   dsRegional[70+1];                      // -- NOME DA REGIONAL
+    char   dsMotivoErro[150+1];                   // -- DESCRICAO SUCINTA DO ERRO
+    char   idUsuarioAlteracao[22+1];              // -- NUMERO DO USUARIO ALTERACAO
+    char   dsObsAnalise[256+1]  ;               // -- TEXTO QUE O ANALISTA INFORMOU PARA A APROVACAO OU REPROVACAO
+    int    idTipoAnalise;                         // -- NUMERO DA CONTA
+    short  inAprovadoLegado ;                     // -- APROVADO PELO LEGADO NA DOCUMENTACAO ESTA COM STATUS DE AVALIACAO
+    short  inStatusComunicacao ;                  // -- ESTADOS DE COMUNICACAO 1 REPROVADO 0 APROVADO
+    char   nmTerceiro[70+1];
+    char   nrRGTerceiro[20+1];
+    char   nrTelTerceiro[20+1];
+} stParametros;
+
+struct stCart_oferta
+{
+char     idCaracteristicaOfertaOld[21+2];
+char     nmPropriedadeOld[257];
+char     vlPropriedadeOld[257];
+char     nmColunaOld[257];
+};
+
+typedef struct _stRetencaoAparelho
+{
+  char IDUSUARIOINCLUSAO[30+1];
+  char IDRETENCAO[30+1]; //               NUMBER(16)           NOT NULL, char   idRetencao[30];
+  char DTRETIRADA[60+1];  //             DATE,
+  char DTINCLUSAO[60+1];          ; //     DATE,
+  char NMLOJA[60+1]               ; //    VARCHAR2(60 BYTE),
+  char NRORDEMVENDA[18+1]         ; //    VARCHAR2(18 BYTE),
+  char VLPRECOREAL[20+1]              ; // NUMBER(8,2),
+  char VLPRECOABS[20+1]               ; // NUMBER(8,2),
+  char NMCOR[20+1]                    ; // VARCHAR2(20 BYTE),
+  char INTIPOENTREGA[20+1]            ; // NUMBER,
+  char IDTIPOPAGAMENTOAPARELHO[20+1]  ; // NUMBER(6),
+  char DSMODELO[60+1]                 ; // VARCHAR2(60 BYTE),
+  char NRPARCELAS[20+1]               ; // NUMBER(4),
+  char VLPERCENTUALDESCONTO[20+1]     ; // NUMBER(3),
+  char VLPARCELA[20+1]                ; // NUMBER(9,2),
+  char DSENDERECOENTREGA[120+1]        ; // VARCHAR2(120 BYTE),
+  char DSDOCUMENTOTERCEIRO[20+1]      ; // VARCHAR2(20 BYTE),
+  char IDAPARELHO[20+1]               ; // NUMBER,
+  char DSCONTATOTELEFONE[60+1]        ; // VARCHAR2(60 BYTE),
+  char QTESTOQUELOJA[20+1]            ; // NUMBER(6),            ; // NUMBER(6),
+  char NMPESSOARECEBE[20+1]           ; // VARCHAR2(60 BYTE)
+  char MATERIAL[60+1]           ; // VARCHAR2(60 BYTE)
+} stRetencaoAparelho ;
+
+
+typedef struct _stRetRegContato
+{
+  char Descricao[40+1];
+  char Valor[256]; 
+} stRetRegContato ;
+
+extern struct sqlca sqlca;
+
+void sql_errorNovo( struct sqlca *sqlca);
+void FormataDados( XMLGen *,  stDadosContato );
+// int  RegContato(char* idUser, stDadosContato, char *siAtendiemento );
+int RegContato(char* idUser, stDadosContato stcnt,stRetRegContato *Reg);
+void InsereRetencaoAnalise( stParametros * pParam );
+void InsereRetencaoEndereco( stParametros * pParam );
+void InsereRetencaoRelAnalise( stParametros * pParam );
+void InsereRetencaoOferta(stParametros * pParam);
+void InsereRetencaoConsolidada( stParametros * pParam );
+void GetContatoTipoEncerramento(int idtipoencerramento,char *pidmatriz,char *pidcontato,char *psgOferta);
+void careg_RETENCAOAPARELHO(char *sCanpo,char *sValor, stRetencaoAparelho *Reg);
+void ins_RETENCAOAPARELHO(stRetencaoAparelho *pParam );
+void dataAtual(char* data) ;
+void conclui_retencao(unsigned long idRetencaoOld);
+
+void ret_idAtendiemento(char * string , char*retorno );
+
+
+
+void get_SMS(char *_idPessoaDePara,char *_nrTelefoneSMS);
+
+int final_retencao( int usuario, DOMNode * dnode, XMLGen * xml )
+{
+
+    ULOG_START("final_retencao()");
+
+    stRetencaoAparelho Reg;
+    
+    stRetRegContato RegCont;
+    
+    stCart_oferta vet_stCart_oferta[20];
+    
+    memset(&vet_stCart_oferta,0,sizeof(vet_stCart_oferta));
+
+    char parm[ 255 ];
+    int  i;
+    char szUser[ 21+1 ];
+//    char buff[ 255 ];
+    char szContatoCorreto[ 21+1 ];
+    char SiglaOferta[20];
+    char sgOferta[20];
+    
+    memset(szContatoCorreto,0,sizeof(szContatoCorreto));
+    memset(SiglaOferta,0,sizeof(SiglaOferta));
+    memset(sgOferta,0,sizeof(sgOferta));
+
+    char nrTelefoneSMS[20];
+    
+    memset(nrTelefoneSMS,0,sizeof(nrTelefoneSMS));
+    
+    
+    int inNovaOferta = 0;
+    
+    int tpOperacao = 1 ; // processo e fechado no momento da abertura
+    int inResponsavelAbertura = 1 ; // processo e fechado no momento da abertura
+
+    stDadosContato stc; 
+
+    memset(&stc,0,sizeof(stDadosContato));
+    // [A001]
+    stParametros pParam;  
+ 
+    EXEC SQL BEGIN DECLARE SECTION;
+        
+
+       VARCHAR     idTipoLinha[21+1];
+       VARCHAR     inTipoPessoa[21+1];
+
+
+        VARCHAR     m_szOferta[30];
+        VARCHAR     szSigla[30];
+        VARCHAR     idRetencao[29+1];
+        VARCHAR     idRespostaIntencao[21+1];
+        VARCHAR     idRespostaIntencaoOld[21+1];
+
+        VARCHAR     idRespostaDestino[21+1];
+        VARCHAR     dsDestinoPrevisto[255];
+        
+        int         idTipoEncerramento;
+        VARCHAR     idOfertaRealizada[21+1]; //para ofertas aceitas!
+        VARCHAR     idOfertaRealizadaOld[21+1]; //para ofertas aceitas!
+        VARCHAR     dsObservacao[255];
+        VARCHAR     dsObservacaoOld[255];
+        int         idconta; 
+        short       inFidelizacao=0;
+        short       i_idRespostaIntencaoOld=-1;
+        short       iidconta = -1; 
+        short       iidPessoaLinhaHistorico = -1;
+        VARCHAR     idLinhaTelefonica[21+1];
+        VARCHAR     nrLinha[15];
+        VARCHAR     dsPropriedade[255];
+        VARCHAR     dsValorPropriedade[255];
+        VARCHAR     idMatrizOferta[21+1];
+        VARCHAR     idMatrizOfertaOld[21+1];
+        
+        VARCHAR     dsComentario[255];
+        int         idPessoaUsuarioInclusao; 
+        VARCHAR     idOfertaAceita[21+1];
+        VARCHAR     idOfertaAceitaOld[21+1];
+        VARCHAR     idPessoaDePara[21+1];
+        VARCHAR     RespDefault[21+1];
+        VARCHAR     dsDadosPessoa[255];
+        VARCHAR     dsTelefone[255];
+        VARCHAR     dtAgendamento[64];
+        VARCHAR     dsAgendaObservacao[255];
+        VARCHAR     idGrupo[21+1];
+        VARCHAR     nmPessoa[255];
+        VARCHAR     idSegmentacao[21+1];
+        VARCHAR     idUFOperadora[21+1];
+        VARCHAR     idTipoPessoa[3];
+        VARCHAR     idTipoCarteira[3];
+        short       dsObservacaoInd=-1;
+        short       dsComentarioInd=-1;
+        short       dsAgendaObservacaoInd=-1;
+        //para indicar se a oferta foi aceita ou não.
+        short       ind_MatrizOfertaAceita=-1;
+
+        VARCHAR     idPessoadeparaOld[21+1];
+        short       i_idPessoadeParaOld=-1;
+        //+
+        VARCHAR     nmLoginUsuario[255];
+        VARCHAR     idCaracteristicaOferta[21+1];
+        VARCHAR     nmPropriedade[255];
+        VARCHAR     vlPropriedade[255];
+        VARCHAR     nmPropriedadeOld[255];
+        VARCHAR     vlPropriedadeOld[255];
+        VARCHAR     dsRegional[255];
+        
+        short       i_idOfertaAceitaOld=-1;
+        VARCHAR     idLinhaTelefonicaOld[21+1];
+        short       i_idLinhaTelefonicaOld=-1;
+        VARCHAR     idRespostaDestinoOld[21+1];
+        VARCHAR     sgTipoOfertaOld[5+1];
+        short       i_sgTipoOfertaOld=-1;
+        
+        VARCHAR     nrLinhaOld[15];
+        short       i_dsObservacaoOld=-1;
+        short       i_nrLinhaOld=-1;
+        short       i_nmRespostaDestinoOld=-1;
+        
+        unsigned long idRetencaoOld=0;
+        VARCHAR       nmRespostaDestinoOld[255];
+
+        /*VARCHAR     idLinhaTelefonicaOld[21+1];
+        short       i_idLinhaTelefonicaOld=-1;*/
+
+        VARCHAR        nmRespostaIntencaoOld[255];
+        short         i_nmRespostaIntencaoOld=-1 ;
+        short      i_idMatrizOfertaOld=-1;
+        VARCHAR     idCaracteristicaOfertaOld[21+1];
+        VARCHAR     nmColunaOld[50];
+//        short       i_nmColunaOld;
+        
+        
+
+    EXEC SQL END DECLARE SECTION;
+  
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    memset( &nmPropriedadeOld, 0x0, sizeof(VARCHAR) );
+    memset( &vlPropriedadeOld, 0x0, sizeof(VARCHAR) );
+    
+
+    memset( &idSegmentacao, 0x0, sizeof(VARCHAR) );
+    memset( SiglaOferta, 0x0, sizeof(SiglaOferta) );
+    memset( &pParam, 0x0, sizeof(stParametros) );
+    
+    memset( &Reg,0x0, sizeof(stRetencaoAparelho));
+    memset( &nmRespostaDestinoOld,0x0,sizeof(VARCHAR))    ;
+    memset( &idRetencao         ,0x0,sizeof(VARCHAR))    ;
+    memset( &idRespostaIntencao ,0x0,sizeof(VARCHAR))    ;
+    memset( &idRespostaIntencaoOld ,0x0,sizeof(VARCHAR))    ;
+    memset( &idRespostaDestino  ,0x0,sizeof(VARCHAR))    ;
+    memset( &idRespostaDestinoOld  ,0x0,sizeof(VARCHAR))    ;
+    memset( &idOfertaRealizada  ,0x0,sizeof(VARCHAR))    ;
+    memset( &idOfertaRealizadaOld  ,0x0,sizeof(VARCHAR))    ;
+    memset( &dsObservacao       ,0x0,sizeof(VARCHAR))    ;
+    memset( &dsObservacaoOld       ,0x0,sizeof(VARCHAR))    ;
+    memset( &idLinhaTelefonica  ,0x0,sizeof(VARCHAR))    ;
+    memset( &idLinhaTelefonicaOld ,0x0,sizeof(VARCHAR))    ;
+    memset( &nrLinha            ,0x0,sizeof(VARCHAR))    ;
+    memset( &nrLinhaOld            ,0x0,sizeof(VARCHAR))    ;
+    memset( &dsPropriedade      ,0x0,sizeof(VARCHAR))    ;
+    memset( &dsValorPropriedade ,0x0,sizeof(VARCHAR))    ;
+    memset( &idMatrizOferta     ,0x0,sizeof(VARCHAR))    ;
+    memset( &dsComentario       ,0x0,sizeof(VARCHAR))    ;
+    memset( &idOfertaAceita     ,0x0,sizeof(VARCHAR))    ;
+    memset( &idOfertaAceitaOld  ,0x0,sizeof(VARCHAR))    ;
+    memset( &idPessoaDePara     ,0x0,sizeof(VARCHAR))    ;
+    memset( &RespDefault        ,0x0,sizeof(VARCHAR))    ;
+    memset( &dsDadosPessoa      ,0x0,sizeof(VARCHAR))    ;
+    memset( &dsTelefone         ,0x0,sizeof(VARCHAR))    ;
+    memset( &dtAgendamento      ,0x0,sizeof(VARCHAR))    ;
+    memset( &dsAgendaObservacao ,0x0,sizeof(VARCHAR))    ;
+    memset( &idGrupo            ,0x0,sizeof(VARCHAR))    ;
+    memset( &nmPessoa           ,0x0,sizeof(VARCHAR))    ;
+    memset( &idUFOperadora      ,0x0,sizeof(VARCHAR))    ;
+    memset( &idTipoPessoa       ,0x0,sizeof(VARCHAR))    ;
+    memset( &nmLoginUsuario     ,0x0,sizeof(VARCHAR))    ;
+    memset( &dsDestinoPrevisto  ,0x0,sizeof(dsDestinoPrevisto) );
+
+    try
+    {
+        ULOG("INICIOU O TRY");
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"inNovaOferta",0,-1);  // OK
+        inNovaOferta=atoi(parm);
+        ULOG("inNovaOferta =[%d]",inNovaOferta);
+        
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"idRetencaoOld",0,-1);  // OK
+        idRetencaoOld=atoi(parm);
+        if ( (idRetencaoOld > 0 ) && ( inNovaOferta == 0 ))
+        {    
+            ULOG("RETENCAO.OFERTAREALIZADA  OFERTAREALIZADA   ");
+            EXEC SQL 
+            SELECT   IDOFERTAREALIZADA  
+                    ,IDMATRIZOFERTA
+            INTO    :idOfertaAceitaOld:i_idOfertaAceitaOld
+                   ,:idMatrizOfertaOld:i_idMatrizOfertaOld
+            FROM         
+                RETENCAO.OFERTAREALIZADA  OFERTAREALIZADA      
+            WHERE 
+                 OFERTAREALIZADA.IDRETENCAO = :idRetencaoOld
+            AND 
+                 INOFERTAACEITA = 1        ;
+
+            endOraStr(idOfertaAceitaOld);
+            endOraStr(idMatrizOfertaOld);
+
+            ULOG("RETENCAO.RETENCAOLINHA  RETENCAOLINHA        "); 
+            EXEC SQL 
+            SELECT   idLinhaTelefonica  
+            INTO    :idLinhaTelefonicaOld:i_idLinhaTelefonicaOld
+            FROM 
+                RETENCAO.RETENCAOLINHA  RETENCAOLINHA      
+            WHERE 
+                RETENCAOLINHA.IDRETENCAO = :idRetencaoOld;
+            
+            endOraStr(idLinhaTelefonicaOld);
+            
+            ULOG("RETENCAO.RETENCAO  RETENCAO           "); 
+            EXEC SQL 
+            SELECT   IDRESPOSTAINTENCAO 
+                    ,DSOBSERVACAO
+            INTO    :idRespostaIntencaoOld:i_idRespostaIntencaoOld   
+                   ,:dsObservacaoOld:i_dsObservacaoOld
+            FROM 
+                RETENCAO.RETENCAO  RETENCAO      
+            WHERE 
+                RETENCAO.IDRETENCAO = :idRetencaoOld;
+            
+            endOraStr(idRespostaIntencaoOld);
+            endOraStr(dsObservacaoOld);
+
+            ULOG("RETENCAO.RETENCAO  RETENCAO           "); 
+
+             EXEC SQL 
+             SELECT   RETENCAOCONSOLIDADA.NRLINHA
+                        ,RETENCAOCONSOLIDADA.DSRESPOSTAINTENCAO 
+                        ,RETENCAOCONSOLIDADA.DSRESPOSTADESTINO,
+                        RETENCAOCONSOLIDADA.SGTIPOOFERTA,
+                        RET.IDPESSOADEPARA
+              INTO    :nrLinhaOld:i_nrLinhaOld  
+                       ,:nmRespostaIntencaoOld:i_nmRespostaIntencaoOld
+                       ,:nmRespostaDestinoOld:i_nmRespostaDestinoOld
+    				   ,:sgTipoOfertaOld:i_sgTipoOfertaOld
+                       ,idPessoadeparaOld:i_idPessoadeParaOld
+                FROM 
+                    RETENCAO.RETENCAOCONSOLIDADA  RETENCAOCONSOLIDADA,
+    				RETENCAO.RETENCAO			  RET      
+                WHERE 
+    				RET.IDRETENCAO=RETENCAOCONSOLIDADA.IDRETENCAO  
+    			AND 
+    			    RETENCAOCONSOLIDADA.IDRETENCAO = :idRetencaoOld;
+
+            endOraStr(nrLinhaOld);
+            endOraStr(nmRespostaIntencaoOld);
+            endOraStr(nmRespostaDestinoOld);
+            endOraStr(sgTipoOfertaOld);
+            endOraStr(idPessoadeparaOld);
+            
+            ULOG("RETENCAO.CARACTERISTICAOFERTAACEITA CARACTERISTICAOFERTAACEITA	          "); 
+            ULOG("RETENCAO.CARACTERISTICAOFERTA CARACTERISTICAOFERTA	          "); 
+
+            EXEC SQL WHENEVER NOT FOUND DO BREAK;
+            EXEC SQL DECLARE crsAp CURSOR FOR
+                SELECT 
+                       CARACTERISTICAOFERTAACEITA.NMPROPRIEDADE
+                      ,CARACTERISTICAOFERTAACEITA.VLPROPRIEDADE
+                      ,CARACTERISTICAOFERTAACEITA.IDCARACTERISTICAOFERTA
+                      ,CARACTERISTICAOFERTA.NMCOLUNA
+                FROM RETENCAO.CARACTERISTICAOFERTAACEITA CARACTERISTICAOFERTAACEITA	
+                     ,RETENCAO.CARACTERISTICAOFERTA CARACTERISTICAOFERTA
+                WHERE
+                    CARACTERISTICAOFERTA.IDCARACTERISTICAOFERTA = CARACTERISTICAOFERTAACEITA.IDCARACTERISTICAOFERTA
+                AND	 
+                    CARACTERISTICAOFERTAACEITA.IDOFERTAREALIZADA = :idOfertaAceitaOld    ;
+
+
+            int ii = 0;        
+            
+            EXEC SQL OPEN crsAp;
+            
+            for(;;) 
+        	{
+        	    if (ii < 20)
+        	    {    
+                    EXEC SQL FETCH crsAp into :nmPropriedadeOld,
+        		  						      :vlPropriedadeOld,
+        								      :idCaracteristicaOfertaOld,
+                                              :nmColunaOld;
+
+                    endOraStr(nmPropriedadeOld);
+                    endOraStr(vlPropriedadeOld);
+                    endOraStr(idCaracteristicaOfertaOld);
+                    endOraStr(nmColunaOld);
+                            								        
+                    strcpy(vet_stCart_oferta[ii].nmPropriedadeOld,(char*)nmPropriedadeOld.arr);
+                    strcpy(vet_stCart_oferta[ii].vlPropriedadeOld,(char*)vlPropriedadeOld.arr);
+                    strcpy(vet_stCart_oferta[ii].idCaracteristicaOfertaOld,(char*)idCaracteristicaOfertaOld.arr);
+                    strcpy(vet_stCart_oferta[ii].nmColunaOld,(char*)nmColunaOld.arr);
+                }
+                ii++;
+            }
+            
+            EXEC SQL CLOSE crsAp;
+                                    
+
+           EXEC SQL WHENEVER NOT FOUND continue;
+        }
+        //DESABILITAR O BREAK ACIMA
+        
+
+
+        /*
+        //########################/###############################################
+        //#     CAPTURANDO DADOS FUNCIONAIS DO XML DE ENTRADA                   #
+        //#######################################################################
+        */
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"idPessoaDePara",0,0); //OK
+        if (strlen(parm)==0)
+        {
+            strToOra(idPessoaDePara,(char*)idPessoadeparaOld.arr);
+        }
+        else
+        {
+            strToOra(idPessoaDePara,parm);
+        }
+
+        ULOG_VAR(idPessoaDePara);
+           
+        get_SMS((char*)idPessoaDePara.arr,nrTelefoneSMS);   
+        
+        ULOG("nrTelefoneSMS = [%s]",nrTelefoneSMS);     
+        
+        stc.nrTelefoneSMS = nrTelefoneSMS;
+        
+        ULOG("stc.nrTelefoneSMS = [%s]",stc.nrTelefoneSMS.c_str());  
+
+
+
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"idRespostaIntencao",0,-1);
+        strToOra(idRespostaIntencao,parm);
+        if (idRespostaIntencao.len == 0 )
+        {    
+            strToOra(idRespostaIntencao,(char *)idRespostaIntencaoOld.arr);
+        }
+            
+        
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"idRespostaDestino",0,-1);
+        strToOra(idRespostaDestino,parm);
+        if (idRespostaDestino.len == 0 )
+        {    
+            strToOra(idRespostaDestino,(char *)idRespostaDestinoOld.arr);
+        }
+        
+    
+        get_tag(parm,dnode,"idTipoEncerramento",0,0); // OK
+        idTipoEncerramento=atoi(parm);
+
+       /*
+       //#########################
+       //valores do contato
+       //##################
+       */
+
+        ULOG(" Pegando id do usuario = [%d] \n",usuario);
+        idPessoaUsuarioInclusao  = usuario;
+
+        /*
+        //#######################################################################
+        //#     Caso os valores de  idRespostaIntencao e    idRespostaDestino   #
+        //#     Sejam nulos gerar   um erro                                     #
+        //#######################################################################
+        */
+
+        /* // RETORNA O NOME DA PESSOA DEPARA E TIPODEPESSOA */
+       ULOG("ANTES DO SELECT");
+       ULOG_VAR(idPessoaDePara);
+      
+	   EXEC SQL
+	   SELECT  PESSOA.NMPESSOA,
+			   PESSOA.IDTIPOPESSOA,
+			   TIPOPESSOA.SGTIPOPESSOA,
+  			   IDTIPOCARTEIRA
+	  INTO		:nmPessoa,
+                :idTipoPessoa,
+                :inTipoPessoa,
+				:idTipoCarteira
+	  FROM   customer.PESSOA  PESSOA 
+			,customer.PESSOADEPARA PESSOADEPARA
+			,APOIO.TIPOPESSOA TIPOPESSOA
+	  WHERE        
+			 PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA 
+	  AND	
+			 PESSOA.IDTIPOPESSOA=TIPOPESSOA.IDTIPOPESSOA
+	  AND  
+			 PESSOADEPARA.IDPESSOADEPARA = :idPessoaDePara;
+        
+        ULOG("DEPOIS DO SELECT");
+        
+
+        ULOG_VAR(nmPessoa);
+        endOraStr(nmPessoa);
+        strcpy( pParam.nmPessoa, (char*)&nmPessoa.arr );
+
+        ULOG_VAR(idTipoPessoa);
+        endOraStr(idTipoPessoa);
+        strcpy( pParam.idTipoPessoa, (char*)&idTipoPessoa.arr );
+
+        endOraStr(idTipoCarteira);
+ 	    endOraStr(inTipoPessoa);
+		ULOG_VAR(idTipoCarteira);
+		ULOG_VAR(inTipoPessoa);
+
+
+
+
+
+
+        /*
+        //###################################################################
+        //#         INICIO  VALIDANDO AMBIENTE                              #
+        //###################################################################
+        
+        //O procedimento abaixo serve para criar a resposta 'Não Informado'
+        //podendo assim finalizarmos a rentencao.
+        //este teste podera no futuro ser excluido pois é melhor gerar um 
+        //script de fidelização já inserindo no banco de dados em um 
+        //novo ambiente.
+        */
+
+
+        EXEC SQL
+        SELECT 
+            COUNT(idresposta) 
+        INTO 
+            :RespDefault 
+        FROM 
+            QUESTIONARIO.RESPOSTA
+        WHERE 
+            IDRESPOSTA = 0;
+
+        ULOG_VAR(RespDefault);
+        ULOG("RESPDEFAULT ");   
+
+        /*---- Nao esta sendo usado atualmente
+         *
+        if( RespDefault.len < 1 )
+        {   
+            EXEC SQL 
+            INSERT INTO QUESTIONARIO.RESPOSTA
+            (   
+                IDRESPOSTA, 
+                IDPERGUNTA, 
+                DSRESPOSTA, 
+                SQAPRESENTACAO, 
+                INENCERRAMENTO,
+                indisponibilidade,
+                IDUSUARIOALTERACAO, 
+                DTULTIMAALTERACAO 
+            )
+            VALUES
+            ( 
+                0,
+                1,
+                'Não Informado',
+                0,
+                0, 
+                0,
+                :idPessoaUsuarioInclusao, 
+                SYSDATE
+            );
+        }
+
+        */
+
+
+        if( strcmp("null",(char*)idRespostaIntencao.arr) == 0 ) 
+        {
+            strToOra(idRespostaIntencao,"0");
+        } //setando para não informado  
+    
+        if( strcmp("null",(char*)idRespostaDestino.arr) == 0 ) 
+        {
+            strToOra(idRespostaDestino,"0");
+        } //setando para não informado  
+                        
+//      inicio de teg ob 
+        // [A001]
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"nmLoginUsuario",0,-1); //OK
+        strcpy( pParam.nmLoginUsuario, parm );
+
+        
+        // [A001]
+        memset(parm,0,sizeof(parm));
+        get_tag(pParam.inExcecao,dnode,"inExcecao",0,-1);
+
+        strcpy( pParam.idRespostaIntencao, (char*)&idRespostaIntencao.arr );
+        strcpy( pParam.idRespostaDestino, (char*)&idRespostaDestino.arr );
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"dsIntencao",0,-1); // OK
+        strcpy( pParam.nmRespostaIntencao, parm );
+        
+        if (strlen(pParam.nmRespostaIntencao)==0)
+        {
+            strcpy( pParam.nmRespostaIntencao,(char*)nmRespostaIntencaoOld.arr );
+        }
+            
+        
+        
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"dsDestinoPrevisto",0,-1); //OK
+        strcpy( pParam.nmRespostaDestino, parm );
+        if(strlen(pParam.nmRespostaDestino)==0)
+        {
+            strcpy( pParam.nmRespostaDestino, (char *)nmRespostaDestinoOld.arr );
+        }
+        strToOra(dsDestinoPrevisto,pParam.nmRespostaIntencao);
+        if ( dsDestinoPrevisto.arr[0] != 0x0 )
+        {
+            if ( idRespostaDestino.arr[0] == 0x0 )
+            {
+                EXEC SQL
+            	SELECT IDRESPOSTA
+            	INTO :idRespostaDestino 
+            	FROM QUESTIONARIO.RESPOSTA 
+            	WHERE UPPER(dsresposta) = UPPER(:dsDestinoPrevisto);
+            }
+        }
+
+
+
+
+        
+        sprintf( Reg.IDUSUARIOINCLUSAO, "%d", usuario );
+        sprintf( pParam.idUsuario, "%d", usuario );
+        strcpy( pParam.idPessoaDePara, (char *)&idPessoaDePara.arr );
+        sprintf( pParam.idTipoEncerramento, "%d", idTipoEncerramento );
+        
+        /*
+        //###################################################################
+        //#     FIM - VALIDANDO AMBIENTE                                    #
+        //###################################################################
+        */
+        // retencao ja tratada
+        
+        
+
+
+        
+        memset(parm,0,sizeof(parm));
+        get_tag( parm,dnode,"idOfertaAceita",0,-1 );
+        strToOra( idOfertaAceita,parm );
+        if (idOfertaAceita.len == 0 )
+        {   
+            strToOra( idOfertaAceita,(char *)idOfertaAceitaOld.arr );
+            ULOG("idOfertaAceitaOld =[%s] ",(char *)idOfertaAceitaOld.arr);        
+            ULOG("idOfertaAceita    =[%s] ",(char *)idOfertaAceita.arr);        
+            
+                    
+        }
+
+
+
+
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"sgOferta",0,-1);  //OK
+        strcpy( pParam.sgOfertaAceita, parm );
+        strcpy( sgOferta, parm );
+
+        
+        if(strlen(sgOferta)==0)   strcpy(sgOferta,(char*)sgTipoOfertaOld.arr);
+        
+        endOraStr(idOfertaAceita);
+        GetContatoTipoEncerramento(idTipoEncerramento,(char*)idOfertaAceita.arr,szContatoCorreto,sgOferta);
+
+
+        if (strcmp(sgOferta,pParam.sgOfertaAceita) != 0 )
+            ULOGW("ERRO DE NEGOCIO A OFERTA INFORMADA PELO JAVA E DIFERENTE DA ENCONTRADA NO SISTEMA");
+
+
+         //matriz do tipo retencao
+        EXEC SQL
+        SELECT 
+            COUNT(IDMATRIZOFERTA)
+        INTO  
+            :inFidelizacao            
+        FROM 
+            RETENCAO.MATRIZOFERTAFIDELIZACAO
+        WHERE 
+            IDMATRIZOFERTA = :idOfertaAceita;
+
+        pParam.inFidelizacao = inFidelizacao ;
+
+        ULOG_INT(inFidelizacao);
+        memset(parm,0,sizeof(parm));       
+        get_tag(parm,dnode,"dsObservacao",0,-1);
+        if (strlen(parm)==0)
+        {
+            strcpy(parm,(char*)dsObservacaoOld.arr); 
+            stc.observacao  = parm;  
+            strToOra(dsObservacao,(char*)dsObservacaoOld.arr);
+            dsObservacaoInd = 1;
+        }    
+        else
+        {
+            if ( strcmp("null",parm) == 0 ) 
+                dsObservacaoInd = -1;
+            else 
+            {  
+                stc.observacao  = parm;
+                strToOra(dsObservacao,parm);
+                dsObservacaoInd = 1;
+            }
+        }
+        memset(parm,0,sizeof(parm));      
+        get_tag( parm,dnode,"idLinhaTelefonica",0,-1 );  //OK
+        
+              
+        if(strlen(parm)==0)
+        {
+            strToOra( idLinhaTelefonica,(char *)idLinhaTelefonicaOld.arr );
+        }    
+        else
+        { 
+            strToOra( idLinhaTelefonica,parm );
+        }
+
+        EXEC SQL
+        SELECT 
+            IDSEGMENTACAO,
+            idUFOperadora,
+            NOMEUF
+        INTO 
+            :idSegmentacao,
+            :idUFOperadora,
+            :dsRegional
+        FROM 
+            RETENCAO.LINHATELEFONICAV01
+        WHERE 
+            IDLINHATELEFONICA=:idLinhaTelefonica
+        AND ROWNUM < 2;
+
+
+		//Variavel de encaminhamento.
+		EXEC SQL
+        SELECT 
+			idTipoLinha
+        INTO 
+            :idTipoLinha
+        FROM 
+            LINHA.LINHATELEFONICA
+        WHERE 
+            IDLINHATELEFONICA=:idLinhaTelefonica
+        AND ROWNUM <2 ;
+
+		
+        ULOG_VAR(idSegmentacao);
+        endOraStr(idSegmentacao);
+
+        ULOG_VAR(idUFOperadora);
+        endOraStr(idUFOperadora);
+
+        ULOG_VAR(dsRegional);
+        endOraStr(dsRegional);
+
+        ULOG_VAR(idTipoLinha);
+        endOraStr(idTipoLinha);
+
+
+
+        // [A001] 
+        strcpy( pParam.idSegmentacao, (char*)&idSegmentacao.arr );
+
+        // [A001] 
+        strcpy( pParam.idUFOperadora, (char*)&idUFOperadora.arr );
+
+        memset(parm,0,sizeof(parm));     
+        get_tag(parm,dnode,"nrLinha",0,-1); //OK
+        strToOra(nrLinha,parm);
+        if (nrLinha.len== 0)
+        {
+            strToOra(nrLinha,(char*)nrLinhaOld.arr);
+        }    
+
+        // [A001] 
+        strcpy( pParam.nrLinha, (char*)&nrLinha.arr );
+              
+        strncpy( pParam.cdAreaRegistro, (char*)&nrLinha.arr,2 );
+
+
+        strcpy(pParam.idRegional, pParam.idUFOperadora);
+        strcpy(pParam.dsRegional,(char*)&dsRegional.arr );
+
+
+     
+        /*
+
+        //################################################################################
+        //#     PROCEDIMENTOS PARA RETENCAO PADRÃO                                       #
+        //################################################################################
+        
+        //Captura o iddaretencao para ser utilizado em outros lugares
+        //pode ou não ser capturado do java, alterado para facilitar a comunicação com
+        // com o SAP, para amarrarmos o idRetencao com a Orden de Venda correta.
+
+        */
+        
+
+        
+        memset(&idRetencao,0,sizeof(idRetencao));
+        ULOG("*********************");
+        ULOG("idRetencao = [%s] ",idRetencao);
+        
+        memset(parm,0,sizeof(parm));
+        if(get_tag(parm,dnode,"idRetencao",0,-1)==-1)
+        {
+           ULOG("1  parm = [%s] ",parm);
+           EXEC SQL SELECT retencao.retencaoSQ.nextval INTO :idRetencao FROM DUAL;
+           pParam.idNovaRetencao = 1 ;
+           ULOG("retencao.retencaoSQ.nextval",(char*)idRetencao.arr);
+        }   
+        else
+        {
+           ULOG("2 parm = [%s] ",parm); 
+           strToOra(idRetencao,parm);
+           pParam.idNovaRetencao = 0 ;
+           ULOG("retencao.retencaoSQ.nextval",(char*)idRetencao.arr);
+        }
+
+        
+        ULOG_VAR(idRetencao);
+        ULOG_VAR(idPessoaDePara); 
+        ULOG_VAR(idRespostaIntencao);
+        ULOG_VAR(idRespostaDestino); 
+        ULOG_INT(idTipoEncerramento); 
+        ULOG_INT(idPessoaUsuarioInclusao);
+
+        ULOG("PEGOU IDRETENCAO");
+
+        sprintf( pParam.idRetencao, "%.*s", idRetencao.len, (char *)&idRetencao.arr );
+        sprintf( Reg.IDRETENCAO, "%.*s", idRetencao.len, (char *)&idRetencao.arr );
+
+        ULOG("CRIANDO UMA IDRETENCAO COM O idRetencao = [%s] ",(char*)&idRetencao.arr);
+
+
+        EXEC SQL
+        INSERT INTO RETENCAO.RETENCAO
+        ( 
+            IDRETENCAO,
+            IDPESSOADEPARA,
+            IDRESPOSTAINTENCAO,
+            IDRESPOSTADESTINO,
+            IDTIPOENCERRAMENTO,
+            IDPESSOAUSUARIOINCLUSAO,
+            DTINCLUSAO,
+            IDPESSOAUSUARIOALTERACAO,
+            DTALTERACAO,
+            IDUSUARIOALTERACAO,
+            DTULTIMAALTERACAO,
+            DSOBSERVACAO 
+        )
+        VALUES 
+        ( 
+            :idRetencao,
+            :idPessoaDePara, 
+            nvl(:idRespostaIntencao,0),
+            nvl(:idRespostaDestino,0), 
+            :idTipoEncerramento, 
+            :idPessoaUsuarioInclusao,
+             SYSDATE,
+            :idPessoaUsuarioInclusao,
+             SYSDATE,
+            :idPessoaUsuarioInclusao,
+             SYSDATE,
+            :dsObservacao:dsObservacaoInd
+        );
+
+        ULOG("INSERIU NA RETENCAO");
+
+        get_tag( parm, dnode, "idGrupo", 0, 0 );
+        strToOra( idGrupo, parm );
+        
+        // [A001]
+        strcpy( pParam.idGrupo, parm );
+
+/*
+ *--------- Nao deverah ser gravada
+ *
+    EXEC SQL
+        INSERT INTO RETENCAO.RETENCAOGRUPO (IDRETENCAOGRUPO,
+                                               IDRETENCAO,
+                                               IDGRUPO)
+        VALUES(RETENCAO.RETENCAOGRUPOSQ.NEXTVAL,
+                :idRetencao,
+                :idGrupo);
+ *
+ *
+*/
+
+
+
+        //RETENCAO.RETENLINHA
+
+        ULOG("CRIANDO UMA retencao.retencaoLinha  ");
+    
+        EXEC SQL
+        INSERT INTO retencao.retencaoLinha
+        ( 
+            idRetencaoLinha,
+            idRetencao,
+            idLinhaTelefonica,
+            idPessoaUsuarioInclusao,
+            dtInclusao,
+            idPessoaUsuarioAlteracao,
+            dtAlteracao,
+            idUsuarioAlteracao,
+            dtUltimaAlteracao 
+        )
+        VALUES 
+        ( 
+            retencao.retencaoLinhaSQ.nextval,
+            :idRetencao,
+            :idLinhaTelefonica,
+            :idPessoaUsuarioInclusao,
+            SYSDATE,
+            :idPessoaUsuarioInclusao,
+            SYSDATE,
+            :idPessoaUsuarioInclusao,
+            SYSDATE 
+        );
+
+
+
+
+
+           //retencao.historico
+/*
+ *--------- Esta tabela continuara sendo gravada ?????
+ *
+      ULOG("INSERIU NA RETENCAOLINHA");
+      EXEC SQL
+          insert into retencao.historico ( idHistorico,
+                                              idRetencao,
+                                              idLinhaTelefonica,
+                                              nrLinha,
+                                              dtRetencao,
+                                              idUsuarioAlteracao,
+                                              dtUltimaAlteracao )
+          values ( retencao.historicoSQ.nextval,
+                                    :idRetencao ,
+                                    :idLinhaTelefonica,
+                                    :nrLinha,
+                                    sysdate,
+                                    :idPessoaUsuarioInclusao,
+                                    sysdate);
+ *
+ *
+*/
+
+    
+
+
+    //RETENCAO.HISTORICODETALHE;
+/*
+ *--------- Nao deve ser gravada
+ *
+
+ //        ULOG("INSERIU NA RETENCAO.HISTORICO");
+
+        sprintf( buff, "%d", idRetencao );
+
+        strToOra( dsPropriedade,buff );
+        strToOra( dsValorPropriedade,buff );
+
+        ULOG_VAR( dsPropriedade );
+        ULOG_VAR( dsValorPropriedade );
+
+ 
+ 
+     EXEC SQL
+      insert into retencao.HistoricoDetalhe( idHistoricoDetalhe,
+                                                idHistorico,
+                                                dsPropriedade,
+                                                dsValorPropriedade,
+                                                idUsuarioAlteracao,
+                                                dtUltimaAlteracao)
+      values( retencao.HistoricoDetalheSQ.nextval, 
+              retencao.historicoSQ.currval,
+              :dsPropriedade,
+              :dsValorPropriedade, 
+              :idPessoaUsuarioInclusao,
+              sysdate );
+ *
+ *
+*/
+
+
+
+     //EXEC SQL
+/*
+ *--------- Esta tabela continuara sendo gravada ?????
+ *
+     if(inFidelizacao)
+     {
+      EXEC SQL
+      insert into RETENCAO.retencaofidelizacao(idretencao)
+      values( :idRetencao);
+     }
+ *
+ *
+*/
+
+        // sm 367 inicio
+        /*
+        //########################/###############################################
+        //#   CAPTURANDO DADOS FUNCIONAIS DO XML DE ENTRADA RELATIVOS A ANALISE  #
+        //########################################################################
+        */
+
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"idTipoAnalise",0,-1);  // OK
+        pParam.idTipoAnalise=atoi(parm);
+
+        // Este documento e o CPF que ja esta na tela
+        
+        get_tag(pParam.nrDocumento,dnode,"nrDocumento",0,-1);
+        
+
+        
+        get_tag(pParam.dsRetornoConsulta,dnode,"dsRetornoConsulta",0,-1);             // -- TEXTO DE RETONO DO LEGADO (ATLYS)
+        
+        
+        get_tag(pParam.nrConta,dnode,"nrConta",0,-1);   //OK                      // -- NUMERO DA CONTA
+        
+
+//        memset(parm,0,sizeof(parm)); 
+//        get_tag(parm,dnode,"dtVencDebito",0,0);                   // -- DATA DO VENCIMENTO DO DEBITO
+//        strcpy(pParam.dtVencDebito,parm);
+
+
+        get_tag(pParam.dtInterrupcao,dnode,"dtInterrupcao",0,-1);                   // -- DATA DA FALHA DE COMUNICACAO COM O LEGADO
+
+
+        
+        get_tag(pParam.dsMotivoErro,dnode,"dsMotivoErro",0,-1);                   // -- DESCRICAO SUCINTA DO ERRO
+        
+
+        memset(parm,0,sizeof(parm));
+        // -- APROVADO A ANALISE 0 REPROVADO 1 APROVADO 
+        //  -- APROVADO PELO LEGADO NA DOCUMENTACAO ESTA COM STATUS DE AVALIACAO
+        get_tag(parm,dnode,"inAprovadoLegado",0,-1);
+        pParam.inAprovadoLegado = atoi(parm);
+
+        // -- ESTADOS DE COMUNICACAO 1 REPROVADO 0 APROVADO
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"inStatusComunicacao",0,-1);
+        pParam.inStatusComunicacao = atoi(parm);;
+        
+
+
+//      campos nao definidos na api
+//        get_tag(parm,dnode,"vlDebito",0,0);                       // -- VALOR DO DEBITO EM ABERTO
+//        strcpy(pParam.vlDebito,parm);
+//        get_tag(parm,dnode,"idContaInadimplente",0,0);             // -- IDENTIFICACAO DA CONTA INADIMPLENTE
+//        strcpy(pParam.idContaInadimplente,parm);
+
+
+
+
+
+
+        /*
+        //########################/##############################################
+        //#     DADOS DO ENDERECO A SER ALTERADO                                #
+        //#######################################################################
+        */
+
+        memset(parm,0,sizeof(parm));
+        get_tag(parm,dnode,"idMotivoAlteracaoEndereco",0,-1);  //OK
+        pParam.idMotivoAlteracaoEndereco=atoi(parm);
+        // verifica se existe alteracao de endereco 
+        if ( pParam.idMotivoAlteracaoEndereco > 0 )
+        {
+            get_tag(pParam.dsEndereco,dnode,"dsEndereco",0,-1);
+            
+            get_tag(pParam.nrNumero,dnode,"nrEndereco",0,-1);
+            
+            get_tag(pParam.dsComplemento,dnode,"dsComplemento",0,-1);
+            
+            get_tag(pParam.dsBairro,dnode,"dsBairro",0,-1);
+            
+            get_tag(pParam.dsCidade,dnode,"dsCidade",0,-1);
+
+            get_tag(pParam.dsEstado,dnode,"dsUF",0,-1); // dsEstado nome antigo 
+
+            get_tag(pParam.dsCep,dnode,"dsCEP",0,-1);
+
+            get_tag(pParam.nmTerceiro,dnode,"dsContatoAutorizado",0,-1);
+            
+            get_tag(pParam.nrRGTerceiro,dnode,"dsContatoRG",0,-1);
+
+            get_tag(pParam.nrTelTerceiro,dnode,"dsContatoTelefone",0,-1);
+
+
+        }
+        
+
+        // sm 367 fim
+
+/*
+        //################################################################################
+        //#     FIM DE OPERAÇÕES PADRÕES                                                 #  
+        //################################################################################
+*/
+    
+        ULOG("INICIO DE SWITCH ->  idTipoEncerramento =[%d]",idTipoEncerramento);
+        switch(idTipoEncerramento)
+        {
+            case AGENDOU:
+                    ULOG("ENTROU NO AGENDOU");
+                    memset(parm,0,sizeof(parm));
+                    if( get_tag(parm,dnode,"nomeContato",0,-1) != -1 )
+                    {
+                        strToOra( dsDadosPessoa,parm );
+
+                        get_tag(parm,dnode,"telefone",0,0);
+                        strToOra(dsTelefone,parm);
+                        stc.nrTelefone      = atoi((char*)nrLinha.arr);
+
+                        get_tag(parm,dnode,"dtAgendamento",0,0);
+                        strToOra(dtAgendamento,parm);
+
+                        get_tag(parm,dnode,"comentario",0,0);   
+
+                        if ( strcmp("null",parm) == 0 ) 
+                        {
+                            dsAgendaObservacaoInd = -1;
+                        }
+                        else 
+                        {
+                            strToOra(dsAgendaObservacao,parm);
+                            dsAgendaObservacaoInd = 1;
+                        }
+            
+                        /*
+                         *
+                         *   Colunas INDISCADOS e DSRESULTADODISCADOR atualmente 
+                         *   nao sao usadas. Foram implementadas
+                         *   para uso com o modulo discador
+                         */
+                        
+                        EXEC SQL 
+                        INSERT INTO RETENCAO.AGENDAMENTOCONTATO 
+                        (
+                            IDAGENDAMENTOCONTATO,
+                            IDRETENCAO,
+                            DSDADOSPESSOA,
+                            DSTELEFONE,
+                            DTAGENDAMENTO,
+                            DSOBSERVACAO,
+                            IDUSUARIOALTERACAO,
+                            DTULTIMAALTERACAO
+                        )
+                        VALUES 
+                        (   
+                            retencao.AgendamentoContatoSQ.nextval, 
+                            :idRetencao,
+                            :dsDadosPessoa,
+                            :dsTelefone,
+                            TO_DATE(:dtAgendamento,'dd/mm/yyyy HH24:MI'),
+                            :dsAgendaObservacao:dsAgendaObservacaoInd,
+                            :idPessoaUsuarioInclusao,
+                            SYSDATE
+                        );
+                    }   
+                    ULOG("SAIO DO AGENDOU");
+            case RETIDO :
+            case VAI_PENSAR:
+            case NAO_RETIDO:
+            case RETIDO_ARGUMENTO:
+            case TRANSFERENCIA:
+            case ANALISECRDB:              // SM 367
+            case ANALISEENDERECO:          // SM 370
+            case RETIDO_RESTRICAO:
+              if ((!idRetencaoOld) || (inNovaOferta))
+               {  
+                   ULOG("ENTROU NO RETIDO,VAIPENSAR,RETIDO_ARGUMENTO E NAO_RETIDO");
+                    i = 0;
+                    //não informação da tag ID
+                    //
+                   int iValidaTagId=0;
+                   int iEntraWhile=0;
+                   if(get_tag(parm,dnode,"id",i,-1)==-1)
+                   {
+                      char szof2[4];
+                     
+                      get_tag(szof2,dnode,"sgOferta",0,0);
+                      ULOG(szof2);
+                      strToOra(m_szOferta,szof2);
+                      //rte_pegaidmatrizoferta(szof2,(char*)idMatrizOferta.arr);
+                       EXEC SQL
+                       select idmatrizoferta
+                       INTO: idMatrizOferta
+                       from retencao.matrizoferta
+                       where idoferta =(select idunidadeoferta
+	  		   	                        from retencao.oferta 
+                                        where sgclassificacao=:m_szOferta
+				                        AND ROWNUM<=1)
+                        AND ROWNUM<=1;
+                       
+                       
+                        strcpy((char*)idOfertaAceita.arr,(char*)idMatrizOferta.arr);
+                        idOfertaAceita.len=idMatrizOferta.len;
+                       
+                        ULOG_VAR(idOfertaAceita);
+  
+                        EXEC SQL 
+                        SELECT retencao.OfertaRealizadaSQ.nextval 
+                        INTO :idOfertaRealizada
+                        FROM DUAL;
+
+                           EXEC SQL 
+                           INSERT INTO RETENCAO.OFERTAREALIZADA 
+                           ( 
+                               IDOFERTAREALIZADA,
+                               IDRETENCAO,
+                               IDMATRIZOFERTA,
+                               INOFERTAACEITA,
+                               IDPESSOAUSUARIOINCLUSAO,
+                               DTINCLUSAO,
+                               IDPESSOAUSUARIOALTERACAO,
+                               DTALTERACAO,
+                               IDUSUARIOALTERACAO,
+                               DTULTIMAALTERACAO,
+                               INATIVO
+                           )
+                           VALUES 
+                           ( 
+                           :idOfertaRealizada,
+                               :idRetencao,
+                               :idMatrizOferta, 
+                               1,
+                               :idPessoaUsuarioInclusao,
+                               sysdate,
+                               :idPessoaUsuarioInclusao,
+                               sysdate,
+                               :idPessoaUsuarioInclusao,
+                               sysdate,
+                               1
+                           );
+                    iEntraWhile=1;
+                   }
+                   
+
+                   
+                   // GRAVA A OFERTAREALIZADAS
+                   while ( get_tag(parm,dnode,"id",i,-1) != -1) 
+                   {
+                       
+                       strToOra(idMatrizOferta,parm); 
+                       get_tag(parm,dnode,"comentOferta",i,-1);
+
+                       if( strcmp("null",parm) == 0 ) 
+                       {
+                           dsComentarioInd = -1;
+                       }
+                       else 
+                       {   
+                           strToOra(dsComentario,parm);
+                           dsComentarioInd = 1;
+                       } 
+
+                       ind_MatrizOfertaAceita = (!strcmp((char*)idMatrizOferta.arr,(char*)idOfertaAceita.arr))?1:0;
+
+                       //ind_MatrizOfertaAceita=atoi(parm);
+                       ULOG_VAR(idMatrizOferta);
+
+                       if( idMatrizOferta.len > 0 )
+                       {       
+
+                           
+                           /*
+                            * //procedimentos para comparar se a oferta realizada foi aceita
+                            *
+                            * De onde vem o valor da coluna INMATRIZFIDELIZACAO, 
+                            * conforme o novo modelo?
+                            *
+                            */
+                            
+                           ULOG("INCLUINDO -> RETENCAO.OFERTAREALIZADA  ") ;
+                           
+                           EXEC SQL 
+                           INSERT INTO RETENCAO.OFERTAREALIZADA
+                           ( 
+                               IDOFERTAREALIZADA,
+                               IDRETENCAO,
+                               IDMATRIZOFERTA,
+                               INOFERTAACEITA,
+                               IDPESSOAUSUARIOINCLUSAO,
+                               DTINCLUSAO,
+                               IDPESSOAUSUARIOALTERACAO,
+                               DTALTERACAO,
+                               IDUSUARIOALTERACAO,
+                               DTULTIMAALTERACAO,
+                               INATIVO
+                           )
+                           VALUES 
+                           ( 
+                               retencao.OfertaRealizadaSQ.nextval,
+                               :idRetencao,
+                               :idMatrizOferta, 
+                               :ind_MatrizOfertaAceita,
+                               :idPessoaUsuarioInclusao,
+                               sysdate,
+                               :idPessoaUsuarioInclusao,
+                               sysdate,
+                               :idPessoaUsuarioInclusao,
+                               sysdate,
+                               1
+                           );
+
+                            EXEC SQL 
+                                   SELECT 
+                                       RETENCAO.OFERTAREALIZADASQ.CURRVAL 
+                                   INTO 
+                                       :idOfertaRealizada 
+                                   FROM DUAL;
+                                   
+                                   ULOG_INT( idOfertaRealizada );
+
+                           ULOG("INCLUINDO -> RETENCAO.OFERTAREALIZADA  ") ;
+                           
+                           /*
+                            *--------- Nao deve ser gravada
+                            *
+                           EXEC SQL 
+                           insert into retencao.OfertaRealizadaComentario
+                                           (   
+                                           idOfertarealizadaComentario,
+                                           idOfertaRealizada,
+                                           dsComentario,
+                                           idUsuarioAlteracao,
+                                           dtUltimaAlteracao
+                                           )                                                                                          
+                                   values  (
+                                           retencao.OfertaRealizadaComentarioSQ.nextval,
+                                           retencao.OfertaRealizadaSQ.currval,
+                                           :dsComentario:dsComentarioInd,
+                                           :idPessoaUsuarioInclusao,
+                                           sysdate
+                                           );
+                            *
+                            *
+                            */
+                                
+                           if( ind_MatrizOfertaAceita == 1 ) 
+                           {
+                               EXEC SQL 
+                                   SELECT 
+                                       RETENCAO.OFERTAREALIZADASQ.CURRVAL 
+                                   INTO 
+                                       :idOfertaRealizada 
+                                   FROM DUAL;
+                                   
+                                   ULOG_INT( idOfertaRealizada );
+                                   
+                           }
+                   
+                       }  //if idMatrizOferta
+                           
+                       i++;
+                   }//end while
+
+                       
+                   // if oferta aceita = 0 -> cliente nao aceitou nenhuma oferta !
+                   if ( idOfertaAceita.len > 0  || iEntraWhile==1)
+                   {
+
+                       pParam.inOfertaAceita = 1; 
+
+                       get_tag( parm,dnode,"comentOferta",0,-1 );
+                       if ( strcmp("null",parm) == 0 ) 
+                       {
+                           dsComentarioInd = -1;
+                       }
+                       else 
+                       {
+                           strToOra(dsComentario,parm);
+                           dsComentarioInd = 1;
+                       }    
+                       i = 0;
+
+                       
+                       char stNomeCampo[256];
+                       char stValorCampo[256];
+                       stNomeCampo[0]='\0';
+                       stValorCampo[0]='\0';
+                       char stValorTmp[256]; 
+                       memset( stValorTmp, 0x0, sizeof(stValorTmp) );
+
+
+                       while( get_tag(parm,dnode,"nome",i,-1) != -1 ) //LOOPING...
+                       {
+
+
+                           int iVal=0;
+                           strcpy( stNomeCampo, parm ); // [A001]
+                           strToOra(szSigla,parm);
+
+                           //iVal=atoi(nmPropriedade); //captura o nome da tag
+                           //ULOG_VAR(szSigla);
+                           //ulog_int(iVal);
+
+
+                           get_tag(parm,dnode,"valor",i,0);
+                           strcpy( stValorCampo, parm ); // [A001]
+                           strToOra(vlPropriedade,parm);
+
+                           if ( strcmp(stNomeCampo, "INTIPOENTREGA") == 0 )
+                           {
+                               // POG - para gravar na 
+                               // tabela RETENCAO.RETENCAOAPARELHO                                
+                               
+                               if (( strcmp(stValorCampo,"'0'")== 0  ) || ( strcmp(stValorCampo,"0")== 0  ))
+                               {
+                                   strcpy( stValorTmp,"0" );
+                                   strToOra( szSigla,"LOJA" );
+                               }
+                               
+                               
+                               //if ( stValorCampo[0] == "'1'" )
+                               if (( strcmp(stValorCampo,"'1'")== 0  ) || ( strcmp(stValorCampo,"1")== 0  ) )
+                               {
+                                   strcpy( stValorTmp,"1" );
+                                   strToOra( szSigla,"LOJA" );
+                               }
+
+                               //if ( stValorCampo[0] == "'2'" )
+                               if (( strcmp(stValorCampo,"'2'")== 0  ) || ( strcmp(stValorCampo,"2")== 0  ))
+                               {
+                                   strcpy( stValorTmp,"2" );
+                                   strToOra( szSigla,"DELIV" );
+                               }
+
+
+                               memset(stValorCampo,0,sizeof(stValorCampo));
+                               stValorCampo[0] = '1';   // POG - para gravar na 
+                                                        // tabela RETENCAO.CaracteristicaOfertaAceita
+                           }
+
+                           ULOG_VAR(szSigla);
+
+                           memset(&idCaracteristicaOferta,0x0,sizeof(idCaracteristicaOferta));
+                           memset(&nmPropriedade,0x0,sizeof(nmPropriedade));
+
+                           EXEC SQL 
+                           SELECT 
+                               IDCARACTERISTICAOFERTA,
+                               DSCARACTERISTICAOFERTA
+                           INTO 
+                               :idCaracteristicaOferta,
+                               :nmPropriedade
+                           FROM 
+                               RETENCAO.CARACTERISTICAOFERTA           
+                           WHERE 
+                             (  TRIM(SGCARACTERISTICAOFERTA) = TRIM(UPPER(:szSigla))
+                           OR  TRIM(NMCOLUNA) = TRIM(UPPER(:szSigla)) ) AND ROWNUM < 2 ;             // SM 367 COMPATIBLILIDADE COM O SISTEMA ANTIGO
+
+                                   
+                           ULOG_VAR(idCaracteristicaOferta);
+                           ULOG_VAR(nmPropriedade);
+
+                           endOraStr(idCaracteristicaOferta);
+                           endOraStr(nmPropriedade);
+
+/*
+                           get_tag(parm,dnode,"valor",i,0);
+                           strcpy( stValorCampo, parm ); // [A001]
+                           strToOra(vlPropriedade,parm);
+*/                                       
+                           if( !vlPropriedade.len )
+                           {
+                               char szValor[] ={"não informado"};
+                               sprintf((char *)vlPropriedade.arr,"%s",szValor);
+                           }
+
+                           ULOG("==>first");
+                           if( idOfertaAceita.len && nmPropriedade.len > 1 )
+                           {
+                               ULOG_VAR(idOfertaAceita);
+
+                                //--------- Nao deve ser gravada
+                               //
+                            /*   ULOG(
+                               "insert  "
+                               "into retencao.CaracteristicaOfertaAceita(idCaracteristicaOfertaAceita,"
+                                                                         " idOfertaRealizada, "
+                                                                         "  nmPropriedade,"
+                                                                         "  vlPropriedade, "
+                                                                         "  idPessoaUsuarioInclusao, "
+                                                                         "  dtInclusao, "
+                                                                         "  idPessoaUsuarioAlteracao, "
+                                                                         "  dtAlteracao, "
+                                                                         "  idUsuarioAlteracao, "
+                                                                         "  dtUltimaAlteracao, "
+                                                                         "  idCaracteristicaOferta) "
+                               " values( retencao.CaracteristicaOfertaAceitaSQ.nextval,%s,  %s, %s, %s, sysdate, %s, sysdate, %s, sysdate, %s",idOfertaRealizada,nmPropriedade,vlPropriedade,idPessoaUsuarioInclusao,idPessoaUsuarioInclusao,idPessoaUsuarioInclusao,idCaracteristicaOferta);
+*/
+
+                               ULOG( "idOfertaRealizada [%s], nmPropriedade [%s] ", (char *)idOfertaRealizada.arr, (char *)nmPropriedade.arr );
+
+                               ULOG(
+                                       "insert into retencao.CaracteristicaOfertaAceita (idCaracteristicaOfertaAceita,"
+                                                                                 "  idOfertaRealizada, "
+                                                                                 "  nmPropriedade,"
+                                                                                 "  vlPropriedade,"
+                                                                                 "  idPessoaUsuarioInclusao,"
+                                                                                 "  dtInclusao,"
+                                                                                 "  idPessoaUsuarioAlteracao,"
+                                                                                 "  dtAlteracao,"
+                                                                                 "  idUsuarioAlteracao,"
+                                                                                 "  dtUltimaAlteracao,"
+                                                                                 "  idCaracteristicaOferta)"
+                                       "values( retencao.CaracteristicaOfertaAceitaSQ.nextval,"
+                                               "%d,%s, %d, %d, sysdate, %d, sysdate, %d, sysdate, %d)",(char *)idOfertaRealizada.arr,(char *)nmPropriedade.arr ,                  (char *)vlPropriedade.arr,
+                                         idPessoaUsuarioInclusao,
+                                         idPessoaUsuarioInclusao,
+                                         idPessoaUsuarioInclusao,
+                                         (char *)idCaracteristicaOferta.arr
+                                    );
+                            
+                               
+                                   
+
+                               EXEC SQL 
+                               insert 
+                               into retencao.CaracteristicaOfertaAceita(idCaracteristicaOfertaAceita,
+                                                                           idOfertaRealizada, 
+                                                                           nmPropriedade,
+                                                                           vlPropriedade,
+                                                                           idPessoaUsuarioInclusao,
+                                                                           dtInclusao,
+                                                                           idPessoaUsuarioAlteracao,
+                                                                           dtAlteracao,
+                                                                           idUsuarioAlteracao,
+                                                                           dtUltimaAlteracao,
+                                                                           idCaracteristicaOferta)
+                               values( retencao.CaracteristicaOfertaAceitaSQ.nextval,
+                                       :idOfertaRealizada,
+                                       :nmPropriedade,
+                                       :vlPropriedade,
+                                       :idPessoaUsuarioInclusao,
+                                       sysdate,
+                                       :idPessoaUsuarioInclusao,
+                                       sysdate,
+                                       :idPessoaUsuarioInclusao,
+                                       sysdate,
+                                       :idCaracteristicaOferta);
+                              }
+                                
+                           ///////////////////////////////////////////////////////////////////
+                           // novo modelo            
+                           ///////////////////////////////////////////////////////////////////
+
+                           // POG - para gravar na 
+                           // tabela RETENCAO.RETENCAOAPARELHO
+                           if ( strcmp(stNomeCampo, "INTIPOENTREGA") == 0 )
+                           {    
+                                strcpy( stValorCampo, stValorTmp );                                
+                           }     
+                           
+                           if (strcmp(stNomeCampo,"0")!= 0 ) 
+                           {
+                               if (strcmp(parm,"EX")!= 0 ) 
+                               {
+                                    if ( strcmp( stNomeCampo,"Caracteristica" ) )
+                                    {
+                                       // copia a nome do campo para a vetor de nome de campo
+                                      strcat(pParam.sNomeCampo,","  );
+                                      strcat(pParam.sValorCampo,"," );
+    
+                                      // copia o conteudo do campo para a vetor de nome de conteudo
+                                      strcat(pParam.sNomeCampo,stNomeCampo);
+                 //                   conv_Numero(stValorCampo);
+                                      strcat(pParam.sValorCampo,stValorCampo);
+    
+                                      careg_RETENCAOAPARELHO(stNomeCampo,stValorCampo, &Reg);
+                                    }
+
+                               }
+                           }
+
+                           strcpy(stNomeCampo,"");
+                           strcpy(stValorCampo,"");
+
+                           stNomeCampo[0]='\0';
+                           stValorCampo[0]='\0';
+
+                           i++;
+                       }
+                       //  end looping
+                       InsereRetencaoConsolidada( &pParam );
+
+                       // verifica se existe oferta a ser incluida
+                       if ( strlen(pParam.sNomeCampo) > 0 )    
+                          
+                       {
+                        // isto foi criado devido a um ero em desenvolvimento que nao encontrei solucao   
+                        //   if (strcmp(pParam.sgOfertaAceita,"AP")== 0 )
+                        //      ins_RETENCAOAPARELHO( &Reg );
+                        //   else 
+                           if (( idTipoEncerramento ==  RETIDO_RESTRICAO) || ( idTipoEncerramento == ANALISECRDB ) || 
+                               ( idTipoEncerramento == ANALISEENDERECO )  || ( idTipoEncerramento == RETIDO ))
+                                InsereRetencaoOferta( &pParam );
+                       }
+
+                           
+                       //sm367 grava dados para analise 
+                       if (( idTipoEncerramento ==   ANALISECRDB ) || ( idTipoEncerramento ==   ANALISEENDERECO ))
+                       { 
+                            InsereRetencaoAnalise(  &pParam  );
+                            tpOperacao = 2 ; // processo aberto para tratamento 
+                            inResponsavelAbertura = 2 ;
+                       }
+
+
+                       //sm370 grava endereco caso exista e se é uma nova retencao
+                       if ( idTipoEncerramento ==   ANALISEENDERECO )
+                           InsereRetencaoEndereco(  &pParam  );
+
+                       //sm367 grava dados para analise de credito
+                       if ( idTipoEncerramento ==   ANALISECRDB ) 
+                           InsereRetencaoRelAnalise(  &pParam  );
+                            
+                         // grava os dados quando retido por  restricao para relatorio
+                        // Entrara nesta obcao quando o atendente informou ao cliente que ele esta com probkemas 
+                        // financeiros 
+
+                        if ( idTipoEncerramento ==  RETIDO_RESTRICAO)
+                        {   
+                            InsereRetencaoAnalise(  &pParam  );
+                            InsereRetencaoRelAnalise(  &pParam  );  
+                        }
+            
+                   }
+                   ULOG("SAIO DO RETIDO,VAIPENSAR,RETIDO_ARGUMENTO E NAO_RETIDO");
+                   
+               }
+               else
+               {   // idRetencoOld 
+                   ULOG("idRetencoOld  ");
+
+                       int a = 0; 
+                       int jj = 0;  
+                       char sColuna[256];
+                       char sValor[256];   
+                       int flagEncontrou = 0; 
+                       char buffer[256];                            
+                       string str;
+                       while( get_tag(parm,dnode,"nome",a,-1) != -1 ) //LOOPING...
+                       {
+                           memset( buffer,0x0,sizeof(buffer) );
+                           memset(sColuna,0x0,sizeof(sColuna));
+                           memset(sValor,0x0,sizeof(sValor));
+
+                           strcpy( sColuna, parm );  
+                           str = sColuna;
+                           trim1(str);
+                           strcpy( sColuna,str.c_str() );
+                                                     
+                           get_tag(parm,dnode,"valor",a,0);
+                           strcpy( sValor, parm );
+                           str = sValor;
+                           trim1(str);
+                           strcpy( sValor,str.c_str() );
+
+                           if ( sValor[0] == 0x27 )  // Aspas simples
+                           {
+                               strcpy( buffer,(char *)&sValor[1] );
+                               buffer[strlen(buffer)-1] = 0x0;
+                               ULOG( "VALOR SEM ASPAS [%s]",buffer );
+                               str = buffer;
+                               trim1(str);
+                               sprintf( sValor,"'%s'",(char *)str.c_str() );
+                           }
+                           else
+                           {
+                               str = sValor;
+                               trim1(str);
+                               sprintf( sValor,"%s",(char *)str.c_str() );
+                           }
+                           ULOG( "VALOR TRATADO [%s]",sValor );
+
+                           
+                           ULOG( "Analisando XML onde Coluna [%s], valor [%s]",sColuna,sValor); 
+                           
+                           flagEncontrou = jj = 0; 
+                           while( strlen(vet_stCart_oferta[jj].nmPropriedadeOld) != 0 )
+                           {            
+                                memset( buffer,0x0,sizeof(buffer) );
+                                str = vet_stCart_oferta[jj].nmColunaOld;
+                                trim1(str);
+                                strcpy(buffer,str.c_str() );
+//                                ULOG( "Comparando Coluna XML [%s], Coluna Vetor [%s]",sColuna,vet_stCart_oferta[jj].nmColunaOld ); 
+                                ULOG( "Comparando Coluna XML [%s], Coluna Vetor [%s]",sColuna,buffer ); 
+//                                if ( strcmp(sColuna,vet_stCart_oferta[jj].nmColunaOld) == 0 )
+                                if ( strcmp(sColuna,buffer) == 0 )
+                                {
+                                    if ( strcmp(sValor,"'null'") != 0 )
+                                    {
+                                       strcpy( vet_stCart_oferta[jj].vlPropriedadeOld,sValor );
+                                       ULOG( "Alterando para o valor [%s]",sValor );
+                                    }
+                                    flagEncontrou = 1;
+                                    break;                                    
+                                }
+                                jj++;  
+                           }   
+                           if ( flagEncontrou == 0 )
+                           {       
+                                ULOG( "Não encontrou [%s]",sColuna); 
+                                 char idCaractOferta[256];
+                                 char sNomePropriedade[256];
+                                 memset( idCaractOferta,0x0,sizeof(idCaractOferta));
+                                 memset( sNomePropriedade,0x0,sizeof(sNomePropriedade));
+
+                                 GetCaracteristicaOferta( sColuna, idCaractOferta, sNomePropriedade );
+                                 
+                                 strcpy(vet_stCart_oferta[jj].nmPropriedadeOld,sNomePropriedade );
+                                 strcpy(vet_stCart_oferta[jj].vlPropriedadeOld,sValor );
+                                 strcpy(vet_stCart_oferta[jj].idCaracteristicaOfertaOld,idCaractOferta );
+                                 strcpy(vet_stCart_oferta[jj].nmColunaOld,sColuna );
+                           }
+                           a++;
+                       }
+
+
+                    i = 0;
+                    EXEC SQL 
+                    SELECT   IDOFERTAREALIZADA  
+                            ,IDMATRIZOFERTA
+                    INTO    :idOfertaAceitaOld:i_idOfertaAceitaOld
+                           ,:idMatrizOfertaOld:i_idMatrizOfertaOld
+                    FROM         
+                        RETENCAO.OFERTAREALIZADA  OFERTAREALIZADA      
+                    WHERE 
+                         OFERTAREALIZADA.IDRETENCAO = :idRetencaoOld
+                    AND 
+                         INOFERTAACEITA = 1;
+                   // GRAVA A OFERTAREALIZADAS
+                       strToOra(idMatrizOferta,(char *)idMatrizOfertaOld.arr);
+                       ind_MatrizOfertaAceita = 1 ; // (!strcmp((char*)idMatrizOferta.arr,(char*)idOfertaAceita.arr))?1:0;
+
+                       //ind_MatrizOfertaAceita=atoi(parm);
+                       ULOG_VAR(idMatrizOferta);
+
+                       if( idMatrizOferta.len > 0 )
+                       {
+                           ULOG("INCLUINDO -> RETENCAO.OFERTAREALIZADA  ") ;
+                           EXEC SQL 
+                           INSERT INTO RETENCAO.OFERTAREALIZADA 
+                           ( 
+                               IDOFERTAREALIZADA,
+                               IDRETENCAO,
+                               IDMATRIZOFERTA,
+                               INOFERTAACEITA,
+                               IDPESSOAUSUARIOINCLUSAO,
+                               DTINCLUSAO,
+                               IDPESSOAUSUARIOALTERACAO,
+                               DTALTERACAO,
+                               IDUSUARIOALTERACAO,
+                               DTULTIMAALTERACAO,
+                               INATIVO
+                           )
+                           VALUES 
+                           ( 
+                               retencao.OfertaRealizadaSQ.nextval,
+                               :idRetencao,
+                               :idMatrizOferta, 
+                               :ind_MatrizOfertaAceita,
+                               :idPessoaUsuarioInclusao,
+                               sysdate,
+                               :idPessoaUsuarioInclusao,
+                               sysdate,
+                               :idPessoaUsuarioInclusao,
+                               sysdate,
+                               1
+                           );
+                           ULOG("INCLUINDO -> RETENCAO.OFERTAREALIZADA  ") ;
+                           if( ind_MatrizOfertaAceita == 1 ) 
+                           {
+                               memset(&idOfertaRealizada,0x0,sizeof(idOfertaRealizada));
+                               EXEC SQL 
+                                   SELECT 
+                                       RETENCAO.OFERTAREALIZADASQ.CURRVAL 
+                                   INTO 
+                                       :idOfertaRealizada 
+                                   FROM DUAL;
+                                   
+                                   ULOG_INT( idOfertaRealizada );
+                           }
+                       }  //if idMatrizOferta
+                       
+
+                   // if oferta aceita = 0 -> cliente nao aceitou nenhuma oferta !
+                   if ( idOfertaAceita.len > 0 )
+                   {
+                       pParam.inOfertaAceita = 1; 
+                       
+                       char stNomeCampo[256];
+                       char stValorCampo[256];
+                       stNomeCampo[0]='\0';
+                       stValorCampo[0]='\0';
+                       char stValorTmp[256]; 
+                       memset( stValorTmp, 0x0, sizeof(stValorTmp) );
+
+                       int ii = 0 ;
+                       while( strlen(vet_stCart_oferta[ii].nmPropriedadeOld) != 0 ) //LOOPING...
+                       {
+
+                           memset(&idCaracteristicaOferta,0x0,sizeof(idCaracteristicaOferta));
+                           memset(&nmPropriedade,0x0,sizeof(nmPropriedade));
+
+
+                           int iVal=0;
+                           strcpy( stNomeCampo, vet_stCart_oferta[ii].nmColunaOld ); // [A001]
+                           strcpy( stValorCampo, vet_stCart_oferta[ii].vlPropriedadeOld ); // [A001]
+                           
+
+                                             
+                           strToOra(szSigla,vet_stCart_oferta[ii].nmPropriedadeOld);
+                           strToOra(vlPropriedade,vet_stCart_oferta[ii].vlPropriedadeOld);
+                           strToOra(idCaracteristicaOferta,vet_stCart_oferta[ii].idCaracteristicaOfertaOld);
+                           strToOra(nmPropriedade,vet_stCart_oferta[ii].nmPropriedadeOld);
+
+
+                           if ( strcmp(stNomeCampo, "INTIPOENTREGA") == 0 )
+                           {
+                               // POG - para gravar na 
+                               // tabela RETENCAO.RETENCAOAPARELHO                                
+                               
+                               if (( strcmp(stValorCampo,"'0'")== 0  ) || ( strcmp(stValorCampo,"0")== 0  ))
+                               {
+                                   strcpy( stValorTmp,"0" );
+                                   strToOra( szSigla,"LOJA" );
+                               }
+                               
+                               
+                               //if ( stValorCampo[0] == "'1'" )
+                               if (( strcmp(stValorCampo,"'1'")== 0  ) || ( strcmp(stValorCampo,"1")== 0  ) )
+                               {
+                                   strcpy( stValorTmp,"1" );
+                                   strToOra( szSigla,"LOJA" );
+                               }
+
+                               //if ( stValorCampo[0] == "'2'" )
+                               if (( strcmp(stValorCampo,"'2'")== 0  ) || ( strcmp(stValorCampo,"2")== 0  ))
+                               {
+                                   strcpy( stValorTmp,"2" );
+                                   strToOra( szSigla,"DELIV" );
+                               }
+
+
+                               memset(stValorCampo,0,sizeof(stValorCampo));
+                               stValorCampo[0] = '1';   // POG - para gravar na 
+                                                        // tabela RETENCAO.CaracteristicaOfertaAceita
+                           }
+                           ULOG("8888888888888888888888888888888888888 " );
+                           ULOG_VAR(szSigla);
+                           ULOG(" stNomeCampo %s ",stNomeCampo );
+                           ULOG_VAR(idCaracteristicaOferta);
+                           ULOG_VAR(nmPropriedade);
+
+                           endOraStr(idCaracteristicaOferta);
+                           endOraStr(nmPropriedade);
+
+                           if( !vlPropriedade.len )
+                           {
+                               char szValor[] ={"não informado"};
+                               sprintf((char *)vlPropriedade.arr,"%s",szValor);
+                           }
+
+                           ULOG("==>first");
+                           if( idOfertaAceita.len && nmPropriedade.len > 1 )
+                           {
+                               ULOG_INT(idOfertaAceita);
+
+                               ULOG( "idOfertaRealizada [%s], nmPropriedade [%s] ", (char *)idOfertaRealizada.arr, (char *)nmPropriedade.arr );
+
+                               ULOG(
+                                       "insert into retencao.CaracteristicaOfertaAceita (idCaracteristicaOfertaAceita,"
+                                                                                 "  idOfertaRealizada, "
+                                                                                 "  nmPropriedade,"
+                                                                                 "  vlPropriedade,"
+                                                                                 "  idPessoaUsuarioInclusao,"
+                                                                                 "  dtInclusao,"
+                                                                                 "  idPessoaUsuarioAlteracao,"
+                                                                                 "  dtAlteracao,"
+                                                                                 "  idUsuarioAlteracao,"
+                                                                                 "  dtUltimaAlteracao,"
+                                                                                 "  idCaracteristicaOferta)"
+                                       "values( retencao.CaracteristicaOfertaAceitaSQ.nextval,"
+                                               "'%s','%s', '%s', %d, sysdate, %d, sysdate, %d, sysdate, '%s')",(char *)idOfertaRealizada.arr,(char *)nmPropriedade.arr ,(char *)vlPropriedade.arr,
+                                         idPessoaUsuarioInclusao,
+                                         idPessoaUsuarioInclusao,
+                                         idPessoaUsuarioInclusao,
+                                         (char *)idCaracteristicaOferta.arr
+                                    );
+
+
+                               EXEC SQL 
+                               insert 
+                               into retencao.CaracteristicaOfertaAceita(idCaracteristicaOfertaAceita,
+                                                                           idOfertaRealizada, 
+                                                                           nmPropriedade,
+                                                                           vlPropriedade,
+                                                                           idPessoaUsuarioInclusao,
+                                                                           dtInclusao,
+                                                                           idPessoaUsuarioAlteracao,
+                                                                           dtAlteracao,
+                                                                           idUsuarioAlteracao,
+                                                                           dtUltimaAlteracao,
+                                                                           idCaracteristicaOferta)
+                               values( retencao.CaracteristicaOfertaAceitaSQ.nextval,
+                                       :idOfertaRealizada,
+                                       :nmPropriedade,
+                                       :vlPropriedade,
+                                       :idPessoaUsuarioInclusao,
+                                       sysdate,
+                                       :idPessoaUsuarioInclusao,
+                                       sysdate,
+                                       :idPessoaUsuarioInclusao,
+                                       sysdate,
+                                       :idCaracteristicaOferta);
+                              }
+                                
+                           ///////////////////////////////////////////////////////////////////
+                           // novo modelo            
+                           ///////////////////////////////////////////////////////////////////
+
+                           // POG - para gravar na 
+                           // tabela RETENCAO.RETENCAOAPARELHO
+                           if ( strcmp(stNomeCampo, "INTIPOENTREGA") == 0 )
+                           {    
+                                strcpy( stValorCampo, stValorTmp );                                
+                           }     
+                           
+                           ULOG( "Checando para careg&@$%... Valor ii [%d]",ii );
+                           ULOG( "Antes do tal careg&%$@###???&¨%$@@@... stNomeCampo [%s], parm [%s]", stNomeCampo, parm );
+                           if (strcmp(stNomeCampo,"0")!= 0 ) 
+                           {
+                               if (strcmp(parm,"EX")!= 0 ) 
+
+                               { 
+                               // copia a nome do campo para a vetor de nome de campo
+                               strcat(pParam.sNomeCampo,","  );
+                               strcat(pParam.sValorCampo,"," );
+
+                               // copia o conteudo do campo para a vetor de nome de conteudo
+                               strcat(pParam.sNomeCampo,stNomeCampo);
+            //                   conv_Numero(stValorCampo);
+                               strcat(pParam.sValorCampo,stValorCampo);
+
+                               careg_RETENCAOAPARELHO(stNomeCampo,stValorCampo, &Reg);
+
+
+
+
+                               }
+                           }
+
+                           strcpy(stNomeCampo,"");
+                           strcpy(stValorCampo,"");
+
+                           stNomeCampo[0]='\0';
+                           stValorCampo[0]='\0';
+
+                           i++;
+                           ii ++;
+                       }
+                       //  end looping
+                       InsereRetencaoConsolidada( &pParam );
+
+                       // verifica se existe oferta a ser incluida
+                       if ( strlen(pParam.sNomeCampo) > 0 )    
+                          
+                       {
+                        // isto foi criado devido a um ero em desenvolvimento que nao encontrei solucao   
+                        //   if (strcmp(pParam.sgOfertaAceita,"AP")== 0 )
+                        //      ins_RETENCAOAPARELHO( &Reg );
+                        //   else 
+                           if (( idTipoEncerramento ==  RETIDO_RESTRICAO) || ( idTipoEncerramento == ANALISECRDB ) || 
+                               ( idTipoEncerramento == ANALISEENDERECO )  || ( idTipoEncerramento == RETIDO ))
+                                InsereRetencaoOferta( &pParam );
+                       }
+
+                           
+                       //sm367 grava dados para analise 
+                       if (( idTipoEncerramento ==   ANALISECRDB ) || ( idTipoEncerramento ==   ANALISEENDERECO ))
+                       { 
+                            InsereRetencaoAnalise(  &pParam  );
+                            tpOperacao = 2 ; // processo aberto para tratamento 
+                            inResponsavelAbertura = 2 ;
+                       }
+
+
+                       //sm370 grava endereco caso exista e se é uma nova retencao
+                       if ( idTipoEncerramento ==   ANALISEENDERECO )
+                           InsereRetencaoEndereco(  &pParam  );
+
+                       //sm367 grava dados para analise de credito
+                       if ( idTipoEncerramento ==   ANALISECRDB ) 
+                           InsereRetencaoRelAnalise(  &pParam  );
+                            
+                         // grava os dados quando retido por  restricao para relatorio
+                        // Entrara nesta obcao quando o atendente informou ao cliente que ele esta com probkemas 
+                        // financeiros 
+
+                        if ( idTipoEncerramento ==  RETIDO_RESTRICAO)
+                        {   
+                            InsereRetencaoAnalise(  &pParam  );
+                            InsereRetencaoRelAnalise(  &pParam  );  
+                        }
+            
+                   }
+                   ULOG("SAIO DO RETIDO,VAIPENSAR,RETIDO_ARGUMENTO E NAO_RETIDO");
+               }
+
+              //  beak ;
+            
+        } 
+        //SWITCH
+
+        
+        // retira o icone do historico 
+        if (idRetencaoOld != 0 )
+            conclui_retencao(idRetencaoOld);
+            
+        
+        ULOG( "Executando rotinas de insert nas tabelas do novo modelo..." );
+
+        stc.idChamadaTelefonica             = 0;    // Fixo
+        stc.idGrupoAbertura                 = (const char*)idGrupo.arr; // Fixo //encaminhamento
+        stc.inResponsavelAbertura           = inResponsavelAbertura ; //encaminhamento  // modificado apos relniao com tiago e vivo 08/12/2006 1;    // Fixo
+        stc.tpOperacao                      = tpOperacao;   // processo  stc.tpOperacao= 1 fechamento altomatico  stc.tpOperacao != 1 aberto para tratamento
+        stc.idProcedencia                   = 1 ; // antigo 2 fax novo 1 telefone	//encaminhamento
+        stc.idCanal                         = 16; // Retencao					//encaminhamento
+        stc.idPessoa                        = atoi((char*)idPessoaDePara.arr); 
+        stc.idSegmentacao                   = (const char*)idSegmentacao.arr;//encaminhamento
+        stc.idContato                       = (const char*)szContatoCorreto;
+        stc.AtendimentoTipoComunicacaoVO    = 1;
+		stc.idTipoCarteira					= (const char*)idTipoCarteira.arr;//encaminhamento
+		stc.inTipoPessoa					= (const char*)inTipoPessoa.arr;//encaminhamento
+		stc.idUfOperadora					= (const char*)idUFOperadora.arr;//encaminhamento
+		stc.idTipoLinha						= (const char*)idTipoLinha.arr; //encaminhamento
+
+		ULOG_VAR(idGrupo);
+		ULOG_INT(inResponsavelAbertura);
+		ULOG("16");
+		ULOG_INT(tpOperacao);
+		ULOG_INT(idSegmentacao);
+		ULOG_VAR(idTipoCarteira);
+		ULOG_VAR(inTipoPessoa);
+		ULOG_INT(idUFOperadora);
+		ULOG_INT(idTipoLinha);
+
+
+
+        EXEC SQL
+        SELECT IDCONTA 
+        INTO :idconta:iidconta
+        FROM CUSTOMER.PESSOACONTA 
+            WHERE IDPESSOADEPARA = :idPessoaDePara 
+            AND ROWNUM = 1; 
+
+        if ( iidconta < 0 ) 
+            stc.idConta = 1; 
+        else
+            stc.idConta = idconta; 
+
+        if ( stc.nrTelefone == "" ) 
+            stc.nrTelefone=atoi((char*)nrLinha.arr);
+
+        stc.idPessoaLinhaHistorico  = atoi((char*)idLinhaTelefonica.arr); 
+
+        sprintf(szUser,"%d",usuario);
+
+        
+        memset(&Reg,0x0,sizeof(RegCont))  ;   
+        
+        RegContato(szUser, stc, &RegCont );
+    }
+    catch(...)
+    {
+        throw ;
+    }
+    
+    endOraStr(idRetencao);
+    ULOG("  Retencao finalizada OK   \n");
+    ULOG_INT(idRetencao);
+    xml->addItem("descricao",RegCont.Descricao);
+
+	if(idTipoEncerramento==10 || idTipoEncerramento==11)
+	{
+		xml->addItem("valor",RegCont.Valor);
+	}
+	else
+	{
+		xml->addItem("valor",(char*)idRetencao.arr);
+	}
+    
+
+
+    ULOG_END("final_retencao()");
+
+ return 1;
+
+}
+
+
+
+int RegContato(char* idUser, stDadosContato stcnt,stRetRegContato *Reg)
+{
+    ULOG_START("RegContato()");
+    XMLGen o_inputXML;
+    TuxMessage o_inputMessage;
+    TuxRemoteService o_remoteService;
+    
+    try 
+    {
+        ULOG(idUser);
+        FormataDados( &o_inputXML, stcnt); 
+
+        o_inputMessage.setUser(idUser);
+        o_inputMessage.setMessageBody(&o_inputXML);
+        o_inputMessage.setService(TXPB_REGCON_SERVICE);
+
+        o_remoteService.setServiceName(TXPB_REGCON_SERVICE);
+        o_remoteService.setInputMessage(&o_inputMessage);
+
+        int i_returnRemoteCall = 0;
+        char* pc_statusCode = NULL;
+        char* pc_statusText = NULL;
+
+        i_returnRemoteCall = o_remoteService.remoteCall();
+
+        TuxMessage  *outTm = o_remoteService.getOutputMessage();
+
+        char *codigoRetorno = outTm->getStatusCode();
+        char *statusText = outTm->getStatusText();
+
+        ULOG("codigoRetorno=\"%s\"",codigoRetorno);
+        ULOG("statusText=\"%s\"",statusText);
+        ULOG("outTm->getMessageBody()=\"%s\"",outTm->getMessageBody());
+        // verifica se a chamada nao retornou erro 
+        if (strcmp(codigoRetorno,CODIGO_SUCESSO_SERVICO)==0)
+        { 
+            // retira o idatendimento da msg de retorno regcontato
+            char viAtendiemento[40];
+            memset(viAtendiemento,0x0,sizeof(viAtendiemento) );
+            // onjetivo e retira o numero do atendiemento do vetor
+            ret_idAtendiemento(outTm->getMessageBody(),viAtendiemento);
+            strcpy(Reg->Descricao,"IDATENDIMENTO");
+            strcpy(Reg->Valor,viAtendiemento);
+        }
+        else
+        {
+            strcpy(Reg->Descricao,"ERRO");
+            strcpy(Reg->Valor,statusText);
+        }
+
+        ULOG(" Reg->Descricao = %s",Reg->Descricao);
+        ULOG(" Reg->Valor = %s",Reg->Valor);
+
+        ULOG(" RegContato::Termino da chamada ao REGCONTATO");
+    } 
+    catch(...)
+    {
+        ULOG(" RegContato::Erro na chamada de REGCONTATO");
+    }
+    ULOG_END("RegContato()");
+    return 0;
+}
+
+void FormataDados( XMLGen *oEntrada,  stDadosContato stcnt)
+{
+    ULOG_START("FormataDados()");
+    oEntrada->createTag("script");
+    oEntrada->addProp("type", "D");
+    oEntrada->addProp("dbid", "3");
+    oEntrada->closeTag();       
+    oEntrada->createTag("rsBody");
+    oEntrada->createTag("xml-fragment");
+    
+    oEntrada->createTag("AtendimentoVO");
+    oEntrada->addProp("xmlns","workflow.fo.vivo.com.br/vo"      );
+    oEntrada->addItem("ProxyLinha","");
+    oEntrada->addItem("ProxyOperacao","getFidelizacao");
+
+    oEntrada->addItem("idChamadaTelefonica",    stcnt.idChamadaTelefonica.c_str()   );  
+    oEntrada->addItem("idGrupoAbertura",        stcnt.idGrupoAbertura.c_str()       );//encaminhamento
+    oEntrada->addItem("inResponsavelAbertura",  stcnt.inResponsavelAbertura.c_str() );//encaminhamento
+    oEntrada->addItem("nmContato",              stcnt.nmContato.c_str()             );
+    oEntrada->addItem("observacao",             stcnt.observacao.c_str()            );
+    oEntrada->addItem("nrTelefone",             stcnt.nrTelefone.c_str()            );
+    oEntrada->addItem("tpOperacao",             stcnt.tpOperacao.c_str()            );
+	//dados necessários para encaminhamento.
+    oEntrada->addItem("idTipoLinha",              stcnt.idTipoLinha.c_str()            );//encaminhamento
+	oEntrada->addItem("inTipoPessoa",           stcnt.inTipoPessoa.c_str()            );//encaminhamento
+	oEntrada->addItem("idUfOperadora",           stcnt.idUfOperadora.c_str()            );//encaminhamento
+
+     
+
+
+    oEntrada->createTag("ProcedenciaVO");
+        oEntrada->addProp("xmlns","admsistemas.fo.vivo.com.br/vo"       );
+        oEntrada->addItem("idProcedencia",      stcnt.idProcedencia.c_str());//encaminhamento
+    oEntrada->closeTag();
+
+    oEntrada->createTag("CanalVO");
+        oEntrada->addItem("idCanal",            stcnt.idCanal.c_str());//encaminhamento
+    oEntrada->closeTag();
+
+    oEntrada->createTag("Contas");
+        oEntrada->createTag("ContaVO");
+            oEntrada->addItem("idConta",        stcnt.idConta.c_str());
+            oEntrada->createTag("LinhaVO");
+                oEntrada->addItem("idPessoaLinhaHistorico", stcnt.idPessoaLinhaHistorico.c_str());
+            oEntrada->closeTag();
+        oEntrada->closeTag();
+    oEntrada->closeTag();
+
+    oEntrada->createTag("PessoaVO");
+        oEntrada->addItem("idPessoa",                           stcnt.idPessoa.c_str());
+        oEntrada->addItem("AtendimentoTipoComunicacaoVO",       stcnt.AtendimentoTipoComunicacaoVO.c_str());
+    oEntrada->closeTag();
+
+    oEntrada->createTag("UsuarioLinhaVO");
+        oEntrada->addProp("xmlns","cliente.fo.vivo.com.br/vo"       );
+        oEntrada->addItem("idPessoa",                           stcnt.idPessoa.c_str());
+    oEntrada->closeTag();
+
+    oEntrada->createTag("ArvoreAtendimentoVO");
+        oEntrada->addProp("xmlns","admsistemas.fo.vivo.com.br/vo"       );
+        oEntrada->addItem("idContato",                          stcnt.idContato.c_str());
+        oEntrada->createTag("CarterizacaoVO");
+            oEntrada->addItem("idTipoCarteira",                  stcnt.idTipoCarteira.c_str());//encaminhamento
+        oEntrada->closeTag();
+        oEntrada->createTag("SegmentacaoVO");
+            oEntrada->addItem("idSegmentacao",                  stcnt.idSegmentacao.c_str());//encaminhamento
+        oEntrada->closeTag();
+    oEntrada->closeTag();
+
+    // problema de envio para o SMS
+
+    char  buffer[15], s[15];
+   
+    memset(buffer,0,sizeof(buffer));
+    memset(s,0,sizeof(s));
+
+    ULOG("stcnt.nrTelefoneSMS.c_str() = [%s]",stcnt.nrTelefoneSMS.c_str());  
+
+    if (strlen(stcnt.nrTelefoneSMS.c_str()) != 0 )
+        sprintf( buffer,"%s",stcnt.nrTelefoneSMS.c_str());
+    else
+    {        
+        ULOG("stcnt.nrTelefone.c_str()=[%s] ",stcnt.nrTelefone.c_str());
+        sprintf(s,"%s",stcnt.nrTelefone.c_str());
+        ULOG("s=[%s] ",s);
+        sprintf( buffer,"(%c%c)%c%c%c%c-%c%c%c%c",s[0],s[1],s[2],s[3],s[4],s[5],s[6],s[7],s[8],s[9]  );
+        ULOG("buffer=[%s] ",buffer);
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    oEntrada->createTag("AtendimentoRetornoVO"); //
+        oEntrada->addProp("xmlns","workflow.fo.vivo.com.br/vo");
+        oEntrada->addItem("idTipoComunicacao","9");   //	sms	= <idTipoComunicacao>9</idTipoComunicacao>
+		oEntrada->addItem("dsComunicacao",buffer); 	  //	telefone formatado <dsComunicacao>(11)9648-1869</dsComunicacao>
+    oEntrada->closeTag();
+
+
+    oEntrada->closeTag();
+ oEntrada->closeTag();
+oEntrada->closeTag();
+
+ULOG_END("FormataDados()");
+        
+}
+
+
+void GetContatoTipoEncerramento(int idtipoencerramento,char *pidmatriz,char *pidcontato,char *psgOferta)
+{
+    ULOG_START("GetContatoTipoEncerramento()");
+    ULOG(" idtipoencerramento=[%d]",idtipoencerramento);
+    ULOG(" pidmatriz=[%s]",pidmatriz); 
+    ULOG(" pidcontato=[%s]",pidcontato); 
+    ULOG(" psgOferta=[%s]",psgOferta);
+    int existReg=1;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    int         idtpenc =idtipoencerramento;
+    int         ligindev=0;
+    VARCHAR     szContato[21+1];
+    VARCHAR     idMatriz[21+1];
+    VARCHAR     sgOferta[20];
+    short       i_szContato=-1 ;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    
+    memset(&sgOferta,0x0,sizeof(sgOferta));
+    memset(&szContato,0x0,sizeof(szContato));
+    strToOra(idMatriz,pidmatriz);
+
+    memset(&szContato,0,sizeof(VARCHAR));
+
+    //verificando se o tipode encerramento é ligação indevida
+    EXEC SQL
+        SELECT COUNT(IDTIPOENCERRAMENTO)
+        into :ligindev
+        FROM RETENCAO.TIPOENCERRAMENTO
+        WHERE INLIGACAOINDEVIDA=1
+        AND   IDTIPOENCERRAMENTO=:idtpenc;
+
+    //se quantidade maior que 0
+    //o valor do idpassa para 4
+    //senão seta retorna o valor atual de idtpenc
+    //facilitando a query abaixo
+    idtpenc=(ligindev>0)?4:idtpenc;
+
+    ULOG("idtpenc = [%d]",idtpenc);
+    ULOG("ligindev = [%d]",ligindev);
+    
+    
+    ULOG_VAR (szContato);
+    ULOG("existReg = [%d]",existReg);
+    EXEC SQL WHENEVER NOT FOUND DO cl_flag(&existReg);
+    EXEC SQL
+        SELECT IDCONTATO
+        INTO    :szContato:i_szContato
+        FROM RETENCAO.CONTATOENCERRAMENTO
+        WHERE IDTIPOENCERRAMENTO=:idtpenc;
+            
+    ULOG("existReg = [%d]",existReg);
+    ULOG("szContato = [%s]",(char*)szContato.arr);
+//    if( szContato.len==0 )
+    if(!existReg)        
+    {
+        
+        ULOG(" => if(!existReg) ");
+        //capturando a sigla da oferta aceita
+        EXEC SQL
+            SELECT SGCLASSIFICACAO
+            INTO    :sgOferta
+        FROM retencao.oferta
+        where idunidadeoferta in (select idoferta
+                                  from retencao.matrizoferta
+                                  where idmatrizoferta=:idMatriz);
+                                    
+                                    
+        ULOG("sgOferta = [%s]" ,(char *)sgOferta.arr);
+        //capturando contato da oferta aceita   
+        EXEC SQL
+        SELECT IDCONTATO
+        INTO    :szContato
+        FROM RETENCAO.CONTATOOFERTA
+        WHERE CDCONTATOOFERTA=:sgOferta;
+            
+        ULOG("szContato = [%s]" ,(char *)szContato.arr);
+
+    }
+  
+    endOraStr(sgOferta);
+    ULOG_VAR (sgOferta);
+    endOraStr(szContato);
+    ULOG_VAR (szContato);
+    strcpy(pidcontato,(const char*)szContato.arr);
+    strcpy(psgOferta,(const char*)sgOferta.arr);
+
+    ULOG_END("GetContatoTipoEncerramento()");
+
+}
+
+
+
+
+// esta funcao tem por objetivo incluir um registro de consolidacao para gerar relatorio com maio facilidade
+void InsereRetencaoConsolidada( stParametros * pParam )
+{
+    ULOG_START( "InsereRetencaoConsolidada()" );
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR       nmLoginUsuario[255];
+        VARCHAR       nrLinha[255];
+        VARCHAR       nmPessoa[255];
+        VARCHAR       sgTipoOferta[16];
+        VARCHAR       inExcecao[2];
+        VARCHAR       nmRespostaIntencao[255];
+        VARCHAR       nmRespostaDestino[255];
+
+        unsigned long idRetencao;
+        unsigned long idGrupo;
+        unsigned long idUFOperadora;
+        unsigned long idSegmentacao;
+        unsigned long idRespostaIntencao;
+        unsigned long idRespostaDestino;
+        int           idTipoPessoa;
+        unsigned long idUsuarioInclusao;
+        short         inFidelizacao=-1;
+        short         inOfertaAceita=-1 ;
+        int           cdAreaRegistro;
+        int           idTipoEncerramento ; 
+        unsigned long idPessoaDePara;
+
+    EXEC SQL END DECLARE SECTION;
+
+    idPessoaDePara     = strtoul( pParam->idPessoaDePara,0,10 );
+    idRetencao         = strtoul( pParam->idRetencao,0,10 );
+    idGrupo            = strtoul( pParam->idGrupo,0,10 );
+    idUFOperadora      = strtoul( pParam->idUFOperadora,0,10 );
+    idSegmentacao      = strtoul( pParam->idSegmentacao,0,10 );
+    idRespostaIntencao = strtoul( pParam->idRespostaIntencao,0,10 );
+    idRespostaDestino  = strtoul( pParam->idRespostaDestino,0,10 );
+    idUsuarioInclusao  = strtoul( pParam->idUsuario,0,10 );
+    cdAreaRegistro     = strtoul( pParam->cdAreaRegistro,0,10 );
+    idTipoPessoa       = strtoul( pParam->idTipoPessoa,0,10 );
+    idTipoEncerramento = strtoul( pParam->idTipoEncerramento,0,10 );
+    inFidelizacao      = pParam->inFidelizacao;
+    inOfertaAceita     = pParam->inOfertaAceita;
+
+    strToOra(inExcecao, pParam->inExcecao);
+    strToOra(nmRespostaIntencao, pParam->nmRespostaIntencao);
+    strToOra(nmRespostaDestino,  pParam->nmRespostaDestino );
+    strToOra(nrLinha, pParam->nrLinha );
+    strToOra(nmPessoa, pParam->nmPessoa );
+    strToOra(nmLoginUsuario, pParam->nmLoginUsuario);
+    strToOra(sgTipoOferta, pParam->sgOfertaAceita);
+
+    ULOG( "idPessoaDePara [%lu] ",idPessoaDePara);
+    ULOG( "idRetencao [%lu] ",idRetencao);
+    ULOG( "idGrupo [%lu] ", idGrupo);
+    ULOG( "idUFOperadora [%lu] ", idUFOperadora);
+    ULOG( "nmLoginUsuario [%s]" , (char*)&nmLoginUsuario.arr);
+    ULOG( "nrLinha [%s]",(char*)&nrLinha.arr);
+    ULOG( "cdAreaRegistro [%lu]",cdAreaRegistro);
+    ULOG( "nmPessoa [%s]",(char*)&nmPessoa.arr);
+    ULOG( "idSegmentacao [%lu]" , idSegmentacao);
+    ULOG( "idRespostaIntencao [%lu] ",idRespostaIntencao);
+    ULOG( "idRespostaDestino [%lu]" ,idRespostaDestino);
+    ULOG( "idTipoPessoa [%d]",idTipoPessoa);
+    ULOG( "sgTipoOferta [%s]",(char*)&sgTipoOferta.arr);
+    ULOG( "inExcecao [%s]" ,(char*)&inExcecao.arr);
+    ULOG( "idUsuarioInclusao [%lu]",idUsuarioInclusao);
+    ULOG( "inFidelizacao [%d]",inFidelizacao);
+    ULOG( "inOfertaAceita [%d]",inOfertaAceita);
+    ULOG( " INSERT INTO RETENCAO.RETENCAOCONSOLIDADA ()" );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        INSERT INTO RETENCAO.RETENCAOCONSOLIDADA
+            (
+                IDUFOPERADORA      ,    
+                IDGRUPO            ,    
+                NMLOGINUSUARIO     ,    
+                IDRETENCAO         ,    
+                NRLINHA            ,    
+                CDAREAREGISTRO     ,    
+                NMPESSOA           ,    
+                IDSEGMENTACAO      ,    
+                IDRESPOSTAINTENCAO ,    
+                IDRESPOSTADESTINO  ,    
+                IDUSUARIOINCLUSAO  ,     
+                IDTIPOPESSOA       ,    
+                DTINCLUSAO         ,    
+                SGTIPOOFERTA       ,    
+                INEXCECAO          ,     
+                INFIDELIZACAO      ,    
+                DSRESPOSTAINTENCAO ,    
+                DSRESPOSTADESTINO  , 
+                IDTIPOENCERRAMENTO ,
+                INOFERTAACEITA     ,   
+                IDPESSOADEPARA  
+            )
+            VALUES
+            (
+                :idUFOperadora,      
+                :idGrupo,            
+                :nmLoginUsuario,     
+                :idRetencao,         
+                :nrLinha,            
+                :cdAreaRegistro,     
+                :nmPessoa,           
+                :idSegmentacao,      
+                :idRespostaIntencao, 
+                :idRespostaDestino,  
+                :idUsuarioInclusao,  
+                :idTipoPessoa,       
+                SYSDATE ,            
+                :sgTipoOferta,       
+                :inExcecao,          
+                :inFidelizacao,      
+                :nmRespostaIntencao, 
+                :nmRespostaDestino,
+                :idTipoEncerramento,
+                :inOfertaAceita,
+                :idPessoaDePara
+            );
+
+    ULOG_END( "InsereRetencaoConsolidada()" );
+}
+
+
+
+// esta funcao tem por objetivo incluir um registro de consolidacao para gerar relatorio com maio facilidade
+void InsereRetencaoEndereco( stParametros * pParam )
+{
+    ULOG_START( "InsereRetencaoEndereco()" );
+    
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR        dsEndereco[70];                  //  ENDERECO ALTERADO PELO ATENDENTE RETENCAO
+        VARCHAR        nrNumero[10];                    //  NUMERO ALTERADO PELO ATENDENTE RETENCAO
+        VARCHAR        dsComplemento[20];               //  NUMERO ALTERADO PELO ATENDENTE RETENCAO
+        VARCHAR        dsBairro[40];                   //  NUMERO ALTERADO PELO ATENDENTE RETENCAO
+        VARCHAR        dsCidade[40];                    //  NUMERO ALTERADO PELO ATENDENTE RETENCAO
+        VARCHAR        dsEstado[3];                     //  NUMERO ALTERADO PELO ATENDENTE RETENCAO
+        VARCHAR        dsCep[70];                       //  CEP ALTERADO PELO ATENDENTE RETENCAO
+        short          idMotivoAlteracaoEndereco=-1;       //  CHAVE ESTRANGEIRA   
+        unsigned long  idRetencao;                      //  CHAVE PRIMARIA          
+        unsigned long  idUsuarioInclusao;               //  NUMERO DO USUARIO ALTERACAO  
+        VARCHAR        nmTerceiro[70];
+        VARCHAR        nrRGTerceiro[20];
+        VARCHAR        nrTelTerceiro[20];
+    EXEC SQL END DECLARE SECTION;
+
+
+    idRetencao                = strtoul( pParam->idRetencao,0,10 );
+    idUsuarioInclusao         = strtoul( pParam->idUsuario,0,10 );
+    idMotivoAlteracaoEndereco = pParam->idMotivoAlteracaoEndereco;
+
+    strToOra(dsEndereco, pParam->dsEndereco);
+    strToOra(nrNumero, pParam->nrNumero);       
+    strToOra(dsComplemento, pParam->dsComplemento);                 
+    strToOra(dsBairro, pParam->dsBairro);                 
+    strToOra(dsCidade, pParam->dsCidade);               
+    strToOra(dsEstado, pParam->dsEstado);               
+    strToOra(dsCep, pParam->dsCep);  
+    strToOra(nmTerceiro, pParam->nmTerceiro);
+    strToOra(nrRGTerceiro, pParam->nrRGTerceiro);
+    strToOra(nrTelTerceiro, pParam->nrTelTerceiro);
+
+    ULOG( "idRetencao [%lu] ",idRetencao);
+    ULOG( "idUsuarioInclusao [%lu]",idUsuarioInclusao);
+    ULOG( "idMotivoAlteracaoEndereco [%d]",idMotivoAlteracaoEndereco);
+    ULOG( "dsEndereco[%s]",(char*)&dsEndereco.arr);
+    ULOG( "nrNumero[%s]",(char*)&nrNumero.arr);         
+    ULOG( "dsComplemento[%s]",(char*)&dsComplemento.arr);               
+    ULOG( "dsBairro[%s]",(char*)&dsBairro.arr);               
+    ULOG( "dsCidade[%s]",(char*)&dsCidade.arr);                 
+    ULOG( "dsEstado[%s]",(char*)&dsEstado.arr);                 
+    ULOG( "dsCep[%s]",(char*)&dsCep.arr);               
+    ULOG( "nmTerceiro[%s]",(char*)&nmTerceiro.arr);
+    ULOG( "nrRGTerceiro[%s]",(char*)&nrRGTerceiro.arr);
+    ULOG( "nrTelTerceiro[%s]",(char*)&nrTelTerceiro.arr);
+
+    
+    
+    ULOG( " INSERT INTO RETENCAO.ENDERECOALTERADO" );
+    
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    ULOG(
+        "INSERT INTO RETENCAO.ENDERECOALTERADO ( "
+             " IDRETENCAO, "
+             " DSENDERECO,"
+             " NRNUMERO,"
+             " DSCOMPLEMENTO,"
+             " DSBAIRRO,"
+             " DSCIDADE,"
+             " DSESTADO,"
+             " DSCEP,"
+             " IDMOTIVOALTERACAOENDERECO ,"
+             " DTULTIMAALTERACAO,"
+             " IDUSUARIOINCLUSAO, "   
+             " NMTERCEIRO ,"
+             " NRRGTERCEIRO,"
+             " NRTELTERCEIRO  )"
+        " VALUES ( %lu , '%s','%s','%s','%s','%s','%s','%s',%d,SYSDATE,%lu,'%s','%s','%s')"
+              ,idRetencao
+              ,(char*)&dsEndereco.arr
+              ,(char*)&nrNumero.arr
+              ,(char*)&dsComplemento.arr
+              ,(char*)&dsBairro.arr
+              ,(char*)&dsCidade.arr
+              ,(char*)&dsEstado.arr
+              ,(char*)&dsCep.arr
+              ,idMotivoAlteracaoEndereco
+              ,idUsuarioInclusao
+              ,(char*)&nmTerceiro.arr
+              ,(char*)&nrRGTerceiro.arr
+              ,(char*)&nrTelTerceiro.arr
+        );
+
+
+
+
+    EXEC SQL
+    INSERT INTO RETENCAO.ENDERECOALTERADO
+        (
+              IDRETENCAO,
+              DSENDERECO,
+              NRNUMERO,
+              DSCOMPLEMENTO,
+              DSBAIRRO,
+              DSCIDADE,
+              DSESTADO,
+              DSCEP,
+              IDMOTIVOALTERACAOENDERECO ,
+              DTULTIMAALTERACAO,
+              IDUSUARIOINCLUSAO,    
+              NMTERCEIRO ,
+              NRRGTERCEIRO,
+              NRTELTERCEIRO
+        )
+        VALUES
+        (
+              :idRetencao,
+              :dsEndereco,
+              :nrNumero,
+              :dsComplemento,
+              :dsBairro,
+              :dsCidade,
+              :dsEstado,
+              :dsCep,
+              :idMotivoAlteracaoEndereco,
+               SYSDATE,
+              :idUsuarioInclusao,
+              :nmTerceiro,
+              :nrRGTerceiro,
+              :nrTelTerceiro
+        );
+
+ 
+
+    ULOG_END( "InsereRetencaoEndereco()" );
+
+}
+
+
+// esta funcao tem por objetivo de incluir os dados da analise 
+void InsereRetencaoAnalise( stParametros * pParam )
+{
+    ULOG_START( "InsereRetencaoAnalise()" );
+    
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+         VARCHAR        nrDocumento[20];                     // -- NUMERO DO CPF
+         VARCHAR        dtConsulta[64];                      // -- DATA DA CONSULTA AO LEGADO
+         unsigned long  idRetencao;                          // -- CHAVE PRIMARIA           
+         int            idTipoAnalise;                         // -- NUMERO DA CONTA
+         VARCHAR        dsObsAnalise[256]   ;               // -- TEXTO QUE O ANALISTA INFORMOU PARA A APROVACAO OU REPROVACAO         
+         unsigned long  idUsuarioAlteracao;                   // -- NUMERO DO USUARIO ALTERACAO  
+    EXEC SQL END DECLARE SECTION;
+    
+
+    memset(&nrDocumento,0x0,sizeof(nrDocumento));   
+    memset(&dtConsulta,0x0,sizeof(dtConsulta));   
+    memset(&dsObsAnalise,0x0,sizeof(dsObsAnalise));   
+    
+
+
+    idTipoAnalise              = pParam->idTipoAnalise;
+    idRetencao                 = strtoul( pParam->idRetencao,0,10 );
+    idUsuarioAlteracao         = strtoul( pParam->idUsuario,0,10 );
+    
+    strToOra(nrDocumento, pParam->nrDocumento );                     // -- NUMERO DO CPF
+    strToOra(dtConsulta, strlen(pParam->dtConsulta)!=0?pParam->dtConsulta:"");                      // -- DATA DA CONSULTA AO LEGADO
+    strToOra(dsObsAnalise, pParam->dsObsAnalise )  ;                // -- TEXTO QUE O ANALISTA INFORMOU PARA A APROVACAO OU REPROVACAO
+        
+
+    ULOG( "idRetencao [%lu] ",idRetencao);
+    ULOG( "idTipoAnalise[%d]",idTipoAnalise);                   
+    ULOG( "dsObsAnalise[%s]",(char*)&dsObsAnalise.arr);                 
+    ULOG( "nrDocumento[%s]",(char*)&nrDocumento.arr);       
+    ULOG( "dtConsulta[%s]",(char*)&dtConsulta.arr);                 
+    ULOG( "idUsuarioAlteracao [%lu]",idUsuarioAlteracao);
+
+
+    
+    
+    ULOG( " INSERT INTO RETENCAO.RETENCAOANALISE" );
+    
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+
+
+    EXEC SQL
+    INSERT INTO RETENCAO.RETENCAOANALISE
+        (
+            IDRETENCAO          ,
+            IDTIPOANALISE       ,
+            DSOBSANALISE        ,
+            NRDOCUMENTO         ,
+//            DTCONSULTA          ,
+            IDUSUARIOALTERACAO  ,
+            DTULTIMAALTERACAO   
+        )
+        VALUES
+        (
+            :idRetencao,
+            :idTipoAnalise,
+            :dsObsAnalise,    
+            :nrDocumento,
+//            :dtConsulta,
+            :idUsuarioAlteracao,
+            SYSDATE             
+        );
+//            TO_DATE(:dtConsulta,'dd/mm/yyyy HH24:MI'),    
+    ULOG_END( "InsereRetencaoAnalise()" );
+
+}
+
+
+// esta funcao tem por objetivo incluir um registro de consolidacao para gerar relatorio com maio facilidade
+void InsereRetencaoRelAnalise( stParametros * pParam )
+{
+    ULOG_START( "InsereRetencaoRelAnalise()" );
+    
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+
+         VARCHAR        dsRetornoConsulta[3000];             // -- TEXTO DE RETONO DO LEGADO (ATLYS)
+         VARCHAR        nrDocumento[20];                     // -- NUMERO DO CPF
+         VARCHAR        nrConta[20];                         // -- NUMERO DA CONTA
+         VARCHAR        nrLinha[15];                         // -- NUMERO DA LINHA
+         VARCHAR        dtConsulta[64];                      // -- DATA DA CONSULTA AO LEGADO
+         VARCHAR        vlDebito[22];                       // -- VALOR DO DEBITO EM ABERTO
+         VARCHAR        idContaInadimplente[20];             // -- IDENTIFICACAO DA CONTA INADIMPLENTE
+         VARCHAR        dtVencDebito[64];                    // -- DATA DO VENCIMENTO DO DEBITO
+         VARCHAR        dtInterrupcao[64];                   // -- DATA DA FALHA DE COMUNICACAO COM O LEGADO
+         VARCHAR        idRegional[22];                      // -- IDENTIFICACAO DA REGIONAL
+         VARCHAR        dsRegional[70];                      // -- NOME DA REGIONAL
+         VARCHAR        dsMotivoErro[150];                   // -- DESCRICAO SUCINTA DO ERRO DSOBSANALISE
+         VARCHAR        dsObsAnalise[256]   ;              // -- TEXTO QUE O ANALISTA INFORMOU PARA A APROVACAO OU REPROVACAO
+         unsigned long  idRetencao;                          // -- CHAVE PRIMARIA           
+         unsigned long  idUsuarioAlteracao;                  // -- NUMERO DO USUARIO ALTERACAO  
+         unsigned long  idSegmentacao;                       
+         unsigned long  idGrupo;
+         short           inAprovadoLegado =-1;                         //  -- APROVADO A ANALISE 0 REPROVADO 1 APROVADO 
+         short           inStatusComunicacao=-1 ;                //  -- ESTADOS DE COMUNICACAO 1 REPROVADO 0 APROVADO
+    EXEC SQL END DECLARE SECTION;
+
+
+    
+    idRetencao                = strtoul( pParam->idRetencao,0,10 );
+    idUsuarioAlteracao        = strtoul( pParam->idUsuario,0,10 );
+    idSegmentacao             = strtoul( pParam->idSegmentacao,0,10 ); 
+    idGrupo                   = strtoul( pParam->idGrupo,0,10 );   
+    inAprovadoLegado          = pParam->inAprovadoLegado ;
+    inStatusComunicacao       = pParam->inStatusComunicacao ;
+    
+    strToOra(dsRetornoConsulta, pParam->dsRetornoConsulta );             // -- TEXTO DE RETONO DO LEGADO (ATLYS)
+    strToOra(nrDocumento, pParam->nrDocumento );                     // -- NUMERO DO CPF
+    strToOra(nrConta, pParam->nrConta );                         // -- NUMERO DA CONTA
+    strToOra(nrLinha, pParam->nrLinha );                         // -- NUMERO DA LINHA
+    strToOra(dtConsulta, strlen(pParam->dtConsulta)!=0?pParam->dtConsulta:"");                      // -- DATA DA CONSULTA AO LEGADO
+    strToOra(vlDebito, pParam->vlDebito );                       // -- VALOR DO DEBITO EM ABERTO
+    strToOra(idContaInadimplente, pParam->idContaInadimplente );             // -- IDENTIFICACAO DA CONTA INADIMPLENTE
+    strToOra(dtVencDebito, strlen(pParam->dtVencDebito)!=0?pParam->dtVencDebito:"" );                    // -- DATA DO VENCIMENTO DO DEBITO
+    strToOra(dtInterrupcao, strlen(pParam->dtInterrupcao )!=0?pParam->dtInterrupcao:"");                   // -- DATA DA FALHA DE COMUNICACAO COM O LEGADO
+    strToOra(idRegional, pParam->idRegional );                      // -- IDENTIFICACAO DA REGIONAL
+    strToOra(dsRegional, pParam->dsRegional );                      // -- NOME DA REGIONAL
+    strToOra(dsMotivoErro, pParam->dsMotivoErro );                   // -- DESCRICAO SUCINTA DO ERRO
+    strToOra(dsObsAnalise, pParam->dsObsAnalise )  ;                // -- TEXTO QUE O ANALISTA INFORMOU PARA A APROVACAO OU REPROVACAO
+
+    
+    ULOG( "idRetencao [%lu] ",idRetencao);
+    ULOG( "inAprovadoLegado [%d] ",inAprovadoLegado);
+    ULOG( "idUsuarioAlteracao [%lu]",idUsuarioAlteracao);
+    ULOG( "idSegmentacao [%lu] ",idSegmentacao);
+    ULOG( "idGrupo       [%lu] ",idGrupo);
+    ULOG( "dsRetornoConsulta[%s]",(char*)&dsRetornoConsulta.arr);
+    ULOG( "nrDocumento[%s]",(char*)&nrDocumento.arr);       
+    ULOG( "nrConta[%s]",(char*)&nrConta.arr);               
+    ULOG( "nrLinha[%s]",(char*)&nrLinha.arr);               
+    ULOG( "dtConsulta[%s]",(char*)&dtConsulta.arr);                 
+    ULOG( "vlDebito[%s]",(char*)&vlDebito.arr);               
+    ULOG( "dtInterrupcao[%s]",(char*)&dtInterrupcao.arr);               
+    ULOG( "idRegional[%s]",(char*)&idRegional.arr);
+    ULOG( "dsRegional[%s]",(char*)&dsRegional.arr);         
+    ULOG( "dsMotivoErro[%s]",(char*)&dsMotivoErro.arr);                 
+    ULOG( "dsObsAnalise[%s]",(char*)&dsObsAnalise.arr);                 
+    ULOG( "idContaInadimplente[%s]",(char*)&idContaInadimplente.arr );  
+    ULOG( "inStatusComunicacao[%d]",inStatusComunicacao) ;                //  -- ESTADOS DE COMUNICACAO 1 REPROVADO 0 APROVADO     
+    
+    
+    ULOG( 
+     " INSERT INTO RETENCAO.RELANALISECREDITO" 
+            "     ( "
+       "     IDRETENCAO          , "
+       "     DSRETORNOCONSULTA   , "
+       "     NRCONTA             , "
+       "     NRLINHA             , "
+       "     DTCONSULTA          , "
+       "     VLDEBITO           ,  "
+       "     IDCONTAINADIMPLENTE , "
+       "     IDREGIONAL          , "
+       "     DSREGIONAL          , "
+       "     DSMOTIVOERRO        , "
+       "     IDGRUPO             , "
+       "     IDSEGMENTO       ,    "
+       "     INAPROVADOLEGADO    , "
+       "     INSTATUSCOMUNICACAO , "
+       "     IDUSUARIOALTERACAO  , "
+       "     DTULTIMAALTERACAO     "
+       " )                         "
+       " VALUES                    "
+       " ( %lu , %s  , %s  ,%s  ,%s  ,%s  ,%s  ,%s,%s,%s,%lu ,%lu ,%d,%d,%lu , SYSDATE )",
+       idRetencao,(char*)&dsRetornoConsulta,(char*)&nrConta,(char*)&nrLinha,(char*)&dtConsulta,
+       (char*)&vlDebito,(char*)&idContaInadimplente,(char*)&idRegional,(char*)&dsRegional,
+       (char*)&dsMotivoErro,idGrupo,idSegmentacao,inAprovadoLegado,inStatusComunicacao,idUsuarioAlteracao
+        );
+    
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+
+
+    EXEC SQL
+    INSERT INTO RETENCAO.RELANALISECREDITO
+        (
+            IDRETENCAO          ,
+            DSRETORNOCONSULTA   ,
+            NRCONTA             ,
+            NRLINHA             ,
+            DTCONSULTA          ,
+            VLDEBITO           ,
+            IDCONTAINADIMPLENTE ,
+            IDREGIONAL          ,
+            DSREGIONAL          ,
+            DSMOTIVOERRO        ,
+            IDGRUPO             ,
+            IDSEGMENTO       ,
+            INAPROVADOLEGADO    ,
+            INSTATUSCOMUNICACAO ,
+            IDUSUARIOALTERACAO  ,
+            DTULTIMAALTERACAO   
+        )
+        VALUES
+        (
+            :idRetencao,
+            :dsRetornoConsulta,              // -- TEXTO DE RETONO DO LEGADO (ATLYS)
+            :nrConta,                        // -- NUMERO DA CONTA
+            :nrLinha,                        // -- NUMERO DA LINHA
+            :dtConsulta,                     //:dtConsulta[64];  // -- DATA DA CONSULTA AO LEGADO
+            :vlDebito,                      // -- VALOR DO DEBITO EM ABERTO
+            :idContaInadimplente,            // -- IDENTIFICACAO DA CONTA INADIMPLENTE
+            :idRegional,                     // -- IDENTIFICACAO DA REGIONAL
+            :dsRegional,                     // -- NOME DA REGIONAL
+            :dsMotivoErro,                   // -- DESCRICAO SUCINTA DO ERRO
+            :idGrupo,
+            :idSegmentacao,
+            :inAprovadoLegado,
+            :inStatusComunicacao,
+            :idUsuarioAlteracao,             // -- NUMERO DO USUARIO ALTERACAO
+            SYSDATE                         // :dtUltimaAlteracao,              // -- DATA DE ALTERACAO
+        );
+
+ 
+
+    ULOG_END( "InsereRetencaoRelAnalise()" );
+
+}
+
+// incluir um registro na tabela orreta de retencao
+void InsereRetencaoOferta(stParametros * pParam)
+{
+    ULOG_START( "InsereRetencaoOferta()" );
+    string dynstmt;
+    int qtArgumentos = 0;
+    char buffer[256];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR dycomandoInsert[60];
+        char * dyinsert;
+        VARCHAR SiglaOferta[20];
+        int     qtParam = 0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memset( buffer, 0x0, sizeof(buffer));
+    memset( &dycomandoInsert, 0x0, sizeof(dycomandoInsert));
+
+    strToOra( SiglaOferta, pParam->sgOfertaAceita );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            DSSTATEMENT
+        INTO
+            :dycomandoInsert
+        FROM
+            RETENCAO.NEGOCIO
+        WHERE
+            SGOFERTA = :SiglaOferta;
+                
+    endOraStr( dycomandoInsert );
+    
+    ULOG("SiglaOferta = [%s]",(char *)&SiglaOferta.arr);
+    ULOG("dycomandoInsert = [%s]",(char *)&dycomandoInsert.arr);
+
+    ULOG("pParam->sNomeCampo = [%s]",pParam->sNomeCampo);
+    ULOG("pParam->sValorCampo  = [%s]",pParam->sValorCampo );
+
+    if ( sqlca.sqlcode != 1403 )  // Encontrou statement
+    {
+        
+        // incluindo campos  estes campos nao vem no xlm de entrada  
+
+        sprintf( buffer,"%s",(char *)&dycomandoInsert.arr );
+        dynstmt = buffer;
+        dynstmt += " ( IDUSUARIOINCLUSAO ,DTINCLUSAO , IDRETENCAO ";
+        sprintf( buffer,"%s",pParam->sNomeCampo );
+        dynstmt += buffer;
+        dynstmt += " ) VALUES (";
+        sprintf( buffer,"%s",pParam->idUsuario );
+        dynstmt += buffer;
+        dynstmt += " , SYSDATE , ";
+        sprintf( buffer,"%s",pParam->idRetencao );
+        dynstmt += buffer;
+        sprintf( buffer,"%s",pParam->sValorCampo );
+        dynstmt += buffer;
+        dynstmt += " ) ";
+        
+        // incluindo valor dos  campos nao vem no xlm de entrada  
+
+        dyinsert = (char *)dynstmt.c_str();
+
+        ULOG( "Executar Statement [%s]\n",dyinsert );
+
+        // strToOra(dyinsert,dynstmt);
+
+        char vTime[65];
+        memset(vTime,0x0,sizeof(vTime));
+        dataAtual(vTime);
+        ULOG("INICIO DA EXECUCAO DA INCLUSAO TIME = [%s] ",vTime) ;
+
+        
+        
+        EXEC SQL EXECUTE IMMEDIATE :dyinsert;
+
+        memset(vTime,0x0,sizeof(vTime));
+        dataAtual(vTime);
+        ULOG("FIM DA EXECUCAO DA INCLUSAO TIME = [%s] ",vTime) ;
+
+
+    }
+    else
+        ULOGE( "*** STATEMENT NAO ENCONTRADO..." );
+
+
+    ULOG_END( "InsereRetencaoOferta()" );
+
+}
+
+
+
+void conv_Numero( char *pNumero )
+{
+    if( isdigit(pNumero[1]) != 0 )
+    { 
+        char temp[40];
+        char tempcomv[40];
+        short tam=0 ;
+        char *pdest;
+        int i,k;
+
+        memset( temp    , 0x0, sizeof(temp) );
+        memset( tempcomv, 0x0, sizeof(tempcomv) );
+
+        pdest = strchr(pNumero,',') ;
+
+/*
+        for(int i = 0; pNumero[i] != NULL; i++ )
+        {
+            if (pNumero[i] != '.' && pNumero[i] != ',')
+                strncat(temp,&pNumero[i],1);
+        }
+*/
+
+
+        for( i=k=0; pNumero[i++] != NULL;  )
+        {
+            if ( pNumero[i] == '.' || pNumero[i] == ',' )
+                continue;
+                
+            temp[k++] = pNumero[i];
+        }
+
+        tam = strlen(temp);    
+        if ( (tam >2) && (pdest != NULL) ) 
+        {    
+            strncat(tempcomv,temp,tam-3);
+            strcat(tempcomv,",");
+            strcat(tempcomv,temp+tam-3);
+            strcat(pNumero,tempcomv);
+        }
+        else
+            strcpy( pNumero,temp );
+
+    }
+
+}
+
+
+
+
+/*
+void careg_RETENCAOAPARELHO(char *sCanpo,char *sValor, stRetencaoAparelho *Reg)
+{
+  switch ( sCanpo ) 
+  {
+      // case  "IDUSUARIOINCLUSAO" :
+      // case  "IDRETENCAO"        :       
+      case  "DTRETIRADA"        :   
+        strcpy(Reg->DTRETIRADA,sValor);
+        break;
+      // case  "DTINCLUSAO"        :       
+      case  "NMLOJA"            :     
+        strcpy(Reg->NMLOJA,sValor)  ;
+        break;
+      case  "NRORDEMVENDA"      :       
+        strcpy(Reg->NRORDEMVENDA,sValor);
+        break;
+      case  "VLPRECOREAL"       :       
+        strcpy(Reg->DTRETIRADA,sValor);
+        break;
+      case  "VLPRECOABS"        :       
+        strcpy(Reg->VLPRECOABS,sValor);
+        break;
+      case  "NMCOR"             :       
+        strcpy(Reg->NMCOR,sValor);
+        break;
+      case  "INTIPOENTREGA"     :       
+        strcpy(Reg->INTIPOENTREGA,sValor);
+        break;
+      case  "IDTIPOPAGAMENTOAPARELHO"  :
+        strcpy(Reg->IDTIPOPAGAMENTOAPARELHO,sValor);
+        break;
+      case  "DSMODELO"                 :
+        strcpy(Reg->DSMODELO,sValor);
+        break;
+      case  "NRPARCELAS"               :
+        strcpy(Reg->NRPARCELAS,sValor);
+        break;
+      case  "VLPERCENTUALDESCONTO"     :
+        strcpy(Reg->VLPERCENTUALDESCONTO,sValor);
+        break;
+      case  "VLPARCELA"                :
+        strcpy(Reg->VLPARCELA,sValor);
+        break;
+      case  "DSENDERECOENTREGA"        :
+        strcpy(Reg->DSENDERECOENTREGA,sValor);
+        break;
+      case  "DSDOCUMENTOTERCEIRO"      :
+        strcpy(Reg->DSDOCUMENTOTERCEIRO,sValor);
+        break;
+      case  "IDAPARELHO"               :
+        strcpy(Reg->IDAPARELHO,sValor);
+        break;
+      case  "DSCONTATOTELEFONE"        :
+        strcpy(Reg->DSCONTATOTELEFONE,sValor);
+        break;
+      case  "QTESTOQUELOJA"            :
+        strcpy(Reg->QTESTOQUELOJA,sValor);
+        break;
+      case  "NMPESSOARECEBE"           :
+        strcpy(Reg->NMPESSOARECEBE,sValor);
+        break;
+  }
+}
+
+*/
+void careg_RETENCAOAPARELHO(char *sCanpo,char *sValor, stRetencaoAparelho *Reg)
+{
+    ULOG_START( "careg_RETENCAOAPARELHO()" );
+    
+       char vetValor[256];
+       int tam = 0;
+       vetValor[0]='\0';
+       strcpy(vetValor,sValor+1);
+       tam=strlen(vetValor) ;
+       vetValor[tam-1]='\0';  
+    
+    
+    ULOG( "sCanpo [%s]",sCanpo );
+    ULOG( "sValor [%s]",sValor );
+
+      if(strcmp(sCanpo,  "DTRETIRADA")== 0 )
+        strcpy(Reg->DTRETIRADA,vetValor);
+
+      // case  "DTINCLUSAO"        :       
+      if(strcmp(sCanpo,  "NMLOJA" )== 0 )
+        strcpy(Reg->NMLOJA,vetValor)  ;
+        
+      if(strcmp(sCanpo,  "NRORDEMVENDA"  )== 0 )
+        strcpy(Reg->NRORDEMVENDA,vetValor);
+        
+      if(strcmp(sCanpo,  "VLPRECOREAL" )== 0 )
+        strcpy(Reg->VLPRECOREAL,vetValor);
+        
+      if(strcmp(sCanpo,  "VLPRECOABS")== 0 )
+        strcpy(Reg->VLPRECOABS,vetValor);
+        
+      if(strcmp(sCanpo,  "NMCOR")== 0 )
+        strcpy(Reg->NMCOR,vetValor);
+       
+      if(strcmp(sCanpo,  "INTIPOENTREGA")== 0 )
+        strcpy(Reg->INTIPOENTREGA,vetValor);
+        
+      if(strcmp(sCanpo,   "IDTIPOPAGAMENTOAPARELHO")== 0 )
+        strcpy(Reg->IDTIPOPAGAMENTOAPARELHO,vetValor);
+        
+      if(strcmp(sCanpo,   "DSMODELO")== 0 )
+        strcpy(Reg->DSMODELO,vetValor);
+        
+      if(strcmp(sCanpo,   "NRPARCELAS")== 0 )
+        strcpy(Reg->NRPARCELAS,vetValor);
+       
+      if(strcmp(sCanpo,  "VLPERCENTUALDESCONTO")== 0 )
+        strcpy(Reg->VLPERCENTUALDESCONTO,vetValor);
+        
+      if(strcmp(sCanpo,  "VLPARCELA")== 0 )
+        strcpy(Reg->VLPARCELA,vetValor);
+        
+      if(strcmp(sCanpo,  "DSENDERECOENTREGA")== 0 )
+        strcpy(Reg->DSENDERECOENTREGA,vetValor);
+        
+      if(strcmp(sCanpo,   "DSDOCUMENTOTERCEIRO")== 0 )
+        strcpy(Reg->DSDOCUMENTOTERCEIRO,vetValor);
+        
+      if(strcmp(sCanpo,  "IDAPARELHO")== 0 )
+        strcpy(Reg->IDAPARELHO,vetValor);
+        
+      if(strcmp(sCanpo,   "DSCONTATOTELEFONE" )== 0 )
+        strcpy(Reg->DSCONTATOTELEFONE,vetValor);
+        
+      if(strcmp(sCanpo,  "QTESTOQUELOJA")== 0 )
+        strcpy(Reg->QTESTOQUELOJA,vetValor);
+        
+      if(strcmp(sCanpo,   "NMPESSOARECEBE")== 0 )
+        strcpy(Reg->NMPESSOARECEBE,vetValor);
+        
+      if(strcmp(sCanpo,   "MATERIAL")== 0 )
+        strcpy(Reg->MATERIAL,vetValor);
+        
+      
+    ULOG_END( "careg_RETENCAOAPARELHO()" );
+        
+  
+};
+
+void ins_RETENCAOAPARELHO(stRetencaoAparelho *pParam )
+{
+
+    
+
+
+   EXEC SQL BEGIN DECLARE SECTION;
+     VARCHAR   IDUSUARIOINCLUSAO[30];       //       NUMBER,
+     VARCHAR   IDRETENCAO[30] ;              //      NUMBER(16)           NOT NULL,
+     VARCHAR   DTRETIRADA[60];                  //   DATE,
+     //   DTINCLUSAO                //     DATE,
+     VARCHAR   NMLOJA[60];                     //   VARCHAR2(60 BYTE),
+     VARCHAR   NRORDEMVENDA[20];                //   VARCHAR2(18 BYTE),
+     VARCHAR   VLPRECOREAL[20];                 //   NUMBER(8,2),
+     VARCHAR   VLPRECOABS[20];                 //   NUMBER(8,2),
+     VARCHAR   NMCOR[20];                    //   VARCHAR2(20 BYTE),
+     VARCHAR   INTIPOENTREGA[60] ;              //   NUMBER,
+     VARCHAR   IDTIPOPAGAMENTOAPARELHO[6];    //   NUMBER(6),
+     VARCHAR   DSMODELO[60] ;                   //   VARCHAR2(60 BYTE),
+     VARCHAR   NRPARCELAS[60]  ;                //   NUMBER(4),
+     VARCHAR   VLPERCENTUALDESCONTO[3];        //   NUMBER(3),
+     VARCHAR   VLPARCELA[20];                   //   NUMBER(9,2),
+     VARCHAR   DSENDERECOENTREGA [120];          //   VARCHAR2(120 BYTE),
+     VARCHAR   DSDOCUMENTOTERCEIRO[20] ;        //   VARCHAR2(20 BYTE),
+     VARCHAR   IDAPARELHO[20];                 //   NUMBER,
+     VARCHAR   DSCONTATOTELEFONE[60];           //   VARCHAR2(60 BYTE),
+     VARCHAR   QTESTOQUELOJA[6] ;              //   NUMBER(6),
+     VARCHAR   NMPESSOARECEBE[60] ;             //   VARCHAR2(60 BYTE)
+     VARCHAR   MATERIAL[60] ; 
+   EXEC SQL END DECLARE SECTION;
+     
+    memset(&NRORDEMVENDA ,0x0,sizeof(NRORDEMVENDA));
+    strToOra( IDUSUARIOINCLUSAO, pParam->IDUSUARIOINCLUSAO ); 
+    strToOra( IDRETENCAO, pParam->IDRETENCAO );     
+   
+    
+    strToOra( DTRETIRADA, pParam->DTRETIRADA ); 
+    strToOra( NMLOJA, pParam->NMLOJA );     
+    strToOra( NRORDEMVENDA, pParam->NRORDEMVENDA);
+    strToOra( VLPRECOREAL, pParam->VLPRECOREAL); 
+    strToOra( VLPRECOABS, pParam->VLPRECOABS);   
+    strToOra( NMCOR, pParam->NMCOR );        
+    strToOra( INTIPOENTREGA, pParam->INTIPOENTREGA) ;
+    strToOra( IDTIPOPAGAMENTOAPARELHO, pParam->IDTIPOPAGAMENTOAPARELHO );
+    strToOra( DSMODELO , pParam->DSMODELO );              
+    strToOra( NRPARCELAS , pParam->NRPARCELAS ) ;           
+    strToOra( VLPERCENTUALDESCONTO, pParam->VLPERCENTUALDESCONTO );   
+    strToOra( VLPARCELA, pParam->VLPARCELA );              
+    strToOra( DSENDERECOENTREGA, pParam->DSENDERECOENTREGA ) ;     
+    strToOra( DSDOCUMENTOTERCEIRO, pParam->DSDOCUMENTOTERCEIRO) ;   
+    strToOra( IDAPARELHO, pParam->IDAPARELHO );             
+    strToOra( DSCONTATOTELEFONE, pParam->DSCONTATOTELEFONE );      
+    strToOra( QTESTOQUELOJA, pParam->QTESTOQUELOJA) ;         
+    strToOra( NMPESSOARECEBE , pParam->NMPESSOARECEBE);        
+    strToOra( MATERIAL , pParam->MATERIAL);        
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+        INSERT INTO RETENCAO.RETENCAOAPARELHO
+        (
+          IDUSUARIOINCLUSAO       , //NUMBER,
+          IDRETENCAO              , //NUMBER(16)           NOT NULL,
+          DTRETIRADA              , //DATE,
+          DTINCLUSAO              , //DATE,
+          NMLOJA                  , //VARCHAR2(60 BYTE),
+          NRORDEMVENDA            , //VARCHAR2(18 BYTE),
+          VLPRECOREAL             , //NUMBER(8,2),
+          VLPRECOABS              , //NUMBER(8,2),
+          NMCOR                   , //VARCHAR2(20 BYTE),
+          INTIPOENTREGA           , //NUMBER,
+          IDTIPOPAGAMENTOAPARELHO , //NUMBER(6),
+          DSMODELO                , //VARCHAR2(60 BYTE),
+          NRPARCELAS              , //NUMBER(4),
+          VLPERCENTUALDESCONTO    , //NUMBER(3),
+          VLPARCELA               , //NUMBER(9,2),
+          DSENDERECOENTREGA       , //VARCHAR2(120 BYTE),
+          DSDOCUMENTOTERCEIRO     , //VARCHAR2(20 BYTE),
+          IDAPARELHO              , //NUMBER,
+          DSCONTATOTELEFONE       , //VARCHAR2(60 BYTE),
+          QTESTOQUELOJA           , //NUMBER(6),
+          NMPESSOARECEBE          , //VARCHAR2(60 BYTE)
+          MATERIAL
+        )
+        VALUES
+        (
+          :IDUSUARIOINCLUSAO       ,
+          :IDRETENCAO              ,
+          :DTRETIRADA              ,
+           SYSDATE                 ,
+          :NMLOJA                  ,
+          :NRORDEMVENDA            ,
+          :VLPRECOREAL             ,
+          :VLPRECOABS              ,
+          :NMCOR                   ,
+          :INTIPOENTREGA           ,
+          :IDTIPOPAGAMENTOAPARELHO ,
+          :DSMODELO                ,
+          :NRPARCELAS              ,
+          :VLPERCENTUALDESCONTO    ,
+          :VLPARCELA               ,
+          :DSENDERECOENTREGA       ,
+          :DSDOCUMENTOTERCEIRO     ,
+          :IDAPARELHO              ,
+          :DSCONTATOTELEFONE       ,
+          :QTESTOQUELOJA           ,
+          :NMPESSOARECEBE          ,
+          :MATERIAL 
+        );
+
+}
+
+// tem como objetivo retorna o idatendiemento do retorno da execucao do processo
+void ret_idAtendiemento(char * string , char*retorno )
+{
+   char str[] =    "idAtendimento>";
+   char *pdest;
+   char vet_temp[40];
+   memset(retorno,0x0,sizeof(retorno) );
+   int i=0 ;
+   pdest = strstr( string, str );
+   for( ; ( *(pdest++) != '<') && ( *(pdest) != '\0') ; )
+   {
+       if ( isdigit(*(pdest)) != 0 )
+       {
+             vet_temp[i]  = *(pdest) ;
+             i++;
+       }
+   }
+   vet_temp[i] = '\0';
+   strcpy(retorno,vet_temp);
+}   
+
+void dataAtual(char* data)
+{
+    ULOG_START("cRegContatoPC::dataAtual()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR dataAtual[64];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    EXEC SQL 
+        SELECT
+            TO_CHAR(SYSDATE, 'DD/MM/YYYY HH24:MI')
+        INTO    
+            :dataAtual
+        FROM
+            dual;
+
+    CONV(dataAtual);
+
+    strcpy(data, (char*) dataAtual.arr);
+
+    ULOG("Dados obtidos - dataAtual = [%s]", dataAtual.arr);
+
+    ULOG_END("cRegContatoPC::dataAtual()");
+}
+
+void conclui_retencao(unsigned long idRetencaoOld)
+{
+  ULOG_START("conclui_retencao()");  
+  ULOG("idRetencaoOld = [%lu]");
+  EXEC SQL BEGIN DECLARE SECTION;
+  	  unsigned long  Idretencao=idRetencaoOld; 				              //  CHAVE PRIMARIA   		
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    
+    EXEC SQL UPDATE RETENCAO.RETENCAOANALISE
+    	 SET 
+          IDTIPOANALISE   = 0  // valor definido na tabela TIPOANALISE
+    	WHERE IDRETENCAO  = :Idretencao;
+  
+  ULOG_END("conclui_retencao()");    
+}
+
+
+void rte_pegaidmatrizoferta(char *pszsgoferta,char* pIDmatriz)
+{
+  ULOG_START("rte_pegaidmatrizoferta()");  
+  ULOG("pszsgoferta = [%s]");
+  
+  EXEC SQL BEGIN DECLARE SECTION;
+  VARCHAR szSgOf[4];
+  VARCHAR idMt[21+1];
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  
+  strToOra(szSgOf,pszsgoferta);
+
+  EXEC SQL
+  select idmatrizoferta
+  INTO: idMt
+  from retencao.matrizoferta
+  where idoferta =(select idunidadeoferta
+	  		   	   from retencao.oferta 
+                   where sgclassificacao=:szSgOf
+				   AND ROWNUM<=1)
+  AND ROWNUM<=1;
+  
+  endOraStr(idMt);
+  
+  strcpy(pIDmatriz,(char*)idMt.arr);
+
+  ULOG_END("rte_pegaidmatrizoferta()");    
+}
+
+void get_SMS(char *_idPessoaDePara,char *_nrTelefoneSMS)
+{
+  ULOG_START("get_SMS()");  
+  ULOG("pszsgoferta = [%s]");
+  
+  EXEC SQL BEGIN DECLARE SECTION;
+  
+      VARCHAR idPessoaDePara[256];
+      VARCHAR IDPESSOACOMUNICACAO[256];
+      VARCHAR IDTIPOCOMUNICACAO[256];
+      VARCHAR SGTIPOCOMUNICACAO[256];
+      VARCHAR DSTIPOCOMUNICACAO[256];
+      VARCHAR DSCONTATO[256];
+
+      short  i_IDPESSOACOMUNICACAO=-1;
+      short  i_IDTIPOCOMUNICACAO=-1;
+      short  i_SGTIPOCOMUNICACAO=-1;
+      short  i_DSTIPOCOMUNICACAO=-1;
+      short  i_DSCONTATO=-1;
+      
+      
+  EXEC SQL END DECLARE SECTION;
+  
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  
+  memset(&idPessoaDePara,0,sizeof(idPessoaDePara));
+  memset(&IDPESSOACOMUNICACAO,0,sizeof(IDPESSOACOMUNICACAO));
+  memset(&IDTIPOCOMUNICACAO,0,sizeof(IDTIPOCOMUNICACAO));
+  memset(&SGTIPOCOMUNICACAO,0,sizeof(SGTIPOCOMUNICACAO));
+  memset(&DSTIPOCOMUNICACAO,0,sizeof(DSTIPOCOMUNICACAO));
+  memset(&DSCONTATO,0,sizeof(DSCONTATO));
+  
+  
+  strToOra(idPessoaDePara,_idPessoaDePara);
+  
+  ULOG(
+  	" SELECT  "
+	   "  PESSOACOMUNICACAO.IDPESSOACOMUNICACAO "
+	   " ,TIPOCOMUNICACAO.IDTIPOCOMUNICACAO "
+	   " ,TIPOCOMUNICACAO.SGTIPOCOMUNICACAO "
+	   " ,TIPOCOMUNICACAO.DSTIPOCOMUNICACAO "
+	   " ,PESSOACOMUNICACAO.DSCONTATO "
+	" FROM "
+	  "  CUSTOMER.PESSOACOMUNICACAO PESSOACOMUNICACAO, "
+	  "  APOIO.TIPOCOMUNICACAO TIPOCOMUNICACAO" 
+	" WHERE PESSOACOMUNICACAO.IDTIPOCOMUNICACAO = TIPOCOMUNICACAO.IDTIPOCOMUNICACAO "
+	" AND   PESSOACOMUNICACAO.IDPESSOA IN  ("
+	       " SELECT PESSOADEPARA.IDPESSOAORIGEM "
+	       " FROM CUSTOMER.PESSOADEPARA PESSOADEPARA"
+	       " WHERE PESSOADEPARA.IDPESSOADEPARA = %s  )"
+	" AND   TIPOCOMUNICACAO.IDTIPOCOMUNICACAO IN ( "
+	       "   SELECT A.IDTIPOCOMUNICACAO "
+	       " FROM APOIO.TIPOCOMUNICACAO A "
+	       " WHERE A.SGTIPOCOMUNICACAO = 'CELULAR' )"
+	" AND PESSOACOMUNICACAO.DTEXPIRACAO IS NULL",(char*)idPessoaDePara.arr
+       );
+
+  EXEC SQL
+	SELECT  
+	     PESSOACOMUNICACAO.IDPESSOACOMUNICACAO
+	    ,TIPOCOMUNICACAO.IDTIPOCOMUNICACAO
+	    ,TIPOCOMUNICACAO.SGTIPOCOMUNICACAO
+	    ,TIPOCOMUNICACAO.DSTIPOCOMUNICACAO
+	    ,PESSOACOMUNICACAO.DSCONTATO
+	INTO    
+       :IDPESSOACOMUNICACAO:i_IDPESSOACOMUNICACAO
+      ,:IDTIPOCOMUNICACAO:i_IDTIPOCOMUNICACAO
+      ,:SGTIPOCOMUNICACAO:i_SGTIPOCOMUNICACAO
+      ,:DSTIPOCOMUNICACAO:i_DSTIPOCOMUNICACAO
+      ,:DSCONTATO:i_DSCONTATO
+	FROM 
+	    CUSTOMER.PESSOACOMUNICACAO PESSOACOMUNICACAO,
+	    APOIO.TIPOCOMUNICACAO TIPOCOMUNICACAO
+	WHERE PESSOACOMUNICACAO.IDTIPOCOMUNICACAO = TIPOCOMUNICACAO.IDTIPOCOMUNICACAO
+	AND   PESSOACOMUNICACAO.IDPESSOA IN
+	      (
+	        SELECT PESSOADEPARA.IDPESSOAORIGEM 
+	        FROM CUSTOMER.PESSOADEPARA PESSOADEPARA
+	        WHERE PESSOADEPARA.IDPESSOADEPARA = :idPessoaDePara
+	      )
+	AND   TIPOCOMUNICACAO.IDTIPOCOMUNICACAO IN
+	      (
+             SELECT A.IDTIPOCOMUNICACAO 
+	        FROM APOIO.TIPOCOMUNICACAO A
+	        WHERE A.SGTIPOCOMUNICACAO = 'CELULAR'
+	      )
+	AND PESSOACOMUNICACAO.DTEXPIRACAO IS NULL;
+	
+	
+  endOraStr(IDPESSOACOMUNICACAO);
+  endOraStr(IDTIPOCOMUNICACAO);
+  endOraStr(SGTIPOCOMUNICACAO);
+  endOraStr(DSTIPOCOMUNICACAO);
+  endOraStr(DSCONTATO);
+  
+  ULOG("IDPESSOACOMUNICACAO =[%s]",(char*)IDPESSOACOMUNICACAO.arr);
+  ULOG("IDTIPOCOMUNICACAO =[%s]",(char*)IDTIPOCOMUNICACAO.arr);
+  ULOG("SGTIPOCOMUNICACAO =[%s]",(char*)SGTIPOCOMUNICACAO.arr);
+  ULOG("DSTIPOCOMUNICACAO =[%s]",(char*)DSTIPOCOMUNICACAO.arr);
+  ULOG("DSCONTATO =[%s]",(char*)DSCONTATO.arr);
+
+  if ( i_DSCONTATO != -1 )
+      strcpy(_nrTelefoneSMS,(char*)DSCONTATO.arr);
+
+  ULOG_END("get_SMS()");    
+}
+
+void GetCaracteristicaOferta( char * sNomeColunaPrm, char * idCaractOfertaPrm, char * sNomePropriedadePrm )
+{
+    ULOG_START("GetCaracteristicaOferta()");  
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+    
+        VARCHAR sNomeColuna[256];
+        VARCHAR idCaractOferta[256];
+        VARCHAR sNomePropriedade[256]; 
+        
+        short i_sNomePropriedade = -1;
+        short i_idCaractOferta = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &sNomeColuna,0x0,sizeof(sNomeColuna) );
+    memset( &idCaractOferta,0x0,sizeof(idCaractOferta) );
+    memset( &sNomePropriedade,0x0,sizeof(sNomePropriedade) );
+    
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    
+    strToOra(sNomeColuna,sNomeColunaPrm);
+    
+    EXEC SQL
+        SELECT 
+               CARACTERISTICAOFERTA.DSCARACTERISTICAOFERTA
+              ,CARACTERISTICAOFERTA.IDCARACTERISTICAOFERTA
+        INTO
+             :sNomePropriedade:i_sNomePropriedade,
+             :idCaractOferta:i_idCaractOferta
+        FROM RETENCAO.CARACTERISTICAOFERTA CARACTERISTICAOFERTA	
+        WHERE
+            UPPER(TRIM(CARACTERISTICAOFERTA.NMCOLUNA)) = UPPER(TRIM(:sNomeColuna))
+        AND ROWNUM < 2;
+    
+    if ( i_sNomePropriedade != -1 )
+    {
+        endOraStr(sNomePropriedade);
+        strcpy( sNomePropriedadePrm, (char *)sNomePropriedade.arr );
+    }
+    if ( i_sNomePropriedade != -1 )
+    {
+        endOraStr(idCaractOferta);
+        strcpy( idCaractOfertaPrm, (char *)idCaractOferta.arr );
+    }
+
+    ULOG( "Valores de sNomePropriedadePrm [%s], idCaractOfertaPrm [%s]",sNomePropriedadePrm,idCaractOfertaPrm );
+    
+    ULOG_END("GetCaracteristicaOferta()");    
+}
+
+
+
+void trim1(string& str)
+{
+  string::size_type pos1 = str.find_first_not_of(' ');
+  string::size_type pos2 = str.find_last_not_of(' ');
+  str = str.substr(pos1 == string::npos ? 0 : pos1, 
+    pos2 == string::npos ? str.length() - 1 : pos2 - pos1 + 1);
+}

@@ -1,0 +1,309 @@
+/**
+ * Serviço de validação de senha e solicitação de segmetação de cliente, ativado via URA
+ **/
+
+#include <stdio.h>
+#include <sqlca.h>
+#include <sqlda.h>
+#include <string.h>
+#include <iostream.h>
+#include "ValSenhaSolicSegmentacaoFxId.hpp"
+#include "../../../negocio/commons/include/Commom.hpp"
+#include "../../../negocio/commons/include/stLinha.hpp"
+#include "../../../negocio/UraPrePago/include/Util.h"
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+extern struct sqlca sqlca;
+void TipoConta( char * idLinhaTelefonicaPrm, char * sTipoContaPrm );
+char * alltrim(char *pStr);
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../../../negocio/commons/include/stLinha.hpp"
+EXEC SQL END DECLARE SECTION;
+
+void TipoConta( char * idLinhaTelefonicaPrm, char * sTipoContaPrm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * idLinhaTelefonica = idLinhaTelefonicaPrm;
+        VARCHAR sTipoConta[256];
+        short i_sTipoConta = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &sTipoConta, 0x0, sizeof(sTipoConta) );
+    
+    tuxfw_getlogger()->information( ">>> TipoConta()" );
+
+    tuxfw_getlogger()->information( "*** Consultando idLinhaTelefonica [%s]", idLinhaTelefonica );
+    
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+    select
+       tipoconta.dstipoconta
+    into
+       :sTipoConta:i_sTipoConta
+    from
+       customer.linhaconta   linhaconta ,
+       customer.conta          conta ,
+       apoio.tipoconta          tipoconta
+    where
+       linhaconta.idlinhatelefonica = :idLinhaTelefonica
+    and linhaconta.idconta = conta.idconta
+    and conta.idtipoconta = tipoconta.idtipoconta;
+    
+    CONVIND( sTipoConta, i_sTipoConta );
+    
+    if ( i_sTipoConta != -1 )
+    {
+        strcpy( sTipoContaPrm,(char*)&sTipoConta.arr );
+    }
+    
+    tuxfw_getlogger()->information( "### Tipo Conta [%s]", sTipoContaPrm );
+    
+    tuxfw_getlogger()->information( "<<< TipoConta()" );
+
+}
+
+
+
+void RecuperarDados( struct stStatuslinha *stLinha, struct stVlStatuslinha *stVlLinha )
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		struct stStatuslinha o_stLinha;
+		struct stVlStatuslinha o_vlLinha;
+		int iAtendimentoFO = 0;
+        
+	EXEC SQL END DECLARE SECTION;
+
+	tuxfw_getlogger()->information("linha %s",stLinha->chrTelefone);
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(&o_stLinha, ERR_DATABASE);
+
+	memset( &o_stLinha, 0, sizeof( o_stLinha ) );
+	memcpy(&o_stLinha,&(*stLinha),sizeof(o_stLinha));
+
+	memset( &o_vlLinha, 0, sizeof( o_vlLinha ) );
+	memcpy(&o_vlLinha,&(*stVlLinha),sizeof(o_vlLinha));
+
+    
+    o_stLinha.ntStatus = 0;
+
+	EXEC SQL SELECT /*+ FIRST_ROWS(10) NO_CPU_COSTING */
+		LT.IDLINHATELEFONICA,
+		NVL(IDCLUSTERLINHA,0) as IDCLUSTERLINHA
+	INTO	
+		:o_stLinha.dblIdlinhatelefonica:o_vlLinha.i_dblIdlinhatelefonica,
+		:o_stLinha.idClusterLinha:o_vlLinha.i_idClusterLinha
+	FROM
+		LINHA.LINHABASE LB,
+		LINHA.LINHATELEFONICA LT,
+		APOIO.AREAREGISTRO AR,
+		APOIO.ESTADOLINHA EL,
+		APOIO.TIPOLINHA TL
+	WHERE
+		LB.IDAREAREGISTRO = AR.IDAREAREGISTRO AND
+		LB.IDLINHABASE = LT.IDLINHABASE AND
+		LB.IDESTADOLINHA = EL.IDESTADOLINHA AND
+		TL.IDTIPOLINHA = LT.IDTIPOLINHA AND
+		LB.NRLINHA = TO_NUMBER(:o_stLinha.ntLinha) AND
+		AR.CDAREAREGISTRO = TO_NUMBER(:o_stLinha.ntArea);
+
+	if (o_vlLinha.i_dblIdlinhatelefonica == -1) {
+		tuxfw_getlogger()->information("Linha não encontrada.");
+		memcpy(&(*stLinha),&o_stLinha,sizeof(*stLinha));
+		memcpy(&(*stVlLinha),&o_vlLinha,sizeof(*stVlLinha));
+		o_stLinha.ntStatus = ERR_NOT_FOUND_OR_DISABLED;
+		return;
+	}
+
+	// tipo de carteira do cliente
+    EXEC SQL 
+    SELECT 
+		PESSOA.IDPESSOA,
+        decode(TIPOCARTEIRA.idtipocarteira, 0, -1, 13, -1, TIPOCARTEIRA.idtipocarteira) AS IDTIPOCARTEIRA
+    INTO
+			:o_stLinha.dblIdcliente:o_vlLinha.i_dblIdcliente,
+        :o_stLinha.ntCarteira:o_vlLinha.i_ntCarteira
+	FROM
+		LINHA.LINHATELEFONICA LINHATELEFONICA,
+		LINHA.LINHABASE LINHABASE,
+		APOIO.AREAREGISTRO AREAREGISTRO,
+		CUSTOMER.PESSOALINHA PESSOALINHA,
+		CUSTOMER.PESSOADEPARA PESSOADEPARA,
+		CUSTOMER.PESSOA PESSOA,
+		CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+		APOIO.TIPOPESSOA TIPOPESSOA,
+		APOIO.TIPOCARTEIRA TIPOCARTEIRA
+	WHERE
+		 LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+		 AND LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE
+		 AND LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA
+		 AND PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA
+		 AND PESSOALINHA.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+		 AND PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+		 AND PESSOA.IDTIPOPESSOA = TIPOPESSOA.IDTIPOPESSOA
+		 AND PESSOA.IDTIPOCARTEIRA = TIPOCARTEIRA.IDTIPOCARTEIRA
+		 AND LINHABASE.NRLINHA = TO_NUMBER(:o_stLinha.ntLinha)
+        AND AREAREGISTRO.CDAREAREGISTRO = TO_NUMBER(:o_stLinha.ntArea)
+        AND ROWNUM < 2;
+
+	// verifica se será atendido pelo FO	
+	EXEC SQL 
+    SELECT 
+        COUNT(1) 
+    INTO 
+        :iAtendimentoFO 
+    FROM 
+        CUSTOMER.PESSOAATENDIMENTOFO 
+    WHERE 
+        IDPESSOA = :o_stLinha.dblIdcliente;
+
+	if(iAtendimentoFO == 1)
+	{
+		o_stLinha.ntStatus = ERR_NAO_ATENDIDO_FO;
+	}
+	else
+	{
+		
+		tuxfw_getlogger()->information("Dados Cliente");
+
+		VerificaLinha( &o_stLinha, &o_vlLinha );
+	}
+	
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+    SELECT
+       SUBSEGMENTO.SGSUBSEGMENTO
+    INTO
+       :o_stLinha.cdCodigoSubSegmentoCliente:o_vlLinha.i_cdCodigoSubSegmentoCliente    
+    FROM
+       CUSTOMER.PESSOASUBSEGMENTO      PESSOASUBSEGMENTO ,
+       APOIO.SUBSEGMENTO               SUBSEGMENTO
+    WHERE
+       PESSOASUBSEGMENTO.IDPESSOA = :o_stLinha.dblIdcliente
+    AND PESSOASUBSEGMENTO.IDSUBSEGMENTO = SUBSEGMENTO.IDSUBSEGMENTO ;
+
+    tuxfw_getlogger()->information( "Codigo do Subsegmento [%s]", o_stLinha.cdCodigoSubSegmentoCliente );
+    alltrim( o_stLinha.cdCodigoSubSegmentoCliente );
+    tuxfw_getlogger()->information( "Codigo do Subsegmento [%s]", o_stLinha.cdCodigoSubSegmentoCliente );
+
+	memcpy(&(*stLinha),&o_stLinha,sizeof(*stLinha));
+	memcpy(&(*stVlLinha),&o_vlLinha,sizeof(*stVlLinha));
+}
+
+
+
+void VerificaLinha(  struct stStatuslinha *stLinha , struct stVlStatuslinha *stVlLinha )
+{
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct stStatuslinha o_stLinha;
+		struct stVlStatuslinha o_vlLinha;
+	EXEC SQL END DECLARE SECTION;	
+
+	memset( &o_stLinha, 0, sizeof( o_stLinha ) );
+	memcpy(&o_stLinha,&(*stLinha),sizeof(o_stLinha));
+
+	memset( &o_vlLinha, 0, sizeof( o_vlLinha ) );
+	memcpy(&o_vlLinha,&(*stVlLinha),sizeof(o_vlLinha));
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(&o_stLinha, ERR_DATABASE);
+
+	// segmento do cliente
+	EXEC SQL SELECT 
+		   SEGMENTACAO.SGSEGMENTACAO
+		   INTO :o_stLinha.ntSegmento:o_vlLinha.i_ntSegmento
+	FROM
+		CUSTOMER.PESSOADEPARA PESSOADEPARA,
+		CUSTOMER.PESSOASEGMENTACAO PESSOASEGMENTACAO,
+		CUSTOMER.PESSOASEGMENTACAOHISTORICO PESSOASEGMENTACAOHISTORICO,
+		APOIO.SEGMENTACAO SEGMENTACAO
+	WHERE
+		PESSOADEPARA.IDPESSOADEPARA = PESSOASEGMENTACAO.IDPESSOADEPARA
+		AND PESSOASEGMENTACAO.IDPESSOASEGMENTACAO = PESSOASEGMENTACAOHISTORICO.IDPESSOASEGMENTACAO
+		AND PESSOASEGMENTACAOHISTORICO.IDPESSOADEPARA = PESSOADEPARA.IDPESSOADEPARA
+		AND SEGMENTACAO.IDSEGMENTACAO = PESSOASEGMENTACAOHISTORICO.IDSEGMENTACAO
+		AND PESSOADEPARA.IDPESSOA = TO_NUMBER(:o_stLinha.dblIdcliente);
+
+        if (sqlca.sqlcode == 1403 || o_vlLinha.i_ntSegmento == -1) {
+                o_stLinha.ntSegmento = -1;
+                tuxfw_getlogger()->debug("Segmento não existe, setado para -1 (não classificado)");
+        }
+        tuxfw_getlogger()->debug("Segmento: %i", o_stLinha.ntSegmento);
+
+	// cep cliente
+    EXEC SQL 
+    SELECT 
+       TRIM( PESSOAENDERECO.NRCEP )
+    INTO 
+       :o_stLinha.chrCEPcliente:o_vlLinha.i_chrCEPcliente
+	FROM 
+       CUSTOMER.PESSOAENDERECO PESSOAENDERECO
+	WHERE
+       PESSOAENDERECO.IDPESSOA = TO_NUMBER(:o_stLinha.dblIdcliente)
+    AND 
+       ROWNUM < 2;
+
+    tuxfw_getlogger()->information("Cep Cliente");
+
+
+
+	// marcação de atendimento pessoal
+	strcpy( o_stLinha.chrAtendimentoPessoal, "N" );
+
+	tuxfw_getlogger()->information("Atendimento Pessoal");
+
+	memcpy(&(*stLinha),&o_stLinha,sizeof(*stLinha));
+	memcpy(&(*stVlLinha),&o_vlLinha,sizeof(*stVlLinha));
+
+	tuxfw_getlogger()->information("Fin Proceso");
+}
+
+
+
+void sql_error(struct stStatuslinha *stLinha, int Status)
+{
+        EXEC SQL WHENEVER SQLERROR CONTINUE;
+
+        stLinha->ntStatus = Status;
+	tuxfw_getlogger()->information("Error: %d", Status);
+
+	tuxfw_getlogger()->information("OraError: sqlca.sqlcode=[%d], sqlca.sqlerrm.sqlerrmc=[%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc);
+
+}
+
+
+
+void sql_error(struct stStatuslinha *stLinha, int Status, int sqlCode)
+{
+   EXEC SQL WHENEVER SQLERROR CONTINUE;
+    stLinha->ntStatus = Status;
+
+    tuxfw_getlogger()->information("Error: status=[%d], sqlcode=[%d]", Status,sqlCode);
+}
+
+
+char * alltrim(char *pStr)
+{
+	int rInd;
+
+	if (pStr == NULL)
+		return NULL;
+	rInd = strlen(pStr) - 1;
+
+	if (!isspace(pStr[rInd]))
+		return pStr;
+
+	while ( isspace(pStr[rInd]) && rInd >= 0)
+		rInd--;
+	pStr[rInd + 1] = '\0';
+	return pStr;
+}

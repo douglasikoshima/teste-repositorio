@@ -1,0 +1,4675 @@
+//
+// $Id: rel_retencao.pcpp,v 1.1 2009/07/31 15:33:36 a5110702 Exp $
+
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+#include "../include/rel_retencao.h"
+
+#define STRLENNULL( y ) ( y == NULL ? 0 : strlen( y )  )
+
+
+// controle de totais: definicao de tipos
+#define PORCINTENCAO	0
+#define PORCRETENCAO	1
+#define PORCMIGRACAO	2
+#define PORCCANCELADO	3
+#define PORCAPARELHOS	4
+#define PORCSUSPENSAO	5
+#define PORCADEQUACAO	6
+#define PORBONUS		7
+#define PORPONTOS		8
+#define NUMPERCENTUAIS	9
+
+#define IQTINTENCAO		0
+#define IQTRETENCAO		1
+#define IQTMIGRACAO		2
+#define IQTCANCELADO	3
+#define IQTAPARELHOS	4
+#define IQTSUSPENSAO	5
+#define IQTADEQUACAO	6
+#define IQBONUS			7
+#define IQPONTOS		8
+#define NUMQUANTIDADES	9
+// ***************************************
+char cFloat[21+1];
+char* floatToChar( float fValor );
+char* floatToCharPercente( float fValor );
+
+//********************************************************************************************
+//Relatório de Retencao
+int rel_retencao(char *stf, XMLGen*xml, const Filtro &stFiltro)
+{
+	struct sqlca sqlca;
+	ULOG("rel_retencao");
+	EXEC SQL BEGIN DECLARE SECTION;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		    float fargumento;
+		    float faparelho;
+		    float fbonus;
+		    float fmigracao;
+		    float fadequacao;
+		    float fpontos;
+		    float fsuspensao;
+			float fcancelado;
+			float fvaipensar;
+		} stTotalPorIntecao;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		    short sargumento;
+		    short saparelho;
+		    short sbonus;
+		    short smigracao;
+		    short sadequacao;
+		    short spontos;
+		    short ssuspensao;
+			short scancelado;
+			short svaipensar;
+		} stTotalPorIntecaoInd;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		    float fargumento;
+		    float faparelho;
+		    float fbonus;
+		    float fmigracao;
+		    float fadequacao;
+		    float fpontos;
+		    float fsuspensao;
+			float fcancelado;
+			float fvaipensar;
+		} stTotalPorDestino;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		    short sargumento;
+		    short saparelho;
+		    short sbonus;
+		    short smigracao;
+		    short sadequacao;
+		    short spontos;
+		    short ssuspensao;
+			short scancelado;
+			short svaipensar;
+		} stTotalPorDestinoInd;
+		int   iContador = 0;
+		int   iContadorGeral = 0;
+		int   iContadorIntermediario = 0;
+		float fTotalIntermediario = 0.0;
+		float fTotalGeral = 0.0;
+	    float faparelhototalint;
+	    float fretencaoint;
+	    float fmigracaototalint;
+	    float fadequacaototalint;
+	    float fsuspensaototalint;
+	    float fcanceladototalint;
+	    float faparelhototal;
+	    float fretencao;
+	    float fmigracaototal;
+	    float fadequacaototal;
+	    float fsuspensaototal;
+	    float fcanceladototal;
+		char cPesquisaTotal[10000];
+		char cPesquisaSomatorias[10000];
+		char cPesquisaIntermediaria[5000];
+		char cPesquisaInterna[5000];
+		char cFiltro[3000];
+	EXEC SQL END DECLARE SECTION;
+	
+	memset(  cPesquisaTotal, 0, sizeof( cPesquisaTotal ) );
+	memset(  cPesquisaSomatorias, 0, sizeof( cPesquisaSomatorias ) );
+	memset(  cFiltro, 0, sizeof( cFiltro ) );
+	
+	sprintf(cFiltro, 
+		" AND RELRETENCAOGERALV01.DTINCLUSAO >= TO_DATE('%s' || ' 00:00:00','DD/MM/YYYY HH24:MI:SS')"
+		" AND RELRETENCAOGERALV01.DTINCLUSAO <= TO_DATE('%s' || ' 23:59:59','DD/MM/YYYY HH24:MI:SS')", stFiltro.szDataIni, stFiltro.szDataFim);
+			        
+	//Segmentacao
+	if( STRLENNULL( stFiltro.szClassificacao ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV01.IDSEGMENTACAO = " );
+		strcat( cFiltro, stFiltro.szClassificacao );
+	}
+	//UFOperadora
+	if( STRLENNULL( stFiltro.szOperadora ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV01.IDUFOPERADORA IN (" );
+		strcat( cFiltro, stFiltro.szOperadora );
+		strcat( cFiltro, 
+			                                           " )" );
+	}
+	//TipoCliente
+	if( STRLENNULL( stFiltro.szTipoCliente ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV01.IDTIPOPESSOA = " );
+		strcat( cFiltro, stFiltro.szTipoCliente );
+	}
+	//Grupo
+	if( STRLENNULL( stFiltro.szGrupo ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV01.IDGRUPO = " );
+		strcat( cFiltro, stFiltro.szGrupo );
+	}
+	//Oferta nao eh utilizado nesta pesquisa (Segundo o Tiago)
+	
+	//Login
+	if( STRLENNULL( stFiltro.szLogin ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV01.NMLOGINUSUARIO = '" );
+		strcat( cFiltro, stFiltro.szLogin );
+		strcat( cFiltro, 
+			                                            "' " );
+	}
+			
+		
+	////////////////////////////////////////////////
+	// Inicio da pesquisa com total geral
+	////////////////////////////////////////////////
+	strcpy( cPesquisaTotal, 
+		"SELECT "
+		    "COUNT(1) TOTAL "
+		"FROM "
+		    "RETENCAO.RELRETENCAOGERALV01 RELRETENCAOGERALV01 "
+		"WHERE "
+		"( "
+			"( "
+					"IDTIPOENCERRAMENTO = 3 "  //RETIDO
+				"AND "
+					"INOFERTAACEITA = 1 "
+			") "
+			"OR "
+				"IDTIPOENCERRAMENTO = 5 " //VAI PENSAR
+			"OR "
+				"IDTIPOENCERRAMENTO = 2 "  //NAO RETIDO
+		") " 
+		);
+	//Coloca o filtro na pesquisa
+	strcat( cPesquisaTotal, cFiltro );
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	ULOG(cPesquisaTotal);
+	//Monta a pesquisa de total geral e dispara
+	EXEC SQL PREPARE qResultadoTotal3 FROM :cPesquisaTotal;
+	EXEC SQL DECLARE crsResultadoTotal3 CURSOR FOR qResultadoTotal3;
+	EXEC SQL OPEN crsResultadoTotal3;
+	EXEC SQL FETCH crsResultadoTotal3 INTO :fTotalGeral;
+	EXEC SQL CLOSE crsResultadoTotal3;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	
+	xml->createTag("RelatorioRetencaoVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+
+	if( fTotalGeral > 0 )
+	{
+		////////////////////////////////////////////////
+		// Inicio da pesquisa de somatorias
+		////////////////////////////////////////////////
+		strcpy( cPesquisaSomatorias, 
+            " SELECT"
+                " IDRESPOSTAINTENCAO,"
+                " DSRESPOSTAINTENCAO,"
+                " ARGUMENTO+APARELHO+BONUS+MIGRACAO+ADEQUACAO+PONTOS+SUSPENSAO+CANCELADO+VAIPENSAR TOTAL,"
+                " ARGUMENTO,"
+                " APARELHO,"
+                " BONUS,"
+                " MIGRACAO,"
+                " ADEQUACAO,"
+                " PONTOS,"
+                " SUSPENSAO,"
+                " CANCELADO,"
+                " VAIPENSAR "
+            " FROM "
+            " ("
+				" SELECT "
+					" IDRESPOSTAINTENCAO, "
+					" DSRESPOSTAINTENCAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AG'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) ARGUMENTO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AP'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) APARELHO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'BN'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) BONUS, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'MIG' AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) MIGRACAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PL'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) ADEQUACAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PT'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) PONTOS, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'SP'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) SUSPENSAO,"
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 2 THEN IDTIPOENCERRAMENTO END ) ) CANCELADO,"
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 5 THEN IDTIPOENCERRAMENTO END ) ) VAIPENSAR "
+				" FROM "
+					" RETENCAO.RELRETENCAOGERALV01 RELRETENCAOGERALV01 "
+				" WHERE " 
+				" ( "
+					" ( "
+							"IDTIPOENCERRAMENTO = 3 "  //RETIDO
+						" AND "
+							"INOFERTAACEITA = 1 "
+					" ) "
+					" OR "
+						" IDTIPOENCERRAMENTO = 5 " //VAI PENSAR
+					" OR "
+						" IDTIPOENCERRAMENTO = 2 "  //NAO RETIDO
+				" ) " 
+		);
+	
+		//Coloca o filtro na pesquisa
+		strcat( cPesquisaSomatorias, cFiltro );
+	
+		strcat( cPesquisaSomatorias, 
+				" GROUP BY "
+					"DSRESPOSTAINTENCAO, IDRESPOSTAINTENCAO" 
+			" )" );
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+	
+		ULOG(cPesquisaSomatorias);
+		EXEC SQL PREPARE qPesquisaSomatorias3 FROM :cPesquisaSomatorias;
+		EXEC SQL DECLARE crsPesquisaSomatorias3 CURSOR FOR qPesquisaSomatorias3;
+		EXEC SQL OPEN crsPesquisaSomatorias3;
+	
+	    faparelhototal = 0.0;
+	    fretencao = 0.0;
+	    fmigracaototal = 0.0;
+	    fadequacaototal = 0.0;
+	    fsuspensaototal = 0.0;
+	    fcanceladototal = 0.0;
+		for (;;iContador++) 
+		{
+			memset(  cPesquisaIntermediaria, 0, sizeof( cPesquisaIntermediaria ) );
+			memset(  &stTotalPorIntecao, 0, sizeof( stTotalPorIntecao ) );
+			EXEC SQL FETCH crsPesquisaSomatorias3 INTO :stTotalPorIntecao:stTotalPorIntecaoInd;
+			
+			////////////////////////////////////////////////
+			// Inicio da pesquisa de intermediario
+			////////////////////////////////////////////////
+			strcpy( cPesquisaIntermediaria, 
+            " SELECT"
+                " IDRESPOSTADESTINO,"
+                " DSRESPOSTADESTINO,"
+                " ARGUMENTO+APARELHO+BONUS+MIGRACAO+ADEQUACAO+PONTOS+SUSPENSAO+CANCELADO+VAIPENSAR TOTAL,"
+                " ARGUMENTO,"
+                " APARELHO,"
+                " BONUS,"
+                " MIGRACAO,"
+                " ADEQUACAO,"
+                " PONTOS,"
+                " SUSPENSAO,"
+                " CANCELADO,"
+                " VAIPENSAR"
+            " FROM"
+            " ("
+				" SELECT "
+					" IDRESPOSTADESTINO, "
+					" DSRESPOSTADESTINO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AG'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) ARGUMENTO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AP'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) APARELHO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'BN'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) BONUS, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'MIG' AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) MIGRACAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PL'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) ADEQUACAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PT'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) PONTOS, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'SP'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) SUSPENSAO,"
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 2 THEN IDTIPOENCERRAMENTO END ) ) CANCELADO,"
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 5 THEN IDTIPOENCERRAMENTO END ) ) VAIPENSAR"
+				" FROM "
+					" RETENCAO.RELRETENCAOGERALV01 RELRETENCAOGERALV01 "
+				" WHERE "
+				" ( "
+					" ( "
+							"IDTIPOENCERRAMENTO = 3 "  //RETIDO
+						" AND "
+							"INOFERTAACEITA = 1 "
+					" ) "
+					" OR "
+						"IDTIPOENCERRAMENTO = 5 " //VAI PENSAR
+					" OR "
+						"IDTIPOENCERRAMENTO = 2 "  //NAO RETIDO
+				" ) "
+				" AND "
+					"IDRESPOSTAINTENCAO = " );
+			strcat( cPesquisaIntermediaria, (char*)stTotalPorIntecao.stidResposta.arr );
+		
+			//Coloca o filtro na pesquisa
+			strcat( cPesquisaIntermediaria, cFiltro );
+		
+			strcat( cPesquisaIntermediaria, 
+					" GROUP BY "
+					    " DSRESPOSTADESTINO, IDRESPOSTADESTINO" 
+				" )" );
+		
+			ULOG(cPesquisaSomatorias);
+			EXEC SQL PREPARE pPesquisaIntermediaria3 FROM :cPesquisaIntermediaria;
+			EXEC SQL DECLARE crsPesquisaIntermediaria3 CURSOR FOR pPesquisaIntermediaria3;
+			EXEC SQL OPEN crsPesquisaIntermediaria3;
+		
+		    faparelhototalint = 0.0;
+		    fretencaoint = 0.0;
+		    fmigracaototalint = 0.0;
+		    fadequacaototalint = 0.0;
+		    fsuspensaototalint = 0.0;
+		    fcanceladototalint = 0.0;
+		    iContadorIntermediario = 0;
+			for (;;iContadorIntermediario++) 
+			{
+				memset(  cPesquisaInterna, 0, sizeof( cPesquisaInterna ) );
+				memset(  &stTotalPorDestino, 0, sizeof( stTotalPorDestino ) );
+				EXEC SQL WHENEVER NOT FOUND DO break;
+				EXEC SQL FETCH crsPesquisaIntermediaria3 INTO :stTotalPorDestino:stTotalPorDestinoInd;
+
+				iContadorGeral++;
+				xml->createTag("linhaRetencao");
+					if( iContadorIntermediario == 0 )
+						xml->addItem("intCancelamiento"  , (char*)stTotalPorIntecao.stdsResposta.arr);
+					else
+						xml->addItem("intCancelamiento"  , " " );
+						
+					xml->addItem("qtdintencao"      , stTotalPorDestino.ftotal );
+					xml->addItem("porcintencao"     , floatToCharPercente( stTotalPorDestino.ftotal * 100.0 / stTotalPorIntecao.ftotal ) );
+
+					xml->addItem("destinoprevisto"  , (char*)stTotalPorDestino.stdsResposta.arr);
+	
+					xml->addItem("qtdretencao"      , ( stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fvaipensar ) );
+					xml->addItem("porcretencao"     , floatToCharPercente( ( ( stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fvaipensar ) * 100.0 / stTotalPorDestino.ftotal ) ) );
+					xml->addItem("qtdmigracao"      , stTotalPorDestino.fmigracao );
+					xml->addItem("porcmigracao"     , floatToCharPercente( stTotalPorDestino.fmigracao * 100.0 / stTotalPorDestino.ftotal ) );
+					xml->addItem("qtdcancelado"     , stTotalPorDestino.fcancelado );
+					xml->addItem("porccancelado"    , floatToCharPercente( stTotalPorDestino.fcancelado * 100.0 / stTotalPorDestino.ftotal ) );
+					xml->addItem("qtdoferta"        , stTotalPorDestino.faparelho );
+					xml->addItem("porcoferta"       , floatToCharPercente( stTotalPorDestino.faparelho * 100.0 / stTotalPorDestino.ftotal ) );
+					xml->addItem("qtdsuspensao"     , stTotalPorDestino.fsuspensao );
+					xml->addItem("porcsuspensao"    , floatToCharPercente( stTotalPorDestino.fsuspensao * 100.0 / stTotalPorDestino.ftotal ) );
+					xml->addItem("qtdadequaplano"   , stTotalPorDestino.fadequacao );
+					xml->addItem("porcadequaplano"  , floatToCharPercente( stTotalPorDestino.fadequacao * 100.0 / stTotalPorDestino.ftotal ) );
+				xml->closeTag();
+		    
+			    //Fomar uma linha para exbir o total por linha
+			    faparelhototalint  += stTotalPorDestino.faparelho;
+			    fretencaoint       += stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fvaipensar;
+			    fmigracaototalint  += stTotalPorDestino.fmigracao;
+			    fadequacaototalint += stTotalPorDestino.fadequacao;
+			    fsuspensaototalint += stTotalPorDestino.fsuspensao;
+			    fcanceladototalint += stTotalPorDestino.fcancelado;
+				
+			}//for (;;iContadorIntermediario++) 
+			EXEC SQL CLOSE crsPesquisaIntermediaria3;
+
+			iContadorGeral++;
+			xml->createTag("linhaRetencao");
+				xml->addItem("intCancelamiento"  , "Total" );
+					
+				xml->addItem("qtdintencao"      , stTotalPorIntecao.ftotal );
+				xml->addItem("porcintencao"     , floatToCharPercente( stTotalPorIntecao.ftotal * 100.0 / fTotalGeral ) );
+
+				xml->addItem("destinoprevisto"  , " " );
+
+				xml->addItem("qtdretencao"      , fretencaoint );
+				xml->addItem("porcretencao"     , floatToCharPercente( fretencaoint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdmigracao"      , fmigracaototalint );
+				xml->addItem("porcmigracao"     , floatToCharPercente( fmigracaototalint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdcancelado"     , fcanceladototalint );
+				xml->addItem("porccancelado"    , floatToCharPercente( fcanceladototalint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdoferta"        , faparelhototalint );
+				xml->addItem("porcoferta"       , floatToCharPercente( faparelhototalint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdsuspensao"     , fsuspensaototalint );
+				xml->addItem("porcsuspensao"    , floatToCharPercente( fsuspensaototalint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdadequaplano"   , fadequacaototalint );
+				xml->addItem("porcadequaplano"  , floatToCharPercente( fadequacaototalint * 100.0 / stTotalPorIntecao.ftotal ) );
+			xml->closeTag();
+			
+		    //Fomar uma linha para exbir o total por linha
+		    faparelhototal  += faparelhototalint;
+		    fretencao       += fretencaoint;
+		    fmigracaototal  += fmigracaototalint;
+		    fadequacaototal += fadequacaototalint;
+		    fsuspensaototal += fsuspensaototalint;
+		    fcanceladototal += fcanceladototalint;
+
+		}//for (;;iContador++)
+		EXEC SQL CLOSE crsPesquisaIntermediaria3;
+
+		xml->createTag("linhaRetencao");
+			xml->addItem("intCancelamiento"  , "Total" );
+				
+			xml->addItem("qtdintencao"      , fTotalGeral );
+			xml->addItem("porcintencao"     , "100%%" );
+
+			xml->addItem("destinoprevisto"  , " " );
+
+			xml->addItem("qtdretencao"      , fretencao );
+			xml->addItem("porcretencao"     , floatToCharPercente( fretencao * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdmigracao"      , fmigracaototal );
+			xml->addItem("porcmigracao"     , floatToCharPercente( fmigracaototal * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdcancelado"     , fcanceladototal );
+			xml->addItem("porccancelado"    , floatToCharPercente( fcanceladototal * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdoferta"        , faparelhototal );
+			xml->addItem("porcoferta"       , floatToCharPercente( faparelhototal * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdsuspensao"     , fsuspensaototal );
+			xml->addItem("porcsuspensao"    , floatToCharPercente( fsuspensaototal * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdadequaplano"   , fadequacaototal );
+			xml->addItem("porcadequaplano"  , floatToCharPercente( fadequacaototal * 100.0 / fTotalGeral ) );
+		xml->closeTag();
+
+		xml->addItem( "total", iContador );
+
+	}//if( fTotalGeral > 0 )
+	else
+	{
+		xml->createTag("linhaDestino");
+			xml->addItem("intCancelamiento"  , "Não foram encontrados dados para este relatórios!" );
+				
+			xml->addItem("qtdintencao"      , "" );
+			xml->addItem("porcintencao"     , "" );
+
+			xml->addItem("destinoprevisto"  , "" );
+
+			xml->addItem("qtdretencao"      , "" );
+			xml->addItem("porcretencao"     , "" );
+			xml->addItem("qtdmigracao"      , "" );
+			xml->addItem("porcmigracao"     , "" );
+			xml->addItem("qtdcancelado"     , "" );
+			xml->addItem("porccancelado"    , "" );
+			xml->addItem("qtdoferta"        , "" );
+			xml->addItem("porcoferta"       , "" );
+			xml->addItem("qtdsuspensao"     , "" );
+			xml->addItem("porcsuspensao"    , "" );
+			xml->addItem("qtdadequaplano"   , "" );
+			xml->addItem("porcadequaplano"  , "" );
+		xml->closeTag();
+		xml->addItem( "total", "0" );
+	}//else if( fTotalGeral > 0 )
+
+	xml->closeTag();//RelatorioRetencaoVO
+
+	return 1;
+}
+//********************************************************************************************
+//Relatório de Retencao com Distinção ==>Ultima ligação é válida
+int rel_retencaoDistincao(char *stf, XMLGen*xml, const Filtro &stFiltro)
+{
+	ULOG("rel_retencaoDistincao");
+	struct sqlca sqlca;
+	ULOG("rel_retencao");
+	EXEC SQL BEGIN DECLARE SECTION;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		    float fargumento;
+		    float faparelho;
+		    float fbonus;
+		    float fmigracao;
+		    float fadequacao;
+		    float fpontos;
+		    float fsuspensao;
+			float fcancelado;
+			float fvaipensar;
+		} stTotalPorIntecao;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		    short sargumento;
+		    short saparelho;
+		    short sbonus;
+		    short smigracao;
+		    short sadequacao;
+		    short spontos;
+		    short ssuspensao;
+			short scancelado;
+			short svaipensar;
+		} stTotalPorIntecaoInd;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		    float fargumento;
+		    float faparelho;
+		    float fbonus;
+		    float fmigracao;
+		    float fadequacao;
+		    float fpontos;
+		    float fsuspensao;
+			float fcancelado;
+			float fvaipensar;
+		} stTotalPorDestino;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		    short sargumento;
+		    short saparelho;
+		    short sbonus;
+		    short smigracao;
+		    short sadequacao;
+		    short spontos;
+		    short ssuspensao;
+			short scancelado;
+			short svaipensar;
+		} stTotalPorDestinoInd;
+		int   iContador = 0;
+		int   iContadorGeral = 0;
+		int   iContadorIntermediario = 0;
+		float fTotalIntermediario = 0.0;
+		float fTotalGeral = 0.0;
+	    float faparelhototalint;
+	    float fretencaoint;
+	    float fmigracaototalint;
+	    float fadequacaototalint;
+	    float fsuspensaototalint;
+	    float fcanceladototalint;
+	    float faparelhototal;
+	    float fretencao;
+	    float fmigracaototal;
+	    float fadequacaototal;
+	    float fsuspensaototal;
+	    float fcanceladototal;
+		char cPesquisaTotal[10000];
+		char cPesquisaSomatorias[10000];
+		char cPesquisaIntermediaria[5000];
+		char cPesquisaInterna[5000];
+		char cFiltro[3000];
+	EXEC SQL END DECLARE SECTION;
+	
+	memset(  cPesquisaTotal, 0, sizeof( cPesquisaTotal ) );
+	memset(  cPesquisaSomatorias, 0, sizeof( cPesquisaSomatorias ) );
+	memset(  cFiltro, 0, sizeof( cFiltro ) );
+	
+	sprintf(cFiltro, 
+		" AND RELRETENCAOGERALV02.DTINCLUSAO >= TO_DATE('%s' || ' 00:00:00','DD/MM/YYYY HH24:MI:SS')"
+		" AND RELRETENCAOGERALV02.DTINCLUSAO <= TO_DATE('%s' || ' 23:59:59','DD/MM/YYYY HH24:MI:SS')", stFiltro.szDataIni, stFiltro.szDataFim);
+			        
+	//Segmentacao
+	if( STRLENNULL( stFiltro.szClassificacao ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV02.IDSEGMENTACAO = " );
+		strcat( cFiltro, stFiltro.szClassificacao );
+	}
+	//UFOperadora
+	if( STRLENNULL( stFiltro.szOperadora ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV02.IDUFOPERADORA IN (" );
+		strcat( cFiltro, stFiltro.szOperadora );
+		strcat( cFiltro, 
+			                                           " )" );
+	}
+	//TipoCliente
+	if( STRLENNULL( stFiltro.szTipoCliente ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV02.IDTIPOPESSOA = " );
+		strcat( cFiltro, stFiltro.szTipoCliente );
+	}
+	//Grupo
+	if( STRLENNULL( stFiltro.szGrupo ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV02.IDGRUPO = " );
+		strcat( cFiltro, stFiltro.szGrupo );
+	}
+	//Oferta nao eh utilizado nesta pesquisa (Segundo o Tiago)
+	
+	//Login
+	if( STRLENNULL( stFiltro.szLogin ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV02.NMLOGINUSUARIO = '" );
+		strcat( cFiltro, stFiltro.szLogin );
+		strcat( cFiltro, 
+			                                            "' " );
+	}
+			
+		
+	////////////////////////////////////////////////
+	// Inicio da pesquisa com total geral
+	////////////////////////////////////////////////
+	strcpy( cPesquisaTotal, 
+		"SELECT "
+		    "COUNT(1) TOTAL "
+		"FROM "
+		    "RETENCAO.RELRETENCAOGERALV02 RELRETENCAOGERALV02 "
+		"WHERE "
+		"( "
+			"( "
+					"IDTIPOENCERRAMENTO = 3 "  //RETIDO
+				"AND "
+					"INOFERTAACEITA = 1 "
+			") "
+			"OR "
+				"IDTIPOENCERRAMENTO = 5 " //VAI PENSAR
+			"OR "
+				"IDTIPOENCERRAMENTO = 2 "  //NAO RETIDO
+		") " 
+		);
+	//Coloca o filtro na pesquisa
+	strcat( cPesquisaTotal, cFiltro );
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	ULOG(cPesquisaTotal);
+	//Monta a pesquisa de total geral e dispara
+	EXEC SQL PREPARE qResultadoTotalRetDis FROM :cPesquisaTotal;
+	EXEC SQL DECLARE crsResultadoTotalRetDis CURSOR FOR qResultadoTotalRetDis;
+	EXEC SQL OPEN crsResultadoTotalRetDis;
+	EXEC SQL FETCH crsResultadoTotalRetDis INTO :fTotalGeral;
+	EXEC SQL CLOSE crsResultadoTotalRetDis;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	
+	xml->createTag("RelatorioRetencaoVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+
+	if( fTotalGeral > 0 )
+	{
+		////////////////////////////////////////////////
+		// Inicio da pesquisa de somatorias
+		////////////////////////////////////////////////
+		strcpy( cPesquisaSomatorias, 
+            " SELECT"
+                " IDRESPOSTAINTENCAO,"
+                " DSRESPOSTAINTENCAO,"
+                " ARGUMENTO+APARELHO+BONUS+MIGRACAO+ADEQUACAO+PONTOS+SUSPENSAO+CANCELADO+VAIPENSAR TOTAL,"
+                " ARGUMENTO,"
+                " APARELHO,"
+                " BONUS,"
+                " MIGRACAO,"
+                " ADEQUACAO,"
+                " PONTOS,"
+                " SUSPENSAO,"
+                " CANCELADO,"
+                " VAIPENSAR "
+            " FROM "
+            " ("
+				" SELECT "
+					" IDRESPOSTAINTENCAO, "
+					" DSRESPOSTAINTENCAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AG'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) ARGUMENTO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AP'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) APARELHO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'BN'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) BONUS, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'MIG' AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) MIGRACAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PL'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) ADEQUACAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PT'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) PONTOS, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'SP'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) SUSPENSAO,"
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 2 THEN IDTIPOENCERRAMENTO END ) ) CANCELADO,"
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 5 THEN IDTIPOENCERRAMENTO END ) ) VAIPENSAR "
+				" FROM "
+					" RETENCAO.RELRETENCAOGERALV02 RELRETENCAOGERALV02 "
+				" WHERE " 
+				" ( "
+					" ( "
+							"IDTIPOENCERRAMENTO = 3 "  //RETIDO
+						" AND "
+							"INOFERTAACEITA = 1 "
+					" ) "
+					" OR "
+						" IDTIPOENCERRAMENTO = 5 " //VAI PENSAR
+					" OR "
+						" IDTIPOENCERRAMENTO = 2 "  //NAO RETIDO
+				" ) " 
+		);
+	
+		//Coloca o filtro na pesquisa
+		strcat( cPesquisaSomatorias, cFiltro );
+	
+		strcat( cPesquisaSomatorias, 
+				" GROUP BY "
+					"DSRESPOSTAINTENCAO, IDRESPOSTAINTENCAO" 
+			" )" );
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+	
+		ULOG(cPesquisaSomatorias);
+		EXEC SQL PREPARE qPesquisaSomatoriasRetDis FROM :cPesquisaSomatorias;
+		EXEC SQL DECLARE crsPesquisaSomatoriasRetDis CURSOR FOR qPesquisaSomatoriasRetDis;
+		EXEC SQL OPEN crsPesquisaSomatoriasRetDis;
+	
+	    faparelhototal = 0.0;
+	    fretencao = 0.0;
+	    fmigracaototal = 0.0;
+	    fadequacaototal = 0.0;
+	    fsuspensaototal = 0.0;
+	    fcanceladototal = 0.0;
+		for (;;iContador++) 
+		{
+			memset(  cPesquisaIntermediaria, 0, sizeof( cPesquisaIntermediaria ) );
+			memset(  &stTotalPorIntecao, 0, sizeof( stTotalPorIntecao ) );
+			EXEC SQL FETCH crsPesquisaSomatoriasRetDis INTO :stTotalPorIntecao:stTotalPorIntecaoInd;
+			
+			////////////////////////////////////////////////
+			// Inicio da pesquisa de intermediario
+			////////////////////////////////////////////////
+			strcpy( cPesquisaIntermediaria, 
+            " SELECT"
+                " IDRESPOSTADESTINO,"
+                " DSRESPOSTADESTINO,"
+                " ARGUMENTO+APARELHO+BONUS+MIGRACAO+ADEQUACAO+PONTOS+SUSPENSAO+CANCELADO+VAIPENSAR TOTAL,"
+                " ARGUMENTO,"
+                " APARELHO,"
+                " BONUS,"
+                " MIGRACAO,"
+                " ADEQUACAO,"
+                " PONTOS,"
+                " SUSPENSAO,"
+                " CANCELADO,"
+                " VAIPENSAR"
+            " FROM"
+            " ("
+				" SELECT "
+					" IDRESPOSTADESTINO, "
+					" DSRESPOSTADESTINO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AG'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) ARGUMENTO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AP'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) APARELHO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'BN'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) BONUS, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'MIG' AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) MIGRACAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PL'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) ADEQUACAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PT'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) PONTOS, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'SP'  AND IDTIPOENCERRAMENTO = 3 THEN IDTIPOENCERRAMENTO END ) ) SUSPENSAO,"
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 2 THEN IDTIPOENCERRAMENTO END ) ) CANCELADO,"
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 5 THEN IDTIPOENCERRAMENTO END ) ) VAIPENSAR"
+				" FROM "
+					" RETENCAO.RELRETENCAOGERALV02 RELRETENCAOGERALV02 "
+				" WHERE "
+				" ( "
+					" ( "
+							"IDTIPOENCERRAMENTO = 3 "  //RETIDO
+						" AND "
+							"INOFERTAACEITA = 1 "
+					" ) "
+					" OR "
+						"IDTIPOENCERRAMENTO = 5 " //VAI PENSAR
+					" OR "
+						"IDTIPOENCERRAMENTO = 2 "  //NAO RETIDO
+				" ) "
+				" AND "
+					"IDRESPOSTAINTENCAO = " );
+			strcat( cPesquisaIntermediaria, (char*)stTotalPorIntecao.stidResposta.arr );
+		
+			//Coloca o filtro na pesquisa
+			strcat( cPesquisaIntermediaria, cFiltro );
+		
+			strcat( cPesquisaIntermediaria, 
+					" GROUP BY "
+					    " DSRESPOSTADESTINO, IDRESPOSTADESTINO" 
+				" )" );
+		
+			ULOG(cPesquisaSomatorias);
+			EXEC SQL PREPARE pPesquisaIntermediariaRetDis FROM :cPesquisaIntermediaria;
+			EXEC SQL DECLARE crsPesquisaIntermediariaRetDis CURSOR FOR pPesquisaIntermediariaRetDis;
+			EXEC SQL OPEN crsPesquisaIntermediariaRetDis;
+		
+		    faparelhototalint = 0.0;
+		    fretencaoint = 0.0;
+		    fmigracaototalint = 0.0;
+		    fadequacaototalint = 0.0;
+		    fsuspensaototalint = 0.0;
+		    fcanceladototalint = 0.0;
+		    iContadorIntermediario = 0;
+			for (;;iContadorIntermediario++) 
+			{
+				memset(  cPesquisaInterna, 0, sizeof( cPesquisaInterna ) );
+				memset(  &stTotalPorDestino, 0, sizeof( stTotalPorDestino ) );
+				EXEC SQL WHENEVER NOT FOUND DO break;
+				EXEC SQL FETCH crsPesquisaIntermediariaRetDis INTO :stTotalPorDestino:stTotalPorDestinoInd;
+
+				iContadorGeral++;
+				xml->createTag("linhaRetencao");
+					if( iContadorIntermediario == 0 )
+						xml->addItem("intCancelamiento"  , (char*)stTotalPorIntecao.stdsResposta.arr);
+					else
+						xml->addItem("intCancelamiento"  , " " );
+						
+					xml->addItem("qtdintencao"      , stTotalPorDestino.ftotal );
+					xml->addItem("porcintencao"     , floatToCharPercente( stTotalPorDestino.ftotal * 100.0 / stTotalPorIntecao.ftotal ) );
+
+					xml->addItem("destinoprevisto"  , (char*)stTotalPorDestino.stdsResposta.arr);
+	
+					xml->addItem("qtdretencao"      , ( stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fvaipensar ) );
+					xml->addItem("porcretencao"     , floatToCharPercente( ( ( stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fvaipensar ) * 100.0 / stTotalPorDestino.ftotal ) ) );
+					xml->addItem("qtdmigracao"      , stTotalPorDestino.fmigracao );
+					xml->addItem("porcmigracao"     , floatToCharPercente( stTotalPorDestino.fmigracao * 100.0 / stTotalPorDestino.ftotal ) );
+					xml->addItem("qtdcancelado"     , stTotalPorDestino.fcancelado );
+					xml->addItem("porccancelado"    , floatToCharPercente( stTotalPorDestino.fcancelado * 100.0 / stTotalPorDestino.ftotal ) );
+					xml->addItem("qtdoferta"        , stTotalPorDestino.faparelho );
+					xml->addItem("porcoferta"       , floatToCharPercente( stTotalPorDestino.faparelho * 100.0 / stTotalPorDestino.ftotal ) );
+					xml->addItem("qtdsuspensao"     , stTotalPorDestino.fsuspensao );
+					xml->addItem("porcsuspensao"    , floatToCharPercente( stTotalPorDestino.fsuspensao * 100.0 / stTotalPorDestino.ftotal ) );
+					xml->addItem("qtdadequaplano"   , stTotalPorDestino.fadequacao );
+					xml->addItem("porcadequaplano"  , floatToCharPercente( stTotalPorDestino.fadequacao * 100.0 / stTotalPorDestino.ftotal ) );
+				xml->closeTag();
+		    
+			    //Fomar uma linha para exbir o total por linha
+			    faparelhototalint  += stTotalPorDestino.faparelho;
+			    fretencaoint       += stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fvaipensar;
+			    fmigracaototalint  += stTotalPorDestino.fmigracao;
+			    fadequacaototalint += stTotalPorDestino.fadequacao;
+			    fsuspensaototalint += stTotalPorDestino.fsuspensao;
+			    fcanceladototalint += stTotalPorDestino.fcancelado;
+				
+			}//for (;;iContadorIntermediario++) 
+			EXEC SQL CLOSE crsPesquisaIntermediariaRetDis;
+
+			iContadorGeral++;
+			xml->createTag("linhaRetencao");
+				xml->addItem("intCancelamiento"  , "Total" );
+					
+				xml->addItem("qtdintencao"      , stTotalPorIntecao.ftotal );
+				xml->addItem("porcintencao"     , floatToCharPercente( stTotalPorIntecao.ftotal * 100.0 / fTotalGeral ) );
+
+				xml->addItem("destinoprevisto"  , " " );
+
+				xml->addItem("qtdretencao"      , fretencaoint );
+				xml->addItem("porcretencao"     , floatToCharPercente( fretencaoint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdmigracao"      , fmigracaototalint );
+				xml->addItem("porcmigracao"     , floatToCharPercente( fmigracaototalint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdcancelado"     , fcanceladototalint );
+				xml->addItem("porccancelado"    , floatToCharPercente( fcanceladototalint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdoferta"        , faparelhototalint );
+				xml->addItem("porcoferta"       , floatToCharPercente( faparelhototalint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdsuspensao"     , fsuspensaototalint );
+				xml->addItem("porcsuspensao"    , floatToCharPercente( fsuspensaototalint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdadequaplano"   , fadequacaototalint );
+				xml->addItem("porcadequaplano"  , floatToCharPercente( fadequacaototalint * 100.0 / stTotalPorIntecao.ftotal ) );
+			xml->closeTag();
+			
+		    //Fomar uma linha para exbir o total por linha
+		    faparelhototal  += faparelhototalint;
+		    fretencao       += fretencaoint;
+		    fmigracaototal  += fmigracaototalint;
+		    fadequacaototal += fadequacaototalint;
+		    fsuspensaototal += fsuspensaototalint;
+		    fcanceladototal += fcanceladototalint;
+
+		}//for (;;iContador++)
+		EXEC SQL CLOSE crsPesquisaIntermediariaRetDis;
+
+		xml->createTag("linhaRetencao");
+			xml->addItem("intCancelamiento"  , "Total" );
+				
+			xml->addItem("qtdintencao"      , fTotalGeral );
+			xml->addItem("porcintencao"     , "100%%" );
+
+			xml->addItem("destinoprevisto"  , " " );
+
+			xml->addItem("qtdretencao"      , fretencao );
+			xml->addItem("porcretencao"     , floatToCharPercente( fretencao * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdmigracao"      , fmigracaototal );
+			xml->addItem("porcmigracao"     , floatToCharPercente( fmigracaototal * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdcancelado"     , fcanceladototal );
+			xml->addItem("porccancelado"    , floatToCharPercente( fcanceladototal * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdoferta"        , faparelhototal );
+			xml->addItem("porcoferta"       , floatToCharPercente( faparelhototal * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdsuspensao"     , fsuspensaototal );
+			xml->addItem("porcsuspensao"    , floatToCharPercente( fsuspensaototal * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdadequaplano"   , fadequacaototal );
+			xml->addItem("porcadequaplano"  , floatToCharPercente( fadequacaototal * 100.0 / fTotalGeral ) );
+		xml->closeTag();
+
+		xml->addItem( "total", iContador );
+
+	}//if( fTotalGeral > 0 )
+	else
+	{
+		xml->createTag("linhaDestino");
+			xml->addItem("intCancelamiento"  , "Não foram encontrados dados para este relatórios!" );
+				
+			xml->addItem("qtdintencao"      , "" );
+			xml->addItem("porcintencao"     , "" );
+
+			xml->addItem("destinoprevisto"  , "" );
+
+			xml->addItem("qtdretencao"      , "" );
+			xml->addItem("porcretencao"     , "" );
+			xml->addItem("qtdmigracao"      , "" );
+			xml->addItem("porcmigracao"     , "" );
+			xml->addItem("qtdcancelado"     , "" );
+			xml->addItem("porccancelado"    , "" );
+			xml->addItem("qtdoferta"        , "" );
+			xml->addItem("porcoferta"       , "" );
+			xml->addItem("qtdsuspensao"     , "" );
+			xml->addItem("porcsuspensao"    , "" );
+			xml->addItem("qtdadequaplano"   , "" );
+			xml->addItem("porcadequaplano"  , "" );
+		xml->closeTag();
+		xml->addItem( "total", "0" );
+	}//else if( fTotalGeral > 0 )
+
+	xml->closeTag();//RelatorioRetencaoVO
+
+	return 1;
+}
+
+//********************************************************************************************
+//Relatório de Controle de Crédito
+int rel_ctrlcredito(char *stf, XMLGen*xml)
+{
+
+try
+{
+	ULOG("rel_ctrlcredito");
+	int iTotalGeral=0;
+	int	iQtReg=0;
+	 EXEC SQL BEGIN DECLARE SECTION;
+	  VARCHAR		DATA[255];	
+	  VARCHAR		NMNOME[255];
+	  VARCHAR		NRLINHA[255]; 
+	  VARCHAR		BONUS[255]; 
+	  VARCHAR		SALDO[255]; 
+	  VARCHAR		SGTIPOPESSOA[255]; 
+	  VARCHAR		SEGMENTACAO[255]; 
+	  char szQuery[8000]	={	  "SELECT TO_CHAR(DATA,'DD/MM/YYYY'),"
+								  "NMNOME,"
+								  "LINHA,"
+								  "BONUS,"
+								  "SALDO,"
+								  "SGTIPOPESSOA,"
+								  "SEGMENTACAO "
+								  "FROM RETENCAO.RELCRTCREDITOV01 "};
+	  EXEC SQL END DECLARE SECTION;
+
+	strcat(szQuery,stf);			
+    ULOG(szQuery);
+    ULOG_INT(strlen(szQuery));
+	
+	
+	// Declara e abre o cursor
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	EXEC SQL PREPARE asd FROM :szQuery;
+	EXEC SQL DECLARE crCred CURSOR FOR asd;
+	EXEC SQL OPEN crCred;
+
+	xml->createTag("RelatorioCCContaCorrenteVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+	
+	for (;;iQtReg++) 
+	{
+		
+
+		EXEC SQL FETCH crCred INTO  :DATA,	
+									:NMNOME,
+									:NRLINHA, 
+									:BONUS,
+									:SALDO, 
+									:SGTIPOPESSOA, 
+									:SEGMENTACAO; 
+			
+		
+
+			  endOraStr(DATA);	
+			  endOraStr(NMNOME);
+			  endOraStr(NRLINHA); 
+			  endOraStr(BONUS); 
+			  endOraStr(SALDO); 
+			  endOraStr(SGTIPOPESSOA); 
+			  endOraStr(SEGMENTACAO); 
+		
+			xml->createTag("linhaCCContaCorrente");
+				xml->addItem("data",(char*)DATA.arr);
+				xml->addItem("cliente",(char*)NMNOME.arr);
+			
+				xml->addItem("linha",(char*)NRLINHA.arr);
+				xml->addItem("bonus",(char*)BONUS.arr);
+
+			
+				xml->addItem("bonusTotal",(char*)SALDO.arr); // Por enquanto assim
+
+				xml->addItem("qtdParc","1");
+				xml->addItem("pessoa",(char*)SGTIPOPESSOA.arr);
+				xml->addItem("classificacao",(char*)SEGMENTACAO.arr);
+		xml->closeTag();
+
+		iTotalGeral+=atoi((char*)SALDO.arr);
+
+
+	}
+
+	if(iQtReg==0)
+	{
+		xml->createTag("linhaCCContaCorrente");
+			xml->addItem("data","A Pesquisa Não Retornou Resultado");
+			xml->addItem("cliente","");
+			xml->addItem("area","");
+			xml->addItem("linha","");
+			xml->addItem("bonus","");
+			xml->addItem("bonusTotal","");
+			xml->addItem("qtdParc","");
+			xml->addItem("pessoa","");
+			xml->addItem("classificacao","");
+		xml->closeTag();
+	}
+		
+		xml->createTag("linhaCCContaCorrente");
+			xml->addItem("data","Total Geral ");
+			xml->addItem("cliente","");
+			xml->addItem("area","");
+			xml->addItem("linha","");
+			xml->addItem("bonus","");
+			xml->addItem("bonusTotal",iTotalGeral);
+			xml->addItem("qtdParc","");
+			xml->addItem("pessoa","");
+			xml->addItem("classificacao","");
+		xml->closeTag();
+		
+	
+	xml->addItem("total",iQtReg);
+
+	xml->closeTag();
+
+
+}
+catch(...)
+{	
+	xml->createTag("RelatorioCCContaCorrenteVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+	
+		xml->createTag("linhaCCContaCorrente");
+			xml->addItem("data","Relatório Temporariamente indisponivel!");
+			xml->addItem("cliente","");
+			xml->addItem("area","");
+			xml->addItem("linha","");
+			xml->addItem("bonus","");
+			xml->addItem("bonusTotal","");
+			xml->addItem("qtdParc","");
+			xml->addItem("pessoa","");
+			xml->addItem("classificacao","");
+		xml->closeTag();
+	xml->addItem( "total", "0" );
+	xml->closeTag();
+}
+
+	return 1;
+}
+
+
+//********************************************************************************************
+//Relatório de Ofertas
+int rel_ofertas(char *stf, XMLGen*xml, const Filtro &stFiltro)
+{
+	struct sqlca sqlca;
+	ULOG("rel_ofertas");
+
+try{
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		    float fargumento;
+		    float faparelho;
+		    float fbonus;
+		    float fmigracao;
+		    float fadequacao;
+		    float fpontos;
+		    float fsuspensao;
+		} stTotalPorIntecao;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		    short sargumento;
+		    short saparelho;
+		    short sbonus;
+		    short smigracao;
+		    short sadequacao;
+		    short spontos;
+		    short ssuspensao;
+		} stTotalPorIntecaoInd;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		    float fargumento;
+		    float faparelho;
+		    float fbonus;
+		    float fmigracao;
+		    float fadequacao;
+		    float fpontos;
+		    float fsuspensao;
+			float fcancelado;
+			float fvaipensar;
+		} stTotalPorDestino;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		    short sargumento;
+		    short saparelho;
+		    short sbonus;
+		    short smigracao;
+		    short sadequacao;
+		    short spontos;
+		    short ssuspensao;
+			short scancelado;
+			short svaipensar;
+		} stTotalPorDestinoInd;
+
+		int   iContador = 0;
+		int   iContadorGeral = 0;
+		int   iContadorIntermediario = 0;
+		float fTotalIntermediario = 0.0;
+		float fTotalGeral = 0.0;
+	    float faparelhototalint;
+	    float fretencaoint;
+	    float fmigracaototalint;
+	    float fadequacaototalint;
+	    float fsuspensaototalint;
+	    float fcanceladototalint;
+	    float fbonustotalint;
+	    float fpontostotalint;
+	    float faparelhototal;
+	    float fretencao;
+	    float fmigracaototal;
+	    float fadequacaototal;
+	    float fsuspensaototal;
+	    float fcanceladototal;
+	    float fbonustotal;
+	    float fpontostotal;
+		char cPesquisaTotal[10000];
+		char cPesquisaSomatorias[10000];
+		char cPesquisaIntermediaria[5000];
+		char cFiltro[3000];
+	EXEC SQL END DECLARE SECTION;
+	
+	memset(  cPesquisaTotal, 0, sizeof( cPesquisaTotal ) );
+	memset(  cPesquisaSomatorias, 0, sizeof( cPesquisaSomatorias ) );
+	memset(  cFiltro, 0, sizeof( cFiltro ) );
+	
+	sprintf(cFiltro, 
+		" AND RELRETENCAOGERALV01.DTINCLUSAO >= TO_DATE('%s' || ' 00:00:00','DD/MM/YYYY HH24:MI:SS')"
+		" AND RELRETENCAOGERALV01.DTINCLUSAO <= TO_DATE('%s' || ' 23:59:59','DD/MM/YYYY HH24:MI:SS')", stFiltro.szDataIni, stFiltro.szDataFim);
+			        
+	//Segmentacao
+	if( STRLENNULL( stFiltro.szClassificacao ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV01.IDSEGMENTACAO = " );
+		strcat( cFiltro, stFiltro.szClassificacao );
+	}
+	//UFOperadora
+	if( STRLENNULL( stFiltro.szOperadora ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV01.IDUFOPERADORA IN (" );
+		strcat( cFiltro, stFiltro.szOperadora );
+		strcat( cFiltro, 
+			                                           " )" );
+	}
+	//TipoCliente
+	if( STRLENNULL( stFiltro.szTipoCliente ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV01.IDTIPOPESSOA = " );
+		strcat( cFiltro, stFiltro.szTipoCliente );
+	}
+	//Grupo
+	if( STRLENNULL( stFiltro.szGrupo ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV01.IDGRUPO = " );
+		strcat( cFiltro, stFiltro.szGrupo );
+	}
+	//Oferta nao eh utilizado nesta pesquisa (Segundo o Tiago)
+	
+	//Login
+	if( STRLENNULL( stFiltro.szLogin ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELRETENCAOGERALV01.NMLOGINUSUARIO = '" );
+		strcat( cFiltro, stFiltro.szLogin );
+		strcat( cFiltro, 
+			                                            "' " );
+	}
+			
+		
+	////////////////////////////////////////////////
+	// Inicio da pesquisa com total geral
+	////////////////////////////////////////////////
+	strcpy( cPesquisaTotal, 
+		"SELECT "
+		    "COUNT(1) TOTAL "
+		"FROM "
+		    "RETENCAO.RELRETENCAOGERALV01 RELRETENCAOGERALV01 "
+		"WHERE "
+		" ( "
+			" IDTIPOENCERRAMENTO = 3 " //Retido
+		" OR "
+			" IDTIPOENCERRAMENTO = 5 " //Agendou
+		" ) "
+		" AND "
+		" ("
+			" ( SGCLASSIFICACAO = 'AG'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( SGCLASSIFICACAO = 'AP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( SGCLASSIFICACAO = 'BN'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( SGCLASSIFICACAO = 'MIG' AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( SGCLASSIFICACAO = 'PL'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( SGCLASSIFICACAO = 'PT'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( SGCLASSIFICACAO = 'SP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( IDTIPOENCERRAMENTO = 5 )"
+		" )" );
+	//Coloca o filtro na pesquisa
+	strcat( cPesquisaTotal, cFiltro );
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	ULOG(cPesquisaTotal);
+	//Monta a pesquisa de total geral e dispara
+	EXEC SQL PREPARE qResTotalOferta FROM :cPesquisaTotal;
+	EXEC SQL DECLARE crsResTotalOferta CURSOR FOR qResTotalOferta;
+	EXEC SQL OPEN crsResTotalOferta;
+	EXEC SQL FETCH crsResTotalOferta INTO :fTotalGeral;
+	EXEC SQL CLOSE crsResTotalOferta;
+	
+	xml->createTag("RelatorioTodasOfertasVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+
+	if( fTotalGeral > 0 )
+	{
+		////////////////////////////////////////////////
+		// Inicio da pesquisa de somatorias
+		////////////////////////////////////////////////
+		strcpy( cPesquisaSomatorias, 
+            " SELECT"
+                " IDRESPOSTAINTENCAO,"
+                " DSRESPOSTAINTENCAO,"
+                " ARGUMENTO+APARELHO+BONUS+MIGRACAO+ADEQUACAO+PONTOS+SUSPENSAO+VAIPENSAR TOTAL, "
+                " ARGUMENTO,"
+                " APARELHO,"
+                " BONUS,"
+                " MIGRACAO,"
+                " ADEQUACAO,"
+                " PONTOS,"
+                " SUSPENSAO,"
+                " CANCELADO,"
+                " VAIPENSAR"
+            " FROM"
+            " ("
+				" SELECT "
+					" IDRESPOSTAINTENCAO, "
+					" DSRESPOSTAINTENCAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AG'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) ARGUMENTO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) APARELHO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'BN'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) BONUS, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'MIG' AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) MIGRACAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PL'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) ADEQUACAO, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PT'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) PONTOS, "
+					" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'SP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) SUSPENSAO,"
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 2 THEN IDTIPOENCERRAMENTO END ) ) CANCELADO,"
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 5 THEN IDTIPOENCERRAMENTO END ) ) VAIPENSAR"
+				" FROM "
+					" RETENCAO.RELRETENCAOGERALV01 RELRETENCAOGERALV01 "
+				" WHERE "
+				" ( "
+					" IDTIPOENCERRAMENTO = 3 " //Retido
+				" OR "
+					" IDTIPOENCERRAMENTO = 5 " //Vai pensar
+				" ) "
+		);
+	
+		//Coloca o filtro na pesquisa
+		strcat( cPesquisaSomatorias, cFiltro );
+	
+		strcat( cPesquisaSomatorias, 
+				" GROUP BY "
+					"DSRESPOSTAINTENCAO, IDRESPOSTAINTENCAO"
+            " )" );
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+	
+		ULOG(cPesquisaSomatorias);
+		EXEC SQL PREPARE qPesSomaOferta FROM :cPesquisaSomatorias;
+		EXEC SQL DECLARE crsPesSomaOferta CURSOR FOR qPesSomaOferta;
+		EXEC SQL OPEN crsPesSomaOferta;
+	
+	    faparelhototal = 0.0;
+	    fretencao = 0.0;
+	    fmigracaototal = 0.0;
+	    fadequacaototal = 0.0;
+	    fsuspensaototal = 0.0;
+	    fcanceladototal = 0.0;
+	    fbonustotal		= 0.0;
+	    fpontostotal	= 0.0;
+		for (;;iContador++) 
+		{
+			memset(  cPesquisaIntermediaria, 0, sizeof( cPesquisaIntermediaria ) );
+			memset(  &stTotalPorIntecao, 0, sizeof( stTotalPorIntecao ) );
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			EXEC SQL FETCH crsPesSomaOferta INTO :stTotalPorIntecao:stTotalPorIntecaoInd;
+			
+			////////////////////////////////////////////////
+			// Inicio da pesquisa de intermediario
+			////////////////////////////////////////////////
+			strcpy( cPesquisaIntermediaria, 
+				" SELECT"
+				    " IDRESPOSTADESTINO, "
+				    " DSRESPOSTADESTINO, "
+					" ARGUMENTO+APARELHO+BONUS+MIGRACAO+ADEQUACAO+PONTOS+SUSPENSAO+VAIPENSAR TOTAL,"
+					" ARGUMENTO,"
+					" APARELHO,"
+					" BONUS,"
+					" MIGRACAO,"
+					" ADEQUACAO,"
+					" PONTOS,"
+					" SUSPENSAO,"
+					" CANCELADO,"
+					" VAIPENSAR"
+				" FROM"
+				" ("
+					" SELECT "
+						" IDRESPOSTADESTINO, "
+						" DSRESPOSTADESTINO, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AG'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) ARGUMENTO, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) APARELHO, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'BN'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) BONUS, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'MIG' AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) MIGRACAO, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PL'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) ADEQUACAO, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PT'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) PONTOS, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'SP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) SUSPENSAO,"
+						" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 2 THEN IDTIPOENCERRAMENTO END ) ) CANCELADO,"
+						" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 5 THEN IDTIPOENCERRAMENTO END ) ) VAIPENSAR"
+					" FROM "
+						" RETENCAO.RELRETENCAOGERALV01 RELRETENCAOGERALV01 "
+					" WHERE "
+					" ( "
+						" IDTIPOENCERRAMENTO = 3 " //Retido
+					" OR "
+						" IDTIPOENCERRAMENTO = 5 " //Vai Pensar
+					" ) "
+					" AND "
+						" IDRESPOSTAINTENCAO = " );
+			strcat( cPesquisaIntermediaria, (char*)stTotalPorIntecao.stidResposta.arr );
+		
+			//Coloca o filtro na pesquisa
+			strcat( cPesquisaIntermediaria, cFiltro );
+		
+			strcat( cPesquisaIntermediaria, 
+					" GROUP BY "
+						" DSRESPOSTADESTINO, IDRESPOSTADESTINO"
+				" )" );
+		
+			EXEC SQL WHENEVER NOT FOUND DO break;
+		
+			ULOG(cPesquisaSomatorias);
+			EXEC SQL PREPARE pPesIntOferta FROM :cPesquisaIntermediaria;
+			EXEC SQL DECLARE crsPesIntOferta CURSOR FOR pPesIntOferta;
+			EXEC SQL OPEN crsPesIntOferta;
+		
+		    faparelhototalint = 0.0;
+		    fretencaoint = 0.0;
+		    fmigracaototalint = 0.0;
+		    fadequacaototalint = 0.0;
+		    fsuspensaototalint = 0.0;
+		    fcanceladototalint = 0.0;
+		    fbonustotalint = 0.0;
+		    fpontostotalint = 0.0;
+		    iContadorIntermediario = 0;
+			for (;;iContadorIntermediario++) 
+			{
+				memset(  &stTotalPorDestino, 0, sizeof( stTotalPorDestino ) );
+				EXEC SQL WHENEVER NOT FOUND DO break;
+				EXEC SQL FETCH crsPesIntOferta INTO :stTotalPorDestino:stTotalPorDestinoInd;
+
+				iContadorGeral++;
+
+				xml->createTag("linhaOferta");
+					if( iContadorIntermediario == 0 )
+						xml->addItem("IntCancelamiento"  , (char*)stTotalPorIntecao.stdsResposta.arr);
+					else
+						xml->addItem("IntCancelamiento"  , " " );
+						
+					xml->addItem("qtdintencao"      , stTotalPorDestino.ftotal );
+					xml->addItem("porcintencao"     , floatToCharPercente( stTotalPorDestino.ftotal * 100.0 / stTotalPorIntecao.ftotal ) );
+
+					xml->addItem("destinoprevisto"  , (char*)stTotalPorDestino.stdsResposta.arr);
+	
+					xml->addItem("qtdretencao"      , ( stTotalPorDestino.faparelho+stTotalPorDestino.fargumento+stTotalPorDestino.fadequacao+stTotalPorDestino.fsuspensao+stTotalPorDestino.fvaipensar ) );
+					xml->addItem("porcretencao"     , floatToCharPercente( ( ( stTotalPorDestino.faparelho+stTotalPorDestino.fargumento+stTotalPorDestino.fadequacao+stTotalPorDestino.fsuspensao+stTotalPorDestino.fvaipensar ) * 100.0 / stTotalPorDestino.ftotal ) ) );
+					xml->addItem("qtdmigracao"      , stTotalPorDestino.fmigracao );
+					xml->addItem("porcmigracao"     , floatToCharPercente( stTotalPorDestino.fmigracao * 100.0 / stTotalPorDestino.ftotal ) );
+					xml->addItem("qtdbonus"         , stTotalPorDestino.fbonus );
+					xml->addItem("porcbonus"        , floatToCharPercente( stTotalPorDestino.fbonus * 100.0 / stTotalPorDestino.ftotal ) );
+					xml->addItem("qtdpronto"        , stTotalPorDestino.fpontos );
+					xml->addItem("porcpronto"       , floatToCharPercente( stTotalPorDestino.fpontos * 100.0 / stTotalPorDestino.ftotal ) );
+				xml->closeTag();
+		    
+			    //Fomar uma linha para exbir o total por linha
+
+				faparelhototalint  += stTotalPorDestino.faparelho;
+			    fretencaoint       += stTotalPorDestino.faparelho+stTotalPorDestino.fargumento+stTotalPorDestino.fadequacao+stTotalPorDestino.fsuspensao+stTotalPorDestino.fvaipensar;
+			    fmigracaototalint  += stTotalPorDestino.fmigracao;
+			    fadequacaototalint += stTotalPorDestino.fadequacao;
+			    fsuspensaototalint += stTotalPorDestino.fsuspensao;
+			    fbonustotalint     += stTotalPorDestino.fbonus;
+			    fpontostotalint    += stTotalPorDestino.fpontos;
+			    fcanceladototalint += stTotalPorDestino.fcancelado;
+				
+			}//for (;;iContadorIntermediario++) 
+			EXEC SQL CLOSE crsPesIntOferta;
+
+			iContadorGeral++;
+			xml->createTag("linhaOferta");
+				xml->addItem("IntCancelamiento"  , "Total" );
+					
+				xml->addItem("qtdintencao"      , stTotalPorIntecao.ftotal );
+				xml->addItem("porcintencao"     , floatToCharPercente( stTotalPorIntecao.ftotal * 100.0 / fTotalGeral ) );
+
+				//xml->addItem("destinoprevisto"  , " " );
+
+				xml->addItem("qtdretencao"      , fretencaoint );
+				xml->addItem("porcretencao"     , floatToCharPercente( fretencaoint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdmigracao"      , fmigracaototalint );
+				xml->addItem("porcmigracao"     , floatToCharPercente( fmigracaototalint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdbonus"			, fbonustotalint );
+				xml->addItem("porcbonus"		, floatToCharPercente( fbonustotalint * 100.0 / stTotalPorIntecao.ftotal ) );
+				xml->addItem("qtdpronto"		, fpontostotalint );
+				xml->addItem("porcpronto"		, floatToCharPercente( fpontostotalint * 100.0 / stTotalPorIntecao.ftotal ) );
+			xml->closeTag();
+			
+		    //Fomar uma linha para exbir o total por linha
+		    faparelhototal  += faparelhototalint;
+		    fretencao       += fretencaoint;
+		    fmigracaototal  += fmigracaototalint;
+		    fadequacaototal += fadequacaototalint;
+		    fsuspensaototal += fsuspensaototalint;
+		    fcanceladototal += fcanceladototalint;
+		    fbonustotal		+= fbonustotalint;
+		    fpontostotal	+= fpontostotalint;
+
+		}//for (;;iContador++)
+		EXEC SQL CLOSE crsPesSomaOferta;
+
+		xml->createTag("linhaOferta");
+			xml->addItem("IntCancelamiento"  , "Total" );
+				
+			xml->addItem("qtdintencao"      , fTotalGeral );
+			xml->addItem("porcintencao"     , "100%%" );
+
+			//xml->addItem("destinoprevisto"  , " " );
+
+			xml->addItem("qtdretencao"      , fretencao );
+			xml->addItem("porcretencao"     , floatToCharPercente( fretencao * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdmigracao"      , fmigracaototal );
+			xml->addItem("porcmigracao"     , floatToCharPercente( fmigracaototal * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdbonus"			, fbonustotal );
+			xml->addItem("porcbonus"        , floatToCharPercente( fbonustotal * 100.0 / fTotalGeral ) );
+			xml->addItem("qtdpronto"		, fpontostotal );
+			xml->addItem("porcpronto"		, floatToCharPercente( fpontostotal * 100.0 / fTotalGeral ) );
+		xml->closeTag();
+
+		xml->addItem( "total", iContador );
+
+	}//if( fTotalGeral > 0 )
+	else
+	{
+		xml->createTag("linhaOferta");
+			xml->addItem("IntCancelamiento", "Não foram encontrados dados para este relatório!" );
+			xml->addItem("qtdintencao", " " );
+			xml->addItem("porcintencao", " " );
+			xml->addItem("qtdretencao", " " );
+			xml->addItem("porcretencao", " " );
+			xml->addItem("qtdmigracao", " " );
+			xml->addItem("porcmigracao", " " );
+			xml->addItem("qtdbonus", " " );
+			xml->addItem("porcbonus", " " );
+			xml->addItem("qtdpronto", " " );
+			xml->addItem("porcpronto", " " );
+		xml->closeTag();
+	
+		xml->addItem( "total", "0" );
+		xml->closeTag();
+	}//else if( fTotalGeral > 0 )
+
+	xml->closeTag();//RelatorioRetencaoVO
+
+}
+catch(...)
+{	
+	xml->createTag("RelatorioTodasOfertasVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+	xml->createTag("linhaOferta");
+			xml->addItem("IntCancelamiento", "Relatório Temporariamente indisponivel!" );
+			xml->addItem("qtdintencao", " " );
+			xml->addItem("porcintencao", " " );
+			xml->addItem("qtdretencao", " " );
+			xml->addItem("porcretencao", " " );
+			xml->addItem("qtdmigracao", " " );
+			xml->addItem("porcmigracao", " " );
+			xml->addItem("qtdbonus", " " );
+			xml->addItem("porcbonus", " " );
+			xml->addItem("qtdpronto", " " );
+			xml->addItem("porcpronto", " " );
+	xml->closeTag();
+	xml->addItem( "total", "0" );
+	xml->closeTag();
+}	
+	return 1;
+}
+
+//********************************************************************************************
+//Relatório de Operador
+int rel_operador(char *stf, XMLGen*xml, const Filtro &stFiltro)
+{
+	struct sqlca sqlca;
+	ULOG("rel_operador");
+	EXEC SQL BEGIN DECLARE SECTION;
+	    struct
+	    {
+		    VARCHAR stidPessoaUsuario[21+1];
+		    VARCHAR stnmLoginUsuario[255+1];
+		    float ftotal;
+		    float fargumento;
+		    float faparelho;
+		    float fbonus;
+		    float fmigracao;
+		    float fadequacao;
+		    float fpontos;
+		    float fsuspensao;
+			float fcancelado;
+			float fvaipensar;
+		} stTotalPorOperador;
+	    struct
+	    {
+		    short sidPessoaUsuario;
+		    short snmLoginUsuario;
+		    short stotal;
+		    short sargumento;
+		    short saparelho;
+		    short sbonus;
+		    short smigracao;
+		    short sadequacao;
+		    short spontos;
+		    short ssuspensao;
+			short scancelado;
+			short svaipensar;
+		} stTotalPorOperadorInd;
+	    struct
+	    {
+		    VARCHAR stnmOferta[21+1];
+		    VARCHAR stTotal[21+1];
+		}stDetalhe;
+	    struct
+	    {
+		    short snmOferta;
+		    short sTotal;
+		}stDetalheInd;
+		int   iContador = 0;
+		float fTotalGeral = 0.0;
+		char cPesquisaTotal[10000];
+		char cPesquisaSomatorias[10000];
+		char cPesquisaDetalhada[10000];
+		char cFiltro[3000];
+	EXEC SQL END DECLARE SECTION;
+	
+	memset(  cPesquisaTotal, 0, sizeof( cPesquisaTotal ) );
+	memset(  cPesquisaSomatorias, 0, sizeof( cPesquisaSomatorias ) );
+	memset(  cFiltro, 0, sizeof( cFiltro ) );
+	
+	sprintf(cFiltro, 
+		" AND RELDESTINOPREVISTOV01.DTINCLUSAO >= TO_DATE('%s' || ' 00:00:00','DD/MM/YYYY HH24:MI:SS')"
+		" AND RELDESTINOPREVISTOV01.DTINCLUSAO <= TO_DATE('%s' || ' 23:59:59','DD/MM/YYYY HH24:MI:SS')", stFiltro.szDataIni, stFiltro.szDataFim);
+			        
+	//Segmentacao
+	if( STRLENNULL( stFiltro.szClassificacao ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV01.IDSEGMENTACAO = " );
+		strcat( cFiltro, stFiltro.szClassificacao );
+	}
+	//UFOperadora
+	if( STRLENNULL( stFiltro.szOperadora ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV01.IDUFOPERADORA IN (" );
+		strcat( cFiltro, stFiltro.szOperadora );
+		strcat( cFiltro, 
+			                                           " )" );
+	}
+	//TipoCliente
+	if( STRLENNULL( stFiltro.szTipoCliente ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV01.IDTIPOPESSOA = " );
+		strcat( cFiltro, stFiltro.szTipoCliente );
+	}
+	//Grupo
+	if( STRLENNULL( stFiltro.szGrupo ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV01.IDGRUPO = " );
+		strcat( cFiltro, stFiltro.szGrupo );
+	}
+	//Oferta nao eh utilizado nesta pesquisa (Segundo o Tiago)
+	
+	//Login
+	if( STRLENNULL( stFiltro.szLogin ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV01.NMLOGINUSUARIO = '" );
+		strcat( cFiltro, stFiltro.szLogin );
+		strcat( cFiltro, 
+			                                            "' " );
+	}
+			
+		
+	////////////////////////////////////////////////
+	// Inicio da pesquisa com total geral
+	////////////////////////////////////////////////
+	strcpy( cPesquisaTotal, 
+		"SELECT "
+		    "COUNT(1) TOTAL "
+		"FROM "
+			" RETENCAO.OFERTAREALIZADA OFERTAREALIZADA, "
+			" RETENCAO.MATRIZOFERTA MATRIZOFERTA, "
+			" RETENCAO.OFERTA OFERTA, "
+		    "RETENCAO.RELDESTINOPREVISTOV01 RELDESTINOPREVISTOV01 "
+		"WHERE "
+			" RELDESTINOPREVISTOV01.IDRETENCAO = OFERTAREALIZADA.IDRETENCAO "
+		" AND "
+			" OFERTAREALIZADA.IDMATRIZOFERTA = MATRIZOFERTA.IDMATRIZOFERTA "
+		" AND "
+			" MATRIZOFERTA.IDOFERTA = OFERTA.IDUNIDADEOFERTA " 
+		" AND "
+		" ( "
+			" RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 " 
+		" OR "
+			" RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 " 
+		" OR "
+			" RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 5 " 
+		" ) "
+		" AND "
+		" ("
+			" ( OFERTA.SGCLASSIFICACAO = 'AG'  AND ( RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 OR  RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 ) AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( OFERTA.SGCLASSIFICACAO = 'AP'  AND ( RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 OR  RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 ) AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( OFERTA.SGCLASSIFICACAO = 'BN'  AND ( RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 OR  RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 ) AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( OFERTA.SGCLASSIFICACAO = 'MIG' AND ( RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 OR  RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 ) AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( OFERTA.SGCLASSIFICACAO = 'PL'  AND ( RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 OR  RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 ) AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( OFERTA.SGCLASSIFICACAO = 'PT'  AND ( RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 OR  RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 ) AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( OFERTA.SGCLASSIFICACAO = 'SP'  AND ( RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 OR  RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 ) AND INOFERTAACEITA = 1 )"
+			" OR"
+			" ( RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 )"
+			" OR"
+			" ( RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 5 )"
+		" )" );
+	//Coloca o filtro na pesquisa
+	strcat( cPesquisaTotal, cFiltro );
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	ULOG(cPesquisaTotal);
+	//Monta a pesquisa de total geral e dispara
+	EXEC SQL PREPARE qResultadoTotalOp FROM :cPesquisaTotal;
+	EXEC SQL DECLARE crsResultadoTotalOp CURSOR FOR qResultadoTotalOp;
+	EXEC SQL OPEN crsResultadoTotalOp;
+	EXEC SQL FETCH crsResultadoTotalOp INTO :fTotalGeral;
+	EXEC SQL CLOSE crsResultadoTotalOp;
+	
+	xml->createTag("RelatorioOperadorVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+
+	if( fTotalGeral > 0 )
+	{
+
+		////////////////////////////////////////////////
+		// Inicio da pesquisa de somatorias
+		////////////////////////////////////////////////
+		strcpy( cPesquisaSomatorias, 
+			" SELECT"
+				" IDPESSOAUSUARIO, "
+				" NMLOGINUSUARIO, "
+				" ARGUMENTO+APARELHO+BONUS+MIGRACAO+ADEQUACAO+PONTOS+SUSPENSAO+CANCELADO+VAIPENSAR TOTAL,"
+				" ARGUMENTO,"
+				" APARELHO,"
+				" BONUS,"
+				" MIGRACAO,"
+				" ADEQUACAO,"
+				" PONTOS,"
+				" SUSPENSAO,"
+				" CANCELADO,"
+				" VAIPENSAR"
+			" FROM"
+			" ("
+				" SELECT "
+					" RELDESTINOPREVISTOV01.IDPESSOAUSUARIO, "
+					" RELDESTINOPREVISTOV01.NMLOGINUSUARIO, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'AG'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN OFERTA.SGCLASSIFICACAO END ) ) ARGUMENTO, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'AP'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN OFERTA.SGCLASSIFICACAO END ) ) APARELHO, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'BN'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN OFERTA.SGCLASSIFICACAO END ) ) BONUS, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'MIG' AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN OFERTA.SGCLASSIFICACAO END ) ) MIGRACAO, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'PL'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN OFERTA.SGCLASSIFICACAO END ) ) ADEQUACAO, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'PT'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN OFERTA.SGCLASSIFICACAO END ) ) PONTOS, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'SP'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN OFERTA.SGCLASSIFICACAO END ) ) SUSPENSAO,"
+					" COUNT( ( CASE WHEN RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 THEN RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO END ) ) CANCELADO, "
+					" COUNT( ( CASE WHEN RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 5 THEN RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO END ) ) VAIPENSAR "
+				" FROM "
+					" RETENCAO.OFERTAREALIZADA OFERTAREALIZADA, "
+					" RETENCAO.MATRIZOFERTA MATRIZOFERTA, "
+					" RETENCAO.OFERTA OFERTA, "
+					" RETENCAO.RELDESTINOPREVISTOV01 RELDESTINOPREVISTOV01 "
+				" WHERE "
+					" RELDESTINOPREVISTOV01.IDRETENCAO = OFERTAREALIZADA.IDRETENCAO "
+				" AND "
+					" OFERTAREALIZADA.IDMATRIZOFERTA = MATRIZOFERTA.IDMATRIZOFERTA "
+				" AND "
+					" MATRIZOFERTA.IDOFERTA = OFERTA.IDUNIDADEOFERTA " 
+				" AND "
+				" ( "
+					" RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 " 
+				" OR "
+					" RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 " 
+				" OR "
+					" RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 5 " 
+				" ) "
+					);
+	
+		//Coloca o filtro na pesquisa
+		strcat( cPesquisaSomatorias, cFiltro );
+	
+		strcat( cPesquisaSomatorias, 
+				" GROUP BY "
+					"RELDESTINOPREVISTOV01.NMLOGINUSUARIO, RELDESTINOPREVISTOV01.IDPESSOAUSUARIO"
+			" ) " );
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+	
+		ULOG(cPesquisaSomatorias);
+		EXEC SQL PREPARE qPesquisaSomatoriasOp FROM :cPesquisaSomatorias;
+		EXEC SQL DECLARE crsPesquisaSomatoriasOp CURSOR FOR qPesquisaSomatoriasOp;
+		EXEC SQL OPEN crsPesquisaSomatoriasOp;
+	
+		for (;;) 
+		{
+			memset(  &stTotalPorOperador, 0, sizeof( stTotalPorOperador ) );
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			EXEC SQL FETCH crsPesquisaSomatoriasOp INTO :stTotalPorOperador:stTotalPorOperadorInd;
+			
+			//Inicio da pesquisa Detalhada
+			memset(  cPesquisaDetalhada, 0, sizeof( cPesquisaDetalhada ) );
+			strcpy( cPesquisaDetalhada,
+			"SELECT "
+				"OFERTA.NMOFERTA,"
+				"COUNT(1) TOTAL "
+			"FROM "
+				" RETENCAO.OFERTAREALIZADA OFERTAREALIZADA, "
+				" RETENCAO.MATRIZOFERTA MATRIZOFERTA, "
+				" RETENCAO.OFERTA OFERTA, "
+				"RETENCAO.RELDESTINOPREVISTOV01 RELDESTINOPREVISTOV01 "
+			"WHERE "
+				" RELDESTINOPREVISTOV01.IDRETENCAO = OFERTAREALIZADA.IDRETENCAO "
+			" AND "
+				" OFERTAREALIZADA.IDMATRIZOFERTA = MATRIZOFERTA.IDMATRIZOFERTA "
+			" AND "
+				" MATRIZOFERTA.IDOFERTA = OFERTA.IDUNIDADEOFERTA " 
+			" AND "
+				" RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 " 
+			" AND "
+			" ("
+				" ( OFERTA.SGCLASSIFICACAO = 'AG'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( OFERTA.SGCLASSIFICACAO = 'AP'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( OFERTA.SGCLASSIFICACAO = 'BN'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( OFERTA.SGCLASSIFICACAO = 'MIG' AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( OFERTA.SGCLASSIFICACAO = 'PL'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( OFERTA.SGCLASSIFICACAO = 'PT'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( OFERTA.SGCLASSIFICACAO = 'SP'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 2 )"
+				" OR"
+				" ( RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 5 )"
+			" )" );
+			strcat( cPesquisaDetalhada, cFiltro );
+			strcat( cPesquisaDetalhada, 
+			" AND IDPESSOAUSUARIO = " );
+			strcat( cPesquisaDetalhada, (char*)stTotalPorOperador.stidPessoaUsuario.arr );
+			strcat( cPesquisaDetalhada, 
+				" GROUP BY "
+					"OFERTA.NMOFERTA" );
+
+			ULOG(cPesquisaDetalhada);
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			EXEC SQL PREPARE qPesquisaDetalhadaOp FROM :cPesquisaDetalhada;
+			EXEC SQL DECLARE crsPesquisaDetalhadaOp CURSOR FOR qPesquisaDetalhadaOp;
+			EXEC SQL OPEN crsPesquisaDetalhadaOp;
+
+			xml->createTag("linhaOperador");
+				xml->addItem("operador"          , (char*)stTotalPorOperador.stnmLoginUsuario.arr);
+				xml->addItem("soma"              , stTotalPorOperador.ftotal );
+				xml->addItem("porcretencoes"     , floatToCharPercente( ( ( stTotalPorOperador.fargumento + stTotalPorOperador.fbonus  + stTotalPorOperador.fpontos + stTotalPorOperador.fvaipensar ) * 100.0 / stTotalPorOperador.ftotal ) ) );
+				xml->addItem("porcmigracao"      , floatToCharPercente( stTotalPorOperador.fmigracao * 100.0 / stTotalPorOperador.ftotal ) );
+				xml->addItem("porccancelado"     , floatToCharPercente( stTotalPorOperador.fcancelado * 100.0 / stTotalPorOperador.ftotal ) );
+				xml->addItem("porcoferta"        , floatToCharPercente( stTotalPorOperador.faparelho * 100.0 / stTotalPorOperador.ftotal ) );
+				xml->addItem("porcsuspensao"     , floatToCharPercente( stTotalPorOperador.fsuspensao * 100.0 / stTotalPorOperador.ftotal ) );
+				xml->addItem("porcadequacaoplano", floatToCharPercente( stTotalPorOperador.fadequacao * 100.0 / stTotalPorOperador.ftotal ) );
+				xml->addItem("percentual"        , floatToCharPercente( stTotalPorOperador.ftotal * 100.0 / fTotalGeral ) );
+
+				xml->createTag("resultado");
+
+			if( stTotalPorOperador.fcancelado > 0 )
+			{
+					xml->addItem("descricao" , "NÃO RETIDO" );
+					xml->addItem("quantidade", stTotalPorOperador.fcancelado );
+			}
+			for(;;)
+			{
+				memset( &stDetalhe, 0, sizeof( stDetalhe ) );
+				EXEC SQL FETCH crsPesquisaDetalhadaOp INTO :stDetalhe:stDetalheInd;
+					xml->addItem("descricao" , (char*)stDetalhe.stnmOferta.arr );
+					xml->addItem("quantidade", (char*)stDetalhe.stTotal.arr );
+			}//for(;;)
+
+			EXEC SQL CLOSE crsPesquisaDetalhadaOp;
+
+			if( stTotalPorOperador.fvaipensar > 0 )
+			{
+					xml->addItem("descricao" , "VAI PENSAR" );
+					xml->addItem("quantidade", stTotalPorOperador.fvaipensar );
+			}
+				xml->closeTag();//resultado
+			xml->closeTag();//linhaOperador
+			iContador++;
+		}//for(;;)
+		EXEC SQL CLOSE crsPesquisaSomatoriasOp;
+
+		xml->addItem( "total", iContador );
+
+	}//if( fTotalGeral > 0 )
+	else
+	{
+		xml->createTag("linhaOperador");
+			xml->addItem("operador", "Relatório Temporariamente indisponivel!");
+			xml->addItem("soma", "");
+			xml->addItem("porcretencoes", "");
+			xml->addItem("porcmigracao", "");
+			xml->addItem("porccancelado", "");
+			xml->addItem("porcoferta", "");
+			xml->addItem("porcsuspensao", "");
+			xml->addItem("porcadequacaoplano", "");
+			xml->addItem("percentual", "");
+		
+			xml->createTag("resultado");
+				xml->addItem("descricao","");
+				xml->addItem("quantidade","");
+			xml->closeTag();	
+		xml->closeTag();
+		
+		xml->addItem("total","1");
+	}//else if( fTotalGeral > 0 )
+
+	xml->closeTag();//RelatorioOperadorVO
+
+	return 1;
+}
+
+
+//********************************************************************************************
+//Relatório de Retencao por Ofertas
+int rel_retoferta(char *stf, XMLGen*xml, const Filtro &stFiltro)
+{
+	struct sqlca sqlca;
+	ULOG("rel_retoferta");
+
+	try{
+	
+		EXEC SQL BEGIN DECLARE SECTION;
+		    struct
+		    {
+			    VARCHAR stidResposta[21+1];
+			    VARCHAR stdsResposta[255+1];
+			    float ftotal;
+			    float fargumento;
+			    float faparelho;
+			    float fbonus;
+			    float fmigracao;
+			    float fadequacao;
+			    float fpontos;
+			    float fsuspensao;
+				float fcancelado;
+				float fvaipensar;
+			    float foferta;
+			} stTotalPorIntecao;
+		    struct
+		    {
+			    short sidResposta;
+			    short sdsResposta;
+			    short stotal;
+			    short sargumento;
+			    short saparelho;
+			    short sbonus;
+			    short smigracao;
+			    short sadequacao;
+			    short spontos;
+			    short ssuspensao;
+				short scancelado;
+				short svaipensar;
+			    short soferta;
+			} stTotalPorIntecaoInd;
+		    struct
+		    {
+			    VARCHAR stidResposta[21+1];
+			    VARCHAR stdsResposta[255+1];
+			    float ftotal;
+			    float fargumento;
+			    float faparelho;
+			    float fbonus;
+			    float fmigracao;
+			    float fadequacao;
+			    float fpontos;
+			    float fsuspensao;
+				float fcancelado;
+				float fvaipensar;
+			    float foferta;
+			} stTotalPorDestino;
+		    struct
+		    {
+			    short sidResposta;
+			    short sdsResposta;
+			    short stotal;
+			    short sargumento;
+			    short saparelho;
+			    short sbonus;
+			    short smigracao;
+			    short sadequacao;
+			    short spontos;
+			    short ssuspensao;
+				short scancelado;
+				short svaipensar;
+			    short soferta;
+			} stTotalPorDestinoInd;
+	
+			int   iContador = 0;
+			int   iContadorGeral = 0;
+			int   iContadorIntermediario = 0;
+			float fTotalIntermediario = 0.0;
+			float fTotalGeral = 0.0;
+			float fTotalGeralOferta = 0.0;
+		    float faparelhototalint;
+		    float fretencaoint;
+		    float fmigracaototalint;
+		    float fadequacaototalint;
+		    float fsuspensaototalint;
+		    float fcanceladototalint;
+		    float fbonustotalint;
+		    float fpontostotalint;
+		    float fofertatotalint;
+			float fargumentototalint;
+		    float faparelhototal;
+		    float fretencao;
+		    float fmigracaototal;
+		    float fadequacaototal;
+		    float fsuspensaototal;
+		    float fcanceladototal;
+		    float fbonustotal;
+		    float fpontostotal;
+		    float fofertatotal;
+			float fargumentototal;
+			char cPesquisaTotal[10000];
+			char cPesquisaSomatorias[10000];
+			char cPesquisaIntermediaria[5000];
+			char cFiltro[3000];
+			float ftotalofertas;
+		EXEC SQL END DECLARE SECTION;
+		
+		memset(  cPesquisaTotal, 0, sizeof( cPesquisaTotal ) );
+		memset(  cPesquisaSomatorias, 0, sizeof( cPesquisaSomatorias ) );
+		memset(  cFiltro, 0, sizeof( cFiltro ) );
+		
+		sprintf(cFiltro, 
+			" AND RELRETENCAOGERALV01.DTINCLUSAO >= TO_DATE('%s' || ' 00:00:00','DD/MM/YYYY HH24:MI:SS')"
+			" AND RELRETENCAOGERALV01.DTINCLUSAO <= TO_DATE('%s' || ' 23:59:59','DD/MM/YYYY HH24:MI:SS')", stFiltro.szDataIni, stFiltro.szDataFim);
+				        
+		//Segmentacao
+		if( STRLENNULL( stFiltro.szClassificacao ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND RELRETENCAOGERALV01.IDSEGMENTACAO = " );
+			strcat( cFiltro, stFiltro.szClassificacao );
+		}
+		//UFOperadora
+		if( STRLENNULL( stFiltro.szOperadora ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND RELRETENCAOGERALV01.IDUFOPERADORA IN (" );
+			strcat( cFiltro, stFiltro.szOperadora );
+			strcat( cFiltro, 
+				                                           " )" );
+		}
+		//TipoCliente
+		if( STRLENNULL( stFiltro.szTipoCliente ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND RELRETENCAOGERALV01.IDTIPOPESSOA = " );
+			strcat( cFiltro, stFiltro.szTipoCliente );
+		}
+		//Grupo
+		if( STRLENNULL( stFiltro.szGrupo ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND RELRETENCAOGERALV01.IDGRUPO = " );
+			strcat( cFiltro, stFiltro.szGrupo );
+		}
+		//Oferta nao eh utilizado nesta pesquisa (Segundo o Tiago)
+		
+		//Login
+		if( STRLENNULL( stFiltro.szLogin ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND RELRETENCAOGERALV01.NMLOGINUSUARIO = '" );
+			strcat( cFiltro, stFiltro.szLogin );
+			strcat( cFiltro, 
+				                                            "' " );
+		}
+			
+		////////////////////////////////////////////////
+		// Inicio da pesquisa com total geral
+		////////////////////////////////////////////////
+		strcpy( cPesquisaTotal, 
+			"SELECT "
+			    "COUNT(1) TOTAL, "
+				" COUNT( ( CASE WHEN IDUNIDADEOFERTA = " );
+		strcat( cPesquisaTotal, stFiltro.szOferta );
+		strcat( cPesquisaTotal, 
+				                                       " AND IDTIPOENCERRAMENTO != 5 AND INOFERTAACEITA = 1 THEN IDTIPOENCERRAMENTO END ) ) OFERTA "
+			" FROM "
+			    " RETENCAO.RELRETENCAOGERALV01 RELRETENCAOGERALV01 "
+			" WHERE "
+			" ( "
+				" IDTIPOENCERRAMENTO = 3 " //Retido
+			" OR "
+				" IDTIPOENCERRAMENTO = 5 " //Vai Pensar
+			" ) "
+			" AND "
+			" ("
+				" ( SGCLASSIFICACAO = 'AG'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( SGCLASSIFICACAO = 'AP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( SGCLASSIFICACAO = 'BN'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( SGCLASSIFICACAO = 'MIG' AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( SGCLASSIFICACAO = 'PL'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( SGCLASSIFICACAO = 'PT'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( SGCLASSIFICACAO = 'SP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 )"
+				" OR"
+				" ( IDTIPOENCERRAMENTO = 5 )"
+			" )" );
+		//Coloca o filtro na pesquisa
+		strcat( cPesquisaTotal, cFiltro );
+		EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+		ULOG(cPesquisaTotal);
+		//Monta a pesquisa de total geral e dispara
+		EXEC SQL PREPARE qResOferta FROM :cPesquisaTotal;
+		EXEC SQL DECLARE crsResOferta CURSOR FOR qResOferta;
+		EXEC SQL OPEN crsResOferta;
+		EXEC SQL FETCH crsResOferta INTO :fTotalGeral, fTotalGeralOferta;
+		EXEC SQL CLOSE crsResOferta;
+		
+		xml->createTag("RelatorioReteOfertaVO");
+		xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+	
+		if( fTotalGeral > 0 )
+		{
+			////////////////////////////////////////////////
+			// Inicio da pesquisa de somatorias
+			////////////////////////////////////////////////
+			strcpy( cPesquisaSomatorias, 
+	            " SELECT"
+	                " IDRESPOSTAINTENCAO,"
+	                " DSRESPOSTAINTENCAO,"
+	                " ARGUMENTO+APARELHO+BONUS+MIGRACAO+ADEQUACAO+SUSPENSAO+PONTOS+VAIPENSAR TOTAL,"
+	                " ARGUMENTO,"
+	                " APARELHO,"
+	                " BONUS,"
+	                " MIGRACAO,"
+	                " ADEQUACAO,"
+	                " PONTOS,"
+	                " SUSPENSAO,"
+	                " CANCELADO,"
+	                " VAIPENSAR,"
+					" OFERTA"
+	            " FROM"
+	            " ("
+					" SELECT "
+						" IDRESPOSTAINTENCAO, "
+						" DSRESPOSTAINTENCAO, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AG'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) ARGUMENTO, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) APARELHO, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'BN'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) BONUS, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'MIG' AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) MIGRACAO, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PL'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) ADEQUACAO, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PT'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) PONTOS, "
+						" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'SP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) SUSPENSAO,"
+						" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 2 THEN IDTIPOENCERRAMENTO END ) ) CANCELADO,"
+						" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 5 THEN IDTIPOENCERRAMENTO END ) ) VAIPENSAR,"
+						" COUNT( ( CASE WHEN IDUNIDADEOFERTA = " );
+			strcat( cPesquisaSomatorias, stFiltro.szOferta );
+			strcat( cPesquisaSomatorias, 
+						                                       " AND IDTIPOENCERRAMENTO != 5 AND INOFERTAACEITA = 1 THEN IDUNIDADEOFERTA END ) ) OFERTA"
+					" FROM "
+						" RETENCAO.RELRETENCAOGERALV01 RELRETENCAOGERALV01 "
+					" WHERE "
+					" ( "
+						" IDTIPOENCERRAMENTO = 3 " //Retido
+					" OR "
+						" IDTIPOENCERRAMENTO = 5 " //Vai Pensar
+					" ) "
+			);
+		
+			//Coloca o filtro na pesquisa
+			strcat( cPesquisaSomatorias, cFiltro );
+		
+			strcat( cPesquisaSomatorias, 
+					" GROUP BY "
+						"DSRESPOSTAINTENCAO, IDRESPOSTAINTENCAO"
+	            " )" );
+		
+			EXEC SQL WHENEVER NOT FOUND DO break;
+		
+			ULOG(cPesquisaSomatorias);
+			EXEC SQL PREPARE qPesResSomaOferta FROM :cPesquisaSomatorias;
+			EXEC SQL DECLARE crsPesResSomaOferta CURSOR FOR qPesResSomaOferta;
+			EXEC SQL OPEN crsPesResSomaOferta;
+		
+		    faparelhototal  = 0.0;
+		    fretencao       = 0.0;
+		    fmigracaototal  = 0.0;
+		    fadequacaototal = 0.0;
+		    fsuspensaototal = 0.0;
+		    fcanceladototal = 0.0;
+		    fbonustotal		= 0.0;
+		    fpontostotal	= 0.0;
+		    fofertatotal	= 0.0;
+			fargumentototal = 0.0;
+			for (;;iContador++) 
+			{
+				memset(  cPesquisaIntermediaria, 0, sizeof( cPesquisaIntermediaria ) );
+				memset(  &stTotalPorIntecao, 0, sizeof( stTotalPorIntecao ) );
+				EXEC SQL WHENEVER NOT FOUND DO break;
+				EXEC SQL FETCH crsPesResSomaOferta INTO :stTotalPorIntecao:stTotalPorIntecaoInd;
+				
+				////////////////////////////////////////////////
+				// Inicio da pesquisa de intermediario
+				////////////////////////////////////////////////
+				strcpy( cPesquisaIntermediaria, 
+					" SELECT"
+					    " IDRESPOSTADESTINO, "
+					    " DSRESPOSTADESTINO, "
+						" ARGUMENTO+APARELHO+BONUS+MIGRACAO+ADEQUACAO+SUSPENSAO+PONTOS+VAIPENSAR TOTAL,"
+						" ARGUMENTO,"
+						" APARELHO,"
+						" BONUS,"
+						" MIGRACAO,"
+						" ADEQUACAO,"
+						" PONTOS,"
+						" SUSPENSAO,"
+						" CANCELADO,"
+						" VAIPENSAR,"
+						" OFERTA"
+					" FROM"
+					" ("
+						" SELECT "
+							" IDRESPOSTADESTINO, "
+							" DSRESPOSTADESTINO, "
+							" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AG'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) ARGUMENTO, "
+							" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'AP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) APARELHO, "
+							" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'BN'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) BONUS, "
+							" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'MIG' AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) MIGRACAO, "
+							" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PL'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) ADEQUACAO, "
+							" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'PT'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) PONTOS, "
+							" COUNT( ( CASE WHEN SGCLASSIFICACAO = 'SP'  AND IDTIPOENCERRAMENTO = 3 AND INOFERTAACEITA = 1 THEN RELRETENCAOGERALV01.SGCLASSIFICACAO END ) ) SUSPENSAO,"
+							" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 2 THEN IDTIPOENCERRAMENTO END ) ) CANCELADO,"
+							" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 5 THEN IDTIPOENCERRAMENTO END ) ) VAIPENSAR,"
+							" COUNT( ( CASE WHEN IDUNIDADEOFERTA = " );
+				strcat( cPesquisaIntermediaria, stFiltro.szOferta );
+				strcat( cPesquisaIntermediaria, 
+							                                       " AND IDTIPOENCERRAMENTO != 5 AND INOFERTAACEITA = 1 THEN IDUNIDADEOFERTA END ) ) OFERTA"
+						" FROM "
+							" RETENCAO.RELRETENCAOGERALV01 RELRETENCAOGERALV01 "
+						" WHERE "
+						" ( "
+							" IDTIPOENCERRAMENTO = 3 " //Retido
+						" OR "
+							" IDTIPOENCERRAMENTO = 5 " //Vai Pensar
+						" ) "
+						" AND "
+							" IDRESPOSTAINTENCAO = " );
+				strcat( cPesquisaIntermediaria, (char*)stTotalPorIntecao.stidResposta.arr );
+			
+				//Coloca o filtro na pesquisa
+				strcat( cPesquisaIntermediaria, cFiltro );
+			
+				strcat( cPesquisaIntermediaria, 
+						" GROUP BY "
+							" DSRESPOSTADESTINO, IDRESPOSTADESTINO"
+					" )" );
+			
+				EXEC SQL WHENEVER NOT FOUND DO break;
+			
+				ULOG(cPesquisaSomatorias);
+				EXEC SQL PREPARE pPesrESIntOferta FROM :cPesquisaIntermediaria;
+				EXEC SQL DECLARE crsPesrESIntOferta CURSOR FOR pPesrESIntOferta;
+				EXEC SQL OPEN crsPesrESIntOferta;
+			
+			    faparelhototalint  = 0.0;
+			    fretencaoint       = 0.0;
+			    fmigracaototalint  = 0.0;
+			    fadequacaototalint = 0.0;
+			    fsuspensaototalint = 0.0;
+			    fcanceladototalint = 0.0;
+			    fbonustotalint     = 0.0;
+			    fpontostotalint    = 0.0;
+		    	fofertatotalint	   = 0.0;
+				fargumentototalint = 0.0;
+			    iContadorIntermediario = 0;
+				for (;;iContadorIntermediario++) 
+				{
+					memset(  &stTotalPorDestino, 0, sizeof( stTotalPorDestino ) );
+					EXEC SQL WHENEVER NOT FOUND DO break;
+					EXEC SQL FETCH crsPesrESIntOferta INTO :stTotalPorDestino:stTotalPorDestinoInd;
+	
+					iContadorGeral++;
+	
+					xml->createTag("linhaOferta");
+						if( iContadorIntermediario == 0 )
+							xml->addItem("IntCancelamiento"  , (char*)stTotalPorIntecao.stdsResposta.arr);
+						else
+							xml->addItem("IntCancelamiento"  , " " );
+							
+						xml->addItem("qtdintencao"      , stTotalPorDestino.ftotal );
+						xml->addItem("porcintencao"     , floatToCharPercente( stTotalPorDestino.ftotal * 100.0 / stTotalPorIntecao.ftotal ) );
+	
+						xml->addItem("destinoprevisto"  , (char*)stTotalPorDestino.stdsResposta.arr);
+
+						ftotalofertas = stTotalPorDestino.fargumento + stTotalPorDestino.faparelho + stTotalPorDestino.fbonus + stTotalPorDestino.fpontos + stTotalPorDestino.fsuspensao + stTotalPorDestino.fvaipensar + stTotalPorDestino.fadequacao + stTotalPorDestino.fmigracao;
+
+						xml->addItem("qtdoferta"        , ftotalofertas );
+						xml->addItem("porcoferta"       , floatToCharPercente( ftotalofertas * 100.0 / stTotalPorDestino.ftotal ) );
+						
+						xml->addItem("ofertaFiltro"     , stTotalPorDestino.foferta );
+						xml->addItem("porcOfertaFiltro" , floatToCharPercente( stTotalPorDestino.foferta * 100.0 / ftotalofertas ) );
+					xml->closeTag();
+			    
+				    //Fomar uma linha para exbir o total por linha
+				    faparelhototalint  += stTotalPorDestino.faparelho;//
+				    fretencaoint       += stTotalPorDestino.fvaipensar;
+				    fmigracaototalint  += stTotalPorDestino.fmigracao;//
+				    fadequacaototalint += stTotalPorDestino.fadequacao;//
+				    fsuspensaototalint += stTotalPorDestino.fsuspensao;//
+				    fbonustotalint     += stTotalPorDestino.fbonus;//
+				    fpontostotalint    += stTotalPorDestino.fpontos;//
+				    fcanceladototalint += stTotalPorDestino.fcancelado;
+				    fofertatotalint    += stTotalPorDestino.foferta;
+					fargumentototalint += stTotalPorDestino.fargumento;//
+					
+				}//for (;;iContadorIntermediario++) 
+				EXEC SQL CLOSE crsPesrESIntOferta;
+	
+				iContadorGeral++;
+				xml->createTag("linhaOferta");
+						xml->addItem("IntCancelamiento"  , "Total" );
+							
+						xml->addItem("qtdintencao"      , stTotalPorIntecao.ftotal );
+						xml->addItem("porcintencao"     , floatToCharPercente( stTotalPorIntecao.ftotal * 100.0 / fTotalGeral ) );
+	
+						xml->addItem("destinoprevisto"  , " " );
+
+						ftotalofertas = stTotalPorIntecao.fargumento + stTotalPorIntecao.faparelho + stTotalPorIntecao.fbonus + stTotalPorIntecao.fpontos + stTotalPorIntecao.fsuspensao + stTotalPorIntecao.fvaipensar + stTotalPorIntecao.fadequacao + stTotalPorIntecao.fmigracao;
+
+						xml->addItem("qtdoferta"        , ftotalofertas );
+						xml->addItem("porcoferta"       , floatToCharPercente( ftotalofertas * 100.0 / stTotalPorIntecao.ftotal ) );
+						
+						xml->addItem("ofertaFiltro"     , stTotalPorIntecao.foferta );
+						xml->addItem("porcOfertaFiltro" , floatToCharPercente( stTotalPorIntecao.foferta * 100.0 / ftotalofertas ) );
+				xml->closeTag();
+				
+			    //Fomar uma linha para exbir o total por linha
+			    faparelhototal  += faparelhototalint;
+			    fretencao       += fretencaoint;
+			    fmigracaototal  += fmigracaototalint;
+			    fadequacaototal += fadequacaototalint;
+			    fsuspensaototal += fsuspensaototalint;
+			    fcanceladototal += fcanceladototalint;
+			    fbonustotal		+= fbonustotalint;
+			    fpontostotal	+= fpontostotalint;
+			    fofertatotal    += fofertatotalint;
+				fargumentototal += fargumentototalint;
+	
+			}//for (;;iContador++)
+			EXEC SQL CLOSE crsPesResSomaOferta;
+	
+			xml->createTag("linhaOferta");
+				xml->addItem("IntCancelamiento" , "Total geral" );
+					
+				xml->addItem("qtdintencao"      , fTotalGeral );
+				xml->addItem("porcintencao"     , "100%%" );
+	
+				xml->addItem("destinoprevisto"  , " " );
+
+				//Variavel fretencao tem a quantidade de vai pensar
+				ftotalofertas = fargumentototal + faparelhototal + fbonustotal + fpontostotal + fsuspensaototal + fretencao + fadequacaototal + fmigracaototal;
+
+				xml->addItem("qtdoferta"        , ftotalofertas );
+				xml->addItem("porcoferta"       , floatToCharPercente( ftotalofertas * 100.0 / fTotalGeral ) );
+				
+				xml->addItem("ofertaFiltro"     , fofertatotal );
+				xml->addItem("porcOfertaFiltro" , floatToCharPercente( fofertatotal * 100.0 / ftotalofertas ) );
+
+			xml->closeTag();
+	
+			xml->addItem( "total", iContador );
+	
+		}//if( fTotalGeral > 0 )
+		else
+		{
+			xml->createTag("linhaOferta");
+				xml->addItem("IntCancelamiento", "Não foram encontrados dados para este relatório!" );
+				xml->addItem("qtdintencao"      , "" );
+				xml->addItem("porcintencao"     , "" );
+				xml->addItem("destinoprevisto"  , "" );
+				xml->addItem("qtdoferta"        , "" );
+				xml->addItem("porcoferta"       , "" );
+				xml->addItem("ofertaFiltro"     , "" );
+				xml->addItem("porcOfertaFiltro" , "" );
+			xml->closeTag();
+		
+			xml->addItem( "total", "0" );
+			xml->closeTag();
+		}//else if( fTotalGeral > 0 )
+	
+		xml->closeTag();//RelatorioReteOfertaVO
+	
+	}
+	catch(...)
+	{	
+		xml->createTag("RelatorioReteOfertaVO");
+		xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+		xml->createTag("linhaOferta");
+			xml->addItem("IntCancelamiento", "Relatório Temporariamente indisponivel!" );
+			xml->addItem("qtdintencao"      , "" );
+			xml->addItem("porcintencao"     , "" );
+			xml->addItem("destinoprevisto"  , "" );
+			xml->addItem("qtdoferta"        , "" );
+			xml->addItem("porcoferta"       , "" );
+			xml->addItem("ofertaFiltro"     , "" );
+			xml->addItem("porcOfertaFiltro" , "" );
+		xml->closeTag();//linhaOferta
+		xml->addItem( "total", "0" );
+		xml->closeTag();//RelatorioReteOfertaVO
+	}	
+	return 1;
+}
+
+
+
+
+
+//********************************************************************************************
+//Relatório de Planos
+//********************************************************************************************
+//Relatório de Planos
+ int rel_planos(char *stf, XMLGen*xml, const Filtro &stFiltro)
+{
+	ULOG("rel_planos");
+	struct sqlca sqlca;
+	char szNmplano[255];
+	EXEC SQL BEGIN DECLARE SECTION;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		} stTotalPorIntecao;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		} stTotalPorIntecaoInd;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		} stTotalPorDestino;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		} stTotalPorDestinoInd;
+	    struct ST_PLANOS_RELPLANO
+	    {
+		    VARCHAR stidPlano[21+1];
+		    VARCHAR stdsPlano[255+1];
+		    float ftotal;
+		} stPlano;
+	    struct
+	    {
+		    short sidPlano;
+		    short sdsPlano;
+		    short stotal;
+		} stPlanoInd;
+		int* pziSomatoriaTotalPlanos;
+		int* pziSomatoriaPlanos;
+		struct ST_PLANOS_RELPLANO* pzstPlanos = NULL;
+		int  iContador = 0;
+		int  iContatodorPlanos = 0;
+		int  iQuantidadePlanos = 0;
+		int  iContadorDestinos = 0;
+		int  iContadorSomatoriaDestinos = 0;
+		int  iSomatoriaDestinos = 0;
+		int  iTotalDestinos;
+		int  iSomatoriaTotalDestinos;
+		int  iPlano = 0;
+		int  iSomatoriaPlanoIntencao = 0;
+		int  iSomatoriaPlanoDestino = 0;
+		int  iSomatoriaPlano = 0;
+		char cQuantidadePlanos[10000];
+		char cPesquisaPlanos[10000];
+		char cPesquisaIntencoes[10000];
+		char cPesquisaDestinos[10000];
+		char cFiltro[3000];
+	EXEC SQL END DECLARE SECTION;
+	
+	try
+	{
+		memset(  cQuantidadePlanos, 0, sizeof( cQuantidadePlanos ) );
+		memset(  cPesquisaPlanos, 0, sizeof( cPesquisaPlanos ) );
+		memset(  cPesquisaIntencoes, 0, sizeof( cPesquisaIntencoes ) );
+		memset(  cFiltro, 0, sizeof( cFiltro ) );
+		
+		sprintf(cFiltro, 
+			" AND DTINCLUSAO >= TO_DATE('%s' || ' 00:00:00','DD/MM/YYYY HH24:MI:SS')"
+			" AND DTINCLUSAO <= TO_DATE('%s' || ' 23:59:59','DD/MM/YYYY HH24:MI:SS')", stFiltro.szDataIni, stFiltro.szDataFim);
+						
+		//Segmentacao
+		if( STRLENNULL( stFiltro.szClassificacao ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND IDSEGMENTACAO = " );
+			strcat( cFiltro, stFiltro.szClassificacao );
+		}
+		//UFOperadora
+		if( STRLENNULL( stFiltro.szOperadora ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND IDUFOPERADORA IN (" );
+			strcat( cFiltro, stFiltro.szOperadora );
+			strcat( cFiltro, 
+														   " )" );
+		}
+		//TipoCliente
+		if( STRLENNULL( stFiltro.szTipoCliente ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND IDTIPOPESSOA = " );
+			strcat( cFiltro, stFiltro.szTipoCliente );
+		}
+		//Grupo
+		if( STRLENNULL( stFiltro.szGrupo ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND IDGRUPO = " );
+			strcat( cFiltro, stFiltro.szGrupo );
+		}
+		//Oferta nao eh utilizado nesta pesquisa (Segundo o Tiago)
+		
+		//Login
+		if( STRLENNULL( stFiltro.szLogin ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND NMLOGINUSUARIO = '" );
+			strcat( cFiltro, stFiltro.szLogin );
+			strcat( cFiltro, 
+															"' " );
+		}
+				
+			
+		////////////////////////////////////////////////
+		// Inicio da pesquisa de quantidade de planos
+		////////////////////////////////////////////////
+		strcpy( cQuantidadePlanos, 
+			"SELECT "
+				" COUNT(1)"
+			" FROM "
+			" ( "
+				" SELECT "
+					" COUNT(1)"
+				" FROM "
+					" RETENCAO.RELRETENCAOPLANOGERALV01 RELRETENCAOPLANOGERALV01 "
+				" WHERE "
+					" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+				"AND "
+					" INOFERTAACEITA = 1 "
+		);
+		//Coloca o filtro na pesquisa
+		strcat( cQuantidadePlanos, cFiltro );
+
+		strcat( cQuantidadePlanos,
+				" GROUP BY "
+					" IDPLANO "
+			" ) "
+		);
+		EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+		ULOG(cQuantidadePlanos);
+		//Monta a pesquisa que recupera quantos planos existem
+		EXEC SQL PREPARE qQuantidadePlanos FROM :cQuantidadePlanos;
+		EXEC SQL DECLARE crsQuantidadePlanos CURSOR FOR qQuantidadePlanos;
+		EXEC SQL OPEN crsQuantidadePlanos;
+		EXEC SQL FETCH crsQuantidadePlanos INTO :iQuantidadePlanos;
+		EXEC SQL CLOSE crsQuantidadePlanos;
+		
+		xml->createTag("RelatorioRetePlanosVO");
+		xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+		if( iQuantidadePlanos > 0 )
+		{
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			
+			strcpy( cPesquisaPlanos, 
+				" SELECT "
+					" IDPLANO,"
+					" NMPLANO,"
+					" COUNT(1)"
+				" FROM "
+					" RETENCAO.RELRETENCAOPLANOGERALV01 RELRETENCAOPLANOGERALV01 "
+				" WHERE "
+					" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+				" AND "
+					" INOFERTAACEITA = 1 "
+			);
+			//Coloca o filtro na pesquisa
+			strcat( cPesquisaPlanos, cFiltro );
+		
+			strcat( cPesquisaPlanos,
+				" GROUP BY"
+					" NMPLANO, IDPLANO"
+			);
+			
+			//Aloca array para recuperar todos os planos
+			struct ST_PLANOS_RELPLANO* pzstPlanos;
+			pzstPlanos = (struct ST_PLANOS_RELPLANO*) malloc( sizeof(struct ST_PLANOS_RELPLANO) * iQuantidadePlanos );
+			pziSomatoriaTotalPlanos = (int*) malloc( sizeof( int ) * iQuantidadePlanos );
+			pziSomatoriaPlanos = (int*) malloc( sizeof( int ) * iQuantidadePlanos );
+
+			memset( pzstPlanos, 0, sizeof(struct ST_PLANOS_RELPLANO) * iQuantidadePlanos );
+			memset( pziSomatoriaTotalPlanos, 0, sizeof(int) * iQuantidadePlanos );
+
+			//Monta a pesquisa que recupera os planos
+			EXEC SQL PREPARE qPesquisaPlanos FROM :cPesquisaPlanos;
+			EXEC SQL DECLARE crsPesquisaPlanos CURSOR FOR qPesquisaPlanos;
+			EXEC SQL OPEN crsPesquisaPlanos;
+			//Cria a TAG com os nomes das colunas com nomes de planos
+			xml->createTag("colunas");
+			for(;;iContador++)
+			{
+				memset(  &stPlano, 0, sizeof( stPlano ) );
+				
+
+				EXEC SQL FETCH crsPesquisaPlanos INTO :stPlano:stPlanoInd;
+				xml->addItem("nome", (char*)stPlano.stdsPlano.arr );
+				sprintf(szNmplano,"%s%%",(char*)stPlano.stdsPlano.arr );
+				xml->addItem("nome", szNmplano );
+				memcpy( &pzstPlanos[iContador], &stPlano, sizeof( stPlano ) );
+			};
+			EXEC SQL CLOSE crsPesquisaPlanos;
+			//Fecha a TAG colunas
+			xml->closeTag();//colunas
+
+			////////////////////////////////////////////////
+			// Inicio da pesquisa intencoes
+			////////////////////////////////////////////////
+			strcpy( cPesquisaIntencoes, 
+				" SELECT "
+					" IDRESPOSTAINTENCAO,"
+					" DSRESPOSTAINTENCAO,"
+					" COUNT(1) TOTALPLANOS"
+				" FROM "
+					" RETENCAO.RELRETENCAOPLANOGERALV01 RELRETENCAOPLANOGERALV01 "
+				" WHERE "
+					" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+				" AND "
+					" INOFERTAACEITA = 1 "
+			);
+			//Coloca o filtro na pesquisa
+			strcat( cPesquisaIntencoes, cFiltro );
+
+			strcat( cPesquisaIntencoes,
+				" GROUP BY"
+					" DSRESPOSTAINTENCAO, IDRESPOSTAINTENCAO"
+			);
+		
+			EXEC SQL WHENEVER NOT FOUND DO break;
+		
+			ULOG(cPesquisaIntencoes);
+			EXEC SQL PREPARE qPesquisaIntencoesPlanos FROM :cPesquisaIntencoes;
+			EXEC SQL DECLARE crsPesquisaIntencoesPlanos CURSOR FOR qPesquisaIntencoesPlanos;
+			EXEC SQL OPEN crsPesquisaIntencoesPlanos;
+			iSomatoriaTotalDestinos = 0;
+			for (;;) 
+			{
+				memset(  cPesquisaDestinos, 0, sizeof( cPesquisaDestinos ) );
+				memset(  &stTotalPorIntecao, 0, sizeof( stTotalPorIntecao ) );
+				EXEC SQL FETCH crsPesquisaIntencoesPlanos INTO :stTotalPorIntecao:stTotalPorIntecaoInd;
+				
+				////////////////////////////////////////////////
+				// Inicio da pesquisa de destinos
+				////////////////////////////////////////////////
+				strcpy( cPesquisaDestinos, 
+					" SELECT "
+						" IDRESPOSTADESTINO,"
+						" DSRESPOSTADESTINO,"
+						" COUNT(1) TOTALPLANOS"
+					" FROM "
+						" RETENCAO.RELRETENCAOPLANOGERALV01 RELRETENCAOPLANOGERALV01 "
+					" WHERE "
+						" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+					" AND "
+						" INOFERTAACEITA = 1 "
+					" AND "
+						" IDRESPOSTAINTENCAO = "
+				);
+				//Adiciona o resposta intecao a pesquisa
+				strcat( cPesquisaDestinos, (char*)stTotalPorIntecao.stidResposta.arr );
+
+				//Coloca o filtro na pesquisa
+				strcat( cPesquisaDestinos, cFiltro );
+		
+				strcat( cPesquisaDestinos,
+					" GROUP BY"
+						" DSRESPOSTADESTINO, IDRESPOSTADESTINO"
+				);
+			
+				ULOG(cPesquisaDestinos);
+				EXEC SQL PREPARE pPesquisaDestinosPlanos FROM :cPesquisaDestinos;
+				EXEC SQL DECLARE crsPesquisaDestinosPlanos CURSOR FOR pPesquisaDestinosPlanos;
+				EXEC SQL OPEN crsPesquisaDestinosPlanos;
+			
+				iSomatoriaPlanoDestino = 0;
+				iSomatoriaPlano = 0;
+				iSomatoriaDestinos = 0;
+				memset( pziSomatoriaPlanos, 0, sizeof(int) * iQuantidadePlanos );
+				for (iContadorDestinos = 0;;iContadorDestinos++) 
+				{
+					iTotalDestinos = 0;
+					memset(  &stTotalPorDestino, 0, sizeof( stTotalPorDestino ) );
+					EXEC SQL WHENEVER NOT FOUND DO break;
+					EXEC SQL FETCH crsPesquisaDestinosPlanos INTO :stTotalPorDestino:stTotalPorDestinoInd;
+
+					//Recupera o total de planos, independente do plano
+					memset(  cPesquisaPlanos, 0, sizeof( cPesquisaPlanos ) );
+					strcpy( cPesquisaPlanos, 
+						" SELECT "
+							" COUNT(1) TOTALDESTINOS"
+						" FROM "
+							" RETENCAO.RELRETENCAOGERALV01 RELRETENCAOGERALV01 "
+						" WHERE "
+							" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+						" AND "
+							" INOFERTAACEITA = 1 "
+						" AND "
+							" IDRESPOSTAINTENCAO = "
+					);
+					//Adiciona o resposta intecao a pesquisa
+					strcat( cPesquisaPlanos, (char*)stTotalPorIntecao.stidResposta.arr );
+					strcat( cPesquisaPlanos, 
+						" AND "
+							" IDRESPOSTADESTINO = "
+					);
+					//Adiciona o resposta destino a pesquisa
+					strcat( cPesquisaPlanos, (char*)stTotalPorDestino.stidResposta.arr );
+
+					//Coloca o filtro na pesquisa
+					strcat( cPesquisaPlanos, cFiltro );
+					
+					ULOG(cPesquisaPlanos);
+					//Monta a pesquisa que recupera a quantidade de cada plano por destino
+					EXEC SQL PREPARE qPesquisaPlanosTotalDestino FROM :cPesquisaPlanos;
+					EXEC SQL DECLARE crsPesquisaPlanosTotalDestino CURSOR FOR qPesquisaPlanosTotalDestino;
+					EXEC SQL OPEN crsPesquisaPlanosTotalDestino;
+					EXEC SQL FETCH crsPesquisaPlanosTotalDestino INTO :iTotalDestinos;
+					EXEC SQL CLOSE crsPesquisaPlanosTotalDestino;
+					
+					iSomatoriaDestinos += iTotalDestinos;
+
+					xml->createTag("linhaPlanos");
+					if( iContadorDestinos == 0 )
+						xml->addItem("intCancelamento", (char*)stTotalPorIntecao.stdsResposta.arr );
+					else
+						xml->addItem("intCancelamento", "" );
+
+					xml->addItem("qtdIntencao"    , iTotalDestinos );
+					xml->addItem("percIntencao"   , "" );
+
+					xml->addItem("destinoPrevisto", (char*)stTotalPorDestino.stdsResposta.arr );
+					xml->addItem("qtdAdeq"        , stTotalPorDestino.ftotal );
+					xml->addItem("percAdeq"       , "" );
+					
+					xml->createTag("valoresColunas");
+					iSomatoriaPlano = 0;
+					for( iContatodorPlanos = 0; iContatodorPlanos < iQuantidadePlanos; iContatodorPlanos++ )
+					{
+						//Recupera o total de planos para um certo destino
+						memset(  cPesquisaPlanos, 0, sizeof( cPesquisaPlanos ) );
+						strcpy( cPesquisaPlanos, 
+							" SELECT "
+								" COUNT(1) TOTALPLANOS"
+							" FROM "
+								" RETENCAO.RELRETENCAOPLANOGERALV01 RELRETENCAOPLANOGERALV01 "
+							" WHERE "
+								" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+							" AND "
+								" INOFERTAACEITA = 1 "
+							" AND "
+								" IDRESPOSTAINTENCAO = "
+						);
+						//Adiciona o resposta intecao a pesquisa
+						strcat( cPesquisaPlanos, (char*)stTotalPorIntecao.stidResposta.arr );
+						strcat( cPesquisaPlanos, 
+							" AND "
+								" IDRESPOSTADESTINO = "
+						);
+						//Adiciona o resposta destino a pesquisa
+						strcat( cPesquisaPlanos, (char*)stTotalPorDestino.stidResposta.arr );
+						strcat( cPesquisaPlanos, 
+							" AND "
+								" IDPLANO = "
+						);
+						//Adiciona o resposta destino a pesquisa
+						strcat( cPesquisaPlanos, (char*)pzstPlanos[iContatodorPlanos].stidPlano.arr );
+						
+						//Coloca o filtro na pesquisa
+						strcat( cPesquisaPlanos, cFiltro );
+						
+						ULOG(cPesquisaPlanos);
+						iPlano = 0;
+						//Monta a pesquisa que recupera a quantidade de cada plano por destino
+						EXEC SQL PREPARE qPesquisaPlanosIndividuais FROM :cPesquisaPlanos;
+						EXEC SQL DECLARE crsPesquisaPlanosIndividuais CURSOR FOR qPesquisaPlanosIndividuais;
+						EXEC SQL OPEN crsPesquisaPlanosIndividuais;
+						EXEC SQL FETCH crsPesquisaPlanosIndividuais INTO :iPlano;
+						EXEC SQL CLOSE crsPesquisaPlanosIndividuais;
+						
+						xml->addItem("valor", iPlano );
+						xml->addItem("valor", "" );
+						
+						pziSomatoriaPlanos[iContatodorPlanos] += iPlano;
+						pziSomatoriaTotalPlanos[iContatodorPlanos] += iPlano;
+
+						iSomatoriaPlano += iPlano;
+						
+					}//for( iContatodorPlanos = 0; iContatodorPlanos < iQuantidadePlanos; iContatodorPlanos++ )
+					xml->closeTag();//valoresColunas
+					xml->closeTag();//linhaPlanos
+					
+					iSomatoriaPlanoDestino += iSomatoriaPlano;
+
+				}//for (iContadorDestinos = 0;;iContadorDestinos++) 
+				EXEC SQL CLOSE crsPesquisaDestinosPlanos;
+
+				xml->createTag("linhaPlanos");
+
+					xml->addItem("intCancelamento", "Total");
+					xml->addItem("qtdIntencao"    , iSomatoriaDestinos );
+					xml->addItem("percIntencao"   , "" );
+
+				
+					xml->addItem("destinoPrevisto", " ");
+					xml->addItem("qtdAdeq" , iSomatoriaPlanoDestino );
+					xml->addItem("percAdeq", "" );
+		
+					xml->createTag("valoresColunas");
+					for( iContatodorPlanos = 0; iContatodorPlanos < iQuantidadePlanos; iContatodorPlanos++ )
+					{
+						xml->addItem("valor", pziSomatoriaPlanos[iContatodorPlanos] );
+						xml->addItem("valor", "" );
+					}
+					xml->closeTag();
+		
+				xml->closeTag();//linhaPlanos
+				iContadorDestinos++;
+				
+				iSomatoriaPlanoIntencao += iSomatoriaPlanoDestino;
+				iSomatoriaTotalDestinos += iSomatoriaDestinos;
+				iContadorSomatoriaDestinos += iContadorDestinos;
+				
+			}//for (;;)
+			EXEC SQL CLOSE crsPesquisaIntencoesPlanos;
+			
+			xml->createTag("linhaPlanos");
+
+				xml->addItem("intCancelamento", "Total Geral");
+				xml->addItem("qtdIntencao"    , iSomatoriaTotalDestinos );
+				xml->addItem("percIntencao"   , "" );
+
+			
+				xml->addItem("destinoPrevisto", " ");
+				xml->addItem("qtdAdeq" , iSomatoriaPlanoIntencao );
+				xml->addItem("percAdeq", "" );
+
+				xml->createTag("valoresColunas");
+				for( iContatodorPlanos = 0; iContatodorPlanos < iQuantidadePlanos; iContatodorPlanos++ )
+				{
+					xml->addItem("valor", pziSomatoriaTotalPlanos[iContatodorPlanos] );
+					xml->addItem("valor", "" );
+				}
+				xml->closeTag();
+
+			xml->closeTag();//linhaPlanos
+			iContadorSomatoriaDestinos++;
+
+			xml->addItem("total", iContadorSomatoriaDestinos );
+
+		}//if( iQuantidadePlanos > 0 )
+		else
+		{
+			xml->createTag("linhaPlanos");
+				xml->addItem("intCancelamento", "Relatório Temporariamente indisponivel!");
+				xml->addItem("qtdIntencao", "");
+			
+				xml->addItem("destinoPrevisto", " ");
+				xml->addItem("percIntencao"   , " ");
+
+				xml->addItem("qtdAdeq" , "");
+				xml->addItem("percAdeq", "");
+
+				xml->createTag("valoresColunas");
+					xml->addItem("valor","");
+					xml->addItem("valor","");
+				xml->closeTag();
+
+			xml->closeTag();//linhaPlanos
+		}//else if( iQuantidadePlanos > 0 )
+
+		xml->closeTag();//RelatorioRetePlanosVO
+
+		//Libera a estrutura dinamica
+		if( pzstPlanos != NULL )
+			free( pzstPlanos );
+		if( pziSomatoriaTotalPlanos != NULL )
+			free( pziSomatoriaTotalPlanos );
+		if( pziSomatoriaPlanos != NULL )
+			free( pziSomatoriaPlanos );
+	}//try
+	catch(...)
+	{
+		//Se der algum pau, ao menos libera a estrutura
+		//Libera a estrutura dinamica
+		if( pzstPlanos != NULL )
+			free( pzstPlanos );
+		if( pziSomatoriaTotalPlanos != NULL )
+			free( pziSomatoriaTotalPlanos );
+		if( pziSomatoriaPlanos != NULL )
+			free( pziSomatoriaPlanos );
+		throw;
+	}//catch(...)
+
+	return 1;
+}
+
+//********************************************************************************************
+//Relatório de Planos com Distinção ==>Ultima ligação é válida
+int rel_planosdistincao(char *stf, XMLGen*xml, const Filtro &stFiltro)
+{
+	ULOG("rel_retencao");
+	struct sqlca sqlca;
+	char szNmplano[255];
+	EXEC SQL BEGIN DECLARE SECTION;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		} stTotalPorIntecao;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		} stTotalPorIntecaoInd;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		} stTotalPorDestino;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		} stTotalPorDestinoInd;
+	    struct ST_PLANOS_RELPLANO
+	    {
+		    VARCHAR stidPlano[21+1];
+		    VARCHAR stdsPlano[255+1];
+		    float ftotal;
+		} stPlano;
+	    struct
+	    {
+		    short sidPlano;
+		    short sdsPlano;
+		    short stotal;
+		} stPlanoInd;
+		int* pziSomatoriaTotalPlanos;
+		int* pziSomatoriaPlanos;
+		struct ST_PLANOS_RELPLANO* pzstPlanos = NULL;
+		int  iContador = 0;
+		int  iContatodorPlanos = 0;
+		int  iQuantidadePlanos = 0;
+		int  iContadorDestinos = 0;
+		int  iContadorSomatoriaDestinos = 0;
+		int  iSomatoriaDestinos = 0;
+		int  iTotalDestinos;
+		int  iSomatoriaTotalDestinos;
+		int  iPlano = 0;
+		int  iSomatoriaPlanoIntencao = 0;
+		int  iSomatoriaPlanoDestino = 0;
+		int  iSomatoriaPlano = 0;
+		char cQuantidadePlanos[10000];
+		char cPesquisaPlanos[10000];
+		char cPesquisaIntencoes[10000];
+		char cPesquisaDestinos[10000];
+		char cFiltro[3000];
+	EXEC SQL END DECLARE SECTION;
+	
+	try
+	{
+		memset(  cQuantidadePlanos, 0, sizeof( cQuantidadePlanos ) );
+		memset(  cPesquisaPlanos, 0, sizeof( cPesquisaPlanos ) );
+		memset(  cPesquisaIntencoes, 0, sizeof( cPesquisaIntencoes ) );
+		memset(  cFiltro, 0, sizeof( cFiltro ) );
+		
+		sprintf(cFiltro, 
+			" AND DTINCLUSAO >= TO_DATE('%s' || ' 00:00:00','DD/MM/YYYY HH24:MI:SS')"
+			" AND DTINCLUSAO <= TO_DATE('%s' || ' 23:59:59','DD/MM/YYYY HH24:MI:SS')", stFiltro.szDataIni, stFiltro.szDataFim);
+						
+		//Segmentacao
+		if( STRLENNULL( stFiltro.szClassificacao ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND IDSEGMENTACAO = " );
+			strcat( cFiltro, stFiltro.szClassificacao );
+		}
+		//UFOperadora
+		if( STRLENNULL( stFiltro.szOperadora ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND IDUFOPERADORA IN (" );
+			strcat( cFiltro, stFiltro.szOperadora );
+			strcat( cFiltro, 
+														   " )" );
+		}
+		//TipoCliente
+		if( STRLENNULL( stFiltro.szTipoCliente ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND IDTIPOPESSOA = " );
+			strcat( cFiltro, stFiltro.szTipoCliente );
+		}
+		//Grupo
+		if( STRLENNULL( stFiltro.szGrupo ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND IDGRUPO = " );
+			strcat( cFiltro, stFiltro.szGrupo );
+		}
+		//Oferta nao eh utilizado nesta pesquisa (Segundo o Tiago)
+		
+		//Login
+		if( STRLENNULL( stFiltro.szLogin ) > 0 )
+		{
+			strcat( cFiltro, 
+				" AND NMLOGINUSUARIO = '" );
+			strcat( cFiltro, stFiltro.szLogin );
+			strcat( cFiltro, 
+															"' " );
+		}
+				
+			
+		////////////////////////////////////////////////
+		// Inicio da pesquisa de quantidade de planos
+		////////////////////////////////////////////////
+		strcpy( cQuantidadePlanos, 
+			"SELECT "
+				" COUNT(1)"
+			" FROM "
+			" ( "
+				" SELECT "
+					" COUNT(1)"
+				" FROM "
+					" RETENCAO.RELRETENCAOPLANOGERALV02 RELRETENCAOPLANOGERALV02 "
+				" WHERE "
+					" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+				"AND "
+					" INOFERTAACEITA = 1 "
+		);
+		//Coloca o filtro na pesquisa
+		strcat( cQuantidadePlanos, cFiltro );
+
+		strcat( cQuantidadePlanos,
+				" GROUP BY "
+					" IDPLANO "
+			" ) "
+		);
+		EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+		ULOG(cQuantidadePlanos);
+		//Monta a pesquisa que recupera quantos planos existem
+		EXEC SQL PREPARE qQuantidadePlanosDis FROM :cQuantidadePlanos;
+		EXEC SQL DECLARE crsQuantidadePlanosDis CURSOR FOR qQuantidadePlanosDis;
+		EXEC SQL OPEN crsQuantidadePlanosDis;
+		EXEC SQL FETCH crsQuantidadePlanosDis INTO :iQuantidadePlanos;
+		EXEC SQL CLOSE crsQuantidadePlanosDis;
+		
+		xml->createTag("RelatorioRetePlanosVO");
+		xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+		if( iQuantidadePlanos > 0 )
+		{
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			
+			strcpy( cPesquisaPlanos, 
+				" SELECT "
+					" IDPLANO,"
+					" NMPLANO,"
+					" COUNT(1)"
+				" FROM "
+					" RETENCAO.RELRETENCAOPLANOGERALV02 RELRETENCAOPLANOGERALV02 "
+				" WHERE "
+					" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+				" AND "
+					" INOFERTAACEITA = 1 "
+			);
+			//Coloca o filtro na pesquisa
+			strcat( cPesquisaPlanos, cFiltro );
+		
+			strcat( cPesquisaPlanos,
+				" GROUP BY"
+					" NMPLANO, IDPLANO"
+			);
+			
+			//Aloca array para recuperar todos os planos
+			struct ST_PLANOS_RELPLANO* pzstPlanos;
+			pzstPlanos = (struct ST_PLANOS_RELPLANO*) malloc( sizeof(struct ST_PLANOS_RELPLANO) * iQuantidadePlanos );
+			pziSomatoriaTotalPlanos = (int*) malloc( sizeof( int ) * iQuantidadePlanos );
+			pziSomatoriaPlanos = (int*) malloc( sizeof( int ) * iQuantidadePlanos );
+
+			memset( pzstPlanos, 0, sizeof(struct ST_PLANOS_RELPLANO) * iQuantidadePlanos );
+			memset( pziSomatoriaTotalPlanos, 0, sizeof(int) * iQuantidadePlanos );
+
+			//Monta a pesquisa que recupera os planos
+			EXEC SQL PREPARE qPesquisaPlanosDis FROM :cPesquisaPlanos;
+			EXEC SQL DECLARE crsPesquisaPlanosDis CURSOR FOR qPesquisaPlanosDis;
+			EXEC SQL OPEN crsPesquisaPlanosDis;
+			//Cria a TAG com os nomes das colunas com nomes de planos
+			xml->createTag("colunas");
+			for(;;iContador++)
+			{
+				memset(  &stPlano, 0, sizeof( stPlano ) );
+				EXEC SQL FETCH crsPesquisaPlanosDis INTO :stPlano:stPlanoInd;
+				xml->addItem("nome", (char*)stPlano.stdsPlano.arr );
+				sprintf(szNmplano,"%s%%",(char*)stPlano.stdsPlano.arr );
+				xml->addItem("nome", "Perc." );
+				memcpy( &pzstPlanos[iContador], &stPlano, sizeof( stPlano ) );
+			};
+			EXEC SQL CLOSE crsPesquisaPlanosDis;
+			//Fecha a TAG colunas
+			xml->closeTag();//colunas
+
+			////////////////////////////////////////////////
+			// Inicio da pesquisa intencoes
+			////////////////////////////////////////////////
+			strcpy( cPesquisaIntencoes, 
+				" SELECT "
+					" IDRESPOSTAINTENCAO,"
+					" DSRESPOSTAINTENCAO,"
+					" COUNT(1) TOTALPLANOS"
+				" FROM "
+					" RETENCAO.RELRETENCAOPLANOGERALV02 RELRETENCAOPLANOGERALV02 "
+				" WHERE "
+					" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+				" AND "
+					" INOFERTAACEITA = 1 "
+			);
+			//Coloca o filtro na pesquisa
+			strcat( cPesquisaIntencoes, cFiltro );
+
+			strcat( cPesquisaIntencoes,
+				" GROUP BY"
+					" DSRESPOSTAINTENCAO, IDRESPOSTAINTENCAO"
+			);
+		
+			EXEC SQL WHENEVER NOT FOUND DO break;
+		
+			ULOG(cPesquisaIntencoes);
+			EXEC SQL PREPARE qPesquisaIntencoesPlanosDis FROM :cPesquisaIntencoes;
+			EXEC SQL DECLARE crsPesquisaIntencoesPlanosDis CURSOR FOR qPesquisaIntencoesPlanosDis;
+			EXEC SQL OPEN crsPesquisaIntencoesPlanosDis;
+			iSomatoriaTotalDestinos = 0;
+			for (;;) 
+			{
+				memset(  cPesquisaDestinos, 0, sizeof( cPesquisaDestinos ) );
+				memset(  &stTotalPorIntecao, 0, sizeof( stTotalPorIntecao ) );
+				EXEC SQL FETCH crsPesquisaIntencoesPlanosDis INTO :stTotalPorIntecao:stTotalPorIntecaoInd;
+				
+				////////////////////////////////////////////////
+				// Inicio da pesquisa de destinos
+				////////////////////////////////////////////////
+				strcpy( cPesquisaDestinos, 
+					" SELECT "
+						" IDRESPOSTADESTINO,"
+						" DSRESPOSTADESTINO,"
+						" COUNT(1) TOTALPLANOS"
+					" FROM "
+						" RETENCAO.RELRETENCAOPLANOGERALV02 RELRETENCAOPLANOGERALV02 "
+					" WHERE "
+						" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+					" AND "
+						" INOFERTAACEITA = 1 "
+					" AND "
+						" IDRESPOSTAINTENCAO = "
+				);
+				//Adiciona o resposta intecao a pesquisa
+				strcat( cPesquisaDestinos, (char*)stTotalPorIntecao.stidResposta.arr );
+
+				//Coloca o filtro na pesquisa
+				strcat( cPesquisaDestinos, cFiltro );
+		
+				strcat( cPesquisaDestinos,
+					" GROUP BY"
+						" DSRESPOSTADESTINO, IDRESPOSTADESTINO"
+				);
+			
+				ULOG(cPesquisaDestinos);
+				EXEC SQL PREPARE pPesquisaDestinosPlanosDis FROM :cPesquisaDestinos;
+				EXEC SQL DECLARE crsPesquisaDestinosPlanosDis CURSOR FOR pPesquisaDestinosPlanosDis;
+				EXEC SQL OPEN crsPesquisaDestinosPlanosDis;
+			
+				iSomatoriaPlanoDestino = 0;
+				iSomatoriaPlano = 0;
+				iSomatoriaDestinos = 0;
+				memset( pziSomatoriaPlanos, 0, sizeof(int) * iQuantidadePlanos );
+				for (iContadorDestinos = 0;;iContadorDestinos++) 
+				{
+					iTotalDestinos = 0;
+					memset(  &stTotalPorDestino, 0, sizeof( stTotalPorDestino ) );
+					EXEC SQL WHENEVER NOT FOUND DO break;
+					EXEC SQL FETCH crsPesquisaDestinosPlanosDis INTO :stTotalPorDestino:stTotalPorDestinoInd;
+
+					//Recupera o total de planos, independente do plano
+					memset(  cPesquisaPlanos, 0, sizeof( cPesquisaPlanos ) );
+					strcpy( cPesquisaPlanos, 
+						" SELECT "
+							" COUNT(1) TOTALDESTINOS"
+						" FROM "
+							" RETENCAO.RELRETENCAOGERALV02 RELRETENCAOGERALV02 "
+						" WHERE "
+							" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+						" AND "
+							" INOFERTAACEITA = 1 "
+						" AND "
+							" IDRESPOSTAINTENCAO = "
+					);
+					//Adiciona o resposta intecao a pesquisa
+					strcat( cPesquisaPlanos, (char*)stTotalPorIntecao.stidResposta.arr );
+					strcat( cPesquisaPlanos, 
+						" AND "
+							" IDRESPOSTADESTINO = "
+					);
+					//Adiciona o resposta destino a pesquisa
+					strcat( cPesquisaPlanos, (char*)stTotalPorDestino.stidResposta.arr );
+
+					//Coloca o filtro na pesquisa
+					strcat( cPesquisaPlanos, cFiltro );
+					
+					ULOG(cPesquisaPlanos);
+					//Monta a pesquisa que recupera a quantidade de cada plano por destino
+					EXEC SQL PREPARE qPesquisaPlanosTotalDestinoDis FROM :cPesquisaPlanos;
+					EXEC SQL DECLARE crsPesquisaPlanosTotalDestinoDis CURSOR FOR qPesquisaPlanosTotalDestinoDis;
+					EXEC SQL OPEN crsPesquisaPlanosTotalDestinoDis;
+					EXEC SQL FETCH crsPesquisaPlanosTotalDestinoDis INTO :iTotalDestinos;
+					EXEC SQL CLOSE crsPesquisaPlanosTotalDestinoDis;
+					
+					iSomatoriaDestinos += iTotalDestinos;
+
+					xml->createTag("linhaPlanos");
+					if( iContadorDestinos == 0 )
+						xml->addItem("intCancelamento", (char*)stTotalPorIntecao.stdsResposta.arr );
+					else
+						xml->addItem("intCancelamento", "" );
+
+					xml->addItem("qtdIntencao"    , iTotalDestinos );
+					xml->addItem("percIntencao"   , "" );
+
+					xml->addItem("destinoPrevisto", (char*)stTotalPorDestino.stdsResposta.arr );
+					xml->addItem("qtdAdeq"        , stTotalPorDestino.ftotal );
+					xml->addItem("percAdeq"       , "" );
+					
+					xml->createTag("valoresColunas");
+					iSomatoriaPlano = 0;
+					for( iContatodorPlanos = 0; iContatodorPlanos < iQuantidadePlanos; iContatodorPlanos++ )
+					{
+						//Recupera o total de planos para um certo destino
+						memset(  cPesquisaPlanos, 0, sizeof( cPesquisaPlanos ) );
+						strcpy( cPesquisaPlanos, 
+							" SELECT "
+								" COUNT(1) TOTALPLANOS"
+							" FROM "
+								" RETENCAO.RELRETENCAOPLANOGERALV02 RELRETENCAOPLANOGERALV02 "
+							" WHERE "
+								" IDTIPOENCERRAMENTO = 3 "  //RETIDO
+							" AND "
+								" INOFERTAACEITA = 1 "
+							" AND "
+								" IDRESPOSTAINTENCAO = "
+						);
+						//Adiciona o resposta intecao a pesquisa
+						strcat( cPesquisaPlanos, (char*)stTotalPorIntecao.stidResposta.arr );
+						strcat( cPesquisaPlanos, 
+							" AND "
+								" IDRESPOSTADESTINO = "
+						);
+						//Adiciona o resposta destino a pesquisa
+						strcat( cPesquisaPlanos, (char*)stTotalPorDestino.stidResposta.arr );
+						strcat( cPesquisaPlanos, 
+							" AND "
+								" IDPLANO = "
+						);
+						//Adiciona o resposta destino a pesquisa
+						strcat( cPesquisaPlanos, (char*)pzstPlanos[iContatodorPlanos].stidPlano.arr );
+						
+						//Coloca o filtro na pesquisa
+						strcat( cPesquisaPlanos, cFiltro );
+						
+						ULOG(cPesquisaPlanos);
+						iPlano = 0;
+						//Monta a pesquisa que recupera a quantidade de cada plano por destino
+						EXEC SQL PREPARE qPesquisaPlanosIndividuaisDis FROM :cPesquisaPlanos;
+						EXEC SQL DECLARE crsPesquisaPlanosIndividuaisDis CURSOR FOR qPesquisaPlanosIndividuaisDis;
+						EXEC SQL OPEN crsPesquisaPlanosIndividuaisDis;
+						EXEC SQL FETCH crsPesquisaPlanosIndividuaisDis INTO :iPlano;
+						EXEC SQL CLOSE crsPesquisaPlanosIndividuaisDis;
+						
+						xml->addItem("valor", iPlano );
+						xml->addItem("valor", "");
+						
+						pziSomatoriaPlanos[iContatodorPlanos] += iPlano;
+						pziSomatoriaTotalPlanos[iContatodorPlanos] += iPlano;
+
+						iSomatoriaPlano += iPlano;
+						
+					}//for( iContatodorPlanos = 0; iContatodorPlanos < iQuantidadePlanos; iContatodorPlanos++ )
+					xml->closeTag();//valoresColunas
+					xml->closeTag();//linhaPlanos
+					
+					iSomatoriaPlanoDestino += iSomatoriaPlano;
+
+				}//for (iContadorDestinos = 0;;iContadorDestinos++) 
+				EXEC SQL CLOSE crsPesquisaDestinosPlanosDis;
+
+				xml->createTag("linhaPlanos");
+
+					xml->addItem("intCancelamento", "Total");
+					xml->addItem("qtdIntencao"    , iSomatoriaDestinos );
+					xml->addItem("percIntencao"   , "" );
+
+				
+					xml->addItem("destinoPrevisto", " ");
+					xml->addItem("qtdAdeq" , iSomatoriaPlanoDestino );
+					xml->addItem("percAdeq", "" );
+		
+					xml->createTag("valoresColunas");
+					for( iContatodorPlanos = 0; iContatodorPlanos < iQuantidadePlanos; iContatodorPlanos++ )
+					{
+						xml->addItem("valor", pziSomatoriaPlanos[iContatodorPlanos] );
+						xml->addItem("valor","" );
+					}
+					xml->closeTag();
+		
+				xml->closeTag();//linhaPlanos
+				iContadorDestinos++;
+				
+				iSomatoriaPlanoIntencao += iSomatoriaPlanoDestino;
+				iSomatoriaTotalDestinos += iSomatoriaDestinos;
+				iContadorSomatoriaDestinos += iContadorDestinos;
+				
+			}//for (;;)
+			EXEC SQL CLOSE crsPesquisaIntencoesPlanosDis;
+			
+			xml->createTag("linhaPlanos");
+
+				xml->addItem("intCancelamento", "Total Geral");
+				xml->addItem("qtdIntencao"    , iSomatoriaTotalDestinos );
+				xml->addItem("percIntencao"   , "");
+
+			
+				xml->addItem("destinoPrevisto", " ");
+				xml->addItem("qtdAdeq" , iSomatoriaPlanoIntencao );
+				xml->addItem("percAdeq", "" );
+
+				xml->createTag("valoresColunas");
+				for( iContatodorPlanos = 0; iContatodorPlanos < iQuantidadePlanos; iContatodorPlanos++ )
+				{
+					xml->addItem("valor", pziSomatoriaTotalPlanos[iContatodorPlanos] );
+					xml->addItem("valor", "" );
+				}
+				xml->closeTag();
+
+			xml->closeTag();//linhaPlanos
+			iContadorSomatoriaDestinos++;
+
+			xml->addItem("total", iContadorSomatoriaDestinos );
+
+		}//if( iQuantidadePlanos > 0 )
+		else
+		{
+			xml->createTag("linhaPlanos");
+				xml->addItem("intCancelamento", "Relatório Temporariamente indisponivel!");
+				xml->addItem("qtdIntencao", "");
+			
+				xml->addItem("destinoPrevisto", " ");
+				xml->addItem("percIntencao"   , " ");
+
+				xml->addItem("qtdAdeq" , "");
+				xml->addItem("percAdeq", "");
+
+				xml->createTag("valoresColunas");
+					xml->addItem("valor","");
+					xml->addItem("valor","");
+				xml->closeTag();
+
+			xml->closeTag();//linhaPlanos
+		}//else if( iQuantidadePlanos > 0 )
+
+		xml->closeTag();//RelatorioRetePlanosVO
+
+		//Libera a estrutura dinamica
+		if( pzstPlanos != NULL )
+			free( pzstPlanos );
+		if( pziSomatoriaTotalPlanos != NULL )
+			free( pziSomatoriaTotalPlanos );
+		if( pziSomatoriaPlanos != NULL )
+			free( pziSomatoriaPlanos );
+	}//try
+	catch(...)
+	{
+		//Se der algum pau, ao menos libera a estrutura
+		//Libera a estrutura dinamica
+		if( pzstPlanos != NULL )
+			free( pzstPlanos );
+		if( pziSomatoriaTotalPlanos != NULL )
+			free( pziSomatoriaTotalPlanos );
+		if( pziSomatoriaPlanos != NULL )
+			free( pziSomatoriaPlanos );
+		throw;
+	}//catch(...)
+
+	return 1;
+}
+
+//********************************************************************************************
+//Relatório de Resultado Destino
+int rel_resdestino(char *stf, XMLGen*xml, const Filtro &stFiltro)
+{
+	struct sqlca sqlca;
+	ULOG("rel_resdestino");
+	EXEC SQL BEGIN DECLARE SECTION;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		    float fargumento;
+		    float faparelho;
+		    float fbonus;
+		    float fmigracao;
+		    float fadequacao;
+		    float fpontos;
+		    float fsuspensao;
+			float fcancelado;
+			float fvaipensar;
+		} stTotalPorDestino;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		    short sargumento;
+		    short saparelho;
+		    short sbonus;
+		    short smigracao;
+		    short sadequacao;
+		    short spontos;
+		    short ssuspensao;
+			short scancelado;
+			short svaipensar;
+		} stTotalPorDestinoInd;
+		int   iContador = 0;
+		float fTotalGeral = 0.0;
+	    float faparelhototal;
+	    float fretencao;
+	    float fmigracaototal;
+	    float fadequacaototal;
+	    float fsuspensaototal;
+	    float fcanceladototal;
+		char cPesquisaTotal[10000];
+		char cPesquisaSomatorias[10000];
+		char cPesquisaInterna[5000];
+		char cFiltro[3000];
+	EXEC SQL END DECLARE SECTION;
+	
+	memset(  cPesquisaTotal, 0, sizeof( cPesquisaTotal ) );
+	memset(  cPesquisaSomatorias, 0, sizeof( cPesquisaSomatorias ) );
+	memset(  cFiltro, 0, sizeof( cFiltro ) );
+	
+	sprintf(cFiltro, 
+		" AND RELDESTINOPREVISTOV01.DTINCLUSAO >= TO_DATE('%s' || ' 00:00:00','DD/MM/YYYY HH24:MI:SS')"
+		" AND RELDESTINOPREVISTOV01.DTINCLUSAO <= TO_DATE('%s' || ' 23:59:59','DD/MM/YYYY HH24:MI:SS')", stFiltro.szDataIni, stFiltro.szDataFim);
+			        
+	//Segmentacao
+	if( STRLENNULL( stFiltro.szClassificacao ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV01.IDSEGMENTACAO = " );
+		strcat( cFiltro, stFiltro.szClassificacao );
+	}
+	//UFOperadora
+	if( STRLENNULL( stFiltro.szOperadora ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV01.IDUFOPERADORA IN (" );
+		strcat( cFiltro, stFiltro.szOperadora );
+		strcat( cFiltro, 
+			                                           " )" );
+	}
+	//TipoCliente
+	if( STRLENNULL( stFiltro.szTipoCliente ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV01.IDTIPOPESSOA = " );
+		strcat( cFiltro, stFiltro.szTipoCliente );
+	}
+	//Grupo
+	if( STRLENNULL( stFiltro.szGrupo ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV01.IDGRUPO = " );
+		strcat( cFiltro, stFiltro.szGrupo );
+	}
+	//Oferta nao eh utilizado nesta pesquisa (Segundo o Tiago)
+	
+	//Login
+	if( STRLENNULL( stFiltro.szLogin ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV01.NMLOGINUSUARIO = '" );
+		strcat( cFiltro, stFiltro.szLogin );
+		strcat( cFiltro, 
+			                                            "' " );
+	}
+
+	////////////////////////////////////////////////
+	// Inicio da pesquisa com total geral
+	////////////////////////////////////////////////
+	strcpy( cPesquisaTotal, 
+		"SELECT "
+		    "COUNT(1) TOTAL "
+		"FROM "
+		    "RETENCAO.RELDESTINOPREVISTOV01 RELDESTINOPREVISTOV01 "
+		"WHERE "
+		"( "
+			"( "
+					"IDTIPOENCERRAMENTO = 3 "  //RETIDO
+				"AND "
+					"IDRETENCAO = ( SELECT IDRETENCAO FROM RETENCAO.OFERTAREALIZADA WHERE OFERTAREALIZADA.IDRETENCAO =  RELDESTINOPREVISTOV01.IDRETENCAO AND INOFERTAACEITA = 1 AND ROWNUM < 2 ) "
+			") "
+			"OR "
+				"IDTIPOENCERRAMENTO = 5 " //VAI PENSAR
+			"OR "
+				"IDTIPOENCERRAMENTO = 2 "  //NAO RETIDO
+		") " );
+	//Coloca o filtro na pesquisa
+	strcat( cPesquisaTotal, cFiltro );
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	ULOG(cPesquisaTotal);
+	//Monta a pesquisa de total geral e dispara
+	EXEC SQL PREPARE qResultadoTotal FROM :cPesquisaTotal;
+	EXEC SQL DECLARE crsResultadoTotal CURSOR FOR qResultadoTotal;
+	EXEC SQL OPEN crsResultadoTotal;
+	EXEC SQL FETCH crsResultadoTotal INTO :fTotalGeral;
+	EXEC SQL CLOSE crsResultadoTotal;
+	
+	xml->createTag("RelatorioResDestinoVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+
+	if( fTotalGeral > 0 )
+	{
+
+		////////////////////////////////////////////////
+		// Inicio da pesquisa de somatorias
+		////////////////////////////////////////////////
+		strcpy( cPesquisaSomatorias, 
+			"SELECT "
+			    " IDRESPOSTA, "
+			    " DSRESPOSTA, "
+			    " TOTAL, "
+			    " ARGUMENTO, "
+			    " APARELHO, "
+			    " BONUS, "
+			    " MIGRACAO, "
+			    " ADEQUACAO, "
+			    " PONTOS, "
+			    " SUSPENSAO, "
+				" CANCELADO,"
+				" VAIPENSAR "
+			" FROM "
+			" ( "
+				"SELECT "
+					" IDRESPOSTA, "
+					" DSRESPOSTA, "
+					" COUNT(1) TOTAL, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'AG'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) ARGUMENTO, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'AP'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) APARELHO, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'BN'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) BONUS, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'MIG' AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) MIGRACAO, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'PL'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) ADEQUACAO, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'PT'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) PONTOS, "
+					" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'SP'  AND RELDESTINOPREVISTOV01.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) SUSPENSAO, "
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 2 THEN IDTIPOENCERRAMENTO END ) ) CANCELADO,"
+					" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 5 THEN IDTIPOENCERRAMENTO END ) ) VAIPENSAR "
+				" FROM "
+					" RETENCAO.OFERTAREALIZADA OFERTAREALIZADA, "
+					" RETENCAO.MATRIZOFERTA MATRIZOFERTA, "
+					" RETENCAO.OFERTA OFERTA, "
+					" RETENCAO.RELDESTINOPREVISTOV01 RELDESTINOPREVISTOV01 "
+				" WHERE "
+					" RELDESTINOPREVISTOV01.IDRETENCAO = OFERTAREALIZADA.IDRETENCAO "
+				" AND "
+					" OFERTAREALIZADA.IDMATRIZOFERTA = MATRIZOFERTA.IDMATRIZOFERTA "
+				" AND "
+					" MATRIZOFERTA.IDOFERTA = OFERTA.IDUNIDADEOFERTA "
+				" AND "
+				" ( "
+					"( "
+							"IDTIPOENCERRAMENTO = 3 " //RETIDO
+						"AND "
+							"OFERTAREALIZADA.IDOFERTAREALIZADA = ( SELECT IDOFERTAREALIZADA FROM RETENCAO.OFERTAREALIZADA WHERE OFERTAREALIZADA.IDRETENCAO =  RELDESTINOPREVISTOV01.IDRETENCAO AND INOFERTAACEITA = 1 AND ROWNUM < 2 ) "
+					") "
+					"OR "
+						"IDTIPOENCERRAMENTO = 5 " //VAI PENSAR
+					"OR "
+						"IDTIPOENCERRAMENTO = 2 " //NAO RETIDO
+				" ) "
+		);
+	
+		//Coloca o filtro na pesquisa
+		strcat( cPesquisaSomatorias, cFiltro );
+	
+		strcat( cPesquisaSomatorias, 
+				" GROUP BY "
+					"DSRESPOSTA, IDRESPOSTA" 
+			" ) "
+				);
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+	
+		ULOG(cPesquisaSomatorias);
+		EXEC SQL PREPARE qPesquisaSomatorias FROM :cPesquisaSomatorias;
+		EXEC SQL DECLARE crsPesquisaSomatorias CURSOR FOR qPesquisaSomatorias;
+		EXEC SQL OPEN crsPesquisaSomatorias;
+	
+	    faparelhototal = 0.0;
+	    fretencao = 0.0;
+	    fmigracaototal = 0.0;
+	    fadequacaototal = 0.0;
+	    fsuspensaototal = 0.0;
+	    fcanceladototal = 0.0;
+		for (;;iContador++) 
+		{
+			memset(  cPesquisaInterna, 0, sizeof( cPesquisaInterna ) );
+			memset(  &stTotalPorDestino, 0, sizeof( stTotalPorDestino ) );
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			EXEC SQL FETCH crsPesquisaSomatorias INTO :stTotalPorDestino:stTotalPorDestinoInd;
+			
+			xml->createTag("linhaDestino");
+				xml->addItem("destinoprevisto"  , (char*)stTotalPorDestino.stdsResposta.arr);
+				xml->addItem("qtddestinp"       , stTotalPorDestino.ftotal );
+				xml->addItem("porctotal"        , floatToCharPercente( stTotalPorDestino.ftotal * 100.0 / fTotalGeral ) );
+				xml->addItem("qtdretencao"      , ( stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fvaipensar ) );
+				xml->addItem("porcretencao"     , floatToCharPercente( ( ( stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fvaipensar ) * 100.0 / stTotalPorDestino.ftotal ) ) );
+				xml->addItem("qtdmigracao"      , stTotalPorDestino.fmigracao );
+				xml->addItem("porcmigracao"     , floatToCharPercente( stTotalPorDestino.fmigracao * 100.0 / stTotalPorDestino.ftotal ) );
+				xml->addItem("qtdcancelado"     , stTotalPorDestino.fcancelado );
+				xml->addItem("porccancelado"    , floatToCharPercente( stTotalPorDestino.fcancelado * 100.0 / stTotalPorDestino.ftotal ) );
+				xml->addItem("porcoferta"       ,  stTotalPorDestino.faparelho );
+				xml->addItem("porcbonus"        , floatToCharPercente( stTotalPorDestino.faparelho * 100.0 / stTotalPorDestino.ftotal ) );
+				xml->addItem("qtdsuspensaoTemp" ,  stTotalPorDestino.fsuspensao );
+				xml->addItem("porcsuspensaoTemp", floatToCharPercente( stTotalPorDestino.fsuspensao * 100.0 / stTotalPorDestino.ftotal ) );
+				xml->addItem("qtdadequacao"     ,  stTotalPorDestino.fadequacao );
+				xml->addItem("porcadequacao"    , floatToCharPercente( stTotalPorDestino.fadequacao * 100.0 / stTotalPorDestino.ftotal ) );
+			xml->closeTag();
+	    
+		    faparelhototal  += stTotalPorDestino.faparelho;
+		    fretencao       += stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fvaipensar;
+		    fmigracaototal  += stTotalPorDestino.fmigracao;
+		    fadequacaototal += stTotalPorDestino.fadequacao;
+		    fsuspensaototal += stTotalPorDestino.fsuspensao;
+		    fcanceladototal += stTotalPorDestino.fcancelado;
+			
+		}//fot(;;)
+		EXEC SQL CLOSE crsPesquisaSomatorias;
+
+			xml->createTag("linhaDestino");
+				xml->addItem("destinoprevisto"  , "Total Geral" );
+				xml->addItem("qtddestinp"       , fTotalGeral );
+				xml->addItem("porctotal"        , " " );
+				xml->addItem("qtdretencao"      , fretencao );
+				xml->addItem("porcretencao"     , " " );
+				xml->addItem("qtdmigracao"      , fmigracaototal );
+				xml->addItem("porcmigracao"     , " " );
+				xml->addItem("qtdcancelado"     , fcanceladototal );
+				xml->addItem("porccancelado"    , " " );
+				xml->addItem("porcoferta"       , faparelhototal );
+				xml->addItem("porcbonus"        , " " );
+				xml->addItem("qtdsuspensaoTemp" , fsuspensaototal );
+				xml->addItem("porcsuspensaoTemp", " " );
+				xml->addItem("qtdadequacao"     , fadequacaototal );
+				xml->addItem("porcadequacao"    , " " );
+			xml->closeTag();
+
+		xml->addItem( "total", iContador );
+
+	}//if( fTotalGeral > 0 )
+	else
+	{
+		xml->createTag("linhaDestino");
+				xml->addItem("destinoprevisto", "Não foram encontrados dados para este relatórios!" );
+				xml->addItem("qtddestinp", " " );
+				xml->addItem("porctotal", " " );
+				xml->addItem("qtdretencao", " " );
+				xml->addItem("porcretencao", " " );
+				xml->addItem("qtdmigracao", " " );
+				xml->addItem("porcmigracao", " " );
+				xml->addItem("qtdcancelado", " " );
+				xml->addItem("porccancelado", " " );
+				xml->addItem("porcoferta", " " );
+				xml->addItem("porcbonus", " " );
+				xml->addItem("qtdsuspensaoTemp", " " );
+				xml->addItem("porcsuspensaoTemp", " " );
+				xml->addItem("qtdadequacao", " " );
+				xml->addItem("porcadequacao", " " );
+			xml->closeTag();
+	
+		xml->addItem( "total", "0" );
+		xml->closeTag();
+	}//else if( fTotalGeral > 0 )
+
+	xml->closeTag();//RelatorioResDestinoVO
+
+	return 1;
+}
+
+
+//********************************************************************************************
+//Relatório de Resultado Destino com Distinção ==>Ultima ligação é válida
+int rel_resdestinodistincao(char *stf, XMLGen*xml, const Filtro &stFiltro)
+{
+	struct sqlca sqlca;
+	ULOG("rel_resdestinodistincao");
+	EXEC SQL BEGIN DECLARE SECTION;
+	    struct
+	    {
+		    VARCHAR stidResposta[21+1];
+		    VARCHAR stdsResposta[255+1];
+		    float ftotal;
+		    float fargumento;
+		    float faparelho;
+		    float fbonus;
+		    float fmigracao;
+		    float fadequacao;
+		    float fpontos;
+		    float fsuspensao;
+			float fcancelado;
+			float fvaipensar;
+		} stTotalPorDestino;
+	    struct
+	    {
+		    short sidResposta;
+		    short sdsResposta;
+		    short stotal;
+		    short sargumento;
+		    short saparelho;
+		    short sbonus;
+		    short smigracao;
+		    short sadequacao;
+		    short spontos;
+		    short ssuspensao;
+			short scancelado;
+			short svaipensar;
+		} stTotalPorDestinoInd;
+		int   iContador = 0;
+		float fTotalGeral = 0.0;
+	    float faparelhototal;
+	    float fretencao;
+	    float fmigracaototal;
+	    float fadequacaototal;
+	    float fsuspensaototal;
+	    float fcanceladototal;
+		char cPesquisaTotal[10000];
+		char cPesquisaSomatorias[10000];
+		char cFiltro[3000];
+	EXEC SQL END DECLARE SECTION;
+	
+	memset(  cPesquisaTotal, 0, sizeof( cPesquisaTotal ) );
+	memset(  cPesquisaSomatorias, 0, sizeof( cPesquisaSomatorias ) );
+	memset(  cFiltro, 0, sizeof( cFiltro ) );
+	
+	sprintf(cFiltro, 
+		" AND RELDESTINOPREVISTOV02.DTINCLUSAO >= TO_DATE('%s' || ' 00:00:00','DD/MM/YYYY HH24:MI:SS')"
+		" AND RELDESTINOPREVISTOV02.DTINCLUSAO <= TO_DATE('%s' || ' 23:59:59','DD/MM/YYYY HH24:MI:SS')", stFiltro.szDataIni, stFiltro.szDataFim);
+			        
+	//Segmentacao
+	if( STRLENNULL( stFiltro.szClassificacao ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV02.IDSEGMENTACAO = " );
+		strcat( cFiltro, stFiltro.szClassificacao );
+	}
+	//UFOperadora
+	if( STRLENNULL( stFiltro.szOperadora ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV02.IDUFOPERADORA IN (" );
+		strcat( cFiltro, stFiltro.szOperadora );
+		strcat( cFiltro, 
+			                                           " )" );
+	}
+	//TipoCliente
+	if( STRLENNULL( stFiltro.szTipoCliente ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV02.IDTIPOPESSOA = " );
+		strcat( cFiltro, stFiltro.szTipoCliente );
+	}
+	//Grupo
+	if( STRLENNULL( stFiltro.szGrupo ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV02.IDGRUPO = " );
+		strcat( cFiltro, stFiltro.szGrupo );
+	}
+	//Oferta nao eh utilizado nesta pesquisa (Segundo o Tiago)
+	
+	//Login
+	if( STRLENNULL( stFiltro.szLogin ) > 0 )
+	{
+		strcat( cFiltro, 
+			" AND RELDESTINOPREVISTOV02.NMLOGINUSUARIO = '" );
+		strcat( cFiltro, stFiltro.szLogin );
+		strcat( cFiltro, 
+			                                            "' " );
+	}
+			
+		
+	////////////////////////////////////////////////
+	// Inicio da pesquisa com total geral
+	////////////////////////////////////////////////
+	strcpy( cPesquisaTotal, 
+		"SELECT "
+		    "COUNT(1) TOTAL "
+		"FROM "
+		    "RETENCAO.RELDESTINOPREVISTOV02 RELDESTINOPREVISTOV02 "
+		"WHERE "
+		"( "
+			"( "
+					"IDTIPOENCERRAMENTO = 3 "  //RETIDO
+				"AND "
+					"RELDESTINOPREVISTOV02.IDRETENCAO = ( SELECT IDRETENCAO FROM RETENCAO.OFERTAREALIZADA WHERE OFERTAREALIZADA.IDRETENCAO =  RELDESTINOPREVISTOV02.IDRETENCAO AND INOFERTAACEITA = 1 AND ROWNUM < 2 ) "
+			") "
+			"OR "
+				"IDTIPOENCERRAMENTO = 5 " //VAI PENSAR
+			"OR "
+				"IDTIPOENCERRAMENTO = 2 "  //NAO RETIDO
+		") " );
+	//Coloca o filtro na pesquisa
+	strcat( cPesquisaTotal, cFiltro );
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	ULOG(cPesquisaTotal);
+	//Monta a pesquisa de total geral e dispara
+	EXEC SQL PREPARE qResultadoTotal2 FROM :cPesquisaTotal;
+	EXEC SQL DECLARE crsResultadoTotal2 CURSOR FOR qResultadoTotal2;
+	EXEC SQL OPEN crsResultadoTotal2;
+	EXEC SQL FETCH crsResultadoTotal2 INTO :fTotalGeral;
+	EXEC SQL CLOSE crsResultadoTotal2;
+	
+	xml->createTag("RelatorioResDestinoVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+
+	if( fTotalGeral > 0 )
+	{
+
+		////////////////////////////////////////////////
+		// Inicio da pesquisa de somatorias
+		////////////////////////////////////////////////
+		strcpy( cPesquisaSomatorias, 
+			"SELECT "
+				"IDRESPOSTA, "
+				"DSRESPOSTA, "
+				"COUNT(1) TOTAL, "
+				" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'AG'  AND RELDESTINOPREVISTOV02.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) ARGUMENTO, "
+				" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'AP'  AND RELDESTINOPREVISTOV02.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) APARELHO, "
+				" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'BN'  AND RELDESTINOPREVISTOV02.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) BONUS, "
+				" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'MIG' AND RELDESTINOPREVISTOV02.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) MIGRACAO, "
+				" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'PL'  AND RELDESTINOPREVISTOV02.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) ADEQUACAO, "
+				" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'PT'  AND RELDESTINOPREVISTOV02.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) PONTOS, "
+				" COUNT( ( CASE WHEN OFERTA.SGCLASSIFICACAO = 'SP'  AND RELDESTINOPREVISTOV02.IDTIPOENCERRAMENTO = 3 THEN OFERTA.SGCLASSIFICACAO END ) ) SUSPENSAO, "
+				" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 2 THEN IDTIPOENCERRAMENTO END ) ) CANCELADO,"
+				" COUNT( ( CASE WHEN IDTIPOENCERRAMENTO = 5 THEN IDTIPOENCERRAMENTO END ) ) VAIPENSAR "
+			"FROM "
+				"RETENCAO.OFERTAREALIZADA OFERTAREALIZADA, "
+				"RETENCAO.MATRIZOFERTA MATRIZOFERTA, "
+				"RETENCAO.OFERTA OFERTA, "
+				"RETENCAO.RELDESTINOPREVISTOV02 RELDESTINOPREVISTOV02 "
+			"WHERE "
+				"RELDESTINOPREVISTOV02.IDRETENCAO = OFERTAREALIZADA.IDRETENCAO "
+			"AND "
+				"OFERTAREALIZADA.IDMATRIZOFERTA = MATRIZOFERTA.IDMATRIZOFERTA "
+			"AND "
+				"MATRIZOFERTA.IDOFERTA = OFERTA.IDUNIDADEOFERTA "
+			"AND "
+				" ( "
+					"( "
+							"IDTIPOENCERRAMENTO = 3 " //RETIDO
+						"AND "
+							"OFERTAREALIZADA.IDOFERTAREALIZADA = ( SELECT IDOFERTAREALIZADA FROM RETENCAO.OFERTAREALIZADA WHERE OFERTAREALIZADA.IDRETENCAO =  RELDESTINOPREVISTOV02.IDRETENCAO AND INOFERTAACEITA = 1 AND ROWNUM < 2 ) "
+					") "
+					"OR "
+						"IDTIPOENCERRAMENTO = 5 " //VAI PENSAR
+					"OR "
+						"IDTIPOENCERRAMENTO = 2 " //NAO RETIDO
+				" ) "
+			 );
+	
+		//Coloca o filtro na pesquisa
+		strcat( cPesquisaSomatorias, cFiltro );
+	
+		strcat( cPesquisaSomatorias, 
+			" GROUP BY "
+				"DSRESPOSTA, IDRESPOSTA" 
+			);
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+	
+		ULOG(cPesquisaSomatorias);
+		EXEC SQL PREPARE qPesquisaSomatorias2 FROM :cPesquisaSomatorias;
+		EXEC SQL DECLARE crsPesquisaSomatorias2 CURSOR FOR qPesquisaSomatorias2;
+		EXEC SQL OPEN crsPesquisaSomatorias2;
+	
+	    faparelhototal = 0.0;
+	    fretencao = 0.0;
+	    fmigracaototal = 0.0;
+	    fadequacaototal = 0.0;
+	    fsuspensaototal = 0.0;
+	    fcanceladototal = 0.0;
+		for (;;iContador++) 
+		{
+			memset(  &stTotalPorDestino, 0, sizeof( stTotalPorDestino ) );
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			EXEC SQL FETCH crsPesquisaSomatorias2 INTO :stTotalPorDestino:stTotalPorDestinoInd;
+			
+			stTotalPorDestino.ftotal = stTotalPorDestino.ftotal + stTotalPorDestino.fcancelado + stTotalPorDestino.fvaipensar;
+
+			xml->createTag("linhaDestino");
+				xml->addItem("destinoprevisto"  , (char*)stTotalPorDestino.stdsResposta.arr);
+				xml->addItem("qtddestinp"       , stTotalPorDestino.ftotal );
+				xml->addItem("porctotal"        , floatToCharPercente( stTotalPorDestino.ftotal * 100.0 / fTotalGeral ) );
+				xml->addItem("qtdretencao"      , ( stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fcancelado ) );
+				xml->addItem("porcretencao"     , floatToCharPercente( ( ( stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fvaipensar ) * 100.0 / stTotalPorDestino.ftotal ) ) );
+				xml->addItem("qtdmigracao"      , stTotalPorDestino.fmigracao );
+				xml->addItem("porcmigracao"     , floatToCharPercente( stTotalPorDestino.fmigracao * 100.0 / stTotalPorDestino.ftotal ) );
+				xml->addItem("qtdcancelado"     , stTotalPorDestino.fcancelado );
+				xml->addItem("porccancelado"    , floatToCharPercente( stTotalPorDestino.fcancelado * 100.0 / stTotalPorDestino.ftotal ) );
+				xml->addItem("porcoferta"       ,  stTotalPorDestino.faparelho );
+				xml->addItem("porcbonus"        , floatToCharPercente( stTotalPorDestino.faparelho * 100.0 / stTotalPorDestino.ftotal ) );
+				xml->addItem("qtdsuspensaoTemp" ,  stTotalPorDestino.fsuspensao );
+				xml->addItem("porcsuspensaoTemp", floatToCharPercente( stTotalPorDestino.fsuspensao * 100.0 / stTotalPorDestino.ftotal ) );
+				xml->addItem("qtdadequacao"     ,  stTotalPorDestino.fadequacao );
+				xml->addItem("porcadequacao"    , floatToCharPercente( stTotalPorDestino.fadequacao * 100.0 / stTotalPorDestino.ftotal ) );
+			xml->closeTag();
+	    
+		    faparelhototal  += stTotalPorDestino.faparelho;
+		    fretencao       += stTotalPorDestino.fargumento + stTotalPorDestino.fbonus  + stTotalPorDestino.fpontos + stTotalPorDestino.fvaipensar;
+		    fmigracaototal  += stTotalPorDestino.fmigracao;
+		    fadequacaototal += stTotalPorDestino.fadequacao;
+		    fsuspensaototal += stTotalPorDestino.fsuspensao;
+		    fcanceladototal += stTotalPorDestino.fcancelado;
+			
+		}//fot(;;)
+		EXEC SQL CLOSE crsPesquisaSomatorias2;
+
+			xml->createTag("linhaDestino");
+				xml->addItem("destinoprevisto"  , "Total Geral" );
+				xml->addItem("qtddestinp"       , fTotalGeral );
+				xml->addItem("porctotal"        , " " );
+				xml->addItem("qtdretencao"      , fretencao );
+				xml->addItem("porcretencao"     , " " );
+				xml->addItem("qtdmigracao"      , fmigracaototal );
+				xml->addItem("porcmigracao"     , " " );
+				xml->addItem("qtdcancelado"     , fcanceladototal );
+				xml->addItem("porccancelado"    , " " );
+				xml->addItem("porcoferta"       , faparelhototal );
+				xml->addItem("porcbonus"        , " " );
+				xml->addItem("qtdsuspensaoTemp" , fsuspensaototal );
+				xml->addItem("porcsuspensaoTemp", " " );
+				xml->addItem("qtdadequacao"     , fadequacaototal );
+				xml->addItem("porcadequacao"    , " " );
+			xml->closeTag();
+
+		xml->addItem( "total", iContador );
+
+	}//if( fTotalGeral > 0 )
+	else
+	{
+		xml->createTag("linhaDestino");
+				xml->addItem("destinoprevisto", "Não foram encontrados dados para este relatórios!" );
+				xml->addItem("qtddestinp", " " );
+				xml->addItem("porctotal", " " );
+				xml->addItem("qtdretencao", " " );
+				xml->addItem("porcretencao", " " );
+				xml->addItem("qtdmigracao", " " );
+				xml->addItem("porcmigracao", " " );
+				xml->addItem("qtdcancelado", " " );
+				xml->addItem("porccancelado", " " );
+				xml->addItem("porcoferta", " " );
+				xml->addItem("porcbonus", " " );
+				xml->addItem("qtdsuspensaoTemp", " " );
+				xml->addItem("porcsuspensaoTemp", " " );
+				xml->addItem("qtdadequacao", " " );
+				xml->addItem("porcadequacao", " " );
+			xml->closeTag();
+	
+		xml->addItem( "total", "0" );
+		xml->closeTag();
+	}//else if( fTotalGeral > 0 )
+
+	xml->closeTag();//RelatorioResDestinoVO
+
+	return 1;
+}
+
+
+//********************************************************************************************
+//Relatório de Movimentação Diária
+ int rel_movdiaria(char *stf, XMLGen*xml)
+{
+
+try
+{
+	ULOG_START("rel_movdiaria");
+	  EXEC SQL BEGIN DECLARE SECTION;
+	  VARCHAR		DATA[255];	
+	  VARCHAR		DTRETIRADA[255];
+	  VARCHAR		NRLINHA[255]; 
+	  VARCHAR		SEGMENTACAO[255]; 
+	  VARCHAR		LOJADELIVERY[255]; 
+	  VARCHAR		LOJA[255]; 
+	  VARCHAR		PRECO[255]; 
+	  VARCHAR		ORDEMVENDA[255];
+	  VARCHAR		APARELHO[255];
+	  VARCHAR		DESCONTO[255];
+	  VARCHAR		DESCABS[255];
+	  VARCHAR		PAGTO[255];
+	  VARCHAR		PARCELAS[255];
+	  VARCHAR		NMLOGINUSUARIO[255];
+
+	  char szQuery[8000]	={	"SELECT   TO_CHAR(DATA,'DD/MM/YYYY HH24:MI:SS'),"	
+								"DTRETIRADA," 
+								"NRLINHA," 
+								"SEGMENTACAO," 
+								"LOJADELIVERY," 
+								"LOJA," 
+								"PRECO," 
+								"ORDEMVENDA,"
+								"APARELHO,"
+								"DESCONTO,"
+								"DESCABS,"
+								"PAGTO,"
+								"PARCELAS,"
+								"NMLOGINUSUARIO "
+								"FROM RETENCAO.RELMOVDIARIAV01 "};
+	  EXEC SQL END DECLARE SECTION;
+	 
+	  
+	
+	struct sqlca sqlca;
+	int iIdRet = -1;
+	int iQtReg=0;
+	
+	
+    strcat(szQuery,stf);			
+    ULOG(szQuery);
+    ULOG_INT(strlen(szQuery));
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	EXEC SQL PREPARE asd FROM :szQuery;
+	EXEC SQL DECLARE crsRelMovDiaria CURSOR FOR asd;
+	EXEC SQL OPEN crsRelMovDiaria;
+
+	ULOG(" EXEC SQL PREPARE asd FROM :szQuery");
+	ULOG(" EXEC SQL DECLARE crsRelMovDiaria CURSOR FOR asd;");
+    ULOG("OPEN crsRelMovDiaria");
+
+	xml->createTag("RelaMovimenDiariasVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+
+	for (;;iQtReg++) 
+	{
+	
+		 ULOG("FETCH crsRelMovDiaria");
+		EXEC SQL FETCH crsRelMovDiaria INTO  :DATA,	
+											 :DTRETIRADA,
+											 :NRLINHA, 
+											 :SEGMENTACAO, 
+											 :LOJADELIVERY, 
+											 :LOJA, 
+											 :PRECO, 
+											 :ORDEMVENDA,
+											 :APARELHO,
+											 :DESCONTO,
+											 :DESCABS,
+											 :PAGTO,
+											 :PARCELAS,
+											 :NMLOGINUSUARIO;
+
+			  endOraStr(DATA);	
+			  endOraStr(DTRETIRADA);
+			  endOraStr(NRLINHA); 
+			  endOraStr(SEGMENTACAO); 
+			  endOraStr(LOJADELIVERY); 
+			  endOraStr(LOJA); 
+			  endOraStr(PRECO); 
+			  endOraStr(ORDEMVENDA);
+			  endOraStr(APARELHO);
+			  endOraStr(DESCONTO);
+			  endOraStr(DESCABS);
+			  endOraStr(PAGTO);
+			  endOraStr(PARCELAS);
+			  endOraStr(NMLOGINUSUARIO);
+			
+		xml->createTag("linhaMovimen");
+				xml->addItem("dataPlanilha", (char*)(DATA.arr));
+				xml->addItem("dataAgendamento",  (char*)(DTRETIRADA.arr));
+				xml->addItem("fone",  (char*)(NRLINHA.arr));
+				xml->addItem("segmentacao", (char*)(SEGMENTACAO.arr));
+				xml->addItem("lojaDellivery", (char*)(LOJADELIVERY.arr));
+				xml->addItem("loja",  (char*)(LOJA.arr));
+				xml->addItem("aparelho", (char*)(APARELHO.arr));
+				xml->addItem("precoVenda", (char*)(PRECO.arr));
+				xml->addItem("ordemVenda",  (char*)(ORDEMVENDA.arr));
+				xml->addItem("percentualDesconto", (char*)(DESCONTO.arr));
+				xml->addItem("formaPago",  (char*)(PAGTO.arr));
+				xml->addItem("parcelas",  (char*)(PARCELAS.arr));//<parcelas>String</parcelas>
+				xml->addItem("dataContato", (char*)(DESCABS.arr));//<dataContato>String</dataContato>
+				xml->addItem("operador", (char*)(NMLOGINUSUARIO.arr));//<operador>String</operador>
+		xml->closeTag();
+	}
+
+	//EXEC SQL CLOSE crsRelMovDiaria;
+	// Fecha último nó de retenção, se pertinente.
+	if (iIdRet != -1)
+		xml->closeTag();
+
+	if(iQtReg==0)
+	{
+		xml->createTag("linhaMovimen");
+			xml->addItem("dataPlanilha","Nenhum registro foi encontrado para a pesquisa!");//<dataPlanilha>String</dataPlanilha>
+			xml->addItem("dataAgendamento","");//<dataAgendamento>String</dataAgendamento>
+			xml->addItem("fone","");//<fone>String</fone>
+			xml->addItem("segmentacao","");//<segmentacao>String</segmentacao>
+			xml->addItem("lojaDellivery","");//<lojaDellivery>String</lojaDellivery>
+			xml->addItem("loja","");//<loja>String</loja>
+			xml->addItem("precoVenda", "");//<precoVenda>String</precoVenda>
+			xml->addItem("ordemVenda","");//<ordemVenda>String</ordemVenda>
+			xml->addItem("aparelho", "");//<aparelho>String</aparelho>
+			xml->addItem("percentualDesconto", "");//<percentualDesconto>String</percentualDesconto>
+			xml->addItem("desncontoAbsoluto", "");//	<desncontoAbsoluto>String</desncontoAbsoluto>
+			xml->addItem("formaPago", "");//<formaPago>String</formaPago>
+			xml->addItem("parcelas", "");//<parcelas>String</parcelas>
+			xml->addItem("dataContato", "");//<dataContato>String</dataContato>
+			xml->addItem("operador", "");//<operador>String</operador>
+		xml->closeTag();
+	}
+
+	xml->addItem("total",iQtReg);
+
+	// Fecha nó incondicional.
+	xml->closeTag();
+
+	ULOG_END("rel_movdiaria");
+
+	return iQtReg;
+}
+catch(...)
+{
+	xml->createTag("RelaMovimenDiariasVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+	xml->createTag("linhaMovimen");
+			xml->addItem("dataPlanilha","Erro: Tamanho de Retorno muito grande.Favor refinar pesquisa!");//<dataPlanilha>String</dataPlanilha>
+			xml->addItem("dataAgendamento","");//<dataAgendamento>String</dataAgendamento>
+			xml->addItem("fone","");//<fone>String</fone>
+			xml->addItem("segmentacao","");//<segmentacao>String</segmentacao>
+			xml->addItem("lojaDellivery","");//<lojaDellivery>String</lojaDellivery>
+			xml->addItem("loja","");//<loja>String</loja>
+			xml->addItem("precoVenda", "");//<precoVenda>String</precoVenda>
+			xml->addItem("ordemVenda","");//<ordemVenda>String</ordemVenda>
+			xml->addItem("aparelho", "");//<aparelho>String</aparelho>
+			xml->addItem("percentualDesconto", "");//<percentualDesconto>String</percentualDesconto>
+			xml->addItem("desncontoAbsoluto", "");//	<desncontoAbsoluto>String</desncontoAbsoluto>
+			xml->addItem("formaPago", "");//<formaPago>String</formaPago>
+			xml->addItem("parcelas", "");//<parcelas>String</parcelas>
+			xml->addItem("dataContato", "");//<dataContato>String</dataContato>
+			xml->addItem("operador", "");//<operador>String</operador>
+		xml->closeTag();
+	
+
+	xml->addItem("total","0");
+
+}
+return 1;
+}
+
+//********************************************************************************************
+//Relatório de Ligações de Retencao
+ int rel_ligretencao(char *stf, XMLGen*xml)
+{
+try
+{
+	int iQtReg=0;
+	char szFormat[255];
+ 	ULOG("rel_ligretencao");
+	EXEC SQL BEGIN DECLARE SECTION;
+	  VARCHAR		resultado[255];	
+	  VARCHAR		QTRESULTADO[255];
+	   double		PERQ;
+	  VARCHAR		TOTAL[21+1];
+
+	  char szQueryApoio[8000]={  "SELECT SUM(COUNT(RESULTADO)) "
+									 "FROM RETENCAO.RELBASEOPERADORV03 "};
+
+	  char szQueryPrincipal[8000]	={" SELECT  resultado,"
+								      " COUNT(resultado), "
+									  "TRUNC((COUNT(resultado) " };
+
+								
+	  
+	EXEC SQL END DECLARE SECTION;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+
+	xml->createTag("RelatorioLigacaoRetencaoVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+		
+    strcat(szQueryApoio,stf);
+	strcat(szQueryApoio," GROUP BY RESULTADO");
+
+
+     ULOG(szQueryApoio);
+     ULOG_INT(strlen(szQueryApoio));
+	
+	EXEC SQL PREPARE asd FROM :szQueryApoio;
+	EXEC SQL DECLARE crsApoio CURSOR FOR asd;
+	EXEC SQL OPEN crsApoio;
+	  
+
+	for(;;)
+	{
+
+		EXEC SQL FETCH crsApoio INTO :TOTAL;
+		break;
+	}
+
+	endOraStr(TOTAL);
+
+	strcat(szQueryPrincipal,"/");
+	strcat(szQueryPrincipal,(char*)TOTAL.arr);
+	strcat(szQueryPrincipal,")*100,2)");
+	strcat(szQueryPrincipal," FROM retencao.relbaseoperadorv03 ");
+	strcat(szQueryPrincipal,stf);
+	strcat(szQueryPrincipal,"GROUP BY RESULTADO");
+
+	
+	 ULOG(szQueryPrincipal);
+     ULOG_INT(strlen(szQueryPrincipal));
+	
+	EXEC SQL PREPARE asd1 FROM :szQueryPrincipal;
+	EXEC SQL DECLARE crsLigacao CURSOR FOR asd1;
+	EXEC SQL OPEN crsLigacao;
+	
+	for (;;iQtReg++) 
+	{
+		
+		EXEC SQL FETCH crsLigacao INTO :resultado,
+									   :QTRESULTADO,
+									   :PERQ ;
+
+			endOraStr(resultado);
+			endOraStr(QTRESULTADO);
+			//endOraStr(PERQ);
+				
+
+		xml->createTag("linhasLigacao");
+		xml->addItem("resultado",(char*) resultado.arr);
+		xml->addItem("ocurrencia",(char*) QTRESULTADO.arr);
+		sprintf(szFormat,"%6.2f",PERQ);
+		xml->addItem("portecta",szFormat);
+		xml->closeTag();
+	}
+
+	//Caso nao exista registro para ser enviado, sera enviado valores default.
+	if(iQtReg==0)
+	{
+		
+		xml->createTag("linhasLigacao");
+				xml->addItem("resultado","Relatório Temporariamente indisponivel!");
+				xml->addItem("resultado", "");
+				xml->addItem("ocurrencia", "");
+				xml->addItem("portecta","");
+		xml->closeTag();
+
+	}
+
+	// Cria nó total.
+	xml->createTag("linhasLigacao");
+	xml->addItem("resultado", "Total Geral");
+	xml->addItem("ocurrencia", (char*)TOTAL.arr);
+	xml->addItem("portecta", "100%");
+	xml->closeTag();
+
+	xml->addItem("total",iQtReg);
+
+	xml->closeTag();
+
+	
+
+
+}
+catch(...)
+{
+
+ 	ULOG("rel_ligretencao");
+	xml->createTag("RelatorioLigacaoRetencaoVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+
+		xml->createTag("linhasLigacao");
+				xml->addItem("resultado","Relatório Temporariamente indisponivel!");
+				xml->addItem("resultado", "");
+				xml->addItem("ocurrencia", "");
+				xml->addItem("portecta","");
+		xml->closeTag();
+	xml->addItem("total","0");
+	xml->closeTag();
+}
+	return 1;
+}
+
+//********************************************************************************************
+//Relatório de Ofertas tais mensais
+int rel_ofertatotalmensal(char *stf, XMLGen*xml)
+{
+try
+{
+	ULOG_START("rel_ofertatotalmensal");
+	  EXEC SQL BEGIN DECLARE SECTION;
+	  VARCHAR		NOME[255];	
+	  VARCHAR		STATUS[255];
+	  VARCHAR		PERDESC[255]; 
+	  VARCHAR		DESCONTO[255]; 
+	  VARCHAR		TOTBONUS[255]; 
+	  VARCHAR		VALORBONUS[255]; 
+	  VARCHAR		QTMIGRACAO[255]; 
+	  VARCHAR		VLMIGRACAO[255]; 
+	  VARCHAR		QTPONTOS[255];
+	  VARCHAR		VLPONTOS[255];
+	  VARCHAR		QTTOTAL[255];
+
+	  char szQuery[8000]	={"	SELECT DISTINCT status,"
+							  " perdesc,"
+							  "	desconto,"
+							  "	totbonus, "
+							  "	valorbonus, "
+							  "	qtmigracao, "
+							  " vlmigracao, "
+							  "	qtpontos, "
+						      "	vlpontos," 
+							  "QTTOTAL "
+						      "	FROM  RETENCAO.OFERTAMENSALV01 "};
+	  EXEC SQL END DECLARE SECTION;
+	 
+	  
+	
+	struct sqlca sqlca;
+	int iIdRet = -1;
+	int iQtReg=0;
+	
+	
+    strcat(szQuery,stf);		
+	strcat(szQuery,"and rownum <=3");		
+	
+    ULOG(szQuery);
+    ULOG_INT(strlen(szQuery));
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL); 
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	EXEC SQL PREPARE asd FROM :szQuery;
+	EXEC SQL DECLARE crsofmensal CURSOR FOR asd;
+	EXEC SQL OPEN crsofmensal;
+
+	ULOG(" EXEC SQL PREPARE asd FROM :szQuery");
+	ULOG(" EXEC SQL DECLARE crsofmensal CURSOR FOR asd;");
+    ULOG("OPEN crsofmensal");
+
+	xml->createTag("RelaOfertasTotMensalVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+
+	
+	for (;;iQtReg++) 
+	{
+	
+		 ULOG("FETCH crsofmensal");
+		EXEC SQL FETCH crsofmensal INTO  :STATUS,	
+										 :PERDESC, 
+										 :DESCONTO, 
+										 :TOTBONUS, 
+										 :VALORBONUS, 
+										 :QTMIGRACAO, 
+										 :VLMIGRACAO, 
+										 :QTPONTOS,
+										 :VLPONTOS,
+										 :QTTOTAL;
+
+			  endOraStr(NOME);	
+			  endOraStr(STATUS);
+			  endOraStr(PERDESC); 
+			  endOraStr(DESCONTO); 
+			  endOraStr(TOTBONUS); 
+			  endOraStr(VALORBONUS); 
+			  endOraStr(QTMIGRACAO); 
+			  endOraStr(VLMIGRACAO);
+			  endOraStr(DESCONTO);
+			  endOraStr(QTPONTOS);
+			  endOraStr(VLPONTOS);
+			  endOraStr(QTTOTAL);
+
+			xml->createTag("linhaMensal");
+			if(iQtReg==0)	xml->addItem("cliente", "total");
+			else			xml->addItem("cliente", " ");
+				xml->addItem("situacao",  "retido");
+				xml->addItem("valSituacao",  (char*)(PERDESC.arr));
+				xml->addItem("qtdDesconto", (char*)(DESCONTO.arr));
+				xml->addItem("qtdBonus",  (char*)(TOTBONUS.arr));
+				xml->addItem("valBonus", (char*)(VALORBONUS.arr));
+				xml->addItem("valDesconto", (char*)(TOTBONUS.arr));
+				xml->addItem("qtdMigracao",  (char*)(QTMIGRACAO.arr));
+				xml->addItem("valMigracao", (char*)(VLMIGRACAO.arr));
+				xml->addItem("qtdPonto", (char*)(QTPONTOS.arr));
+				xml->addItem("valPonto",  (char*)(PERDESC.arr));
+				xml->addItem("qtdGeral", (char*)(VLPONTOS.arr));
+				xml->addItem("valGeral",  (char*)(PERDESC.arr));
+			xml->closeTag();
+	}
+
+	EXEC SQL CLOSE crsofmensal;
+	// Fecha último nó de retenção, se pertinente.
+	
+	
+	if(iQtReg==0)
+	{
+		xml->createTag("linhaMensal");
+					xml->addItem("cliente", "Nenhum registro foi encontrado para a pesquisa!");
+					xml->addItem("situacao",  "");
+					xml->addItem("valSituacao", "");
+					xml->addItem("qtdDesconto", "");
+					xml->addItem("valDesconto", "");
+					xml->addItem("qtdMigracao",  "");
+					xml->addItem("valMigracao", "");
+					xml->addItem("qtdPonto","");
+					xml->addItem("valPonto", "");
+					xml->addItem("qtdGeral", "");
+					xml->addItem("valGeral", "");
+		xml->closeTag();
+	}
+
+	xml->addItem("total",iQtReg);
+
+	// Fecha nó incondicional.
+	xml->closeTag();
+
+	ULOG_END("rel_ofertatotalmensal");
+}
+catch(...)
+{
+ 	ULOG("rel_ofertatotalmensal");
+	xml->createTag("RelaOfertasTotMensalVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+	xml->createTag("linhaMensal");
+     	xml->addItem("cliente", "Relatório Temporariamente indisponivel!");
+    	xml->addItem("situacao", "");
+		xml->addItem("valSituacao", "");
+		xml->addItem("qtdDesconto", "");
+		xml->addItem("valDesconto", "");
+		xml->addItem("qtdMigracao", "");
+		xml->addItem("valMigracao", "");
+		xml->addItem("qtdPonto", "");
+        xml->addItem("valPonto", "");
+		xml->addItem("qtdGeral", "");
+     	xml->addItem("valGeral", "");
+	xml->closeTag();
+	xml->addItem("total","0");
+	xml->closeTag();
+}
+	return 1;
+}
+//********************************************************************************************
+//Relatório de Ofertas tais mensais
+int rel_notesloja(char *stf, XMLGen*xml)
+{
+	int iQtReg=0;
+	ULOG("rel_notesloja");
+	EXEC SQL BEGIN DECLARE SECTION;
+	  VARCHAR		DATA[255];	
+	  VARCHAR		CLIENTE[255];
+	  VARCHAR		DTRETIRADA[255];
+	  VARCHAR		NRLINHA[255]; 
+	  VARCHAR		APARELHO[255];
+	  VARCHAR		SEGMENTACAO[255]; 
+	  VARCHAR		LOJA[255]; 
+	  VARCHAR		PRECO[255]; 
+	  VARCHAR		DESCONTO[255];
+	  VARCHAR		DESCABS[255];
+	  VARCHAR		PARCELAS[255];
+	  VARCHAR		NMLOGINUSUARIO[255];
+
+	  char szQuery[8000]	={		"SELECT  TO_CHAR(DATA,'DD/MM/YYYY HH24:MI:SS'), " 
+ 									"cliente, "
+ 									"NRLINHA, "
+									"DTRETIRADA, "
+									"LOJA, "
+									"APARELHO, "
+									"PRECO, "
+									"DESCONTO, "
+									"DESCABS, "
+									"PARCELAS, "
+									"NMLOGINUSUARIO, "
+									"SEGMENTACAO "
+									"FROM retencao.relmovdiariav01 "};
+	  
+	EXEC SQL END DECLARE SECTION;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+	strcat(szQuery,stf);
+	strcat(szQuery,"and LOJA !='Não Informado'");
+
+    ULOG(szQuery);
+
+    ULOG_INT(strlen(szQuery));
+
+	
+	EXEC SQL PREPARE asd FROM :szQuery;
+	EXEC SQL DECLARE crsrelNotesLoja CURSOR FOR asd;
+	EXEC SQL OPEN crsrelNotesLoja;
+	  
+		
+	
+ 
+	ULOG("RelNotesLoja - Comeco do XML");
+	// Cria nó incondicional.
+	xml->createTag("RelatorioNotesLojaVO");
+	xml->addProp("xmlns","fidelizacao.fo.vivo.com.br/vo");
+
+	ULOG("RelNotesLoja - Comeco do XML 2");
+
+	for (;;) 
+	{
+		//EXEC SQL FETCH relNotesLoja INTO :sOraDado:iOraDado;
+
+		EXEC SQL FETCH crsrelNotesLoja INTO  :DATA,
+										  :CLIENTE,
+									      :NRLINHA,
+										  :DTRETIRADA,
+										  :LOJA,
+										  :APARELHO,
+										  :PRECO,
+										  :DESCONTO,
+										  :DESCABS,
+										  :PARCELAS,
+										  :NMLOGINUSUARIO,
+										  :SEGMENTACAO;
+										  
+
+		ULOG("RelNotesLoja - Dentro do for");
+
+		xml->createTag("linhaNotesLoja");
+		
+		endOraStr(DATA);
+		endOraStr(CLIENTE);
+		endOraStr(NRLINHA);
+		endOraStr(DTRETIRADA);
+		endOraStr(APARELHO);
+		endOraStr(LOJA);
+		endOraStr(PRECO);
+		endOraStr(DESCONTO);
+		endOraStr(DESCABS);
+		endOraStr(PARCELAS);
+		endOraStr(NMLOGINUSUARIO);
+		endOraStr(SEGMENTACAO);
+		
+
+
+		xml->addItem("data",(char*)DATA.arr);
+		xml->addItem("cliente",(char*)CLIENTE.arr);
+		xml->addItem("linha",(char*)NRLINHA.arr);
+		xml->addItem("agendamento",(char*)DTRETIRADA.arr);
+		xml->addItem("loja",(char*)LOJA.arr);
+		xml->addItem("aparelho",(char*)APARELHO.arr);
+		xml->addItem("precoVenda",(char*)PRECO.arr);
+		xml->addItem("desc",(char*)DESCONTO.arr);
+		xml->addItem("precoFinal",(char*)DESCABS.arr);
+		xml->addItem("nroVezes",(char*)PARCELAS.arr);
+		xml->addItem("envPor",(char*)NMLOGINUSUARIO.arr);
+		xml->addItem("classificacao",(char*)SEGMENTACAO.arr);
+		
+	
+
+		xml->closeTag();
+		iQtReg++;
+	}
+
+	if(iQtReg==0)
+	{
+		xml->createTag("linhaNotesLoja");
+		xml->addItem("data","A Pesquisa Não Retornou Resultado");
+		xml->addItem("cliente","");
+		xml->addItem("linha","");
+		xml->addItem("agendamento","");
+		xml->addItem("loja","");
+		xml->addItem("aparelho","");
+		xml->addItem("precoVenda","");
+		xml->addItem("desc","");
+		xml->addItem("precoFinal","");
+		xml->addItem("nroVezes","");
+		xml->addItem("envPor","");
+		xml->addItem("classificacao","");
+		xml->closeTag();
+	}
+
+	xml->addItem("total",iQtReg);
+	return 1;
+
+
+}
+
+char* floatToChar( float fValor )
+{
+	memset( cFloat, 0, sizeof( cFloat ) );
+	sprintf( cFloat, "%5.2f", fValor );
+	return cFloat;
+}
+
+char* floatToCharPercente( float fValor )
+{
+	memset( cFloat, 0, sizeof( cFloat ) );
+	sprintf( cFloat, "%5.2f%%", fValor );
+	return cFloat;
+}

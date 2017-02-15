@@ -1,0 +1,179 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#undef MSG_NONE
+#define MSG_NONE
+#include "../include/Messages.h"
+
+#include <tuxfw.h>
+#include "../include/Exception.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../include/classSegmentacao.h";
+
+CSegmentacao::CSegmentacao()
+{
+    memset(&tTabela, 0x00, sizeof(tTabela));
+}
+
+void CSegmentacao::setId(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tTabela.iId_ora = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tTabela.sId, pDado);
+        tTabela.iId_ora = 0;
+    }
+}
+
+void CSegmentacao::setSigla(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tTabela.iSigla_ora = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tTabela.sSigla, pDado);
+        tTabela.iSigla_ora = 0;
+    }
+}
+
+void CSegmentacao::setDescricao(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tTabela.iDescricao_ora = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tTabela.sDescricao, pDado);
+        tTabela.iDescricao_ora = 0;
+    }
+}
+
+void CSegmentacao::setPeso(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tTabela.iPeso_ora = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tTabela.sPeso, pDado);
+        tTabela.iPeso_ora = 0;
+    }
+}
+
+
+char* CSegmentacao::getId()
+{
+        return ((char*)tTabela.sId.arr);
+}
+char* CSegmentacao::getSigla()
+{
+        return ((char*)tTabela.sSigla.arr);
+}
+char* CSegmentacao::getDescricao()
+{
+        return ((char*)tTabela.sDescricao.arr);
+}
+char* CSegmentacao::getPeso()
+{
+        return ((char*)tTabela.sPeso.arr);
+}
+//
+
+
+int CSegmentacao::Incluir()
+{
+    return OK;
+}
+
+int CSegmentacao::Excluir()
+{
+    return OK;
+}
+
+
+int CSegmentacao::Alterar()
+{
+    return OK;
+}
+
+
+CSegmentacao* CSegmentacao::RecuperarTodos(int* iNroObjetos)
+{
+struct sqlca sqlca;
+
+CSegmentacao* oSeg = NULL;
+int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        TAPOIO_SE tSt;
+	EXEC SQL END DECLARE SECTION;
+
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE cCursor CURSOR FOR
+            SELECT idsegmentacao
+                  ,sgsegmentacao
+                  ,dssegmentacao
+                  ,vlpeso
+             FROM apoio.segmentacao
+			 WHERE idsegmentacao > 0;
+
+	EXEC SQL OPEN cCursor;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;; iNroObjLocal++) 
+    {
+        memset(&tSt, 0x00, sizeof(tSt));
+
+		EXEC SQL FETCH cCursor 
+                  INTO :tSt.sId:tSt.iId_ora,
+                       :tSt.sSigla:tSt.iSigla_ora,
+                       :tSt.sDescricao:tSt.iDescricao_ora,
+                       :tSt.sPeso:tSt.iPeso_ora;
+
+		// Aloca memória para o objeto atual.
+		if ((oSeg = (CSegmentacao*) realloc((void *)oSeg, (sizeof(CSegmentacao) * iNroObjLocal))) != NULL)
+        {
+			oSeg[iNroObjLocal-1].setId((char*)tSt.sId.arr);
+			oSeg[iNroObjLocal-1].setSigla((char*)tSt.sSigla.arr);
+			oSeg[iNroObjLocal-1].setDescricao((char*)tSt.sDescricao.arr);
+			oSeg[iNroObjLocal-1].setPeso((char*)tSt.sPeso.arr);
+		} 
+        else 
+        {
+			if (oSeg) 
+                free(oSeg);
+
+            ERROR(NRO_MEMORIA);
+            EXEC SQL CLOSE cCursor;
+			throw TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+		}
+	}
+
+    EXEC SQL CLOSE cCursor;
+
+	*iNroObjetos = iNroObjLocal - 1;
+
+	return oSeg;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+

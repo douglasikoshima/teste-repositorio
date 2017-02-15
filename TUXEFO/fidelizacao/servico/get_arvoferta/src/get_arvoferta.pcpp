@@ -1,0 +1,579 @@
+//
+// $Id: get_arvoferta.pcpp,v 1.1 2009/07/31 15:33:22 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+#define EXISTE_REGISTRO    ( (!fimLista) )
+#define MESMA_REGIONAL ( EXISTE_REGISTRO  && (idUFOperadora == idUFOperadoraOri))
+#define MESMO_TPPESSOA ( MESMA_REGIONAL && (idTipoPessoa == idTipoPessoaOri))
+#define MESMO_SEGMENTO ( MESMO_TPPESSOA && (idSegmentacao == idSegmentacaoOri))
+#define MESMO_RESPINT  ( MESMO_SEGMENTO && (idRespostaIntencao == idRespostaIntencaoOri))
+#define MESMO_RESPDEST ( MESMO_RESPINT  && (idRespostaDestino == idRespostaDestinoOri))
+
+
+int get_arvoferta(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char parm[255];
+
+  int  iCaso=0;
+  int  idUFOperadoraOri = 0;
+  int  idTipoPessoaOri = 0;
+  int  idSegmentacaoOri = 0;
+  int  idRespostaIntencaoOri = 0;
+  int  idRespostaDestinoOri = 0;
+  int  idGrupoOri = 0;
+  int  idTpLinhaOri = 0;
+
+  int fimLista = 0;
+  
+  EXEC SQL BEGIN DECLARE SECTION;
+  VARCHAR     idUFOperadora[21+1];
+  VARCHAR     idTipoPessoa[21+1];
+  VARCHAR     idSegmentacao[21+1];
+  VARCHAR     idRespostaIntencao[21+1];
+  VARCHAR     idRespostaDestino[21+1];
+  VARCHAR     idOferta[21+1];
+  VARCHAR	  nmUf[255];
+  VARCHAR	  dsTipoPessoa[255];
+  VARCHAR     dsSegmentacao[255];
+  VARCHAR     dsRespostaIntencao[255];
+  VARCHAR     dsRespostaDestino[255];
+  VARCHAR     nmOferta[255];
+  VARCHAR	  nmGrupo[255];
+  VARCHAR	  idGrupo[21+1];	
+  int	      idTpLinha;
+  VARCHAR     dsTpLinha[256];	
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER NOT FOUND DO break;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+ 
+
+  try{
+    
+    ULOG("entrou no try");
+
+	
+	//Capturando idufoperadora
+	idUFOperadoraOri=get_tag(parm,dnode,"idUF",0,-1);
+	
+	ULOG_INT(idUFOperadoraOri);
+
+	if(!idUFOperadoraOri)	{strToOra(idUFOperadora,parm);}
+    
+	//Capturando idTipoPessoa
+	idTipoPessoaOri=get_tag(parm,dnode,"idTipoPessoa",0,-1);
+	
+	if(!idTipoPessoaOri)    {strToOra(idTipoPessoa,parm);}
+
+	ULOG_INT(idTipoPessoaOri);
+
+	//Capturando idGrupo
+    idGrupoOri=get_tag(parm,dnode,"idGrupo",0,-1);
+	
+	if(!idGrupoOri)    {strToOra(idGrupo,parm);}
+
+	ULOG_INT(idGrupoOri);
+
+	//Capturando idSegmentacao
+    idSegmentacaoOri=get_tag(parm,dnode,"idSegmentacao",0,-1);
+	
+	if(!idSegmentacaoOri)   {strToOra(idSegmentacao,parm);} 
+	
+	//Capturando idIntencao
+	idRespostaIntencaoOri=get_tag(parm,dnode,"idIntencao",0,-1);
+	if(!idRespostaIntencaoOri) {strToOra(idRespostaIntencao,parm);}
+
+	//Capturando idDestino
+    idRespostaDestinoOri=get_tag(parm,dnode,"idDestino",0,-1);
+    if(!idRespostaDestinoOri)  {strToOra(idRespostaDestino,parm);}
+
+    idTpLinhaOri=get_tag(parm,dnode,"idTipoLinha",0,-1);
+    if(!idTpLinhaOri) idTpLinha = atoi(parm);
+
+
+	//MAIS RÁPIDO
+	//iCaso=(idRespostaDestinoOri!=-1)?6:(idRespostaIntencaoOri!=-1)?5:(idSegmentacaoOri!=-1)?4:(idTipoPessoaOri!=-1)?3:(idGrupoOri!=-1)?2:(idUFOperadoraOri!=-1)?1:0;
+	iCaso=(idRespostaDestinoOri!=-1)?7:(idRespostaIntencaoOri!=-1)?6:(idSegmentacaoOri!=-1)?5:(idTpLinhaOri!=-1)?4:(idTipoPessoaOri!=-1)?3:(idGrupoOri!=-1)?2:(idUFOperadoraOri!=-1)?1:0;
+
+	ULOG("passou para do iCaso");
+	ULOG_INT(iCaso);
+
+   //HEADER DO XML DE RETORNO 
+   xml->createTag("tns:ItemArvoreVO");
+		xml->addProp("xmlns:tns","fidelizacao.fo.vivo.com.br/vo");
+		xml->addProp("xmlns:xsi","http://www.w3.org/2001/XMLSchema-instance");
+ 
+
+//INICIANDO PROCEDIMENTO DE SWITCH
+switch(iCaso)
+{
+       case 0:
+//###############UFOPERADORA##################################################################### 
+		ULOG("caso 0");
+		xml->addItem("nivel",0);
+		xml->addItem("id",0);
+	    xml->addItem("descricao","Matriz Oferta"); 
+		//CURSOR DA UF
+		ULOG("antes do cursosr crsUFOfrt");
+		EXEC SQL DECLARE crsUFOfrt CURSOR FOR
+        SELECT   ufo.idufoperadora, u.nmuf
+            FROM apoio.uf u, customer.ufoperadora ufo
+           WHERE u.iduf = ufo.iduf
+        ORDER BY UPPER (TRIM (u.nmuf));
+        
+        /*
+        SELECT   ufo.idufoperadora, u.nmuf
+            FROM apoio.uf u, customer.ufoperadora ufo
+           WHERE u.iduf = ufo.iduf
+             AND EXISTS (
+                    SELECT respostaunidade.idufoperadora
+                      FROM retencao.ofertarespostaunidade ofertarespostaunidade,
+                           retencao.respostaunidade respostaunidade
+                     WHERE respostaunidade.inativo = 1
+                       AND respostaunidade.idrespostaunidade =
+                                                        ofertarespostaunidade.idrespostaunidade
+                       AND respostaunidade.idufoperadora = ufo.idufoperadora
+                       and 1 = ofertarespostaunidade.inativo )
+        ORDER BY UPPER (TRIM (u.nmuf));
+        */
+        
+		ULOG("antes de abrir ocursosr crsUFOfrt");
+		EXEC SQL OPEN crsUFOfrt;
+		ULOG("passou pela query");
+		for(;;)
+			{
+ULOG("antes do fetch ocursosr crsUFOfrt");
+			  	EXEC SQL FETCH crsUFOfrt INTO :idUFOperadora,
+												  :nmUf;
+                    ULOG("executou o fech");
+					endOraStr(idUFOperadora); //remover lixo da variavel
+					endOraStr(nmUf);		  //remover lixo da variavel
+					
+					xml->createTag("tns:ItemArvoreVO");
+					xml->addItem("nivel",1);
+					xml->addItem("id",(char*)idUFOperadora.arr);
+					xml->addItem("descricao",(char*)nmUf.arr);
+					xml->closeTag();
+				}
+		 
+	 EXEC SQL CLOSE crsUFOfrt;
+
+//######################UFOPERADORA###########################################################
+		break;
+		case 1:
+		//########################GRUPO_DE_USUARIO###############################################
+		EXEC SQL DECLARE crsGrupo CURSOR FOR
+        SELECT grupo.idgrupo, grupo.nmgrupo
+            FROM acesso.grupo grupo
+           WHERE grupo.idgrupo IN (
+                    SELECT ofertagrupo.idgrupo
+                      FROM retencao.ofertarespostaunidade ofertarespostaunidade ,
+                           retencao.gruporespostaunidade ofertagrupo ,
+                           retencao.respostaunidade respostaunidade
+                     WHERE respostaunidade.idrespostaunidade =
+                                                        ofertarespostaunidade.idrespostaunidade
+                       AND respostaunidade.inativo = 1
+                       and ofertagrupo.idrespostaunidade = ofertarespostaunidade.idrespostaunidade
+                       and 1 = ofertagrupo.inativo
+                       and 1 = ofertarespostaunidade.inativo
+                       AND respostaunidade.idufoperadora = :idUFOperadora)
+        ORDER BY UPPER (grupo.nmgrupo);
+        
+	EXEC SQL OPEN crsGrupo;
+	 for(;;)
+	 {
+	
+				EXEC SQL FETCH crsGrupo INTO	:idGrupo,
+												:nmGrupo;
+
+				endOraStr(idGrupo);
+				endOraStr(nmGrupo);
+				xml->createTag("tns:ItemArvoreVO");
+				xml->addItem("nivel",2);
+				xml->addItem("id",(char *)idGrupo.arr);
+				xml->addItem("descricao",(char*)nmGrupo.arr);
+				xml->closeTag();
+	 }
+	
+	EXEC SQL CLOSE crsGrupo;
+//########################GRUPO_DE_USUARIO#########################################################
+
+		break;
+		case 2:
+//####################TIPO_DE_PESSOA#############################################################
+		EXEC SQL DECLARE crsPessoa CURSOR FOR
+        SELECT 
+            TIPOPESSOA.IDTIPOPESSOA, 
+            TIPOPESSOA.DSTIPOPESSOA
+        FROM  
+            APOIO.TIPOPESSOA TIPOPESSOA
+        WHERE 
+            TIPOPESSOA.IDTIPOPESSOA 
+        IN
+        (
+            SELECT
+                RESPOSTAUNIDADE.IDTIPOPESSOA
+            FROM 
+                RETENCAO.GRUPORESPOSTAUNIDADE OFERTAGRUPO ,
+                RETENCAO.OFERTARESPOSTAUNIDADE OFERTARESPOSTAUNIDADE ,
+                RETENCAO.RESPOSTAUNIDADE RESPOSTAUNIDADE
+            WHERE
+                RESPOSTAUNIDADE.IDRESPOSTAUNIDADE = OFERTARESPOSTAUNIDADE.IDRESPOSTAUNIDADE
+            AND
+                OFERTARESPOSTAUNIDADE.IDRESPOSTAUNIDADE = OFERTAGRUPO.IDRESPOSTAUNIDADE
+            AND
+                1 = OFERTAGRUPO.INATIVO
+            AND
+                1 = OFERTARESPOSTAUNIDADE.INATIVO
+            AND
+                RESPOSTAUNIDADE.INATIVO = 1
+            AND   
+                RESPOSTAUNIDADE.IDUFOPERADORA = :idUFOperadora
+            AND     
+                OFERTAGRUPO.IDGRUPO    = :idGrupo
+            GROUP BY(RESPOSTAUNIDADE.IDTIPOPESSOA)
+        )
+        ORDER BY UPPER(TRIM(TIPOPESSOA.DSTIPOPESSOA));
+        
+		EXEC SQL OPEN crsPessoa;
+
+			for(;;)
+			{
+				
+				EXEC SQL FETCH crsPessoa INTO :idTipoPessoa,
+											  :dsTipoPessoa;
+                  
+				endOraStr(idTipoPessoa);
+				endOraStr(dsTipoPessoa);
+				
+				xml->createTag("tns:ItemArvoreVO");
+				xml->addItem("nivel",3);
+				xml->addItem("id",(char *)idTipoPessoa.arr);
+				xml->addItem("descricao",(char*)dsTipoPessoa.arr);
+				xml->closeTag();
+			}
+
+		EXEC SQL CLOSE crsPessoa;
+//########################TIPO_DE_PESSOA#########################################################
+		break;
+
+	case 3:
+		
+		EXEC SQL DECLARE crsTpLinha CURSOR FOR
+        SELECT   tipolinha.idtipolinha, tipolinha.dstipolinha
+            FROM apoio.tipolinha tipolinha
+           WHERE tipolinha.idtipolinha in
+            (
+                SELECT 
+                    RESPOSTAUNIDADE.IDTIPOLINHA
+                FROM 
+                    RETENCAO.OFERTARESPOSTAUNIDADE OFERTARESPOSTAUNIDADE ,
+                    RETENCAO.GRUPORESPOSTAUNIDADE OFERTAGRUPO ,
+                    RETENCAO.RESPOSTAUNIDADE RESPOSTAUNIDADE
+                WHERE 
+                    RESPOSTAUNIDADE.IDRESPOSTAUNIDADE = OFERTARESPOSTAUNIDADE.IDRESPOSTAUNIDADE
+                AND
+                    1 = RESPOSTAUNIDADE.INATIVO
+                AND
+                    1 = OFERTARESPOSTAUNIDADE.INATIVO
+                AND
+                    OFERTARESPOSTAUNIDADE.IDRESPOSTAUNIDADE = OFERTAGRUPO.IDRESPOSTAUNIDADE
+                AND
+                    1 = OFERTAGRUPO.INATIVO
+                AND   
+                    RESPOSTAUNIDADE.IDUFOPERADORA = :idUFOperadora
+                AND    
+                    RESPOSTAUNIDADE.IDTIPOPESSOA = :idTipoPessoa
+                AND     
+                    OFERTAGRUPO.IDGRUPO = :idGrupo
+                GROUP BY(RESPOSTAUNIDADE.IDTIPOLINHA)
+            )
+        ORDER BY UPPER (TRIM (tipolinha.dstipolinha));
+		
+		EXEC SQL OPEN crsTpLinha;
+		for(;;)
+		{
+	
+			EXEC SQL FETCH crsTpLinha INTO :idTpLinha,
+										   :dsTpLinha;
+			endOraStr( dsTpLinha );
+			xml->createTag( "tns:ItemArvoreVO" );
+				xml->addItem( "nivel",4 );
+				xml->addItem( "id",idTpLinha );
+				xml->addItem( "descricao",(char*)dsTpLinha.arr );
+			xml->closeTag();
+		}
+		EXEC SQL CLOSE crsTpLinha;
+		break;
+
+
+		case 4:
+		EXEC SQL DECLARE crsSegmentacao CURSOR FOR
+            SELECT 
+                SEGMENTACAO.IDSEGMENTACAO,
+                SEGMENTACAO.DSSEGMENTACAO
+            FROM  
+                APOIO.SEGMENTACAO
+            WHERE 
+                SEGMENTACAO.IDSEGMENTACAO 
+            IN
+            (
+                SELECT 
+                    OFERTASEGMENTACAO.IDSEGMENTACAO
+                FROM 
+                    RETENCAO.SEGMENTACAORESPOSTAUNIDADE OFERTASEGMENTACAO ,
+                    RETENCAO.OFERTARESPOSTAUNIDADE OFERTARESPOSTAUNIDADE ,
+                    RETENCAO.GRUPORESPOSTAUNIDADE OFERTAGRUPO ,
+                    RETENCAO.RESPOSTAUNIDADE RESPOSTAUNIDADE
+                WHERE 
+                    RESPOSTAUNIDADE.IDRESPOSTAUNIDADE = OFERTARESPOSTAUNIDADE.IDRESPOSTAUNIDADE
+                AND
+                    OFERTAGRUPO.IDRESPOSTAUNIDADE = OFERTASEGMENTACAO.IDRESPOSTAUNIDADE
+                AND
+                    OFERTARESPOSTAUNIDADE.IDRESPOSTAUNIDADE = OFERTAGRUPO.IDRESPOSTAUNIDADE
+                AND
+                    1 = OFERTARESPOSTAUNIDADE.INATIVO
+                AND 
+                    1 = OFERTASEGMENTACAO.INATIVO
+                AND 
+                    1 = OFERTAGRUPO.INATIVO
+                AND
+                    RESPOSTAUNIDADE.INATIVO = 1
+                AND   
+                    RESPOSTAUNIDADE.IDUFOPERADORA = :idUFOperadora
+                AND    
+                    RESPOSTAUNIDADE.IDTIPOPESSOA = :idTipoPessoa
+                AND
+                    RESPOSTAUNIDADE.IDTIPOLINHA = :idTpLinha
+                AND     
+                    OFERTAGRUPO.IDGRUPO = :idGrupo
+            )
+            ORDER BY UPPER(TRIM(SEGMENTACAO.DSSEGMENTACAO));					   
+
+            EXEC SQL OPEN crsSegmentacao;
+    for(;;)
+    {
+	
+        EXEC SQL FETCH crsSegmentacao INTO	:idSegmentacao,
+        								:dsSegmentacao;
+        
+        endOraStr(idSegmentacao);
+        endOraStr(dsSegmentacao);
+        xml->createTag("tns:ItemArvoreVO");
+        xml->addItem("nivel",5);
+        xml->addItem("id",(char *)idSegmentacao.arr);
+        xml->addItem("descricao",(char*)dsSegmentacao.arr);
+        xml->closeTag();
+    }
+	
+	EXEC SQL CLOSE crsSegmentacao;
+//########################SEGMENTACAO#########################################################
+	    break;
+		case 5:
+//########################INTENCAO#############################################################
+	  EXEC SQL DECLARE crsIntencao CURSOR FOR
+       SELECT 
+          IDRESPOSTA,
+          DSRESPOSTA
+       FROM 
+          QUESTIONARIO.RESPOSTA
+       WHERE 
+          IDRESPOSTA IN
+          (
+                SELECT 
+                    RESPOSTAUNIDADE.IDRESPOSTA1
+                FROM 
+                    RETENCAO.SEGMENTACAORESPOSTAUNIDADE OFERTASEGMENTACAO ,
+                    RETENCAO.OFERTARESPOSTAUNIDADE OFERTARESPOSTAUNIDADE ,
+                    RETENCAO.GRUPORESPOSTAUNIDADE OFERTAGRUPO ,
+                    RETENCAO.RESPOSTAUNIDADE RESPOSTAUNIDADE
+                WHERE 
+                    RESPOSTAUNIDADE.IDRESPOSTAUNIDADE = OFERTARESPOSTAUNIDADE.IDRESPOSTAUNIDADE
+                AND
+                    OFERTAGRUPO.IDRESPOSTAUNIDADE = OFERTASEGMENTACAO.IDRESPOSTAUNIDADE
+                AND
+                    OFERTARESPOSTAUNIDADE.IDRESPOSTAUNIDADE = OFERTAGRUPO.IDRESPOSTAUNIDADE
+                AND
+                    1 = OFERTARESPOSTAUNIDADE.INATIVO
+                AND 
+                    1 = OFERTASEGMENTACAO.INATIVO
+                AND 
+                    1 = OFERTAGRUPO.INATIVO
+                AND
+                    RESPOSTAUNIDADE.INATIVO = 1
+                AND   
+                    RESPOSTAUNIDADE.IDUFOPERADORA = :idUFOperadora
+                AND    
+                    RESPOSTAUNIDADE.IDTIPOPESSOA = :idTipoPessoa
+                AND
+                    RESPOSTAUNIDADE.IDTIPOLINHA = :idTpLinha
+                AND     
+                    OFERTAGRUPO.IDGRUPO = :idGrupo 
+                AND
+                    OFERTASEGMENTACAO.IDSEGMENTACAO = :idSegmentacao
+          )
+        ORDER BY UPPER(DSRESPOSTA);							   
+	EXEC SQL OPEN crsIntencao;
+	 for(;;)
+	 {
+	
+				EXEC SQL FETCH crsIntencao INTO	:idRespostaIntencao,
+													:dsRespostaIntencao;
+
+				endOraStr(idRespostaIntencao);
+				endOraStr(dsRespostaIntencao);
+
+				xml->createTag("tns:ItemArvoreVO");
+				xml->addItem("nivel",6);
+				xml->addItem("id",(char *)idRespostaIntencao.arr);
+				xml->addItem("descricao",(char*)dsRespostaIntencao.arr);
+				xml->closeTag();
+	 }
+	
+	EXEC SQL CLOSE crsIntencao;
+
+//########################INTENCAO#############################################################
+		break;
+		case 6:
+//########################DESTINO#############################################################
+		EXEC SQL DECLARE crsDestino CURSOR FOR
+       SELECT 
+          IDRESPOSTA,
+          DSRESPOSTA
+       FROM 
+          QUESTIONARIO.RESPOSTA
+       WHERE 
+          IDRESPOSTA IN
+          (
+                SELECT 
+                    RESPOSTAUNIDADE.IDRESPOSTA2
+                FROM 
+                    RETENCAO.SEGMENTACAORESPOSTAUNIDADE OFERTASEGMENTACAO ,
+                    RETENCAO.OFERTARESPOSTAUNIDADE OFERTARESPOSTAUNIDADE ,
+                    RETENCAO.GRUPORESPOSTAUNIDADE OFERTAGRUPO ,
+                    RETENCAO.RESPOSTAUNIDADE RESPOSTAUNIDADE
+                WHERE 
+                    RESPOSTAUNIDADE.IDRESPOSTAUNIDADE = OFERTARESPOSTAUNIDADE.IDRESPOSTAUNIDADE
+                AND
+                    OFERTAGRUPO.IDRESPOSTAUNIDADE = OFERTASEGMENTACAO.IDRESPOSTAUNIDADE
+                AND
+                    OFERTARESPOSTAUNIDADE.IDRESPOSTAUNIDADE = OFERTAGRUPO.IDRESPOSTAUNIDADE
+                AND
+                    1 = OFERTARESPOSTAUNIDADE.INATIVO
+                AND 
+                    1 = OFERTASEGMENTACAO.INATIVO
+                AND 
+                    1 = OFERTAGRUPO.INATIVO
+                AND
+                    RESPOSTAUNIDADE.INATIVO = 1
+                AND   
+                    RESPOSTAUNIDADE.IDUFOPERADORA = :idUFOperadora
+                AND    
+                    RESPOSTAUNIDADE.IDTIPOPESSOA = :idTipoPessoa
+                AND
+                    RESPOSTAUNIDADE.IDTIPOLINHA = :idTpLinha
+                AND     
+                    OFERTAGRUPO.IDGRUPO = :idGrupo 
+                AND
+                    OFERTASEGMENTACAO.IDSEGMENTACAO = :idSegmentacao
+                AND
+                    RESPOSTAUNIDADE.IDRESPOSTA1 = :idRespostaIntencao
+          )
+        ORDER BY UPPER(DSRESPOSTA);
+        							   
+	EXEC SQL OPEN crsDestino;
+	 for(;;)
+	 {
+	
+				EXEC SQL FETCH crsDestino INTO	:idRespostaDestino,
+												:dsRespostaDestino;
+
+				endOraStr(idRespostaDestino);
+				endOraStr(dsRespostaDestino);
+
+				xml->createTag("tns:ItemArvoreVO");
+				xml->addItem("nivel",7);
+				xml->addItem("id",(char *)idRespostaDestino.arr);
+				xml->addItem("descricao",(char*)dsRespostaDestino.arr);
+				xml->closeTag();
+	 }
+	
+	EXEC SQL CLOSE crsDestino;
+
+
+//########################DESTINO#############################################################
+		break;
+		case 7:
+//########################OFERTAS#############################################################
+	EXEC SQL DECLARE crsOferta CURSOR FOR
+    SELECT   idunidadeoferta,
+             nmoferta
+        FROM retencao.oferta
+       WHERE idunidadeoferta IN (
+                SELECT ofertarespostaunidade.idoferta
+                  FROM retencao.ofertarespostaunidade ofertarespostaunidade ,
+                       retencao.gruporespostaunidade ofertagrupo ,
+                       retencao.segmentacaorespostaunidade ofertasegmentacao , 
+                       retencao.respostaunidade respostaunidade
+                 WHERE respostaunidade.inativo = 1
+                   AND respostaunidade.idrespostaunidade =
+                                                    ofertarespostaunidade.idrespostaunidade
+                    AND
+                        ofertagrupo.idrespostaunidade = ofertasegmentacao.idrespostaunidade
+                    AND
+                        ofertarespostaunidade.idrespostaunidade = ofertagrupo.idrespostaunidade
+                    AND
+                        1 = ofertarespostaunidade.inativo
+                    AND 
+                        1 = ofertasegmentacao.inativo
+                    AND 
+                        1 = ofertagrupo.inativo
+                    AND
+                        1 = respostaunidade.inativo
+                    AND
+                       respostaunidade.idufoperadora = :idUFOperadora
+                   AND respostaunidade.idtipopessoa = :idTipoPessoa
+                   AND ofertasegmentacao.idsegmentacao = :idSegmentacao
+                   AND respostaunidade.idresposta1 = :idRespostaIntencao
+                   AND respostaunidade.idresposta2 = :idRespostaDestino
+                   AND respostaunidade.idtipolinha = :idTpLinha
+                   AND ofertagrupo.idgrupo = :idGrupo)
+                   AND INATIVO = 1
+    ORDER BY UPPER (TRIM (nmoferta));    
+					   
+	EXEC SQL OPEN crsOferta;
+	 for(;;)
+	 {
+	
+				EXEC SQL FETCH crsOferta INTO	:idOferta,
+												:nmOferta;
+
+				endOraStr(idOferta);
+				endOraStr(nmOferta);
+
+				xml->createTag("tns:ItemArvoreVO");
+				xml->addItem("nivel",8);
+				xml->addItem("id",(char *)idOferta.arr);
+				xml->addItem("descricao",(char*)nmOferta.arr);
+				xml->closeTag();
+	 }
+	
+	EXEC SQL CLOSE crsOferta;
+//########################OFERTAS#############################################################
+	break;
+}
+xml->closeTag();//ItemArvoreVO	
+
+    
+   
+  
+  }
+  
+  catch(...)
+  {
+	throw;
+  }
+ return 1;
+}
+

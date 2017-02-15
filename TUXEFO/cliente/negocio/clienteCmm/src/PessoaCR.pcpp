@@ -1,0 +1,842 @@
+// PessoaCR.pcpp: implementation for the 
+// CPessoaCR class.
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw.h>
+#include "../include/Funcoes.h"
+#include "../include/Global.h"
+EXEC SQL INCLUDE "../include/PessoaCR.h";
+
+//
+// Construtor e Destrutor
+CPessoaCR::CPessoaCR() {
+	iIdPessoaRelacionamento = -1;
+	memset(sIdUsuarioAlteracao,0,256);
+}
+
+CPessoaCR::~CPessoaCR() {
+}
+
+// Usuário de alteração
+void CPessoaCR::setUsuarioAlteracao(char* value) {
+	if (value != NULL) {
+		strncpy(sIdUsuarioAlteracao,value, 255);
+		sIdUsuarioAlteracao[255]='\0';
+	}
+}
+
+//
+// Metodos getter
+int CPessoaCR::getIdPessoaRelacionamento(){
+	return iIdPessoaRelacionamento;
+}
+
+int CPessoaCR::getIdPessoaCR(){
+	return iIdPessoaCR;
+}
+
+int CPessoaCR::getIdCliente(){
+	return iIdCliente;
+}
+
+char* CPessoaCR::getNmPessoaCR(){
+	return cNmPessoaCR;
+}
+
+char* CPessoaCR::getNmCliente(){
+	return cNmPessoaCliente;
+}
+
+char* CPessoaCR::getNrDocumento(){
+	return cNrDocumento;
+}
+
+char* CPessoaCR::getDsSegmentacao(){
+	return cDsSegmentacao;
+}
+
+int CPessoaCR::getIdSegmentacao(){
+	return iIdSegmentacao;
+}
+
+char* CPessoaCR::getDsCarteirizacao(){
+	return cDsCarteirizacao;
+}
+
+char* CPessoaCR::getDsTipoDocumento(){
+	return cDsTipoDocumento;
+}
+
+int CPessoaCR::getIdCarteirizacao(){
+	return iIdCarteirizacao;
+}
+
+//
+// Metodos setter
+void CPessoaCR::setIdPessoaRelacionamento(int value){
+	iIdPessoaRelacionamento = value;
+}
+
+void CPessoaCR::setIdPessoaCR(int value){
+	iIdPessoaCR = value;
+}
+
+void CPessoaCR::setIdCliente(int value){
+	iIdCliente = value;
+}
+
+void CPessoaCR::setNmPessoaCR(char* value){
+	strncpy(cNmPessoaCR, value, 255);
+	cNmPessoaCR[255]='\0';
+}
+void CPessoaCR::setNmCliente(char* value){
+	strncpy(cNmPessoaCliente, value, 255);
+	cNmPessoaCliente[255]='\0';
+}
+
+void CPessoaCR::setNrDocumento(char* value){
+	strncpy(cNrDocumento, value, 255);
+	cNrDocumento[255]='\0';
+}
+
+void CPessoaCR::setDsSegmentacao(char* value){
+	strncpy(cDsSegmentacao, value, 255);
+	cDsSegmentacao[255]='\0';
+}
+
+void CPessoaCR::setIdSegmentacao(int value){
+	iIdSegmentacao = value;
+}
+
+void CPessoaCR::setDsCarteirizacao(char* value){
+	strncpy(cDsCarteirizacao, value, 255);
+	cDsCarteirizacao[255]='\0';
+}
+
+void CPessoaCR::setDsTipoDocumento(char* value){
+	strncpy(cDsTipoDocumento, value, 255);
+	cDsTipoDocumento[255]='\0';
+}
+
+void CPessoaCR::setIdCarteirizacao(int value){
+	iIdCarteirizacao = value;
+}
+
+
+//
+// Métodos de acesso a banco de dados
+CPessoaCR* CPessoaCR::listaParaCR(int iIdCR, int iIdSeg, int iIdCart, char* pcNmPess, int* iNroObjetos)
+{
+    ULOG_START("CPessoaCR::listaParaCR()");
+	struct sqlca sqlca;
+	CPessoaCR* listaPessoaCR = NULL;
+	int iNroObjLocal = 1;
+	int iAux = 0;
+	int iPessSel  = 0;
+	char sAux[256];
+	int iInsere = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iIdPessoaRelacionamento;
+ 		int iIdPessoaCR;
+ 		char cNmPessoaCR[256];
+		char cNrDocumento[256];
+		char cDsSegmentacao[256];
+		int iIdSegmentacao;
+		char cDsCarteirizacao[256];
+		int iIdCarteirizacao;
+
+		int iOraIdCR;
+		int iOraIdSeg;
+		int iOraIdCart;
+		char cOraNmPess[256];
+	EXEC SQL END DECLARE SECTION;
+
+	iOraIdCR = iIdCR;
+	iOraIdSeg = iIdSeg;
+	iOraIdCart = iIdCart;
+	if (pcNmPess != NULL) {
+		strncpy(sAux, pcNmPess, 253);
+		sAux[254]='\0';
+	} else
+		sAux[0]='\0';
+	sprintf(cOraNmPess,"%%%s%%",sAux);
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE pessoasSel CURSOR FOR
+	SELECT
+	 IdPessoa,
+	 NmPessoa,
+	 NrDocumento,
+	 IdSegmentacao,
+	 DsSegmentacao,
+	 IdTipoCarteira,
+	 DsTipoCarteira,
+	 IdPessoaRelacionamento
+	FROM
+	 Customer.PessoaCRSelV01
+	WHERE
+	 IdPessoaCR = :iOraIdCR;
+	EXEC SQL OPEN pessoasSel;
+
+	// Corre os dados e monta a lista de objetos
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) {
+		
+		EXEC SQL FETCH pessoasSel
+		INTO
+		 :iIdPessoaCR,
+		 :cNmPessoaCR,
+		 :cNrDocumento,
+		 :iIdSegmentacao,
+		 :cDsSegmentacao,
+		 :iIdCarteirizacao,
+		 :cDsCarteirizacao,
+		 :iIdPessoaRelacionamento;
+
+		// Aloca memória para o objeto atual.
+		if ((listaPessoaCR = (CPessoaCR*) realloc((void *)listaPessoaCR, (sizeof(CPessoaCR) * iNroObjLocal))) != NULL) {
+			// Coloca os dados do objeto atual.
+			listaPessoaCR[iNroObjLocal-1].setIdPessoaCR(iIdPessoaCR);
+			listaPessoaCR[iNroObjLocal-1].setNmPessoaCR(rtrim(cNmPessoaCR));
+			listaPessoaCR[iNroObjLocal-1].setNrDocumento(rtrim(cNrDocumento));
+			listaPessoaCR[iNroObjLocal-1].setIdSegmentacao(iIdSegmentacao);
+			listaPessoaCR[iNroObjLocal-1].setDsSegmentacao(rtrim(cDsSegmentacao));
+			listaPessoaCR[iNroObjLocal-1].setIdCarteirizacao(iIdCarteirizacao);
+			listaPessoaCR[iNroObjLocal-1].setDsCarteirizacao(rtrim(cDsCarteirizacao));
+			listaPessoaCR[iNroObjLocal-1].setIdPessoaRelacionamento(iIdPessoaRelacionamento);
+		} else {
+			if (listaPessoaCR)
+				free(listaPessoaCR);
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+	}
+
+	// Declara e abre cursor para os disponíveis
+	EXEC SQL DECLARE pessoasDisp CURSOR FOR
+	SELECT
+	 IdPessoa,
+	 NmPessoa,
+	 NrDocumento,
+	 IdSegmentacao,
+	 DsSegmentacao,
+	 IdTipoCarteira,
+	 DsTipoCarteira
+	FROM
+	 Customer.PessoaCRDispV01
+	WHERE
+	 IdSegmentacao = :iOraIdSeg AND
+	 IdTipoCarteira = :iOraIdCart AND
+	 NmPessoa like :cOraNmPess;
+	EXEC SQL OPEN pessoasDisp;
+
+	// Marca quantidade de pessoas até aqui, para não incluir IDs que já existem.
+	iPessSel = iNroObjLocal-1;
+
+	// Corre os dados e monta a lista de objetos
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) {
+
+		iInsere = 1;
+		
+		EXEC SQL FETCH pessoasDisp
+		INTO
+		 :iIdPessoaCR,
+		 :cNmPessoaCR,
+		 :cNrDocumento,
+		 :iIdSegmentacao,
+		 :cDsSegmentacao,
+		 :iIdCarteirizacao,
+		 :cDsCarteirizacao;
+
+		// Checa se já existe o ID como selecionado.
+		for (iAux=0; iAux < iPessSel; iAux++)
+			if (listaPessoaCR[iAux].getIdPessoaCR() == iIdPessoaCR)
+				iInsere = 0;
+
+		// Aloca memória para o objeto atual.
+		if (iInsere) {
+			if ((listaPessoaCR = (CPessoaCR*) realloc((void *)listaPessoaCR, (sizeof(CPessoaCR) * iNroObjLocal))) != NULL) {
+				// Coloca os dados do objeto atual.
+				listaPessoaCR[iNroObjLocal-1].setIdPessoaCR(iIdPessoaCR);
+				listaPessoaCR[iNroObjLocal-1].setNmPessoaCR(rtrim(cNmPessoaCR));
+				listaPessoaCR[iNroObjLocal-1].setNrDocumento(rtrim(cNrDocumento));
+				listaPessoaCR[iNroObjLocal-1].setIdSegmentacao(iIdSegmentacao);
+				listaPessoaCR[iNroObjLocal-1].setDsSegmentacao(rtrim(cDsSegmentacao));
+				listaPessoaCR[iNroObjLocal-1].setIdCarteirizacao(iIdCarteirizacao);
+				listaPessoaCR[iNroObjLocal-1].setDsCarteirizacao(rtrim(cDsCarteirizacao));
+				listaPessoaCR[iNroObjLocal-1].setIdPessoaRelacionamento(-1);
+			} else {
+				if (listaPessoaCR)
+					free(listaPessoaCR);
+				ULOG(MSG_ERR_MEMORIA);
+				ULOG_END("CPessoaCR::listaParaCR()");
+				throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+			}
+		} else
+			iNroObjLocal--;
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG_END("CPessoaCR::listaParaCR()");
+	return listaPessoaCR;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CPessoaCR::listaParaCR()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CPessoaCR::criaVinculo() 
+{
+    
+    ULOG_START("CPessoaCR::criaVinculo()");
+    
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iNovoId;
+		int iIdPessoaDP;
+		int iIdConsultorDP;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorVinc;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    //Verifica e remove se o Cliente ja tem algum Consultor 
+    removeVinculo();
+
+	// Busca o novo ID da sequence.
+	EXEC SQL
+		SELECT customer.PessoaRelacionamentoSQ.NEXTVAL
+		  INTO :iNovoId
+		  FROM DUAL;
+
+	if (sqlca.sqlcode)
+	{
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		throw TuxBasicOraException(sqlca.sqlcode);
+	}
+
+	// Traz o ID da pessoa
+	EXEC SQL
+	    SELECT IdPessoaDePara 
+	      INTO :iIdPessoaDP
+	      FROM Customer.PessoaDePara 
+	     WHERE IdPessoa = IdPessoaOrigem 
+           AND IdPessoa = :iIdPessoaRelacionamento ;
+
+	// Traz o ID do consultor
+	EXEC SQL
+	SELECT 
+	 IdPessoaDePara 
+	INTO
+	 :iIdConsultorDP
+	FROM 
+	 Customer.PessoaDePara 
+	WHERE 
+	 IdPessoa = IdPessoaOrigem 
+    AND 
+	 IdPessoa = :iIdPessoaCR;
+
+	// Cria o vínculo
+	EXEC SQL
+	INSERT INTO Customer.PessoaRelacionamento
+	 (IdPessoaRelacionamento,
+	  IdPessoaDeParaRelacionada,
+	  IdTipoRelacionamento,
+	  IdPessoaDePara,
+	  dtInicioRelacionamento,
+	  idUsuarioAlteracao,
+	  DtUltimaAlteracao)
+	VALUES
+	 (:iNovoId, 
+	  :iIdConsultorDP,
+	  3,
+	  :iIdPessoaDP,
+	  SYSDATE,
+	  :sIdUsuarioAlteracao,
+	  SYSDATE);
+
+	// Coloca o novo ID.
+	iIdPessoaRelacionamento = iNovoId;
+	
+	ULOG_END("CPessoaCR::criaVinculo()");
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorVinc:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CPessoaCR::criaVinculo()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CPessoaCR::removeVinculo() 
+{
+    ULOG_END("CPessoaCR::removeVinculo()");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iIdPessoaDPCliente;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorAtu;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+
+	// Traz o ID DePara do cliente
+	EXEC SQL
+	SELECT 
+	 IdPessoaDePara
+	INTO
+	 :iIdPessoaDPCliente
+	FROM 
+	 Customer.PessoaDePara 
+	WHERE 
+	 IdPessoa = IdPessoaOrigem AND 
+	 IdPessoa = :iIdPessoaRelacionamento;
+
+
+	// Traz o ID do consultor
+	EXEC SQL
+	UPDATE
+	 Customer.PessoaRelacionamento
+	SET
+	 DtFimRelacionamento = SYSDATE,
+	 IdUsuarioAlteracao  = :sIdUsuarioAlteracao,
+	 DtUltimaAlteracao   = SYSDATE
+	WHERE
+	 IdPessoaDePara = :iIdPessoaDPCliente
+    AND
+     IdTipoRelacionamento = 3;
+     
+    ULOG_END("CPessoaCR::removeVinculo()");
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorAtu:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CPessoaCR::removeVinculo()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+CPessoaCR* CPessoaCR::listaConsultores(int* iNroObjetos) 
+{
+    ULOG_START("CPessoaCR::listaConsultores()");
+	struct sqlca sqlca;
+	CPessoaCR* listaPessoa = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdPessoa;
+	char cNmPessoa[256];
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE ufs CURSOR FOR
+        SELECT
+            Pes.IdPessoa,
+            Pes.NmPessoa
+        FROM
+            Customer.Pessoa Pes,
+            Acesso.Usuario Usua
+        WHERE
+            pes.idpessoa = Usua.Idpessoausuario
+            and Usua.Inconsultor = 1;
+	EXEC SQL OPEN ufs;
+
+	// Corre os dados e monta a lista de objetos
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) {
+		
+		EXEC SQL FETCH ufs INTO
+		 :iIdPessoa,
+		 :cNmPessoa;
+
+		// Aloca memória para o objeto atual.
+		if ((listaPessoa = (CPessoaCR*) realloc((void *)listaPessoa, (sizeof(CPessoaCR) * iNroObjLocal))) != NULL) {
+			
+			// Coloca os dados do objeto atual.
+			listaPessoa[iNroObjLocal-1].setIdPessoaCR(iIdPessoa);
+			listaPessoa[iNroObjLocal-1].setNmPessoaCR(cNmPessoa);
+
+		} else {
+			if (listaPessoa)
+				free(listaPessoa);
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG_END("CPessoaCR::listaConsultores()");
+	return listaPessoa;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CPessoaCR::listaConsultores()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+CPessoaCR* CPessoaCR::listaClientesEConsultores(int iIdCR, 
+                                                int iIdSeg, 
+                                                int iIdCart, 
+                                                char* pcNmPess, 
+                                                int iIdTpDoc, 
+                                                char* pcNrDoc, 
+                                                int* iNroObjetos)
+{
+    ULOG_START("CPessoaCR::listaClientesEConsultores()");
+    struct sqlca sqlca;
+    CPessoaCR* listaCliCon = NULL;
+    int iNroObjLocal = 1;
+    char sAux[256];
+
+	// Logando as coisas.
+	ULOG("IdConsultorRelacionamento: %d", iIdCR);
+	ULOG("IdSegmentacao: %d", iIdSeg);
+	ULOG("Idcarteirizacao: %d", iIdCart);
+	ULOG("NmPessoa: %s", pcNmPess);
+	ULOG("TipoDocumento: %d", iIdTpDoc);
+	ULOG("NrDocumento: %s", pcNrDoc);
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iIdPessoaCliente;
+ 		int iIdPessoaCR;
+ 		char cNmPessoaCR[256];
+ 		char cNmCliente[256];
+		char cNrDocumento[256];
+		char cDsSegmentacao[256];
+		char cDsCarteirizacao[255];
+		char cDsTipoDocumento[255];
+
+		short iIdPessoaCliente_ora;
+ 		short iIdPessoaCR_ora;
+ 		short iNmPessoaCR_ora;
+ 		short iNmCliente_ora;
+		short iNrDocumento_ora;
+		short iDsSegmentacao_ora;
+		short iDsCarteirizacao_ora;
+		short iDsTipoDocumento_ora;
+
+		int iOraIdCR;
+		int iOraIdSeg;
+		int iOraIdCart;
+        char cOraNrDoc[256];
+        int iOraIdTpDoc;
+		char cOraNmPess[256];
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorListaCliCon;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+
+    // Carregando as condicoes
+	iOraIdCR    = iIdCR;
+	iOraIdSeg   = iIdSeg;
+	iOraIdCart  = iIdCart;
+
+    iOraIdTpDoc = iIdTpDoc;
+
+    if (pcNrDoc && *pcNrDoc){
+		strncpy(sAux, pcNrDoc, 255);
+		sAux[255]='\0';
+	    sprintf(cOraNrDoc,"%s",sAux);
+    }
+    else{
+	    strcpy(cOraNrDoc, "-1");
+    }
+
+	if (pcNmPess && *pcNmPess) {
+		strncpy(sAux, pcNmPess, 255);
+		sAux[255]='\0';
+	    sprintf(cOraNmPess,"%s%%",sAux);
+	} else
+	    strcpy(cOraNmPess,"-1");
+
+
+	EXEC SQL DECLARE cLisCliCon CURSOR FOR
+        SELECT  DISTINCT 
+		        idCliente
+               ,nmCliente
+               ,idConsultor
+               ,nmConsultor
+               ,Dstipodocumento
+               ,nrdocumento
+               ,dssegmentacao
+               ,dstipocarteira
+          FROM customer.lista_cliente_consultorV01  
+         WHERE ( idtipocarteira = :iOraIdCart OR -1 = :iOraIdCart )
+           AND ( idsegmentacao  = :iOraIdSeg OR -1 = :iOraIdSeg )
+           AND ( IdConsultor = :iOraIdCR OR -1 = :iOraIdCR )
+           AND ( Idtipodocumento = :iOraIdTpDoc OR -1 = :iOraIdTpDoc )
+           AND ( iddocumento = ( 
+                                 SELECT MIN(documento.iddocumento)
+                                   FROM customer.pessoadocumento, customer.documento
+                                  WHERE pessoadocumento.idpessoa = idclientedocumento 
+                                    AND pessoadocumento.iddocumento = documento.iddocumento 
+                                    AND (documento.idtipodocumento = :iOraIdTpDoc OR -1 = :iOraIdTpDoc)
+                               ) )
+           AND ( nrdocumento = :cOraNrDoc OR '-1' = :cOraNrDoc )
+           AND ( upper(nmcliente) like upper(:cOraNmPess) OR '-1' = :cOraNmPess ) ;
+
+
+	EXEC SQL OPEN cLisCliCon;
+
+    if ( sqlca.sqlerrd[2] > 50){
+	    *iNroObjetos = 51;
+        return NULL;
+    }
+
+	// Corre os dados e monta a lista de objetos
+	for (;; iNroObjLocal++) {
+		
+		EXEC SQL FETCH cLisCliCon
+		INTO
+		 :iIdPessoaCliente:iIdPessoaCliente_ora,
+		 :cNmCliente:iNmCliente_ora,
+         :iIdPessoaCR:iIdPessoaCR_ora,
+         :cNmPessoaCR:iNmPessoaCR_ora,
+		 :cDsTipoDocumento:iDsTipoDocumento_ora,
+		 :cNrDocumento:iNrDocumento_ora,
+		 :cDsSegmentacao:iDsSegmentacao_ora,
+         :cDsCarteirizacao:iDsCarteirizacao_ora;
+
+
+		// Aloca memória para o objeto atual.
+		if ((listaCliCon = (CPessoaCR*) realloc((void *)listaCliCon, (sizeof(CPessoaCR) * iNroObjLocal))) != NULL) 
+        {
+			// Coloca os dados do objeto atual.
+			listaCliCon[iNroObjLocal-1].setIdPessoaCR(iIdPessoaCR);
+			listaCliCon[iNroObjLocal-1].setNmPessoaCR(rtrim(cNmPessoaCR));
+			listaCliCon[iNroObjLocal-1].setNrDocumento(rtrim(cNrDocumento));
+			listaCliCon[iNroObjLocal-1].setDsSegmentacao(rtrim(cDsSegmentacao));
+			listaCliCon[iNroObjLocal-1].setDsCarteirizacao(rtrim(cDsCarteirizacao));
+
+			listaCliCon[iNroObjLocal-1].setIdCliente(iIdPessoaCliente);
+			listaCliCon[iNroObjLocal-1].setNmCliente(rtrim(cNmCliente));
+			listaCliCon[iNroObjLocal-1].setDsTipoDocumento(rtrim(cDsTipoDocumento));
+		} else {
+
+			if (listaCliCon)
+				free(listaCliCon);
+
+            EXEC SQL CLOSE cLisCliCon;
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG_END("CPessoaCR::listaClientesEConsultores()");
+	return listaCliCon;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorListaCliCon:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CPessoaCR::listaClientesEConsultores()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+CPessoaCR* CPessoaCR::listaClientesEConsultoresFiltroDoc(int iIdCR, 
+                                                         int iIdSeg, 
+                                                         int iIdCart, 
+                                                         char* pcNmPess, 
+                                                         char* cIdTpDoc, 
+                                                         char* pcNrDoc, 
+                                                         int* iNroObjetos)
+{
+    ULOG_START("CPessoaCR::listaClientesEConsultoresFiltroDoc()");
+
+    struct sqlca sqlca;
+    char sAux[256];
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iIdPessoaCliente;
+ 		int iIdPessoaCR;
+ 		char cNmPessoaCR[256];
+ 		char cNmCliente[256];
+		char cNrDocumento[256];
+		char cDsSegmentacao[256];
+		char cDsCarteirizacao[255];
+		char cDsTipoDocumento[255];
+
+		short iIdPessoaCliente_ora;
+ 		short iIdPessoaCR_ora;
+ 		short iNmPessoaCR_ora;
+ 		short iNmCliente_ora;
+		short iNrDocumento_ora;
+		short iDsSegmentacao_ora;
+		short iDsCarteirizacao_ora;
+		short iDsTipoDocumento_ora;
+
+		int iOraIdCR;
+		int iOraIdSeg;
+		int iOraIdCart;
+        char cOraNrDoc[256];
+        char cOraIdTpDoc[256];
+		char cOraNmPess[256];
+	EXEC SQL END DECLARE SECTION;
+
+    int iNroObjLocal = 1;
+    CPessoaCR *listaCliCon = NULL;
+
+    // condicoes
+	iOraIdCR    = iIdCR;
+	iOraIdSeg   = iIdSeg;
+	iOraIdCart  = iIdCart;
+
+    if (pcNrDoc && *pcNrDoc)
+    {
+    	strcpy( cOraIdTpDoc, cIdTpDoc );
+    }
+    else
+    {
+    	strcpy( cOraIdTpDoc, "-1" );
+    }
+
+    if (pcNrDoc && *pcNrDoc)
+    {
+		strncpy(sAux, pcNrDoc, 255);
+		sAux[255]='\0';
+	    sprintf(cOraNrDoc,"%s",sAux);
+    }
+    else
+    {
+	    strcpy(cOraNrDoc, "-1");
+    }
+
+	if (pcNmPess && *pcNmPess)
+    {
+		strncpy(sAux, pcNmPess, 255);
+		sAux[255]='\0';
+	    sprintf(cOraNmPess,"%s%%",sAux);
+	} else
+    {
+	    strcpy(cOraNmPess,"-1");
+    }
+
+	// Logando as coisas.
+	ULOG("IdConsultorRelacionamento: %d", iOraIdCR);
+	ULOG("IdSegmentacao: %d", iOraIdSeg);
+	ULOG("Idcarteirizacao: %d", iOraIdCart);
+	ULOG("NmPessoa: %s", cOraNmPess);
+	ULOG("TipoDocumento: %s", cOraIdTpDoc);
+	ULOG("NrDocumento: %s", cOraNrDoc);
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorListaCliCon;
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE CursorlistaClientesEConsultoresFiltroDoc 
+    CURSOR FOR
+        SELECT DISTINCT 
+		       IDCLIENTE
+               ,NMCLIENTE
+               ,IDCONSULTOR
+               ,NMCONSULTOR
+               ,DSTIPODOCUMENTO
+               ,NRDOCUMENTO
+               ,DSSEGMENTACAO
+               ,DSTIPOCARTEIRA
+          FROM CUSTOMER.LISTA_CLIENTE_CONSULTORV01
+         WHERE ( IDTIPOCARTEIRA = :iOraIdCart OR -1 = :iOraIdCart )
+           AND ( IDSEGMENTACAO  = :iOraIdSeg OR -1 = :iOraIdSeg )
+           AND ( IDCONSULTOR = :iOraIdCR OR -1 = :iOraIdCR )
+           AND ( IDTIPODOCUMENTO = (SELECT MIN(IDTIPODOCUMENTO)
+                                      FROM APOIO.TIPODOCUMENTO 
+                                     WHERE SGCLASSIFICACAO = :cOraIdTpDoc 
+                                       AND INVISUALIZA = 1) OR '-1' = :cOraIdTpDoc )
+           AND ( IDDOCUMENTO = (SELECT MIN(DOCUMENTO.IDDOCUMENTO)
+                                   FROM CUSTOMER.PESSOADOCUMENTO, CUSTOMER.DOCUMENTO
+                                  WHERE PESSOADOCUMENTO.IDPESSOA = IDCLIENTEDOCUMENTO 
+                                    AND PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO 
+                                    AND (DOCUMENTO.IDTIPODOCUMENTO = (SELECT IDTIPODOCUMENTO
+                                                                        FROM APOIO.TIPODOCUMENTO 
+                                                                        WHERE SGCLASSIFICACAO = :cOraIdTpDoc 
+                                                                        AND INVISUALIZA = 1 )
+                                         OR '-1' = :cOraIdTpDoc )
+                               ) )
+           AND ( NRDOCUMENTO = :cOraNrDoc OR '-1' = :cOraNrDoc )
+           AND ( UPPER(NMCLIENTE) like UPPER(:cOraNmPess) OR '-1' = :cOraNmPess );
+
+	EXEC SQL OPEN CursorlistaClientesEConsultoresFiltroDoc;
+
+    if ( sqlca.sqlerrd[2] > 50)
+    {
+	    *iNroObjetos = 51;
+	    ULOG_END("CPessoaCR::listaClientesEConsultoresFiltroDoc() - nrObjetos excedeu");
+        return NULL;
+    }
+
+	// Corre os dados e monta a lista de objetos
+
+	while (true)
+    {
+		
+		EXEC SQL FETCH CursorlistaClientesEConsultoresFiltroDoc
+		INTO
+		 :iIdPessoaCliente:iIdPessoaCliente_ora,
+		 :cNmCliente:iNmCliente_ora,
+         :iIdPessoaCR:iIdPessoaCR_ora,
+         :cNmPessoaCR:iNmPessoaCR_ora,
+		 :cDsTipoDocumento:iDsTipoDocumento_ora,
+		 :cNrDocumento:iNrDocumento_ora,
+		 :cDsSegmentacao:iDsSegmentacao_ora,
+         :cDsCarteirizacao:iDsCarteirizacao_ora;
+
+		// Aloca memória para o objeto atual.
+		if ((listaCliCon = (CPessoaCR*) realloc((void *)listaCliCon, (sizeof(CPessoaCR) * iNroObjLocal))) != NULL) 
+        {
+			// Coloca os dados do objeto atual.
+			listaCliCon[iNroObjLocal-1].setIdPessoaCR(iIdPessoaCR);
+			listaCliCon[iNroObjLocal-1].setNmPessoaCR(rtrim(cNmPessoaCR));
+			listaCliCon[iNroObjLocal-1].setNrDocumento(rtrim(cNrDocumento));
+			listaCliCon[iNroObjLocal-1].setDsSegmentacao(rtrim(cDsSegmentacao));
+			listaCliCon[iNroObjLocal-1].setDsCarteirizacao(rtrim(cDsCarteirizacao));
+
+			listaCliCon[iNroObjLocal-1].setIdCliente(iIdPessoaCliente);
+			listaCliCon[iNroObjLocal-1].setNmCliente(rtrim(cNmCliente));
+			listaCliCon[iNroObjLocal-1].setDsTipoDocumento(rtrim(cDsTipoDocumento));
+		}
+        else
+        {
+            if (listaCliCon) { free(listaCliCon); }
+
+            EXEC SQL CLOSE CursorlistaClientesEConsultoresFiltroDoc;
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+
+        iNroObjLocal++;
+	}
+
+    EXEC SQL CLOSE CursorlistaClientesEConsultoresFiltroDoc;
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG("numero de objetos = %d",*iNroObjetos);
+	ULOG_END("CPessoaCR::listaClientesEConsultoresFiltroDoc()");
+	return listaCliCon;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorListaCliCon:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CPessoaCR::listaClientesEConsultoresFiltroDoc()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

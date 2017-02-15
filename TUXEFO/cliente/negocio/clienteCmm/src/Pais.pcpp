@@ -1,0 +1,269 @@
+// Pais.pcpp: implementation for the 
+// CPais class.
+//////////////////////////////////////////////////////////////////////
+
+/*
+ * Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+ */
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include "../include/tuxfw.h"
+#include "../include/Global.h"
+EXEC SQL INCLUDE "../include/Pais.h";
+
+//
+// Construtor e Destrutor
+CPais::CPais() {
+
+	memset(sIdUsuarioAlteracao,0,256);
+}
+
+CPais::CPais(int iIdEstado) {
+    ULOG_START("CPais::CPais()");
+	struct sqlca sqlca;
+
+	iIdPais = iIdEstado;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL SELECT
+	 SgPais,
+	 NmPais
+	INTO
+	 cSgPais,
+	 cNmPais
+	FROM
+	 apoio.Pais
+	WHERE
+	 IdPais = :iIdPais;
+
+	// ID não existe. Seta o ID para -1.
+	if (sqlca.sqlcode == NO_DATA_FOUND)
+		iIdPais = -1;
+		
+    ULOG_END("CPais::CPais()");
+	return;
+
+	sqlErrorConstrutor:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CPais::CPais()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+CPais::~CPais() {
+}
+
+// Usuário de alteração
+void CPais::setUsuarioAlteracao(char* value) {
+	if (value != NULL) {
+		strncpy(sIdUsuarioAlteracao,value, 255);
+		sIdUsuarioAlteracao[255]='\0';
+	}
+}
+
+//
+// Metodos getter
+int CPais::getIdPais(){
+	return iIdPais;
+}
+
+char* CPais::getSgPais(){
+	return cSgPais;
+}
+
+char* CPais::getNmPais(){
+	return cNmPais;
+}
+
+//
+// Metodos setter
+void CPais::setIdPais(int value){
+	iIdPais = value;
+}
+
+void CPais::setSgPais(char* value){
+    strncpy(cSgPais, value?value:"", 255);
+	cSgPais[255]='\0';
+}
+
+void CPais::setNmPais(char* value){
+	strncpy(cNmPais, value?value:"", 255);
+	cNmPais[255]='\0';
+}
+
+//
+// Métodos de acesso a banco de dados
+void CPais::inclui(){
+
+	ULOG_START("CPais::inclui()");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iNovoId;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorInc;
+
+	// Busca o novo ID da sequence.
+	EXEC SQL
+		SELECT apoio.PaisSQ.NEXTVAL
+		INTO :iNovoId
+		FROM DUAL;
+	if (sqlca.sqlcode)
+	{
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CPais::inclui()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+	}
+
+	// Insere no banco de dados
+	EXEC SQL
+	INSERT INTO apoio.Pais
+	(IdPais,
+	 SgPais,
+	 NmPais,
+	 IdUsuarioAlteracao,
+	 DtUltimaAlteracao)
+	VALUES
+	(:iNovoId,
+	 :cSgPais,
+	 :cNmPais,
+	 :sIdUsuarioAlteracao,
+	 SYSDATE);
+
+	// Inserção OK, coloca o ID no objeto
+	iIdPais = iNovoId;
+
+	ULOG_END("CPais::inclui()");
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorInc:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CPais::inclui()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CPais::exclui(){
+
+	ULOG_START("CPais::exclui()");
+	struct sqlca sqlca;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorExc;
+
+	// Remove do banco de dados
+	EXEC SQL
+	DELETE apoio.Pais
+	WHERE IdPais = :iIdPais;
+
+	// Remoção OK, seta ID do objeto para -1
+	iIdPais = -1;
+
+	ULOG_END("CPais::exclui()");
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorExc:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CPais::exclui()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CPais::altera(){
+
+	ULOG_START("CPais::altera()");
+	struct sqlca sqlca;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorAlt;
+
+	// Altera no banco de dados para os dados atuais
+	EXEC SQL
+	UPDATE apoio.Pais
+	SET
+	 SgPais = :cSgPais,
+	 NmPais = :cNmPais,
+	 IdUsuarioAlteracao = :sIdUsuarioAlteracao,
+	 DtUltimaAlteracao = SYSDATE
+	WHERE
+	 IdPais = :iIdPais;
+
+	ULOG_END("CPais::altera()");
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorAlt:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CPais::altera()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+CPais* CPais::lista(int* iNroObjetos){
+
+	ULOG_START("CPais::lista()");
+	struct sqlca sqlca;
+	CPais* listaPais = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdPais;
+	char cSgPais[256];
+	char cNmPais[256];
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE ufs CURSOR FOR
+	SELECT
+	 IdPais,
+	 SgPais,
+	 NmPais
+	FROM
+	 apoio.Pais
+	WHERE
+	 INPREENCHELISTA=1;
+
+	EXEC SQL OPEN ufs;
+
+	// Corre os dados e monta a lista de objetos
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) {
+		
+		EXEC SQL FETCH ufs INTO
+		 :iIdPais,
+		 :cSgPais,
+		 :cNmPais;
+
+		// Aloca memória para o objeto atual.
+		if ((listaPais = (CPais*) realloc((void *)listaPais, (sizeof(CPais) * iNroObjLocal))) != NULL) {
+			
+			// Coloca os dados do objeto atual.
+			listaPais[iNroObjLocal-1].setIdPais(iIdPais);
+			listaPais[iNroObjLocal-1].setSgPais(cSgPais);
+			listaPais[iNroObjLocal-1].setNmPais(cNmPais);
+
+		} else {
+			if (listaPais)
+				free(listaPais);
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG_END("CPais::lista()");
+	return listaPais;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CPais::lista()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

@@ -1,0 +1,569 @@
+//
+// $Id: sel_detaparelho.pcpp,v 1.1 2009/07/31 15:34:46 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+// Prototipos
+void GetGSMDados( int idTipoPessoaPrm, int idAparelhoPrm, int idUFOperadoraPrm, XMLGen *xml );
+
+
+/*----------------------------------------------------------------*/
+int sel_detaparelho(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+    ULOG_START("sel_detaparelho()");
+
+    char parm[10];
+    int existAp = 1;
+    char szVlAparelho[50];
+    char szVlMulta[50];
+    int erro_Neg = 1 ;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int     idMatrizAparelho;
+        int     idAparelho;
+        int     idAparelhoCor;
+        VARCHAR nmMarca[255];
+        VARCHAR dsModelo[255];
+        double     vlMulta;
+        int	  idUfOperadora;
+        int     idEstoque;
+        VARCHAR nmCor[255];
+        double  vlAparelho;
+        int     qtDisponivel;
+        VARCHAR cdSapAparelho[255];
+        int     idMatrizAparelhoDesconto;
+        int     vlPercentualDesconto;
+        int     idParcela;
+        int     nrParcelas;
+        short   vlAparelhoInd;
+        short   qtDisponivelInd;
+        short   cdSapAparelhoInd;
+        int	  idTipoPessoa=0;
+
+        short i_nmMarca = -1;
+        short i_dsModelo = -1;
+    EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    try
+    {
+        //  Obtendo dados do xml
+        get_tag(parm,dnode,"idMatrizAparelho",0,0);
+        idMatrizAparelho = atoi(parm);
+
+        // Obter id aparelho
+        EXEC SQL WHENEVER NOT FOUND DO cl_flag(&existAp);
+        EXEC SQL 
+          SELECT 
+                IDAPARELHO,
+		        VLMULTA,
+		        IDUFOPERADORA,
+		        IDTIPOPESSOA
+          INTO  
+                :idAparelho,
+		        :vlMulta,
+		        :idUfOperadora,
+		        :idTipoPessoa
+          FROM   
+                RETENCAO.MATRIZAPARELHO
+          WHERE  
+                IDMATRIZAPARELHO = :idMatrizAparelho;
+
+
+        // Definicao dos cursores
+        //EXEC SQL WHENEVER NOT FOUND DO break;
+
+        // Cursor para aparelhos em estoque
+        EXEC SQL DECLARE crsApCor CURSOR FOR
+        SELECT   RE.idEstoque,
+		         RE.idAparelhoCor, 
+		         AC.nmCor, 
+		         RE.vlAparelho, 
+		         RE.qtDisponivel, 
+		         RE.cdSapAparelho
+          FROM   retencao.estoque RE,
+	  	         RETENCAO.APARELHOCOR RAC,
+		         RETENCAO.APARELHO	  RA,
+		         APOIO.COR			  AC
+          WHERE  RA.inAtivo != 0
+          AND 	 RAC.INATIVO!=0
+          AND 	 RA.IDAPARELHO=RAC.IDAPARELHO
+          AND 	 RAC.IDAPARELHOCOR=RE.IDAPARELHOCOR
+          AND 	 RAC.IDCOR=AC.IDCOR
+          AND    RA.idAparelho = :idAparelho
+          AND	 RE.idufoperadora=:idUfOperadora
+          AND	 RE.idTipoPessoa=:idTipoPessoa;
+
+        // Cursor para aparelhos existentes mais ainda sem estoque
+        EXEC SQL DECLARE crsApExs CURSOR FOR
+            SELECT RAC.IDAPARELHOCOR,
+			           AC.NMCOR
+      	        FROM   RETENCAO.APARELHOCOR RAC,
+			           RETENCAO.APARELHO	RA,
+			           APOIO.COR			AC
+      	        WHERE  RA.INATIVO = 1
+		        AND    RAC.INATIVO=1
+		        AND    RA.IDAPARELHO=RAC.IDAPARELHO
+		        AND	   RAC.IDCOR=AC.IDCOR
+		        AND    RA.IDAPARELHO = :idAparelho
+		        AND	   RAC.idaparelhocor NOT IN	(SELECT idAparelhoCor	  	  		
+							  	  	         FROM   retencao.estoque
+									         where idufoperadora=:idUfOperadora
+									         and   idTipoPessoa=:idTipoPessoa);	
+	
+        // Cursor para descontos
+        EXEC SQL 
+        DECLARE crsDesc CURSOR FOR
+            SELECT 
+                IDMATRIZAPARELHODESCONTO,
+	            VLPERCENTUALDESCONTO
+            FROM   
+                RETENCAO.MATRIZAPARELHODESCONTO
+            WHERE  
+                INATIVO != 0
+            AND    
+                IDMATRIZAPARELHO = :idMatrizAparelho;
+
+        // Cursor para parcelas
+        EXEC SQL DECLARE crsParc CURSOR FOR
+            SELECT RP.idParcela,
+	             RP.nrParcelas
+            FROM   retencao.matrizAparelhoParcela RMTP,
+	             RETENCAO.PARCELA				RP
+            WHERE  RMTP.inAtivo != 0
+            AND 	 RMTP.IDPARCELA=RP.IDPARCELA
+            AND    RMTP.idMatrizAparelho = :idMatrizAparelho;
+
+   
+    
+        // Teste de existencia do aparelho
+        if ( existAp == 0) return 1;
+
+        ULOG_INT(idUfOperadora);
+        ULOG_INT(idAparelho);
+        //ulog_int(vlMulta);
+
+
+        // Obter Dados deste aparelho
+/*
+        EXEC SQL 
+            SELECT  
+                RM.nmMarca,
+	            RA.dsModelo
+            INTO   
+                :nmMarca, 
+	            :dsModelo
+            FROM   
+                retencao.Aparelho RA,
+	            RETENCAO.MARCA	   RM      
+            WHERE  
+                RA.IDMARCA=RM.IDMARCA  
+            AND 
+                idAparelho = :idAparelho;
+*/
+
+    
+        EXEC SQL 
+            SELECT  
+                RM.nmMarca,
+	            RA.dsModelo || ' - ' || TIPOAPARELHO.DSTIPOAPARELHO
+            INTO   
+                :nmMarca:i_nmMarca, 
+                :dsModelo:i_dsModelo
+            FROM   
+                retencao.Aparelho RA,
+	            RETENCAO.MARCA	   RM,
+				APOIO.TIPOAPARELHO TIPOAPARELHO      
+            WHERE  
+                RA.IDMARCA=RM.IDMARCA  
+			AND
+			    RA.IDTIPOAPARELHO = TIPOAPARELHO.IDTIPOAPARELHO
+            AND 
+                RA.idAparelho = :idAparelho;
+
+        endOraStr(nmMarca);
+        endOraStr(dsModelo);
+        ULOG_VAR(nmMarca);
+        ULOG_VAR(dsModelo);
+
+        EXEC SQL WHENEVER NOT FOUND DO break;
+        EXEC SQL OPEN crsApCor;
+        EXEC SQL OPEN crsApExs;
+        EXEC SQL OPEN crsDesc;
+        EXEC SQL OPEN crsParc;
+
+        // Aqui retornarei o idMatrizAparelho, pois esta eh a informacao
+        // necessaria adiante. E facilita o trabalho da Web.
+        xml->addItem("idAparelho",idMatrizAparelho);
+        xml->addItem("marca",(char *)nmMarca.arr);
+        xml->addItem("modelo",(char *)dsModelo.arr);
+
+        sprintf(szVlMulta,"%6.2f",vlMulta);
+
+        xml->addItem("valorMulta",szVlMulta);
+        xml->addItem("idUfoperadora",idUfOperadora);
+   
+	
+    
+        for(;;) 
+        {
+            vlAparelhoInd = 0;
+            qtDisponivelInd = 0;
+            cdSapAparelhoInd = 0;
+            EXEC SQL FETCH crsApCor INTO   :idEstoque,
+    							           :idAparelhoCor, 
+								           :nmCor, 
+								           :vlAparelho:vlAparelhoInd,
+								           :qtDisponivel:qtDisponivelInd, 
+								           :cdSapAparelho:cdSapAparelhoInd;
+      
+            // Controle de colunas com null
+            if (vlAparelhoInd < 0) vlAparelho = 0;
+            if (qtDisponivelInd < 0) qtDisponivel = 0;
+            if (cdSapAparelhoInd < 0) { strToOra(cdSapAparelho,"null"); } // {} necessarios
+      
+            endOraStr(nmCor);
+            endOraStr(cdSapAparelho);
+            ULOG_INT(idEstoque);
+            ULOG_VAR(nmCor);
+            sprintf(szVlAparelho,"%6.2f",vlAparelho);
+            //ulog_int(vlAparelho);
+            ULOG_INT(qtDisponivel);
+            ULOG_VAR(cdSapAparelho);
+
+            xml->createTag("tns:AparelhoCorVO");
+                xml->addItem("idEstoque",idEstoque);
+                xml->addItem("idAparelhoCor",idAparelhoCor);
+                xml->addItem("cor",(char *)nmCor.arr);
+                xml->addItem("preco",szVlAparelho);
+                xml->addItem("qtdeEstoque",qtDisponivel);
+                xml->addItem("codigoSAP",(char *)cdSapAparelho.arr);
+            xml->closeTag();
+            erro_Neg = 0 ; // log erro de negocio
+      
+        } 
+    
+        // log de erro de negocio 
+        if( erro_Neg == 1)
+        { 
+            ULOGW("erro no cursor -> crsApCor");    
+            ULOGW("QUERY = SELECT   RE.idEstoque,RE.idAparelhoCor, AC.nmCor, RE.vlAparelho, RE.qtDisponivel, RE.cdSapAparelho FROM  retencao.estoque RE, RETENCAO.APARELHOCOR RAC, RETENCAO.APARELHO RA, APOIO.COR AC WHERE  RA.inAtivo != 0  AND RAC.INATIVO!=0 AND RA.IDAPARELHO=RAC.IDAPARELHO AND RAC.IDAPARELHOCOR=RE.IDAPARELHOCOR AND RAC.IDCOR=AC.IDCOR AND RA.idAparelho = %d AND RE.idufoperadora= %d AND RE.idTipoPessoa=%d;", idAparelho,idUfOperadora,idTipoPessoa);
+        }
+        else
+	        erro_Neg = 1 ;		 
+	    
+	    
+        // Pegando dados das cores de aparelhos que nao estao no estoque
+        for ( ;; ) 
+        {
+                     
+            EXEC SQL FETCH crsApExs INTO :idAparelhoCor, 
+	    				                 :nmCor;
+
+            endOraStr(nmCor);
+            xml->createTag("tns:AparelhoCorVO");
+                xml->addItem("idEstoque",0);
+                xml->addItem("idAparelhoCor",idAparelhoCor);
+                xml->addItem("cor",(char *)nmCor.arr);
+                xml->addItem("preco",0);
+                xml->addItem("qtdeEstoque",0);
+                xml->addItem("codigoSAP",0);
+            xml->closeTag();
+            erro_Neg = 0 ; // log erro de negocio
+        } 
+
+        // log de erro de negocio 
+        if( erro_Neg == 1)
+        { 
+            ULOGW("erro no cursor -> crsApExs");    
+            ULOGW("QUERY = SELECT RAC.IDAPARELHOCOR, AC.NMCOR FROM RETENCAO.APARELHOCOR RAC, RETENCAO.APARELHO RA, APOIO.COR	AC WHERE  RA.INATIVO = 1 AND RAC.INATIVO=1 AND RA.IDAPARELHO=RAC.IDAPARELHO AND RAC.IDCOR=AC.IDCOR AND    RA.IDAPARELHO = %d AND	   RAC.idaparelhocor NOT IN	(SELECT idAparelhoCor FROM   retencao.estoque where idufoperadora=%d and   idTipoPessoa=%d); ",idAparelho,idUfOperadora,idTipoPessoa);
+        }
+        else
+	        erro_Neg = 1 ;		 
+    
+        //fim da captura da cor do aparelho
+   
+
+        for ( ;; ) 
+        {
+            EXEC SQL FETCH crsDesc INTO :idMatrizAparelhoDesconto,
+						                :vlPercentualDesconto;
+
+            ULOG_INT(idMatrizAparelhoDesconto);
+            ULOG_INT(vlPercentualDesconto);
+
+            xml->createTag("tns:descontoVO");
+                xml->addItem("id",idMatrizAparelhoDesconto);
+                xml->addItem("valor",vlPercentualDesconto);
+            xml->closeTag();
+            erro_Neg = 0 ; // log erro de negocio
+        } 
+
+        // log de erro de negocio 
+        if( erro_Neg == 1)
+        { 
+            ULOGW("erro no cursor -> crsDesc");    
+            ULOGW("QUERY = select idMatrizAparelhoDesconto, vlPercentualDesconto from   retencao.matrizAparelhoDesconto where  inAtivo != 0 and    idMatrizAparelho = %d ;",idMatrizAparelho);
+        }
+        else
+	        erro_Neg = 1 ;		 
+
+  
+        for(;;) 
+        {
+              EXEC SQL FETCH crsParc INTO :idParcela, 
+	    						          :nrParcelas;
+
+            ULOG_INT(idParcela);
+            ULOG_INT(nrParcelas);
+            xml->createTag("tns:parcelaVO");
+                xml->addItem("id",idParcela);
+                xml->addItem("valor",nrParcelas);
+            xml->closeTag();
+
+            erro_Neg = 0 ; // log erro de negocio
+  
+        } 
+
+        // log de erro de negocio 
+        if( erro_Neg == 1)
+        { 
+            ULOGW("erro no cursor -> crsParc");    
+            ULOGW("QUERY = SELECT RP.idParcela,RP.nrParcelas FROM retencao.matrizAparelhoParcela RMTP, RETENCAO.PARCELA RP WHERE RMTP.inAtivo != 0 AND RMTP.IDPARCELA=RP.IDPARCELA AND RMTP.idMatrizAparelho = %d;",idMatrizAparelho);
+	    }
+        EXEC SQL CLOSE crsApCor;
+        EXEC SQL CLOSE crsApExs;
+        EXEC SQL CLOSE crsDesc;
+        EXEC SQL CLOSE crsParc;
+        
+        // Se houver caracterisiticas GSM, serao processadas
+        GetGSMDados( idTipoPessoa, idAparelho, idUfOperadora, xml ); 
+    }
+    catch(...)
+    {
+    ULOGE("SAIDA INDEVIDA  ERRO ");
+    throw;
+    }
+  
+    ULOG_END("sel_detaparelho()");
+    return 1;
+}
+
+
+
+
+/*
+ *  Inclusão para a SM250
+ *  Marcelo Jan/2007
+ */
+void GetGSMDados( int idTipoPessoaPrm, int idAparelhoPrm, int idUFOperadoraPrm, XMLGen *xml )
+{
+    ULOG_START("GetGSMDados()");
+
+    char valorChip[28];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        
+        int idAparelho = idAparelhoPrm;
+        int idUFOperadora = idUFOperadoraPrm;
+        int idTipoPessoa = idTipoPessoaPrm;
+        int idEstoqueChip = -1;
+        int idTipoAparelho = -1;
+        int idAreaRegistro = -1;
+        int cdAreaRegistro = -1;
+        VARCHAR cdSAPChip[21];
+        VARCHAR vlrChip[21];
+        int   qtdChip = 0;
+        short i_cdSAPChip = -1;
+        short i_vlrChip = -1;
+        short i_qtdChip = -1;
+        short i_idEstoqueChip = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &cdSAPChip,0x0,sizeof(cdSAPChip));
+    memset( &vlrChip,0x0,sizeof(vlrChip));
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+    SELECT 
+       IDTIPOAPARELHO
+    INTO
+       :idTipoAparelho
+    FROM
+       RETENCAO.APARELHO
+    WHERE 
+       IDAPARELHO = :idAparelho;
+
+    if ( idTipoAparelho == 1 )
+    {
+        ULOG( "*** Aparelho selecionado não é GSM" );
+	    ULOG_END("GetGSMDados()");
+        return;
+    }
+
+    if ( idTipoAparelho == 2 )
+    {
+        xml->addItem( "inChipAvulso", 1 );
+        xml->addItem( "inChipPreProgramado", 0 );
+    }
+
+    if ( idTipoAparelho == 3 )
+    {
+        xml->addItem( "inChipAvulso", 0 );
+        xml->addItem( "inChipPreProgramado", 1 );
+    }
+
+    // Cursor para DDDs da Regional
+    EXEC SQL DECLARE crsDDD CURSOR FOR
+        SELECT
+            IDAREAREGISTRO,
+            CDAREAREGISTRO
+        FROM
+            APOIO.AREAREGISTRO
+        WHERE
+            IDUFOPERADORA = :idUFOperadora;
+
+    EXEC SQL WHENEVER NOT FOUND DO break;
+    EXEC SQL OPEN crsDDD;
+    
+    for ( ;; )
+    {
+        i_cdSAPChip = i_vlrChip = i_qtdChip = -1;
+        memset( &cdSAPChip, 0x0, sizeof(cdSAPChip) );
+        memset( valorChip , 0x0, sizeof(valorChip) );
+
+        EXEC SQL FETCH crsDDD INTO :idAreaRegistro, 
+	    				           :cdAreaRegistro;
+
+        ULOG_INT( idAreaRegistro );
+        ULOG_INT( cdAreaRegistro );
+
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        if ( idTipoAparelho == 2 )
+        {
+            EXEC SQL
+                SELECT
+	                CDSAPCHIPAVULSO,
+                    IDESTOQUECHIP
+                INTO
+                   :cdSAPChip:i_cdSAPChip,
+                   :idEstoqueChip:i_idEstoqueChip
+                FROM
+	                RETENCAO.ESTOQUECHIP
+                WHERE
+                    IDAREAREGISTRO = :idAreaRegistro;
+
+            EXEC SQL
+                SELECT
+					REPLACE(TO_CHAR(VLCHIPAVULSO,'9990.99'),'.',','),
+	                QTCHIPAVULSO
+                INTO
+                   :vlrChip:i_vlrChip,
+                   :qtdChip:i_qtdChip
+                FROM
+	                RETENCAO.ESTOQUECHIPSAP
+                WHERE
+                    IDESTOQUECHIP = :idEstoqueChip
+                AND
+                    IDTIPOPESSOA = :idTipoPessoa;
+        }
+        else
+        {
+            EXEC SQL
+                SELECT
+	                CDSAPCHIPPREPROG,
+                    IDESTOQUECHIP
+                INTO
+                   :cdSAPChip:i_cdSAPChip,
+                   :idEstoqueChip:i_idEstoqueChip
+                FROM
+	                RETENCAO.ESTOQUECHIP
+                WHERE
+                    IDAREAREGISTRO = :idAreaRegistro;
+
+            EXEC SQL
+                SELECT
+					REPLACE(TO_CHAR(VLCHIPPREPROG,'9990.99'),'.',','),
+	                QTCHIPPREPROG
+                INTO
+                   :vlrChip:i_vlrChip,
+                   :qtdChip:i_qtdChip
+                FROM
+	                RETENCAO.ESTOQUECHIPSAP
+                WHERE
+                    IDESTOQUECHIP = :idEstoqueChip
+                AND
+                    IDTIPOPESSOA = :idTipoPessoa;
+
+        }
+
+/*
+        if ( idTipoAparelho == 2 )
+        {
+            EXEC SQL
+                SELECT
+	                CDSAPCHIPAVULSO,
+					REPLACE(TO_CHAR(VLCHIPAVULSO,'9990.99'),'.',','),
+	                QTDCHIPAVULSO
+                INTO
+                   :cdSAPChip:i_cdSAPChip,
+                   :vlrChip:i_vlrChip,
+                   :qtdChip:i_qtdChip
+                FROM
+	                RETENCAO.ESTOQUECHIP
+                WHERE
+                    IDAREAREGISTRO = :idAreaRegistro;
+        }
+        else
+        {
+            EXEC SQL
+                SELECT
+	                CDSAPCHIPPREPROG,
+					REPLACE(TO_CHAR(VLCHIPPREPROG,'9990.99'),'.',','),
+	                QTDCHIPPREPROG
+                INTO
+                   :cdSAPChip:i_cdSAPChip,
+                   :vlrChip:i_vlrChip,
+                   :qtdChip:i_qtdChip
+                FROM
+	                RETENCAO.ESTOQUECHIP
+                WHERE
+                    IDAREAREGISTRO = :idAreaRegistro;
+        }
+*/
+
+        endOraStr( cdSAPChip );
+        endOraStr( vlrChip );
+        
+        if ( cdSAPChip.len == 0 ) // Nao mostra CHIPS nao cadastrados
+            continue;
+
+        ULOG( "*** Devolvendo tipo de aparelho [%d], idAreaRegistro [%d], cdAreaRegistro [%d], código SAP Chip [%s], valor unitário [%5.2f], quantidade no estoque [%d]",
+              idTipoAparelho,
+              idAreaRegistro,
+              cdAreaRegistro,
+              (char *)cdSAPChip.arr,
+              valorChip,
+              qtdChip );
+
+        xml->createTag( "tns:ListaDDDVO" );
+            xml->addItem( "id", idAreaRegistro );
+            xml->addItem( "nrDDD", cdAreaRegistro );
+            xml->addItem( "nrCodigoSAP", (char *)cdSAPChip.arr );
+            xml->addItem( "vlUnitario", (char *)vlrChip.arr );
+            if ( i_qtdChip != -1 )
+                xml->addItem( "qtEstoque", qtdChip );
+            else
+                xml->addItem( "qtEstoque", 0 );
+        xml->closeTag();
+    }
+
+    EXEC SQL CLOSE crsDDD;
+
+    ULOG_END("GetGSMDados()");
+}

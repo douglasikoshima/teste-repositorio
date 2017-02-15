@@ -1,0 +1,391 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+
+#include <tuxfw.h>
+
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+//==============================================================================
+// Protótipos
+int sendXML(char *pXmlSaida, char *pRetMsg, long * iErrorNumber );
+char *ObtemValorTag(char *pXml, char *pTag);
+char *replace( char *st, char *orig, char *repl );
+void retira_apostrofe( char * bf );
+bool RemoverRegistro( char * idPessoaDePara );
+
+int ProcCadastroPPSeg( char * sPROCEDURE, char * idPessoaDeParaPrm  )
+{
+    ULOG_START( "ProcCadastroPPSeg()" );
+   
+    char szRetMsg[4000 + 1];
+    char szO_CDERRO[10 + 1];
+    char szO_DSERRO[1000 + 1];
+	
+    char szStatusCode[255 + 1];
+    char szStatusText[255 + 1];
+    char szXml[8000 + 1];
+    char szXmlTmp[8000 + 1];
+    long iErrorNumber=0;
+
+
+    struct sqlca sqlca;
+
+    char *pc_statusCode = 0x0;
+    char *pc_statusText = 0x0;
+    char *pc_Msg = 0x0;
+    TuxRemoteService* remoteService;
+    TuxMessage* inputMessage;
+    XMLGen oEntrada;
+	
+
+    sprintf(szXml, "<msg><PROCEDURE>%s</PROCEDURE></msg>",sPROCEDURE);
+	
+	
+	ULOG( "ENVIANDO Registro de Cadastro para o Programa de Pontos:" );
+	
+	ULOG("PROCEDURE:[%s] ", sPROCEDURE );
+	
+    ULOG( "szXml [%s]", szXml );
+	
+    oEntrada.aggregateXML(szXml);
+
+    // Faz a solicitação ao serviço
+    remoteService = new TuxRemoteService();
+    inputMessage = new TuxMessage();
+    inputMessage->setUser("FO");
+    inputMessage->setService("CADPPSEG");
+    inputMessage->setMessageBody(&oEntrada);
+    // Repassa configuracoes ao manipulador do serviço remoto e invoca o servico.
+    remoteService->setServiceName("CADPPSEG");
+    remoteService->setInputMessage(inputMessage);
+
+    if(remoteService->remoteCall() != TUXFWRET_OK)
+    {
+        ULOG( "ERRO. remoteService->remoteCall() != TUXFWRET_OK \n");
+        delete remoteService;
+        delete inputMessage;
+        return -2;
+    }
+
+    memset( szStatusCode, 0x0, sizeof(szStatusCode) );
+    memset( szStatusText, 0x0, sizeof(szStatusText) );
+
+    pc_statusCode = remoteService->getOutputMessage()->getStatusCode();
+    pc_statusText = remoteService->getOutputMessage()->getStatusText();
+    pc_Msg = remoteService->getOutputMessage()->getMessageBody();
+
+    if(pc_statusCode)
+    {
+        strcpy(szStatusCode, pc_statusCode);
+        ULOG( "#szStatusCode[%s] \n", szStatusCode);
+    }
+
+    if(pc_statusText)
+    {
+        if(strlen(pc_statusText) >= sizeof(szStatusText))
+            strncpy(szStatusText, pc_statusText, sizeof(szStatusText) - 1);
+        else
+            strcpy(szStatusText, pc_statusText);
+        
+        ULOG( "#szStatusText[%s] \n", szStatusText);
+    }
+	
+    if ( szStatusCode[2] == 'I' )
+    {
+        if(pc_Msg)
+        {
+            if(strlen(pc_statusText) >= sizeof(szStatusText))
+                strncpy(szStatusText, pc_statusText, sizeof(szStatusText) - 1);
+            else
+                strcpy(szStatusText, pc_statusText);
+
+            memset( szO_CDERRO, 0x0, sizeof(szO_CDERRO) );
+            memset( szO_DSERRO, 0x0, sizeof(szO_DSERRO) );
+
+            try
+            {
+                SAFE_STRNCPY(szO_CDERRO,ObtemValorTag(pc_Msg, "O_CDERRO"));
+                SAFE_STRNCPY(szO_DSERRO,ObtemValorTag(pc_Msg, "O_DSERRO")); 
+                ULOG( "#szO_CDERRO[%s] \n", szO_CDERRO);
+                ULOG( "#szO_DSERRO[%s] \n", szO_DSERRO);
+            }
+            catch(...)
+            {
+                ULOG( "#Erro tentanto ober O_CDERRO e O_DSERRO \n");
+            }
+        }
+        else
+        {
+            ULOG( "!!! ERRO !!! Serviço CADPPSEG nao retornou xml com a TAG de MessageBody\n" );
+        }
+    }
+	
+    free(pc_statusCode);
+    free(pc_statusText);
+    free(pc_Msg);
+
+
+    /* Obtem os valores das tags de retorno do XML */    
+    /*    SAFE_STRNCPY(szStatusCode,ObtemValorTag(szRetMsg, "statusCode"));    */
+    ULOG( "statusCode=[%s]\n",szStatusCode );
+
+    /*   SAFE_STRNCPY(szStatusText,ObtemValorTag(szRetMsg, "statusText"));   */
+    ULOG( "statusText=[%s]\n",szStatusText );
+
+    if ( szStatusCode[2] != 'I' )
+    {
+        iErrorNumber = TPESYSTEM;
+    }
+    
+    if ( iErrorNumber )
+    {
+        //if ( 0 == szStatusCode[0] ) 
+        //{
+            switch (iErrorNumber) 
+            {
+                case TPEABORT     : strcpy(szStatusCode,"TPEABORT");strcpy(szStatusText,"TPEABORT"); break;
+                case TPEBADDESC   : strcpy(szStatusCode,"TPEBADDESC");strcpy(szStatusText,"TPEBADDESC"); break;
+                case TPEBLOCK     : strcpy(szStatusCode,"TPEBLOCK");strcpy(szStatusText,"TPEBLOCK"); break;
+                case TPEINVAL     : strcpy(szStatusCode,"TPEINVAL");strcpy(szStatusText,"TPEINVAL"); break;
+                case TPELIMIT     : strcpy(szStatusCode,"TPELIMIT");strcpy(szStatusText,"TPELIMIT"); break;
+                case TPENOENT     : strcpy(szStatusCode,"TPENOENT");strcpy(szStatusText,"TPENOENT"); break;
+                case TPEOS        : strcpy(szStatusCode,"TPEOS");strcpy(szStatusText,"TPEOS"); break;
+                case TPEPERM      : strcpy(szStatusCode,"TPEPERM");strcpy(szStatusText,"TPEPERM"); break;
+                case TPEPROTO     : strcpy(szStatusCode,"TPEPROTO");strcpy(szStatusText,"TPEPROTO"); break;
+                case TPESVCERR    : strcpy(szStatusCode,"TPESVCERR");strcpy(szStatusText,"TPESVCERR"); break;
+                case TPESVCFAIL   : strcpy(szStatusCode,"TPESVCFAIL");strcpy(szStatusText,"TPESVCFAIL"); break;
+                case TPESYSTEM    : strcpy(szStatusCode,"TPESYSTEM");strcpy(szStatusText,"TPESYSTEM"); break;
+                case TPETIME      : strcpy(szStatusCode,"TPETIME");strcpy(szStatusText,"TPETIME"); break;
+                case TPETRAN      : strcpy(szStatusCode,"TPETRAN");strcpy(szStatusText,"TPETRAN"); break;
+                case TPGOTSIG     : strcpy(szStatusCode,"TPGOTSIG");strcpy(szStatusText,"TPGOTSIG"); break;
+                case TPERMERR     : strcpy(szStatusCode,"TPERMERR");strcpy(szStatusText,"TPERMERR"); break;
+                case TPEITYPE     : strcpy(szStatusCode,"TPEITYPE");strcpy(szStatusText,"TPEITYPE"); break;
+                case TPEOTYPE     : strcpy(szStatusCode,"TPEOTYPE");strcpy(szStatusText,"TPEOTYPE"); break;
+                case TPERELEASE   : strcpy(szStatusCode,"TPERELEASE");strcpy(szStatusText,"TPERELEASE"); break;
+                case TPEHAZARD    : strcpy(szStatusCode,"TPEHAZARD");strcpy(szStatusText,"TPEHAZARD"); break;
+                case TPEHEURISTIC : strcpy(szStatusCode,"TPEHEURISTIC");strcpy(szStatusText,"TPEHEURISTIC"); break;
+                case TPEEVENT     : strcpy(szStatusCode,"TPEEVENT");strcpy(szStatusText,"TPEEVENT"); break;
+                case TPEMATCH     : strcpy(szStatusCode,"TPEMATCH");strcpy(szStatusText,"TPEMATCH"); break;
+                case TPEDIAGNOSTIC: strcpy(szStatusCode,"TPEDIAGNOSTIC");strcpy(szStatusText,"TPEDIAGNOSTIC"); break;
+                case TPEMIB       : strcpy(szStatusCode,"TPEMIB");strcpy(szStatusText,"TPEMIB"); break;
+                default           : strcpy(szStatusCode,"ERRDESCONHECIDO");strcpy(szStatusText,"ERRDESCONHECIDO"); break;
+            } // switch (iErrorNumber)
+        //} // if ( 0 == szStatusCode[0] )
+    }
+
+    /* Se sucesso grava o XML em disco e apaga o registro */
+    if(szStatusCode[2] == 'I' && 0 == iErrorNumber) 
+    {
+        ULOG( "szXml [%s] processado por CADPPSEG.", szXml );
+        int iO_CDERRO;
+        
+        iO_CDERRO = atoi(szO_CDERRO);
+
+        if (iO_CDERRO != 0 )
+        {
+            ULOG( "*** FALHA NO PROCESSAMENTO DO CADPPSEG ***" );
+            ULOG( "O_CDERRO[%s]\n",szO_CDERRO );
+            ULOG( "O_DSERRO[%s]\n",szO_DSERRO );
+        }
+        else
+        {
+            ULOG( "*** Sucesso no processamento do CADPPSEG ***" );
+        }
+        //DELETAR REGISTRO DA FILA
+        /*
+        RemoverRegistro( idPessoaDeParaPrm );
+        */
+    }
+
+    //DELETAR REGISTRO DA FILA
+    RemoverRegistro( idPessoaDeParaPrm );
+
+    delete remoteService;
+    delete inputMessage;
+    ULOG("### Processamento encerrado ###\n");
+    ULOG_END( "ProcCadastroPPSeg()" );
+ 
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemValorTag(char *pXml, char *pTag)
+{
+    static char szValue[4096 + 1];
+
+    szValue[0] = 0;
+    if ( pXml )
+    {
+        if ( *pXml )
+        {
+            char *p0 = strstr(pXml,pTag) + strlen(pTag) + 1;
+            if ( p0 )
+            {
+                char *p1 = strstr(p0,pTag) - 2;
+                if ( p1 )
+                {
+                    if ( p1 > p0 )
+                    {
+                        int tam = p1-p0;
+                        if (tam > 4096) tam = 4096;
+                        strncpy(szValue,p0,tam);
+                        szValue[tam]=0;
+                    }
+                }
+            }
+        }
+    }
+
+    return szValue;
+}
+
+
+
+/************************************************************************************************************/
+int sendXML( char *pXmlSaida, char *pRetMsg, long * iErrorNumber ) 
+{
+    ULOG_START( "sendXML()" );
+    
+    char *sendbuf, *rcvbuf;
+    long sendlen, rcvlen;
+
+    sendlen = strlen( pXmlSaida );
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        ULOGE("Error allocating send buffer\n");
+        return -1;
+    }
+    
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        ULOGE("Error allocating receive buffer\n");
+        tpfree( sendbuf );
+        return -1;
+    }
+
+    strcpy( sendbuf, pXmlSaida );
+
+    if( tpcall("TUXPREPAGOBE", (char *)sendbuf, sendlen, (char **)&rcvbuf, &rcvlen, (long)0 ) == -1 ) 
+    {
+        ULOG( ">>> ERRO: TUXPREPAGOBE --> TPERRNO [%d]",tperrno  );
+
+        ULOGE( "rcvbuf [%s]\n", rcvbuf);
+    
+        *iErrorNumber = tperrno;
+        strcpy( pRetMsg, rcvbuf );
+
+        tpfree( sendbuf );
+        tpfree( rcvbuf );
+
+        ULOG_END( "sendXML()" );
+        return 1;
+    }
+
+    *iErrorNumber=0;
+    strcpy( pRetMsg, rcvbuf );
+
+    tpfree( sendbuf );
+    tpfree( rcvbuf );
+
+    ULOG_END( "sendXML()" );
+    return 0;
+}
+
+/************************************************************************************************************/
+bool RemoverRegistro( char * idPessoaDeParaPrm )
+{
+    ULOG_START( "RemoverRegistro()" );
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * idPessoaDePara = idPessoaDeParaPrm;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    
+    ULOG( "Removendo idPessoaDePara [%s]", idPessoaDePara );
+
+    EXEC SQL
+    DELETE CUSTOMER.PROGRAMAPONTOSEG WHERE idPessoaDePara = :idPessoaDePara ;
+
+    ULOG_END( "RemoverRegistro()" );
+    return true;
+
+    erro:
+        ULOG( "ERRO ORACLE: sqlcode = [%d],sqlerrmc = [%s]",sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc );
+        ULOG_END( "RemoverRegistro()" );
+        return false;
+}
+
+
+
+char *replace( char *st, char *orig, char *repl ) 
+{
+   static char buffer[4096];
+   char *ch;
+   buffer[0] = 0x0;
+   
+   if (!(ch = strstr(st, orig)))
+      return st;
+   
+   strncpy(buffer, st, ch-st);  
+   buffer[ch-st] = 0;
+   sprintf(buffer+(ch-st), "%s%s", repl, ch+strlen(orig));
+   
+   return buffer;
+}
+
+
+void retira_apostrofe( char * bf )
+{
+    char buffer[4096];
+    char *p;
+    char *s;
+    
+    strcpy( buffer, bf );
+        
+    p = strstr( buffer, "&apos;" );
+    
+    while ( p != NULL )
+    {
+        s = replace( buffer, "&apos;", "" );
+        strcpy( buffer, s );
+        p = strstr( buffer, "&apos;" );
+    }
+    
+    strcpy( bf, buffer );
+    
+}
+

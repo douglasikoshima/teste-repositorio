@@ -1,0 +1,76 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:35:01 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/SmallString.h"
+
+#include "../include/cWFAtdDetDSarv.h"
+
+void WFAtdDetDSarv(sqlca*sqlca);
+
+bool proCObterPath( int _idContato, XMLGen *saida )
+{
+    ULOG_START("proCObterPath()");
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idContato;
+        short i_path;
+        VARCHAR path[4096];
+    EXEC SQL END DECLARE SECTION;
+
+    idContato = _idContato;
+
+    EXEC SQL WHENEVER NOT FOUND GO TO PathNotFound;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdDetDSarv(&sqlca);
+
+    EXEC SQL SELECT NMPATH INTO :path:i_path
+               FROM CONTATOADM.CONTATO
+              WHERE IDCONTATO = :idContato;
+
+    CONVIND(path,i_path);
+
+    saida->addItem("stringComum",(char*)path.arr);
+
+    ULOG("'path' para idContato=%d ==> '%s'",idContato,(char*)path.arr);
+            
+            
+    ULOG_END("proCObterPath()");
+
+    return true;
+
+PathNotFound:
+    ULOG("'path' não encontrado em CONTATOADM.CONTATO para idContato=%d",idContato,(char*)path.arr);
+
+    saida->createTag("stringComum");
+    saida->closeTag();
+
+    ULOG_END("proCObterPath()");
+    return false;
+}
+
+
+void WFAtdDetDSarv(sqlca*sqlca)
+{
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOGE("WFAtdDetDSarv:sqlcode=%d,sqlerrmc=%.70s"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

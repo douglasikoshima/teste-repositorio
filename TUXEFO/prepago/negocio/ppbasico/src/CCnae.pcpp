@@ -1,0 +1,221 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <CCnae.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+CCnae::CCnae()
+{
+}
+
+CCnae::~CCnae()
+{
+}
+
+int CCnae::ListAll( void )
+{
+    ULOG_START("CCnae::ListAll");
+
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+            VARCHAR oszIdCnae[LEN_IDCNAE];
+            VARCHAR oszCdCnae[LEN_CDCNAE];
+            VARCHAR oszDsCnae[LEN_DSCNAE];
+            VARCHAR oszCdCfop[LEN_CDCFOP];
+		} stCnaeRegistro;
+		struct
+		{
+            short iIdCnae;
+            short iCdCnae;
+            short iDsCnae;
+            short iCdCfop;
+		} stCnaeIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		ZeraCnae();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL 
+	   		DECLARE 
+	   			CursorCnaeAll CURSOR FOR
+			SELECT 
+			  TO_CHAR(idcnae)
+			, cdcnae
+			, dscnae
+			, TO_CHAR(cdcfop)
+			FROM 
+    			apoio.cnae;
+	
+		EXEC SQL OPEN CursorCnaeAll;
+	
+		if(sqlca.sqlcode)
+        {
+            ULOGE("CCnae::ListAll <ERROR>");
+            ULOG_END("CCnae::ListAll");
+			return 0;
+        }
+		else
+		{
+			for(;;)
+			{
+				memset( &stCnaeRegistro, 0, sizeof(stCnaeRegistro) );
+				EXEC SQL FETCH CursorCnaeAll INTO :stCnaeRegistro:stCnaeIndicator;
+	
+				Add( (char*)stCnaeRegistro.oszIdCnae.arr, 
+				     (char*)stCnaeRegistro.oszCdCnae.arr, 
+				     (char*)stCnaeRegistro.oszDsCnae.arr,
+				     (char*)stCnaeRegistro.oszCdCfop.arr);
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorCnaeAll;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOGI("CCnae::ListAll <OK>");
+    ULOG_END("CCnae::ListAll");
+	return iCont;
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CCnae::ListNrCNAE( char* cnrCNAE )
+{
+    ULOG_START("CCnae::ListNrCNAE");
+
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxnrCNAE = cnrCNAE;
+		struct
+		{
+            VARCHAR oszIdCnae[LEN_IDCNAE];
+            VARCHAR oszCdCnae[LEN_CDCNAE];
+            VARCHAR oszDsCnae[LEN_DSCNAE];
+            VARCHAR oszCdCfop[LEN_CDCFOP];
+		} stCnaeRegistro;
+		struct
+		{
+            short iIdCnae;
+            short iCdCnae;
+            short iDsCnae;
+            short iCdCfop;
+		} stCnaeIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		ZeraCnae();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListNrCNAE;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL 
+	   		DECLARE 
+	   			CursorListNrCNAE CURSOR FOR
+			SELECT 
+			 	 IDCNAE
+				,CDCNAE
+				,DSCNAE
+				,CDCFOP
+			FROM 
+    			APOIO.CNAE
+    		WHERE
+    			CDCNAE = :cAuxnrCNAE;
+	
+		EXEC SQL OPEN CursorListNrCNAE;
+	
+		for(;;)
+		{
+			memset( &stCnaeRegistro, 0, sizeof(stCnaeRegistro) );
+			EXEC SQL FETCH CursorListNrCNAE INTO :stCnaeRegistro:stCnaeIndicator;
+
+			Add( (char*)stCnaeRegistro.oszIdCnae.arr, 
+				 (char*)stCnaeRegistro.oszCdCnae.arr, 
+				 (char*)stCnaeRegistro.oszDsCnae.arr,
+				 (char*)stCnaeRegistro.oszCdCfop.arr);
+
+			iCont++;
+
+		}
+		EXEC SQL CLOSE CursorListNrCNAE;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CCnae::ListNrCNAE");
+	return iCont;
+
+GotoListNrCNAE:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+void CCnae::getXmlCombo( char* cNomeTag,
+                                  char* idCNAE,
+                                  char* cdCNAE,
+                                  char* dsCNAE,
+                                  char* cdCFOP,
+                                  XMLGen* xml )
+{
+	if( Quantidade() > 0 )
+	{
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			xml->createTag(cNomeTag);
+			if( Registro( x ) != NULL )
+			{
+				xml->addItem( idCNAE , Registro(x)->szIdCnae );
+				xml->addItem( cdCNAE , Registro(x)->szCdCnae );
+				xml->addItem( dsCNAE , Registro(x)->szDsCnae );
+				xml->addItem( cdCFOP , Registro(x)->szCdCfop );
+			}
+			xml->closeTag();
+		}
+	}
+}
+
+void CCnae::getXml( char* cNomeTag,
+                    XMLGen* xml )
+{
+	if( Quantidade() > 0 )
+	{
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			xml->createTag(cNomeTag);
+			xml->addProp("xmlns","cliente.fo.vivo.com.br/vo");
+			if( Registro( x ) != NULL )
+			{
+				xml->addItem( "idCNAE" , Registro(x)->szIdCnae );
+				xml->addItem( "nrCNAE" , Registro(x)->szCdCnae );
+				xml->addItem( "dsCNAE" , Registro(x)->szDsCnae );
+				xml->addItem( "cdCFOP" , Registro(x)->szCdCfop );
+			}
+			xml->closeTag();
+		}
+	}
+}

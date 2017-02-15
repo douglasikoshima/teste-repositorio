@@ -1,0 +1,285 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include<tuxfw.h>
+#include <FilaServico.hpp>
+
+FilaServico::FilaServico()
+{
+	tuxfw_getlogger()->debug("FilaServico::FilaServico()");
+}
+
+FilaServico::~FilaServico()
+{
+	tuxfw_getlogger()->debug("FilaServico::~FilaServico()");
+}
+
+char* FilaServico::getParametro(char*nome,char*param)
+{
+	tuxfw_getlogger()->debug("FilaServico::getParametro");
+	struct sqlca sqlca;
+	char valor[256];
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR parametroValor[256];
+		char* parametro = nome;
+    EXEC SQL END DECLARE SECTION;	
+
+	memset(&parametroValor,0,sizeof(parametroValor));
+	memset(&valor,0,256);
+	memset(param,0,sizeof(param));
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+	EXEC SQL WHENEVER NOT FOUND goto erro;
+
+	EXEC SQL
+		SELECT DSVALORPARAMETRO 
+		INTO :parametroValor
+		FROM APOIO.PARAMETRO
+		WHERE CDPARAMETRO = :parametro;
+
+	if(((char*)parametroValor.arr)!=NULL)
+		strcpy(param,(char*)parametroValor.arr);
+
+	return param;
+
+    erro:
+        tuxfw_getlogger()->debug("Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode);
+        throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int FilaServico::setStatusParametro(char*parametro,char*valor)
+{
+	tuxfw_getlogger()->debug("FilaServico::setStatusParametro");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        char* cparametro = parametro;
+		char* cvalor = valor;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+	EXEC SQL WHENEVER NOT FOUND goto erro;
+
+	EXEC SQL
+		UPDATE APOIO.PARAMETRO SET DSVALORPARAMETRO = :cvalor
+		WHERE CDPARAMETRO = :cparametro;
+
+	return 1;
+
+    erro:
+        tuxfw_getlogger()->debug("Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+        return 0;
+}
+
+void FilaServico::getRegistroAgrupado(XMLGen*gen)
+{
+	tuxfw_getlogger()->debug("FilaServico::getRegistroAgrupado");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+		struct param{
+			VARCHAR cderro[20+1];
+			VARCHAR dserro[70+1];
+			VARCHAR count[256];
+		}m_param;
+		struct iparam{
+			short cderro;
+			short dserro;
+			short count;
+		}m_iparam;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	EXEC SQL DECLARE GRUPO1 CURSOR FOR
+		SELECT CDERRO,DSERRO,COUNT(1) 
+		FROM INFRA.COMPSERVICODESATIVADO
+		GROUP BY CDERRO,DSERRO;
+
+	EXEC SQL OPEN GRUPO1;
+	for(;;)
+	{
+		memset(&m_param,0,sizeof(m_param));
+		memset(&m_iparam,0,sizeof(m_iparam));
+		EXEC SQL FETCH GRUPO1 INTO :m_param:m_iparam;
+		gen->createTag("GrupoErroVO");
+		gen->addItem("cdErro",(char*)m_param.cderro.arr);
+		gen->addItem("dsErro",(char*)m_param.dserro.arr);
+		gen->addItem("countErro",(char*)m_param.count.arr);
+		gen->closeTag();
+	}
+	EXEC SQL CLOSE GRUPO1;
+
+	return;
+
+    erro:
+        tuxfw_getlogger()->debug("Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void FilaServico::getRegistros(XMLGen*gen,char*cderro,char*regIni,char*regFim)
+{
+	tuxfw_getlogger()->debug("FilaServico::getRegistros");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+		struct param{
+			VARCHAR idcompservicodesativado[20+1];
+			VARCHAR dtcriacao[20];
+			VARCHAR dtultimaalteracao[20];
+			VARCHAR xmlretorno[2000+1];
+		}m_param;
+		struct iparam{
+			short idcompservicodesativado;
+			short dtcriacao;
+			short dtultimaalteracao;
+			short xmlretorno;
+		}m_iparam;
+		char* ccderro = cderro;
+		char* inicio = regIni;
+		char* fim = regFim;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	EXEC SQL DECLARE GRUPO2 CURSOR FOR
+		SELECT 
+		IDCOMPSERVICODESATIVADO ,
+		TO_CHAR(DTCRIACAO,'DD/MM/YYYY HH24:MI:SS'),
+		TO_CHAR(DTULTIMAALTERACAO,'DD/MM/YYYY HH24:MI:SS'),
+		XMLRETORNO
+		FROM (
+			SELECT 
+			CDERRO,
+			IDCOMPSERVICODESATIVADO ,
+			DTCRIACAO,
+			DTULTIMAALTERACAO,
+			XMLRETORNO,
+			ROWNUM AS LINHA
+			FROM INFRA.COMPSERVICODESATIVADO
+			WHERE
+			CDERRO = :ccderro AND ROWNUM <= :fim
+			ORDER BY IDCOMPSERVICODESATIVADO ASC
+		) tabela
+		WHERE
+		CDERRO = :ccderro AND LINHA >= :inicio;
+
+	EXEC SQL OPEN GRUPO2;
+	for(;;)
+	{
+		memset(&m_param,0,sizeof(m_param));
+		memset(&m_iparam,0,sizeof(m_iparam));
+		EXEC SQL FETCH GRUPO2 INTO :m_param:m_iparam;
+		gen->createTag("GrupoErroVO");
+		gen->addItem("idcompservicodesativado",(char*)m_param.idcompservicodesativado.arr);
+		gen->addItem("dtTimeStamp",(char*)m_param.dtcriacao.arr);
+		gen->addItem("dtErro",(char*)m_param.dtultimaalteracao.arr);
+		gen->addItem("xml",(char*)m_param.xmlretorno.arr);
+		// fecha tag
+		gen->closeTag();
+	}
+	EXEC SQL CLOSE GRUPO2;
+
+	return;
+
+    erro:
+        tuxfw_getlogger()->debug("Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void FilaServico::apagaIdErroFila(char*idComprovante)
+{
+	tuxfw_getlogger()->debug("FilaServico::apagaIdErroFila");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        char* cidComprovante = idComprovante;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+	EXEC SQL WHENEVER NOT FOUND goto erro;
+
+	EXEC SQL
+		DELETE FROM INFRA.COMPSERVICODESATIVADO 
+		WHERE IDCOMPSERVICODESATIVADO = :cidComprovante;
+
+	return;
+
+    erro:
+        tuxfw_getlogger()->debug("Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void FilaServico::apagaGrupoErroFila(char*erro)
+{
+	tuxfw_getlogger()->debug("FilaServico::apagaGrupoErroFila");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        char* cerro = erro;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+	EXEC SQL WHENEVER NOT FOUND goto erro;
+
+	EXEC SQL
+		DELETE FROM INFRA.COMPSERVICODESATIVADO 
+		WHERE CDERRO = :cerro;
+
+	return;
+
+    erro:
+        tuxfw_getlogger()->debug("Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void FilaServico::atualizaIdErroFila(char*idComprovante)
+{
+	tuxfw_getlogger()->debug("FilaServico::apagaIdErroFila");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        char* cidComprovante = idComprovante;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+	EXEC SQL WHENEVER NOT FOUND goto erro;
+
+	EXEC SQL
+		UPDATE INFRA.COMPSERVICODESATIVADO 
+		SET CDERRO = '',
+		DSERRO = '',
+		QTTENTATIVA = 0,
+		XMLRETORNO = ''
+		WHERE IDCOMPSERVICODESATIVADO = :cidComprovante;
+
+	return;
+
+    erro:
+        tuxfw_getlogger()->debug("Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void FilaServico::atualizaGrupoErroFila(char*cderro)
+{
+	tuxfw_getlogger()->debug("FilaServico::apagaGrupoErroFila");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        char* cerro = cderro;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+	EXEC SQL WHENEVER NOT FOUND goto erro;
+
+	EXEC SQL
+		UPDATE INFRA.COMPSERVICODESATIVADO 
+		SET CDERRO = '',
+		DSERRO = '',
+		QTTENTATIVA = 0,
+		XMLRETORNO = ''
+		WHERE CDERRO = :cerro;
+
+	return;
+
+    erro:
+        tuxfw_getlogger()->debug("Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

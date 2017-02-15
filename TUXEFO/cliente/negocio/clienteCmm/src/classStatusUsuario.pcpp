@@ -1,0 +1,185 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../include/Exception.h"
+
+#undef MSG_NONE
+#define MSG_NONE
+#include "../include/Messages.h"
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../include/classStatusUsuario.h";
+
+
+CStatusUsuario::CStatusUsuario()
+{
+    memset(&tTabela, 0x00, sizeof(tTabela));
+}
+
+void CStatusUsuario::setId(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tTabela.iId_ora = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tTabela.sId, pDado);
+        tTabela.iId_ora = 0;
+    }
+}
+
+void CStatusUsuario::setSigla(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tTabela.iSigla_ora = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tTabela.sSigla, pDado);
+        tTabela.iSigla_ora = 0;
+    }
+}
+
+void CStatusUsuario::setDescricao(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tTabela.iDescricao_ora = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tTabela.sDescricao, pDado);
+        tTabela.iDescricao_ora = 0;
+    }
+}
+
+void CStatusUsuario::setDisponibilidade(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tTabela.iDisponibilidade_ora = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tTabela.sDisponibilidade, pDado);
+        tTabela.iDisponibilidade_ora = 0;
+    }
+}
+
+
+char* CStatusUsuario::getId()
+{
+        return ((char*)tTabela.sId.arr);
+}
+char* CStatusUsuario::getSigla()
+{
+        return ((char*)tTabela.sSigla.arr);
+}
+char* CStatusUsuario::getDescricao()
+{
+        return ((char*)tTabela.sDescricao.arr);
+}
+char* CStatusUsuario::getDisponibilidade()
+{
+        return ((char*)tTabela.sDisponibilidade.arr);
+}
+//
+
+
+int CStatusUsuario::Incluir()
+{
+    return OK;
+}
+
+int CStatusUsuario::Excluir()
+{
+    return OK;
+}
+
+
+int CStatusUsuario::Alterar()
+{
+    return OK;
+}
+
+
+CStatusUsuario* CStatusUsuario::RecuperarTodos(int* iNroObjetos)
+{
+    ULOG_START("CStatusUsuario::RecuperarTodos()");
+    
+    struct sqlca sqlca;
+    
+    CStatusUsuario* oSeg = NULL;
+    int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        TAPOIO_SU tSt;
+	EXEC SQL END DECLARE SECTION;
+
+    memset(&tSt, 0x00, sizeof(tSt));
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE cCursor CURSOR FOR
+            SELECT IDSTATUSUSUARIO
+                  ,SGSTATUSUSUARIO
+                  ,DSSTATUSUSUARIO
+                  ,INDISPONIBILIDADE
+             FROM apoio.statususuario;
+
+	EXEC SQL OPEN cCursor;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;; iNroObjLocal++) 
+    {
+		EXEC SQL FETCH cCursor 
+                  INTO :tSt.sId:tSt.iId_ora,
+                       :tSt.sSigla:tSt.iSigla_ora,
+                       :tSt.sDescricao:tSt.iDescricao_ora,
+                       :tSt.sDisponibilidade:tSt.iDisponibilidade_ora;
+
+		// Aloca memória para o objeto atual.
+		if ((oSeg = (CStatusUsuario*) realloc((void *)oSeg, (sizeof(CStatusUsuario) * iNroObjLocal))) != NULL)
+        {
+			oSeg[iNroObjLocal-1].setId((char*)tSt.sId.arr);
+			oSeg[iNroObjLocal-1].setSigla((char*)tSt.sSigla.arr);
+			oSeg[iNroObjLocal-1].setDescricao((char*)tSt.sDescricao.arr);
+			oSeg[iNroObjLocal-1].setDisponibilidade((char*)tSt.sDisponibilidade.arr);
+		} 
+        else 
+        {
+			if (oSeg) 
+                free(oSeg);
+
+            ULOGE("ERRO DE MEMORIA -> NRO_MEMORIA");
+            EXEC SQL CLOSE cCursor;
+            ULOG_END("CStatusUsuario::RecuperarTodos()");
+			throw TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+		}
+	}
+
+    EXEC SQL CLOSE cCursor;
+
+	*iNroObjetos = iNroObjLocal - 1;
+
+	ULOG_END("CStatusUsuario::RecuperarTodos()");
+	return oSeg;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CStatusUsuario::RecuperarTodos()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+

@@ -1,0 +1,139 @@
+#include <stdio.h>
+#include <tuxfw.h>
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+// Prototipos
+void SqlErrorPontoContato( sqlca * sqlca );
+void proCConsultaStatus( XMLGen * Saida );
+
+
+void proCConsultaStatus( XMLGen * Saida )
+{
+    ULOG_START("proCConsultaStatus()");
+
+    struct sqlca sqlca;
+    char sMensagemStatus[32];
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR dtEnvio[256];
+        VARCHAR dtProcessamento[256];
+        VARCHAR nmUsuario[256];
+        int idUsuario;
+        int stCarga;
+        int nrTotalRejeitados;
+        int nrTotalRegistros;
+        
+        short i_dtEnvio = -1;
+        short i_dtProcessamento = -1;
+        short i_stCarga = -1;
+        short i_nrTotalRejeitados = -1;
+        short i_nrTotalRegistros = -1;
+        short i_idUsuario = -1;
+        short i_nmUsuario = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &dtEnvio        ,0x0,sizeof(dtEnvio) );
+    memset( &dtProcessamento,0x0,sizeof(dtProcessamento) );
+
+
+    EXEC SQL 
+    DECLARE crConsultaPontoContato CURSOR FOR 
+    SELECT
+       TO_CHAR(DTENVIO,'DD/MM/YYYY HH24:MI') AS DTENVIO ,
+       TO_CHAR(DTPROCESSAMENTO ,'DD/MM/YYYY HH24:MI') AS DTPROCESSAMENTO ,
+       STCARGA ,
+       NRTOTALREJEITADOS ,
+       NRTOTALREGISTRO ,
+       IDPESSOAUSUARIO
+	FROM 
+	(
+        SELECT
+           DTENVIO ,
+           DTPROCESSAMENTO ,
+           STCARGA ,
+           NRTOTALREJEITADOS ,
+           NRTOTALREGISTRO ,
+           IDPESSOAUSUARIO
+        FROM
+           VOL.STATUSPONTOCONTATO
+        ORDER BY DTPROCESSAMENTO DESC
+	)
+    WHERE ROWNUM < 6;
+                        
+    EXEC SQL WHENEVER SQLERROR DO SqlErrorPontoContato( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    EXEC SQL OPEN crConsultaPontoContato;
+
+    Saida->createTag("PontosContatoVO");
+    Saida->addProp("xmlns", "voltav.fo.vivo.com.br/vo");
+
+    for( ;; )
+    {
+        EXEC SQL FETCH crConsultaPontoContato 
+                       INTO :dtEnvio:i_dtEnvio ,
+                            :dtProcessamento:i_dtProcessamento ,
+                            :stCarga:i_stCarga ,
+                            :nrTotalRejeitados:i_nrTotalRejeitados ,
+                            :nrTotalRegistros:i_nrTotalRegistros ,
+                            :idUsuario:i_idUsuario;
+
+        EXEC SQL
+        SELECT
+           NMLOGINUSUARIO
+        INTO
+          :nmUsuario:i_nmUsuario
+        FROM
+           ACESSO.USUARIO
+        WHERE
+           IDPESSOAUSUARIO = :idUsuario;
+
+        CONVIND( nmUsuario,i_nmUsuario );
+        CONVIND( dtEnvio,i_dtEnvio );
+        CONVIND( dtProcessamento,i_dtProcessamento );
+
+        if ( stCarga == 1 )
+           strcpy( sMensagemStatus, "Finalizada com sucesso" );
+        else
+           strcpy( sMensagemStatus, "Arquivo Rejeitado" );
+
+        Saida->createTag( "ItemPontosContato" );
+           Saida->addItem( "dsLoginUsuario",(char*)nmUsuario.arr );
+           Saida->addItem( "dsStatusCarga", sMensagemStatus );
+           Saida->addItem( "dtEnvio",(char*)dtEnvio.arr );
+           Saida->addItem( "dtProcessamento",(char*)dtProcessamento.arr );
+           Saida->addItem( "qtRegistrosRejeitados",nrTotalRejeitados );
+           Saida->addItem( "qtRegistrosTotal",nrTotalRegistros );
+        Saida->closeTag();
+    }
+
+    Saida->closeTag();
+
+    EXEC SQL CLOSE crConsultaPontoContato;
+
+    ULOG_END("proCConsultaStatus()");
+
+}
+
+
+
+
+void SqlErrorPontoContato( sqlca * sqlca )
+{
+    ULOGE("SqlError -> sqlcode=%d,sqlerrmc=%.256s",sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc);
+	throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

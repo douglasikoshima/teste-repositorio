@@ -1,0 +1,411 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+
+
+#include "../include/cWFChamadaTelefonica.h"
+#include "../include/stWFChamadaTelefonica.h"
+
+void sql_error_WFChamadaTelefonica(sqlca*sqlca);
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/stWFChamadaTelefonica.h"
+EXEC SQL END DECLARE SECTION;
+
+unsigned long proCIncluirWFChamadaTelefonica(st_ChamadaTelefonica* dados, st_vlChamadaTelefonica* status, XMLGen* saida) 
+{
+    ULOG_START( "proCIncluirWFChamadaTelefonica()" );
+
+	struct sqlca sqlca;
+
+	int idGrauSatisfacaoRetorno = 0;
+	unsigned long idChamadaRetorno = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idGrauSatisfacaoPessoa=0;
+		short i_idGrauSatisfacaoPessoa = -1;
+		int m_Flag = 0;
+	
+		struct st_ChamadaTelefonica   oDados;
+		struct st_vlChamadaTelefonica oStatus;
+	
+	    long idChamadaAtendimento=0;
+	    
+	    long  idTipoRelacionamento = 0;
+	    short i_idTipoRelacionamento = 0;
+	    
+    	long  idAtendimento = 0;
+    	short i_idAtendimento = 0;
+	    
+    EXEC SQL END DECLARE SECTION;
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFChamadaTelefonica(&sqlca);
+
+    ULOG("oStatus.sgTipoRelacionamento[%ld]", oStatus.sgTipoRelacionamento);    
+    ULOG("oDados.idPessoaDePara[%ld]", oDados.idPessoaDePara);
+    
+    //Se tem sgTipoRelacionamento entao eh porque foi chamado da tela inicial caso contrario de workflow
+    if( oStatus.sgTipoRelacionamento == -1 )
+    {
+        //Utilizado em workflow para reabertura, onde nao se tem o tiporelacionamento
+        //nem o grau de Satisfacao, entao pega o ultimo
+        
+        //Se entrou aqui eh porque foi uma chamada da tela inicial, embora a variavel seja idpessoadepara o que
+        //ela contem eh o idpessoa, e nao tempos o idtiporelacinamento, entao tem que pegar o ultimo
+        EXEC SQL 
+            SELECT
+               CHAMADATELEFONICA.IDGRAUSATISFACAO,
+               CHAMADAATENDIMENTO.IDATENDIMENTO,
+               CHAMADATELEFONICA.IDTIPORELACIONAMENTO
+            INTO
+                :idGrauSatisfacaoPessoa:i_idGrauSatisfacaoPessoa,
+                :idAtendimento:i_idAtendimento,
+                :idTipoRelacionamento:i_idTipoRelacionamento
+            FROM
+               CUSTOMER.PESSOADEPARA PESSOADEPARA,
+               ATENDIMENTO.CHAMADATELEFONICA CHAMADATELEFONICA,
+               ATENDIMENTO.CHAMADAATENDIMENTO CHAMADAATENDIMENTO,
+               ATENDIMENTO.ATENDIMENTOPRIORIZACAO ATENDIMENTOPRIORIZACAO
+            WHERE
+                ATENDIMENTOPRIORIZACAO.IDPESSOADEPARA = PESSOADEPARA.IDPESSOADEPARA
+            AND ATENDIMENTOPRIORIZACAO.IDATENDIMENTO = CHAMADAATENDIMENTO.IDATENDIMENTO
+            AND CHAMADAATENDIMENTO.IDCHAMADATELEFONICA = CHAMADATELEFONICA.IDCHAMADATELEFONICA
+            AND PESSOADEPARA.IDPESSOA = :oDados.idPessoaDePara
+            AND CHAMADATELEFONICA.INCHAMADAATUAL = 1
+            AND ROWNUM < 2;
+    }
+    else
+    {
+        //Se entrou aqui eh porque foi uma chamada da tela inicial
+        //Recupera o idtiporelacinamento
+        EXEC SQL
+            SELECT
+                IDTIPORELACIONAMENTO
+            INTO
+                :idTipoRelacionamento:i_idTipoRelacionamento
+            FROM
+                CUSTOMER.TIPORELACIONAMENTO 
+            WHERE
+                SGTIPORELACIONAMENTO = :oDados.sgTipoRelacionamento
+            AND ROWNUM < 2;
+
+        ULOG("SGTIPORELACIONAMENTO[%s]", oDados.sgTipoRelacionamento);
+        ULOG("IDTIPORELACIONAMENTO[%ld]", idTipoRelacionamento);
+
+        //Zera o id para que, mais abaixo, seja recuperado
+        oDados.idChamadaTelefonica = 0;
+
+        //Obtem o grau de Satisfacao atraves de idpessoadepara e idtiporelacionamento, nao procura por atendimento
+        //porque nao tem idatendimento, seria preciso, pois ao terminar um atendimento ocorre uma palitagem
+        EXEC SQL
+            SELECT
+                IDGRAUSATISFACAO
+            INTO
+                :idGrauSatisfacaoPessoa:i_idGrauSatisfacaoPessoa
+            FROM
+                ATENDIMENTO.CHAMADATELEFONICA
+            WHERE 
+                IDPESSOADEPARA = :oDados.idPessoaDePara
+            AND IDTIPORELACIONAMENTO = :idTipoRelacionamento
+            AND INCHAMADAATUAL = 1
+            AND ROWNUM < 2;
+    }
+
+    if (sqlca.sqlcode || i_idGrauSatisfacaoPessoa == -1)
+    {
+        idGrauSatisfacaoRetorno = 0;
+    }
+    else
+    {
+        idGrauSatisfacaoRetorno = idGrauSatisfacaoPessoa;
+    }
+
+	ULOG("idAtendimento[%ld]", idAtendimento);
+	ULOG("i_idGrauSatisfacaoPessoa[%d]", i_idGrauSatisfacaoPessoa);
+	ULOG("idGrauSatisfacaoPessoa[%d]", idGrauSatisfacaoPessoa);
+	ULOG("idGrauSatisfacaoRetorno[%d]", idGrauSatisfacaoRetorno);
+	ULOG("oDados.idGrauSatisfacao[%d]", oDados.idGrauSatisfacao);
+    ULOG("oDados.dtChamada[%s]", oStatus.dtChamada==-1?"SYSDATE":oDados.dtChamada);
+
+    if( oDados.idPessoaDePara > 0 && idTipoRelacionamento > 0 )
+    {
+        if( oDados.idChamadaTelefonica <= 0 )
+        {
+            ULOG("Obtendo NEXTVAL sequence CHAMADATELEFONICASQ ...");
+
+            EXEC SQL
+                SELECT
+                    ATENDIMENTO.CHAMADATELEFONICASQ.NEXTVAL
+                INTO
+                    :oDados.idChamadaTelefonica 
+                FROM
+                    DUAL;
+        }
+
+        idChamadaRetorno = oDados.idChamadaTelefonica;
+
+        // Remove o apontador de chamada telefonica mais atual para a pessoa
+        ULOG("UPDATE em ATENDIMENTO.CHAMADATELEFONICA");
+        EXEC SQL
+            UPDATE
+                ATENDIMENTO.CHAMADATELEFONICA
+            SET
+                INCHAMADAATUAL = 0,
+                DTULTIMAALTERACAO = SYSDATE
+            WHERE
+                IDPESSOADEPARA = :oDados.idPessoaDePara
+            AND
+                IDTIPORELACIONAMENTO = :idTipoRelacionamento
+            AND
+                INCHAMADAATUAL = 1;
+
+        ULOG("INSERT em ATENDIMENTO.CHAMADATELEFONICA");
+        ULOG("idChamadaTelefonica (%ld)", oDados.idChamadaTelefonica);
+
+        EXEC SQL
+		    INSERT INTO ATENDIMENTO.CHAMADATELEFONICA
+		    (
+			    IDCHAMADATELEFONICA,
+			    IDGRAUSATISFACAO,
+			    DTCHAMADA,
+			    IDPESSOADEPARA,
+			    IDTIPORELACIONAMENTO,
+                INCHAMADAATUAL,
+                DTULTIMAALTERACAO
+		    )
+		    VALUES
+		    (
+			    :oDados.idChamadaTelefonica,
+			    :idGrauSatisfacaoPessoa,
+			    DECODE(:oStatus.dtChamada,-1,SYSDATE,TO_DATE(:oDados.dtChamada,'DD/MM/YYYY HH24:MI')),
+			    :oDados.idPessoaDePara,
+			    :idTipoRelacionamento,
+                1, /* aponta para a chamada telefonica mais atual */
+                SYSDATE
+		    );
+
+        if( idAtendimento > 0 )
+        {
+    	    ULOG("Obtendo NEXTVAL sequence CHAMADAATENDIMENTOSQ ...");
+
+			EXEC SQL SELECT 
+                ATENDIMENTO.CHAMADAATENDIMENTOSQ.NEXTVAL 
+            INTO 
+                :idChamadaAtendimento 
+            FROM DUAL;
+	
+	    	ULOG("idChamadaAtendimento (%ld)", idChamadaAtendimento);
+	
+    	    ULOG("INSERT em ATENDIMENTO.CHAMADAATENDIMENTO");
+
+	        EXEC SQL
+	            INSERT INTO ATENDIMENTO.CHAMADAATENDIMENTO
+	            (
+	                IDCHAMADAATENDIMENTO,
+	                IDATENDIMENTO,
+	                IDCHAMADATELEFONICA,
+	                DTULTIMAALTERACAO
+	            )
+	            VALUES
+	            (
+	                :idChamadaAtendimento,
+	                :idAtendimento,
+	                :oDados.idChamadaTelefonica,
+	                SYSDATE
+	            );
+	    }//if( idAtendimento > 0 )
+	}//if (oDados.idChamadaTelefonica <= 0 && oDados.idPessoaDePara > 0 && idTipoRelacionamento> 0 )
+
+	ULOG("idChamadaRetorno(%lu)", idChamadaRetorno);
+	ULOG("idGrauSatisfacaoRetorno(%d)", idGrauSatisfacaoRetorno);
+
+	saida->createTag("ChamadaTelefonicaVO");
+	saida->addProp( "xmlns","workflow.fo.vivo.com.br/vo" );
+		saida->addItem("idChamadaTelefonica", idChamadaRetorno);
+		saida->addItem("idGrauSatisfacao",  idGrauSatisfacaoRetorno);
+	saida->closeTag();
+
+    ULOG_END( "proCIncluirWFChamadaTelefonica()" );
+
+	return idChamadaRetorno;
+}
+
+bool proCAlterarWFChamadaTelefonica(st_ChamadaTelefonica* dados, st_vlChamadaTelefonica* status, XMLGen* saida) {
+
+    ULOG_START( "proCAlterarWFChamadaTelefonica()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_ChamadaTelefonica   oDados;
+		struct st_vlChamadaTelefonica oStatus;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFChamadaTelefonica(&sqlca);
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+	sprintf(query,"%s", "UPDATE ATENDIMENTO.CHAMADATELEFONICA SET ");
+
+	bool separa = false;
+
+	if (status->idGrauSatisfacao != -1) 
+		montaUpdate("IDGRAUSATISFACAO", oDados.idGrauSatisfacao, 1);
+
+	if (status->dtChamada != -1)
+		montaUpdate("DTCHAMADA", oDados.dtChamada, 4);
+
+    if (separa) { strcat(query,","); }
+	strcat(query, "DTULTIMAALTERACAO = SYSDATE");
+
+	sprintf(query, "%s WHERE IDCHAMADATELEFONICA = %i", query, dados->idChamadaTelefonica);
+	ULOG("QUERY [%s]", query);
+
+	EXEC SQL EXECUTE IMMEDIATE :query;
+
+    ULOG_END( "proCAlterarWFChamadaTelefonica()" );
+
+	return true;
+}
+
+bool proCExcluirWFChamadaTelefonica(st_ChamadaTelefonica* dados, st_vlChamadaTelefonica* status, XMLGen* saida) {
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idChamadaTelefonica = dados->idChamadaTelefonica;
+        int inChamadaAtual;
+        int idPessoaDePara;
+        int idTipoRelacionamento;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFChamadaTelefonica(&sqlca);
+
+    EXEC SQL
+        SELECT
+            INCHAMADAATUAL,IDPESSOADEPARA,IDTIPORELACIONAMENTO
+         INTO
+            :inChamadaAtual,
+            :idPessoaDePara,
+            :idTipoRelacionamento
+        FROM
+            ATENDIMENTO.CHAMADATELEFONICA
+        WHERE
+            IDCHAMADATELEFONICA = :idChamadaTelefonica;
+
+
+    // deleta dependencia ...
+	EXEC SQL
+		DELETE
+			ATENDIMENTO.CHAMADAATENDIMENTO
+		WHERE
+			IDCHAMADATELEFONICA = :idChamadaTelefonica;
+
+	EXEC SQL
+		DELETE
+			ATENDIMENTO.CHAMADATELEFONICA
+		WHERE
+			IDCHAMADATELEFONICA = :idChamadaTelefonica;
+
+    // se o registro deletado era o mais atual aponta o mais novo como mais atual
+    if ( inChamadaAtual == 1 )
+    {
+        EXEC SQL
+            UPDATE
+                ATENDIMENTO.CHAMADATELEFONICA
+            SET 
+                INCHAMADAATUAL = 1
+            WHERE
+                IDPESSOADEPARA = :idPessoaDePara
+            AND IDTIPORELACIONAMENTO = :idTipoRelacionamento
+            AND INCHAMADAATUAL = 0
+            AND IDCHAMADATELEFONICA = (SELECT MAX(IDCHAMADATELEFONICA)
+                                         FROM ATENDIMENTO.CHAMADATELEFONICA
+                                        WHERE
+                                            IDPESSOADEPARA = :idPessoaDePara
+                                        AND IDTIPORELACIONAMENTO = :idTipoRelacionamento
+                                        AND INCHAMADAATUAL = 0
+                                       );
+    }
+
+	return true;
+}
+
+bool proCConsultaWFChamadaTelefonica(st_ChamadaTelefonica* dados, st_vlChamadaTelefonica* status, char* order, XMLGen* saida) {
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int     idChamadaTelefonica;
+		int     idGrauSatisfacao;
+		VARCHAR dtChamada[256];
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	strcpy(query,"SELECT IDCHAMADATELEFONICA, IDGRAUSATISFACAO, "
+                        "TO_CHAR(DTCHAMADA, 'DD/MM/YYYY HH24:MI') "
+                   "FROM ATENDIMENTO.CHAMADATELEFONICA ");
+
+	bool separa = false;
+
+	if (status->idChamadaTelefonica != -1) 
+		montaWhere("IDCHAMADATELEFONICA", dados->idChamadaTelefonica, 1);
+
+	if (status->idGrauSatisfacao != -1)
+		montaWhere("IDGRAUSATISFACAO", dados->idGrauSatisfacao, 1);
+
+	if (status->dtChamada != -1)
+		montaWhere("DTCHAMADA", dados->dtChamada, 4);
+
+	if (strlen(order) > 0) 
+		sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFChamadaTelefonica(&sqlca);
+
+	EXEC SQL PREPARE consultaChamadaTelefonica FROM :query;
+	EXEC SQL DECLARE consulta CURSOR FOR consultaChamadaTelefonica;
+
+	EXEC SQL OPEN consulta;
+
+	while (true)
+	{
+		EXEC SQL FETCH consulta INTO :idChamadaTelefonica, :idGrauSatisfacao, :dtChamada;
+
+		CONV(dtChamada);
+
+		saida->createTag("WFChamadaTelefonicaVO");
+			saida->addItem("idChamadaTelefonica", idChamadaTelefonica);
+			saida->addItem("idGrauSatisfacao", idGrauSatisfacao);
+			saida->addItem("dtChamada", (char*)dtChamada.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE consulta;
+
+	return true;
+}
+
+void sql_error_WFChamadaTelefonica(sqlca*sqlca) {
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

@@ -1,0 +1,143 @@
+//////////////////////////////////////////////////////////////////////
+// CRelArqResult.cpp: CRelArqResult class.
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <SRelatorioCampanha.h>
+#include <CRelatorioCampanha.h>
+#include <SRelArqResp.h>
+#include <CRelArqResult.h>
+#include <TString.h>
+// Monta o relatório
+
+void CRelArqResult::montaRelatorio(struct SRelatorioCampanha* sRelatorioCampanha, XMLGen* xml_g) 
+{
+
+struct sqlca sqlca;
+	char ddd[256] = {NULL}; 
+
+	char s[256] = {NULL}; 
+	int  iQtdReg	= 0 ;
+	int  iSeq		= 0 ;
+	int  i			= 0 ; 
+	long total		= 0 ;
+	long ret		= 0 ; 
+
+	struct RelArqResultLista    pstRel;  
+
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		varchar idsubcampanhahistorico	[255+1];
+		varchar datain					[255+1];
+		varchar datafim					[255+1];
+
+		varchar DataAtendimento			[255+1];
+		varchar Linha					[255+1];
+		varchar Motivo					[255+1];
+
+
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND do break;
+
+	STRCPY_TO_ORA (idsubcampanhahistorico,	sRelatorioCampanha->pcidSubCampanha			); 
+	STRCPY_TO_ORA (datain,					sRelatorioCampanha->pcdtInicio				); 
+	STRCPY_TO_ORA (datafim,					sRelatorioCampanha->pcdtFim					); 
+
+
+	EXEC SQL DECLARE crRELARQ CURSOR FOR
+		SELECT    
+				 ate.dtatendimento dataatend, 
+				 lis.nrtelefone,
+				 tip.dstipomotivocampanha 
+
+			FROM campanha.atendimentocampanha  ate,
+				 campanha.listaconteudo		  lis,
+				 campanha.subcampanhahistorico sub,
+				 campanha.canalcampanha		  can,
+				 campanha.motivocampanha		  mot,
+				 apoio.tipomotivocampanha	  tip,
+				 apoio.tiposubmotivocampanha   tpsubmot,
+				 apoio.tipostatuscampanha	  tipostatuscampanha,
+				 apoio.campanha				  campanha,
+				 campanha.subcampanhafixa	  scampfix,
+				 campanha.canalufoperadora	  canaluf,
+				 apoio.canal					  canal
+		   WHERE (    
+		              (lis.idlistaconteudo					   = ate.idlistaconteudo		 )
+				  AND (sub.idsubcampanhahistorico			   = can.idsubcampanhahistorico  )
+				  AND (can.idcanalcampanha					   = ate.idcanalcampanha		 )
+				  AND (sub.idsubcampanhahistorico		       = mot.idsubcampanhahistorico  )
+				  AND (mot.idmotivocampanha				       = ate.idmotivocampanha		 )
+				  AND (tip.idtipomotivocampanha				   = mot.idtipomotivocampanha	 )
+				  AND (tpsubmot.idtiposubmotivocampanha		   = mot.idtiposubmotivocampanha )
+				  AND (tipostatuscampanha.idtipostatuscampanha = mot.idtipostatuscampanha    )
+				  AND (campanha.idcampanha					   = scampfix.idcampanha		 )
+				  AND (scampfix.idsubcampanhafixa			   = sub.idsubcampanhafixa		 )
+				  AND (canaluf.idcanalufoperadora			   = can.idcanalufoperadora		 )
+				  AND (canal.idcanal                           = canaluf.idcanal		     )
+				  AND (ate.dtatendimento >= TO_DATE( :datain  || ' 00:00:00','DD/MM/YYYY HH24:MI:SS'))
+				  AND (ate.dtatendimento <= TO_DATE( :datafim || ' 23:59:59','DD/MM/YYYY HH24:MI:SS'))
+				  AND (mot.idsubcampanhahistorico = :idsubcampanhahistorico)
+				 )
+			ORDER BY ate.dtatendimento ASC;
+
+	xml_g->createTag("RelArquivoResultadoVO");
+	xml_g->addProp("xmlns","campanha.fo.vivo.com.br/vo");
+
+	EXEC SQL OPEN crRELARQ;
+
+	int x = 0; 
+
+	for(;;)
+	{
+			EXEC SQL FETCH crRELARQ INTO
+				:DataAtendimento        ,
+				:Linha	                ,			
+				:Motivo	;
+			
+
+			memset(&pstRel,0,sizeof(RelArqResultLista));
+
+			STRCPY_FROM_ORA(pstRel.DataAtendimento		 ,  DataAtendimento );	
+			STRCPY_FROM_ORA(pstRel.Linha				 ,  Linha			);	
+			STRCPY_FROM_ORA(pstRel.Motivo				 ,  Motivo			);			
+			
+			if ( strlen ( pstRel.Linha ) < 10 ) 
+                 strcpy ( ddd, "00" ); 
+			else
+			{
+			    strncpy ( ddd, pstRel.Linha, 2 ); 
+				strcpy ( pstRel.Linha, &pstRel.Linha[2] ); 
+			}
+
+			xml_g->createTag("linha"); 
+
+			xml_g->addItem( "dtAtendimento",			pstRel.DataAtendimento ); 
+			xml_g->addItem( "codigoArea",				ddd ); 
+			xml_g->addItem( "nrTelefone",				pstRel.Linha ); 
+			xml_g->addItem( "dsTipoMotivoCampanha",		pstRel.Motivo); 
+
+			xml_g->closeTag();
+	}
+
+
+		EXEC SQL CLOSE crRELARQ;
+ 		xml_g->closeTag();	
+
+
+return; 
+}
+	
+
+
+void CRelArqResult::sql_error()
+{
+	return; 
+}

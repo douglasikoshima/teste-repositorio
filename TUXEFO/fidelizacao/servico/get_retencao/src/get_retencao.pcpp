@@ -1,0 +1,571 @@
+//
+// $Id: get_retencao.pcpp,v 1.1 2009/07/31 15:34:00 a5110702 Exp $
+//
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+#define strlennull( y ) ( y == NULL ? 0 : strlen( y )  )
+
+void sql_error_WFAtendimento();
+
+int getIntencaoCancelamento( DOMNode*dnode, XMLGen*xml  );
+int vObtenerDestinoPrevisto( DOMNode*dnode,XMLGen*xml, struct stInXML stInXml );
+int getTiposEncerramento( XMLGen*xml, int iIdTipoEncerramento );
+int getQtdeOferta( XMLGen*xml );
+void vObtenerDados( DOMNode*dnode , struct stInXML *stIn );
+
+int vGetQtdeIntencaoCancel( XMLGen*xml, struct stInXML stIn );
+
+struct stInXML{
+	int	 iIdRespostaIntencao;
+	char cDesde[50];
+	char cSegmentacao[50];
+	char cCustoPonto[50];
+	char cOperador[50];
+	char cAte[50];
+	char cGrupo[50];
+	char cTipoCliente[50];
+	char cOperadora[50];
+};
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+//Dados para pesquisa
+	struct 
+	{
+		int	 iIdRespostaIntencao;
+		char cAuxDesde[50+1];
+		char cAuxAte[50+1];
+		char cAuxSegmentacao[5+1];
+		char cAuxCustoPonto[21+1];
+		char cAuxOperador[5+1];
+		char cAuxGrupo[5+1];
+		char cAuxTipoCliente[5+1];
+		char cAuxOperadora[21+1];
+	} stCriterio;
+
+int iCountOferta;
+EXEC SQL END DECLARE SECTION;
+
+
+int get_list_retencao(int usuario, DOMNode*dnode, XMLGen*xml_g)
+{
+	//Processamento Principal
+	try
+	{	
+		
+/*------- Obtener Intencao de Cancelamento -------*/
+			getIntencaoCancelamento( dnode, xml_g );
+/*------- Obtener Intencao de Cancelamento -------*/
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+	return 0;
+}
+
+
+void sql_error_WFAtendimento( )
+{
+//	throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+
+int getIntencaoCancelamento( DOMNode*dnode,XMLGen*xml  )
+{
+	int				iCont = 0;
+	char			cErro[255+1];
+	int				iIntenCancelTotal  =0;
+	int				iIntenCancelPorcent  =0;
+	struct sqlca	sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+	//Dados para pesquisa
+		int iIdRespostaIntencao;
+		char cRespostaIntencao[250];
+		char cRespostaDestino[250];
+		int	iCountconsultaIntCancel;
+
+	EXEC SQL END DECLARE SECTION;
+
+	struct stInXML stInXml;
+
+	try       
+	{
+		memset( &stCriterio, 0, sizeof( stCriterio) );
+		memset(&stInXml,0x00,sizeof(stInXml));
+		vObtenerDados( dnode , &stInXml );
+
+		strcpy( stCriterio.cAuxDesde,		stInXml.cDesde);
+		strcpy( stCriterio.cAuxAte,			stInXml.cAte);
+		strcpy( stCriterio.cAuxSegmentacao,	stInXml.cSegmentacao);
+		strcpy( stCriterio.cAuxCustoPonto,	stInXml.cCustoPonto);
+		strcpy( stCriterio.cAuxOperador,	stInXml.cOperador);
+		strcpy( stCriterio.cAuxGrupo,		stInXml.cGrupo);
+		strcpy( stCriterio.cAuxTipoCliente,	stInXml.cTipoCliente);
+		strcpy( stCriterio.cAuxOperadora,	stInXml.cOperadora);
+
+		iIntenCancelTotal = vGetQtdeIntencaoCancel( xml,stInXml );
+
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorIntencaoCancelamento;
+		sqlca.sqlcode=0;
+		
+		//Retorna dados do relatorio
+		EXEC SQL DECLARE ListIntencaoCancelamento CURSOR FOR
+			SELECT	rogs.idrespostaintencao,
+			        rogs.dsRespostaIntencao, 
+					rogs.dsRespostaDestino, 
+					COUNT(rogs.idRespostaIntencao)
+			FROM 
+			  	RETENCAO.OfertaGrupoSegmentV01 rogs
+			 WHERE
+				(rogs.dtinclusao >= TO_DATE(:stCriterio.cAuxDesde  || 
+				' 00:00:00','DD/MM/YYYY HH24:MI:SS') )
+				AND (rogs.dtinclusao <= TO_DATE(:stCriterio.cAuxAte  || 
+				' 23:59:59','DD/MM/YYYY HH24:MI:SS') )
+				AND  ( rogs.IdSegmentacao LIKE :stCriterio.cAuxSegmentacao 
+						OR :stCriterio.cAuxSegmentacao = '-1' )
+				AND  ( rogs.NmPropriedade LIKE :stCriterio.cAuxCustoPonto
+						OR :stCriterio.cAuxCustoPonto = '-1' )
+				AND  ( rogs.IdPessoaDePara LIKE :stCriterio.cAuxOperador 
+						OR :stCriterio.cAuxOperador = '-1' )
+				AND  ( rogs.IdGrupo LIKE :stCriterio.cAuxGrupo 
+						OR :stCriterio.cAuxGrupo = '-1' )
+				AND  ( rogs.IdTipoPessoa LIKE :stCriterio.cAuxTipoCliente 
+						OR :stCriterio.cAuxTipoCliente = '-1' )
+				AND  ( rogs.IdUfOperadora LIKE :stCriterio.cAuxOperadora 
+						OR :stCriterio.cAuxOperadora = '-1' )
+				GROUP BY	rogs.idrespostaintencao,
+							rogs.dsRespostaIntencao, 
+							rogs.dsRespostaDestino ;
+
+		EXEC SQL OPEN ListIntencaoCancelamento;
+		if(sqlca.sqlcode)
+		{
+			strcpy( cErro, "Erro ao tentar abrir o CURSOR ListIntencaoCancelamento" );
+			return 0;
+		}
+	
+		for(;;)
+		{
+			EXEC SQL FETCH ListIntencaoCancelamento INTO :iIdRespostaIntencao,:cRespostaIntencao,
+							:cRespostaDestino, :iCountconsultaIntCancel;
+			
+			xml->addItem("initcancel", (char *)cRespostaIntencao);
+			xml->addItem("qtdintencao", iCountconsultaIntCancel);
+
+			iIntenCancelPorcent = ((iCountconsultaIntCancel* 100)/iIntenCancelTotal);
+
+			xml->addItem("porcintencion", iIntenCancelPorcent);
+			
+/*------- Obtener Destino Previsto -------------*/
+			stCriterio.iIdRespostaIntencao = iIdRespostaIntencao;
+			vObtenerDestinoPrevisto(dnode,xml, stInXml);
+			
+		
+/*------- Obtener Tipo de Cerramento -----------*/		
+		
+/*------- Obtener Oferta -----------------------*/
+
+
+			iCont++;
+		}//for(;;iContador++)
+		EXEC SQL CLOSE ListIntencaoCancelamento;
+	}
+	catch(...)
+	{
+		throw;
+	}
+	return iCont;
+
+ErrorIntencaoCancelamento:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+/*++++++++++++++++++++++++++++++++++++++++++++*/
+int vObtenerDestinoPrevisto( DOMNode*dnode,XMLGen*xml, struct stInXML stInXml )
+{
+	struct sqlca sqlca;
+	int			iCont = 0;
+	char		cErro[255+1];
+	int			iDestinoPrevPorcent =0;
+	int			iDestinoPrevTotal = 0;
+	EXEC SQL BEGIN DECLARE SECTION;
+	//Dados para pesquisa
+			
+		char cRespostaDestino[250];
+		int	iCountDestinoPrev;
+		int	iIdRespostaDestino;
+
+	EXEC SQL END DECLARE SECTION;
+
+	try       
+	{
+		iDestinoPrevTotal = vGetQtdeIntencaoCancel( xml,stInXml );
+
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorDestinoPrevisto;
+		sqlca.sqlcode=0;
+		
+		//Retorna dados do relatorio
+		EXEC SQL DECLARE crsDestinoPrevisto CURSOR FOR
+			SELECT	rogs.idRespostaDestino,
+					rogs.dsRespostaDestino, 
+					COUNT(rogs.dsRespostaDestino)
+			FROM 
+			  	RETENCAO.OfertaGrupoSegmentV01 rogs
+			 WHERE
+				(rogs.dtinclusao >= TO_DATE(:stCriterio.cAuxDesde  || 
+				' 00:00:00','DD/MM/YYYY HH24:MI:SS') )
+				AND (rogs.dtinclusao <= TO_DATE(:stCriterio.cAuxAte  || 
+				' 23:59:59','DD/MM/YYYY HH24:MI:SS') )
+				AND  ( rogs.IdSegmentacao LIKE :stCriterio.cAuxSegmentacao 
+					OR :stCriterio.cAuxSegmentacao = '-1' )
+				AND  ( rogs.NmPropriedade LIKE :stCriterio.cAuxCustoPonto
+					OR :stCriterio.cAuxCustoPonto = '-1' )
+				AND  ( rogs.IdPessoaDePara LIKE :stCriterio.cAuxOperador 
+					OR :stCriterio.cAuxOperador = '-1' )
+				AND  ( rogs.IdGrupo LIKE :stCriterio.cAuxGrupo 
+					OR :stCriterio.cAuxGrupo = '-1' )
+				AND  ( rogs.IdTipoPessoa LIKE :stCriterio.cAuxTipoCliente 
+					OR :stCriterio.cAuxTipoCliente = '-1' )
+				AND  ( rogs.IdUfOperadora LIKE :stCriterio.cAuxOperadora 
+					OR :stCriterio.cAuxOperadora = '-1' )
+				AND  ( rogs.IdRespostaIntencao = :stCriterio.iIdRespostaIntencao 
+					OR :stCriterio.iIdRespostaIntencao = '-1' )
+				GROUP BY rogs.idRespostaDestino, rogs.dsRespostaDestino;
+
+
+		EXEC SQL OPEN crsDestinoPrevisto;
+		if(sqlca.sqlcode)
+		{
+			strcpy( cErro, "Erro ao tentar abrir o CURSOR crsDestinoPrevisto" );
+			return 0;
+		}
+	
+		for(;;)
+		{
+			EXEC SQL FETCH crsDestinoPrevisto INTO	:iIdRespostaDestino,
+													:cRespostaDestino,
+													:iCountDestinoPrev;
+						
+			xml->addItem("destinoprev", cRespostaDestino);
+			xml->addItem("qtddestino", iCountDestinoPrev);
+
+			iDestinoPrevPorcent = ((iCountDestinoPrev* 100)/iDestinoPrevTotal);
+
+			xml->addItem("porcdestino", iDestinoPrevPorcent);
+		
+/*------- Obtener Tipo de Cerramento -----------*/		
+			getTiposEncerramento ( xml, 1 );
+			getTiposEncerramento ( xml, 2 );
+			getTiposEncerramento ( xml, 3 );
+			getTiposEncerramento ( xml, 4 );
+			getTiposEncerramento ( xml, 5 );
+			getQtdeOferta(xml);
+/*------- Obtener Oferta -----------------------*/
+
+			iCont++;
+		}//for(;;iContador++)
+		EXEC SQL CLOSE crsDestinoPrevisto;
+	}
+	catch(...)
+	{
+		throw;
+	}
+	return iCont;
+
+ErrorDestinoPrevisto:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+/*################################################################################################*/
+void vObtenerDados( DOMNode*dnode , struct stInXML *stC )
+{
+	char sDesde[50];
+	char sSegmentacao[50];
+	char sCustoPonto[50];
+	char sOperador[50];
+	char sAte[50];
+	char sGrupo[50];
+	char sTipoCliente[50];
+	char sOperadora[50];
+	
+	memset(sDesde,0x00,sizeof(sDesde));
+	memset(sSegmentacao,0x00,sizeof(sSegmentacao));
+	memset(sCustoPonto,0x00,sizeof(sCustoPonto));
+	memset(sOperador,0x00,sizeof(sOperador));
+	memset(sAte,0x00,sizeof(sAte));
+	memset(sGrupo,0x00,sizeof(sGrupo));	
+	memset(sTipoCliente,0x00,sizeof(sTipoCliente));
+	memset(sOperadora,0x00,sizeof(sOperadora));
+	
+	
+	//  Obtendo dados do xml
+	get_tag(sDesde, dnode, "Periodo", 0, -1);
+	get_tag(sAte, dnode, "sAte", 0, -1);
+	get_tag(sSegmentacao, dnode, "sSegmentacao", 0, -1);
+	get_tag(sCustoPonto, dnode, "sCustoPonto", 0, -1);
+	get_tag(sOperador, dnode, "sOperador", 0, -1);
+	get_tag(sGrupo, dnode, "sGrupo", 0, -1);
+	get_tag(sTipoCliente, dnode, "sTipoCliente", 0, -1);
+	get_tag(sOperadora, dnode, "sOperadora", 0, -1);
+
+	if( strlennull( sDesde ) <= 0 )
+		strcpy( stC->cDesde, "-1" );
+	else
+		sprintf( stC->cDesde, "%s", sDesde );
+
+	if( strlennull( sAte ) <= 0 )
+		strcpy( stC->cAte, "-1" );
+	else
+		sprintf( stC->cAte, "%s", sAte );
+
+	if( strlennull( sSegmentacao ) <= 0 )
+		strcpy( stC->cSegmentacao, "-1" );
+	else
+		sprintf( stC->cSegmentacao, "%s", sSegmentacao );
+	
+	if( strlennull( sCustoPonto ) <= 0 )
+		strcpy( stC->cCustoPonto, "-1" );
+	else
+		sprintf( stC->cCustoPonto, "%s", sCustoPonto );
+
+	if( strlennull( sOperador ) <= 0 )
+		strcpy( stC->cOperador, "-1" );
+	else
+		sprintf( stC->cOperador, "%s", sOperador );
+
+	if( strlennull( sGrupo ) <= 0 )
+		strcpy( stC->cGrupo, "-1" );
+	else
+		sprintf( stC->cGrupo, "%s%", sGrupo );
+
+	if( strlennull( sTipoCliente ) <= 0 )
+		strcpy( stC->cTipoCliente, "-1" );
+	else
+		sprintf( stC->cTipoCliente, "%s%", sTipoCliente );
+
+	if( strlennull( sOperadora ) <= 0 )
+		strcpy( stC->cOperadora, "-1" );
+	else
+		sprintf( stC->cOperadora, "%s%", sOperadora );
+		
+}
+
+
+int getTiposEncerramento( XMLGen*xml, int iIdTipoEncerramento  )
+{
+	struct sqlca sqlca;
+	int iCont = 0;
+	char cErro[255+1];
+	char szTipoEncerramento[25];
+	EXEC SQL BEGIN DECLARE SECTION;
+	//Dados para pesquisa
+		
+		int	iCountTipoEncerramento;
+		int	idTipoEncerramento;
+
+	EXEC SQL END DECLARE SECTION;
+
+	try       
+	{
+		memset( &szTipoEncerramento, 0, sizeof( szTipoEncerramento) );
+		
+		switch (iIdTipoEncerramento)
+		{
+				case 1:	strcpy(szTipoEncerramento,"noretido");
+					break;
+				case 2:	strcpy(szTipoEncerramento,"Retido");
+					break;				
+				case 3:	strcpy(szTipoEncerramento,"agendou");
+					break;				
+				case 4:	strcpy(szTipoEncerramento, "ligindevida");
+					break;
+				case 5:	strcpy(szTipoEncerramento, "vaipensar");
+					break;
+		}
+
+		idTipoEncerramento = iIdTipoEncerramento;
+
+
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorTiposEncerramento;
+		sqlca.sqlcode=0;
+		
+		//Retorna dados do relatorio
+		EXEC SQL DECLARE ListTipoEncer CURSOR FOR
+			SELECT	count(rogs.IdTipoEncerramento)
+			FROM 
+			  	RETENCAO.OfertaGrupoSegmentV01 rogs
+			 WHERE
+
+				(rogs.dtinclusao >= TO_DATE(:stCriterio.cAuxDesde  || 
+					' 00:00:00','DD/MM/YYYY HH24:MI:SS') )
+				AND (rogs.dtinclusao <= TO_DATE(:stCriterio.cAuxAte  || 
+					' 23:59:59','DD/MM/YYYY HH24:MI:SS') )
+				AND  ( rogs.IdSegmentacao LIKE :stCriterio.cAuxSegmentacao 
+						OR :stCriterio.cAuxSegmentacao = '-1' )
+				AND  ( rogs.NmPropriedade LIKE :stCriterio.cAuxCustoPonto
+						OR :stCriterio.cAuxCustoPonto = '-1' )
+				AND  ( rogs.IdPessoaDePara LIKE :stCriterio.cAuxOperador 
+						OR :stCriterio.cAuxOperador = '-1' )
+				AND  ( rogs.IdGrupo LIKE :stCriterio.cAuxGrupo 
+						OR :stCriterio.cAuxGrupo = '-1' )
+				AND  ( rogs.IdTipoPessoa LIKE :stCriterio.cAuxTipoCliente 
+						OR :stCriterio.cAuxTipoCliente = '-1' )
+				AND  ( rogs.IdUfOperadora LIKE :stCriterio.cAuxOperadora 
+						OR :stCriterio.cAuxOperadora = '-1' )				
+				AND	 (rogs.IdTipoEncerramento = :idTipoEncerramento)
+				GROUP BY rogs.idTipoEncerramento;
+
+		EXEC SQL OPEN ListTipoEncer;
+		if(sqlca.sqlcode)
+		{
+			strcpy( cErro, "Erro ao tentar abrir o CURSOR ListTipoEncer" );
+			return 0;
+		}
+	
+		for(;;)
+		{
+			EXEC SQL FETCH ListTipoEncer INTO :iCountTipoEncerramento;
+			
+			xml->addItem(szTipoEncerramento, iCountTipoEncerramento);
+
+			iCont++;
+		}//for(;;iContador++)
+		EXEC SQL CLOSE ListTipoEncer;
+	}
+	catch(...)
+	{
+		throw;
+	}
+	return iCont;
+
+ErrorTiposEncerramento:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+int getQtdeOferta( XMLGen*xml)
+{
+	struct sqlca sqlca;
+	int iCont = 0;
+	char cErro[255+1];
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+	//Dados para pesquisa
+		int iCountOferta;
+	EXEC SQL END DECLARE SECTION;
+
+	try       
+	{
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorOferta;
+		sqlca.sqlcode=0;
+		
+		//Retorna dados do relatorio
+		EXEC SQL DECLARE crsOferta CURSOR FOR
+			SELECT	count(rogs.InOfertaAceita)
+			FROM 
+			  	RETENCAO.OfertaGrupoSegmentV01 rogs
+			 WHERE
+				(rogs.dtinclusao >= TO_DATE(:stCriterio.cAuxDesde  || 
+				' 00:00:00','DD/MM/YYYY HH24:MI:SS') )
+				AND (rogs.dtinclusao <= TO_DATE(:stCriterio.cAuxAte  || 
+				' 23:59:59','DD/MM/YYYY HH24:MI:SS') )
+				AND  ( rogs.IdSegmentacao LIKE :stCriterio.cAuxSegmentacao 
+						OR :stCriterio.cAuxSegmentacao = '-1' )
+				AND  ( rogs.NmPropriedade LIKE :stCriterio.cAuxCustoPonto
+						OR :stCriterio.cAuxCustoPonto = '-1' )
+				AND  ( rogs.IdPessoaDePara LIKE :stCriterio.cAuxOperador 
+						OR :stCriterio.cAuxOperador = '-1' )
+				AND  ( rogs.IdGrupo LIKE :stCriterio.cAuxGrupo 
+						OR :stCriterio.cAuxGrupo = '-1' )
+				AND  ( rogs.IdTipoPessoa LIKE :stCriterio.cAuxTipoCliente 
+						OR :stCriterio.cAuxTipoCliente = '-1' )
+				AND  ( rogs.IdUfOperadora LIKE :stCriterio.cAuxOperadora 
+						OR :stCriterio.cAuxOperadora = '-1' )				
+				AND	 (rogs.InOfertaAceita = 1);
+
+		EXEC SQL OPEN crsOferta;
+		if(sqlca.sqlcode)
+		{
+			strcpy( cErro, "Erro ao tentar abrir o CURSOR crsOferta" );
+			return 0;
+		}
+	
+		for(;;)
+		{
+			EXEC SQL FETCH crsOferta INTO :iCountOferta;
+			
+			xml->addItem("qtdoferta", iCountOferta);
+
+			iCont++;
+		}//for(;;iContador++)
+		EXEC SQL CLOSE crsOferta;
+	}
+	catch(...)
+	{
+		throw;
+	}
+	return iCont;
+
+ErrorOferta:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+int vGetQtdeIntencaoCancel( XMLGen*xml, struct stInXML stC )
+{
+	struct sqlca sqlca;
+	int iCont = 0;
+		
+	EXEC SQL BEGIN DECLARE SECTION;
+	//Dados para pesquisa
+		int iCountIntencaoCancel = 0;
+	EXEC SQL END DECLARE SECTION;
+
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorQtdeIntencaoCancel;
+	
+	sqlca.sqlcode=0;
+		
+		//Retorna dados do relatorio
+	EXEC SQL 
+		SELECT	count(rogs.idrespostaIntencao)
+			INTO :iCountIntencaoCancel
+		FROM 
+			  	RETENCAO.OfertaGrupoSegmentV01 rogs
+		WHERE
+			(rogs.dtinclusao >= TO_DATE(:stCriterio.cAuxDesde  || 
+			' 00:00:00','DD/MM/YYYY HH24:MI:SS') )
+			AND (rogs.dtinclusao <= TO_DATE(:stCriterio.cAuxAte  || 
+			' 23:59:59','DD/MM/YYYY HH24:MI:SS') )
+			AND  ( rogs.IdSegmentacao LIKE :stCriterio.cAuxSegmentacao 
+				OR :stCriterio.cAuxSegmentacao = '-1' )
+			AND  ( rogs.NmPropriedade LIKE :stCriterio.cAuxCustoPonto
+				OR :stCriterio.cAuxCustoPonto = '-1' )
+			AND  ( rogs.IdPessoaDePara LIKE :stCriterio.cAuxOperador 
+				OR :stCriterio.cAuxOperador = '-1' )
+			AND  ( rogs.IdGrupo LIKE :stCriterio.cAuxGrupo 
+				OR :stCriterio.cAuxGrupo = '-1' )
+			AND  ( rogs.IdTipoPessoa LIKE :stCriterio.cAuxTipoCliente 
+				OR :stCriterio.cAuxTipoCliente = '-1' )
+			AND  ( rogs.IdUfOperadora LIKE :stCriterio.cAuxOperadora 
+				OR :stCriterio.cAuxOperadora = '-1' );
+			
+	if( sqlca.sqlcode != 0 )
+		iCountIntencaoCancel = 0;
+	
+	return iCountIntencaoCancel;	
+
+ErrorQtdeIntencaoCancel:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+

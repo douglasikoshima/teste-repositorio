@@ -1,0 +1,143 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include<stdio.h>
+#include<sqlca.h>
+#include<sqlda.h>
+#include<iostream.h>
+
+#include <ReservaAparelho.hpp>
+
+ReservaAparelho::ReservaAparelho() {
+
+}
+
+ReservaAparelho::~ReservaAparelho() {
+
+}
+
+int ReservaAparelho::cancelarReservaAparelho(char*retornoReservaSAP)
+{
+	tuxfw_getlogger()->debug("ReservaAparelho::cancelarReservaAparelho");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char*cretornoReservaSAP=retornoReservaSAP;
+	EXEC SQL END DECLARE SECTION;
+	sqlca.sqlcode = 0;
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL
+		UPDATE RETENCAO.RESERVAAPARELHO
+		   SET IDSTATUS = 3, DTULTIMAALTERACAO = SYSDATE
+		 WHERE RETORNORESERVASAP = :cretornoReservaSAP;
+	return 1;
+Error:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void ReservaAparelho::consultarParametro(char *cdParametro, char *dsParametro)
+{
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+	char* pc_chave = cdParametro;
+	VARCHAR  pc_valor[256];
+	short i_pc_valor = 0;
+	EXEC SQL END DECLARE SECTION;
+	
+
+	memset(&pc_valor, 0, sizeof(pc_valor));
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraException;
+
+	EXEC SQL SELECT NVL(dsValorParametro, ' ') INTO :pc_valor:i_pc_valor FROM apoio.Parametro WHERE cdParametro = :pc_chave;
+
+	sprintf(dsParametro,"%s",(char*)pc_valor.arr);
+
+	return;
+
+	OraException:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+DOMNode* ReservaAparelho::enviarXML(XMLGen *xml)
+{
+	tuxfw_getlogger()->debug("ReservaAparelho::enviarXML");
+	TuxMessage o_inputMessage;
+	
+	TuxRemoteService o_remoteService;
+	char statusTextCHAR[200];
+	o_inputMessage.setUser("30");
+	o_inputMessage.setMessageBody(xml);
+	o_inputMessage.setService("WRSOAHTTPMBO");
+	o_remoteService.setServiceName("WRSOAHTTPMBO");
+	o_remoteService.setInputMessage(&o_inputMessage);
+
+	if(o_remoteService.remoteCall() != TUXFWRET_OK)
+	{
+		tuxfw_getlogger()->debug("Erro de acesso ao serviço WRSOAHTTPMBO");
+		throw new TuxBasicSvcException("11E0999","Erro de acesso ao serviço WRSOAHTTPMBO");
+	}
+
+	char* statusCode = o_remoteService.getOutputMessage()->getStatusCode();
+	char* statusText = o_remoteService.getOutputMessage()->getStatusText();
+	tuxfw_getlogger()->debug("ReservaAparelho:LastStatusCode: '%s'", statusCode);
+	tuxfw_getlogger()->debug("ReservaAparelho:LastStatusText: '%s'", statusText);
+	tuxfw_getlogger()->debug("ReservaAparelho:Liberando statusCode");
+	tuxfw_getlogger()->debug("ReservaAparelho:Liberando statusText");
+
+	strncpy(statusTextCHAR,statusText,200);
+	if(strlen(statusText) < 200)
+		statusTextCHAR[strlen(statusText)]=0;
+	else
+		statusTextCHAR[200-1]=0;
+
+	if((statusCode != NULL) && (strlen(statusCode) > 3) && (statusCode[2] == 'E'))
+	{
+		tuxfw_getlogger()->debug("Erro de acesso ao Serviço");
+		if(!strcmp(statusCode,"12E1252"))
+			throw new TuxBasicSvcException("00W0599",statusTextCHAR);
+		free(statusCode);	
+		free(statusText);
+		throw new TuxBasicSvcException("00W0100",statusTextCHAR);
+	}
+
+	char* pc_textMessage = o_remoteService.getOutputMessage()->getMessageBody();
+
+	if (pc_textMessage == NULL)
+	{
+		tuxfw_getlogger()->debug("callRemoteAPI - NULL");
+		return NULL;
+	}
+	else
+	{
+		char* outputFull = (char*) malloc(strlen(pc_textMessage) + 100);
+		sprintf(outputFull, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>%s", pc_textMessage);
+		tuxfw_getlogger()->debug("getMessageBody() nova chamada");
+
+		DOMNode* po_textMessage = NULL;
+
+		po_textMessage = m_pManangerDOMNode.createDOMNode(outputFull);
+
+		tuxfw_getlogger()->debug("Liberando pc_textMessage");
+		free(pc_textMessage);
+		free(outputFull);
+
+		if(po_textMessage == NULL)
+		{
+			tuxfw_getlogger()->debug("createDOMNode - ERRO");
+			return NULL;
+		}
+		else
+		{
+			tuxfw_getlogger()->debug("createDOMNode - OK");			
+			TuxHelper o_tuxhp;
+			return o_tuxhp.walkDOM(po_textMessage, "msgBody", 0);
+		}
+	}
+
+}

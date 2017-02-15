@@ -1,0 +1,174 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "CSisOrg.h"
+
+CSisOrg::CSisOrg()
+{
+}
+
+CSisOrg::~CSisOrg()
+{
+}
+
+int CSisOrg::ListId( char* cid )
+{
+	ULOG_START("CSisOrg::ListId()");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidOra = cid;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stSigla[255+1];
+			VARCHAR stNome[255+1];
+		} stSistemaOrigemRegistro;
+		struct
+		{
+			short iId;
+			short iSigla;
+			short iDescricao;
+		} stSistemaOrigemIndicator;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraSistemaOrigem();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorSistemaOrigemId CURSOR FOR
+			SELECT IDSistemaOrigem, 
+			       SGSistemaOrigem, 
+			       NMSistemaOrigem
+			  FROM APOIO.SistemaOrigem
+			 WHERE IDSistemaOrigem = :cidOra;
+	
+		EXEC SQL OPEN CursorSistemaOrigemId;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CSisOrg::ListId()");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stSistemaOrigemRegistro, 0, sizeof(stSistemaOrigemRegistro) );
+				EXEC SQL FETCH CursorSistemaOrigemId INTO :stSistemaOrigemRegistro:stSistemaOrigemIndicator;
+	
+				Add( (char*)stSistemaOrigemRegistro.stId.arr, (char*)stSistemaOrigemRegistro.stSigla.arr, (char*)stSistemaOrigemRegistro.stNome.arr );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorSistemaOrigemId;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CSisOrg::ListId()");
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CSisOrg::ListAll( void )
+{
+	ULOG_START("CSisOrg::ListAll()");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stSigla[255+1];
+			VARCHAR stNome[255+1];
+		} stSistemaOrigemRegistro;
+		struct
+		{
+			short iId;
+			short iSigla;
+			short iDescricao;
+		} stSistemaOrigemIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		ZeraSistemaOrigem();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorSistemaOrigemAll CURSOR FOR
+			SELECT IDSistemaOrigem, 
+			       SGSistemaOrigem, 
+			       NMSistemaOrigem
+			  FROM APOIO.SistemaOrigem;
+	
+		EXEC SQL OPEN CursorSistemaOrigemAll;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CSisOrg::ListAll()");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stSistemaOrigemRegistro, 0, sizeof(stSistemaOrigemRegistro) );
+				EXEC SQL FETCH CursorSistemaOrigemAll INTO :stSistemaOrigemRegistro:stSistemaOrigemIndicator;
+	
+				Add( (char*)stSistemaOrigemRegistro.stId.arr, (char*)stSistemaOrigemRegistro.stSigla.arr, (char*)stSistemaOrigemRegistro.stNome.arr );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorSistemaOrigemAll;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CSisOrg::ListAll()");
+	return iCont;
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CSisOrg::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	ULOG_START("CSisOrg::GetXml()");
+	if( Quantidade() > 0 )
+	{
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			xml->createTag(cNomeTag);
+			xml->addProp(	"xmlns", "usuario.fo.vivo.com.br/vo" );
+			if( Registro( x ) != NULL )
+			{
+				xml->addItem("idSistemaOrigem"  , Registro(x)->cidSistemaOrigem   );
+				xml->addItem("sgSistemaOrigem"  , Registro(x)->csgSistemaOrigem   );
+				xml->addItem("nmSistemaOrigem"  , Registro(x)->cnmSistemaOrigem   );
+			}
+			xml->closeTag();
+		}
+	}
+	ULOG_END("CSisOrg::GetXml()");
+}

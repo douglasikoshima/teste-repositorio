@@ -1,0 +1,1201 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Fonte   : main.cpp
+//* Servico : LupaLinhaIni
+//* Servidor: LupaLinha
+//*
+//* Ficheiro: TUXEFO/cliente/LupaLinha/LupaLinhaIni/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson Martins
+//*
+//* Fecha primeira version:13/06/2004
+//*
+//* Version actual: 01.00
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Servico a ser chamando a partir da Tela Inicial e monta o XML para preencher a
+//* tela principal da Lupa Linha.
+//* 
+//* Review:
+//*
+//* Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+//*
+//*//-------------------------------------------------------------------------------
+//---------------------------------------------------------------------
+//EXEC SQL INCLUDE SQLCA;
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+#include "../include/LupaLinhaIni.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classEstadoLinha.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classTipoLinha.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classBuscaDadosLinha.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classUsuario.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classPlanoServicoLinha.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/Parametro.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/AreaRegistroBloqueado.h";
+
+void alltrim(char *pszString);
+void l_trim(char *pszString);
+void r_trim(char *pszString);
+
+
+#define STRLENNULL( y ) ( y == NULL ? 0 : strlen( y )  )
+
+DECLARE_TUXEDO_SERVICE(LupaLinhaIni);
+
+void implLupaLinhaIni::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+ 	struct sqlca sqlca;
+	
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char  sIdPessoa[64];
+        short iIdPessoa_ora = -1;
+        char  sIdLinhaTelefonica[64];
+        short iIdLinhaTelefonica_ora = -1;
+        char  sCdAreaRegistro[64];
+        short iCdAreaRegistro_ora = -1;
+        char  sNrLinha[64];
+        short iNrLinha_ora = -1;
+        char  sDsTipoLinha[256];
+        short iDsTipoLinha_ora = -1;
+        char  sDsEstadoLinha[256];
+        short iDsEstadoLinha_ora = -1;
+        char  sDtHabilitacaoOut[64];
+        short iDtHabilitacaoOut_ora = -1;
+        char  sInDivulgacaoNrLinha[32];
+        short iInDivulgacaoNrLinha_ora = -1;
+        char  sDtTerminoContrato[32];
+        short iDtTerminoContrato_ora = -1;
+        char  sNmServico[256];
+        short iNmServico_ora = -1;
+        
+        char sLinha[16]={0};
+        char sDDD[8]={0};
+
+        VARCHAR sinIdLinhaTelefonica[LEN_IDLINHATELEFONICA + LEN_EOS];
+    
+        VARCHAR sId[LEN_NUMBER+LEN_EOS];
+        //char* pzcPaginaAtual = pPagina;
+		//long  ipaginaAtual = atol( pzcPaginaAtual );
+        long  ipaginaAtual = 1;
+		long  iregistrosPPagina = 0;
+		short sregistrosPPagina;
+		long  iIni = 0;
+		long  iFim = 0;
+		int   iCont;
+	EXEC SQL END DECLARE SECTION;
+
+    bool  bInformaQtdLinhas = false;
+    int   iNroReg = 0;
+    int   iAux;
+    int   iProximaPagina = 0;
+    bool  bFlagErro = false;
+    char* pParam = 0;
+    char  pcParam1[255+1];
+    char  pcParam2[255+1];
+    char  pcIdLinSisOrig[21+1];
+    char  pcNrLinha[21+1]={0};
+    char  pcIdLinhaTelefonica[LEN_IDLINHATELEFONICA + LEN_EOS]={0};
+    char  cContadorPagina[255+1];
+    char  cPaginaAtual[255+1];
+    char  szIdSistemaOrigem[21+1];
+    bool  bFlagLegado;
+
+    char *pParam2=0;    //variavel temp para idtipolinha
+    int  idTipoLinha=0; //variavel de tipo da linha
+                        //para encaminhamento de tuxproxy correto
+    
+
+    CEstadoLinha* oEL=0;
+    CTipoLinha* oTL=0;
+    CBuscaDadosLinha* poBDL=0;
+    CPlanoServicoLinha* oPSL=0;
+
+    CParametro clParametro;
+
+    //VARIAVEIS PARA CHAMADAS REMOTAS
+    const char* pMemBufId = "inputInfo";
+    char* pRetorno = NULL;
+    char* pStatusCode = NULL;
+
+    XercesDOMParser *pParserFidelizacao=NULL;
+    XercesDOMParser *pParser=0;
+
+    MemBufInputSource *pMemBuf=0;
+    MemBufInputSource *pMemBufFidelizacao=NULL;
+
+    TuxRemoteService* remoteService=0;
+    TuxRemoteService* remoteServiceFidelizacao;
+
+    TuxMessage* inputMessage=0;
+    TuxMessage* inputMessageFidelizacao;
+
+    DOMNode *pDocFidelizacao=NULL;
+    XMLGen xmlDetalheLinha;
+
+    try
+    {
+        ULOG_START( "implLupaLinhaIni::Execute()" );
+
+        //capturando tipo de linha  
+        pParam2 = walkTree(pDnode, "idTipoLinha", 0);
+        if(!pParam2)
+        {
+            ERROR("idTipoLinha");
+            TAG_INEXISTENTE("idTipoLinha");
+            throw new TuxBasicSvcException("00E0666","faltando idTipoLinha");
+        }
+        if(!*pParam2)
+        {
+            if ( pParam2 ) XMLString::release(&pParam2);
+            throw new TuxBasicSvcException("00E0666","faltando idTipoLinha");
+        }
+        idTipoLinha=atoi(pParam2);
+        XMLString::release(&pParam2);
+
+        /*
+        if(idTipoLinha != 1 && idTipoLinha != 2 && idTipoLinha != 5 && idTipoLinha != 6 && idTipoLinha != 4 && idTipoLinha != 7) {
+            throw new TuxBasicSvcException("00E0666", "IdTipoLinha diferente de 1(pos) 2(pre) 5(poschip) 6(prechip) 4(Controle CDMA) 7(Controle GSM)");
+        }
+        */
+
+        //Fim do tratamento da linha
+
+        memset( pcParam1, 0, sizeof( pcParam1 ) );
+        memset( pcParam2, 0, sizeof( pcParam2 ) );
+        memset( cContadorPagina, 0, sizeof( cContadorPagina ) );
+        memset( cPaginaAtual, 0, sizeof( cPaginaAtual ) );
+
+        pParam = walkTree(pDnode, "paginaAtual", 0);
+        if(STRLENNULL( pParam ) <= 0 )
+            strcpy( cPaginaAtual, "0" );
+        else
+            strcpy( cPaginaAtual, pParam );
+
+        XMLString::release(&pParam);
+        pParam = NULL;
+
+        pParam = walkTree(pDnode, XML_OUT_DSOPERACAO, 0);
+        if(STRLENNULL( pParam ) <= 0 )
+        {
+            if( pParam ) XMLString::release( &pParam );
+            bInformaQtdLinhas = false;
+        }
+        else
+        {
+            bInformaQtdLinhas = true;
+        }
+
+        pParam = walkTree(pDnode, XML_OUT_IDPESSOAFIL, 0);
+        if(STRLENNULL( pParam ) <= 0 )
+        {
+            ERROR(NRO_ID_PESSOA_NE);
+            TAG_INEXISTENTE(XML_OUT_IDPESSOAFIL);
+            if( pParam )
+                XMLString::release(&pParam);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        else
+            strcpy( pcParam1, pParam );
+
+        //Zera o ponteiro do walkTree
+        if( pParam )
+            XMLString::release(&pParam);
+
+        if ( !IsNumeric(pcParam1) )
+        {
+            ERROR(NRO_ID_PESSOA_VV);
+            TAG_VALOR_INVALIDO(XML_OUT_IDPESSOAFIL);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        ULOG("local1");
+
+        pParam = walkTree(pDnode, XML_OUT_IDLINHAFIL, 0);
+        if( STRLENNULL( pParam ) <= 0 )
+        {
+            ERROR(NRO_ID_LINHA_NE);
+            TAG_INEXISTENTE(XML_OUT_IDLINHAFIL);
+            if( pParam )
+                XMLString::release(&pParam);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        else
+            strcpy( pcParam2, pParam );
+
+        //Zera o ponteiro do walkTree
+        if( pParam )
+            XMLString::release(&pParam);
+
+        if ( !IsNumeric(pcParam2) )
+        {
+            ERROR(NRO_ID_PESSOA_VI);
+            TAG_VALOR_INVALIDO(XML_OUT_IDLINHAFIL);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        ULOG("local2");
+
+        pParam = walkTree(pDnode, XML_IN_SISTEMA_ORIGEM, 0);
+        if( STRLENNULL( pParam ) <= 0 )
+        {
+            ERROR(NRO_ID_LIN_SIST_ORIG_NE);
+            TAG_INEXISTENTE(XML_IN_SISTEMA_ORIGEM);
+            if( pParam )
+                XMLString::release(&pParam);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        else
+            strcpy( pcIdLinSisOrig, pParam );
+
+        //Zera o ponteiro do walkTree
+        if( pParam )
+            XMLString::release(&pParam);
+
+        if ( !IsNumeric(pcIdLinSisOrig) )
+        {
+            ERROR(NRO_ID_LIN_SIST_ORIG_VI);
+            TAG_VALOR_INVALIDO(XML_IN_SISTEMA_ORIGEM);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        ULOG("local3");
+
+
+        pParam = walkTree(pDnode, XML_IN_IDLINHATELEFONICA, 0);
+        if (pParam)
+        {
+        	strcpy( pcIdLinhaTelefonica, pParam );
+        	XMLString::release(&pParam);
+        	pParam=0;
+
+            if ( !IsNumeric(pcIdLinhaTelefonica) )
+            {
+                ERROR(NRO_IDLINHATELEFONICA_VI);
+                TAG_VALOR_INVALIDO(XML_IN_IDLINHATELEFONICA);
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+        }
+        /**
+		  * O serviço precisa da informação de número de linha
+		  * para chamar o serviço getDetalheLinha do TuxNGINBE
+		  * Estava ocorrendo erro em 100% das chamadas do NGIN 
+		  * quando o idlinhatelefonica era passado para o serviço
+		  * LupaLinhaIni
+		  */
+           pParam = walkTree(pDnode, XML_OUT_NRLINHA, 0);
+        if( STRLENNULL( pParam ) <= 0 )
+        {
+            ERROR(NRO_NR_LINHA_NE);
+            TAG_INEXISTENTE(XML_OUT_NRLINHA);
+            if( pParam )
+                XMLString::release(&pParam);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        else
+               strcpy( pcNrLinha, pParam );
+           
+            //Zera o ponteiro do walkTree
+            if( pParam )
+               XMLString::release(&pParam);
+
+            if ( !IsNumeric(pcNrLinha) )
+            {
+               ERROR(NRO_NR_LINHA_VI);
+               TAG_VALOR_INVALIDO(XML_OUT_NRLINHA);
+               throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+        
+        ULOG("local4");
+
+        pXmlG->createTag(XML_OUT_ROOT);
+        pXmlG->addProp("xmlns", XML_OUT_PROP);
+            pXmlG->createTag(XML_OUT_NO_FILTRO);
+            
+                oEL = CEstadoLinha::RecuperarTodos(&iNroReg,atoi(pcParam2));
+                for (iAux=0; iAux < iNroReg; iAux++) 
+                {
+                    pXmlG->createTag(XML_OUT_NO_STATUS);
+                        pXmlG->addItem(XML_OUT_IDTIPO, oEL[iAux].getId());
+                        pXmlG->addItem(XML_OUT_DESCRICAO, oEL[iAux].getDescricao());
+                    pXmlG->closeTag();
+                }
+                ULOG("local5");
+
+                oTL = CTipoLinha::RecuperarTodos(&iNroReg);
+                for (iAux=0; iAux < iNroReg; iAux++) 
+                {
+                    pXmlG->createTag(XML_OUT_NO_TIPO);
+                        pXmlG->addItem(XML_OUT_IDTIPO, oTL[iAux].getId());
+                        pXmlG->addItem(XML_OUT_DESCRICAO, oTL[iAux].getDescricao());
+                    pXmlG->closeTag();
+                }
+
+                ULOG("local6");
+
+            pXmlG->closeTag();
+            ULOG("local7");
+
+            /* poBDL = CBuscaDadosLinha::buscarPorDadosFiltro(&iNroReg, pcParam1, NULL, NULL, NULL, NULL, cPaginaAtual, cContadorPagina, &iProximaPagina );  */
+
+            EXEC SQL
+            SELECT
+                TO_NUMBER(DSVALORPARAMETRO)
+            INTO
+                :iregistrosPPagina:sregistrosPPagina
+            FROM
+                APOIO.PARAMETRO
+            WHERE
+                CDPARAMETRO = 'LUPALINHA_LINHAS_POR_PAGINA';
+
+            ULOG("buscarPorDadosFiltro ->> LUPALINHA_LINHAS_POR_PAGINA[%d]", iregistrosPPagina); 
+            //iIni = ipaginaAtual*iregistrosPPagina;
+            iIni = 1;
+            iFim = iIni+iregistrosPPagina;
+            ULOG("buscarPorDadosFiltro ->> iIni[%d]", iIni); 
+            ULOG("buscarPorDadosFiltro ->> iFim[%d]", iFim); 
+            
+        if (pcIdLinhaTelefonica[0]) {
+        	STRCPY_TO_ORA(sinIdLinhaTelefonica, pcIdLinhaTelefonica);
+        	ZERA_TO_ORA(sinIdLinhaTelefonica);
+        } else {
+        sprintf(sDDD,"%.2s",pcNrLinha);
+        sprintf(sLinha,"%s",(char*)&pcNrLinha[2]);
+        }
+        
+		ULOG("código alterado . Query suportando LD NÃO VIVO");
+		
+        STRCPY_TO_ORA( sId, pcParam1 );
+
+
+        if (pcIdLinhaTelefonica[0])
+        {
+			EXEC SQL DECLARE CursorbuscarPorDadosFiltroTelefonica CURSOR FOR
+			  SELECT pessoadepara.idpessoa,
+					 linhatelefonica.idlinhatelefonica,
+					 arearegistro.cdarearegistro,
+					 linhabase.nrlinha,
+					 //tipolinha.dstipolinha||decode(linhatelefonica.cdfixomovel,'F',' FIXO',NULL),
+					 (CASE
+						WHEN linhatelefonica.cdfixomovel = 'N' THEN
+							'LD NÃO VIVO'
+						ELSE
+							SUBSTR(TIPOLINHA.DSTIPOLINHA, 1, 18)||decode(linhatelefonica.cdfixomovel,'F',' FIXO',NULL)
+						END
+					 ),
+					 decode (reason.SBSCRP_ID,null,(SUBSTR((ESTADOLINHA.DSESTADOLINHA || ' ' || LINHABASE.DSMOTIVOESTADO), 1, 25)),'Bloqueio Pré-Ativação'),
+					 to_char(trunc(linhatelefonica.dthabilitacao), 'DD/MM/YYYY'),
+					 linhatelefonica.indivulgacaonrlinha,
+					 linhatelefonica.dtexpiracao
+				FROM linha.linhatelefonica,
+					 linha.ACCESS_NBR_HOTLN_REASON REASON,
+					 linha.linhabase,
+					 apoio.arearegistro,
+					 apoio.estadolinha,
+					 apoio.tipolinha,
+					   (select p.idpessoadepara,
+							   p.idpessoa,
+							   pl.idlinhatelefonica
+					   from customer.pessoadepara p,
+							customer.pessoalinha pl
+					   where idpessoa=:sId
+					   and   pl.IDPESSOADEPARA=p.IDPESSOADEPARA
+					   and   pl.IDTIPORELACIONAMENTO=2 )pessoadepara
+				 WHERE linhabase.idlinhabase                = linhatelefonica.idlinhabase
+				   AND arearegistro.idarearegistro          = linhabase.idarearegistro
+				   AND estadolinha.idestadolinha            = linhabase.idestadolinha
+				   AND tipolinha.idtipolinha                = linhatelefonica.idtipolinha
+				   AND linhatelefonica.idlinhatelefonica    = pessoadepara.idlinhatelefonica
+				   AND LINHATELEFONICA.IDLINHASISTEMAORIGEM=REASON.SBSCRP_ID(+)
+				   and REASON.HOTLN_REASON_CD(+) = 'PRE ACTIVATION'
+				   and rownum<=50
+				UNION
+				  SELECT pessoadepara.idpessoa,
+						 linhatelefonica.idlinhatelefonica,
+						 arearegistro.cdarearegistro,
+						 linhabase.nrlinha,
+						 //tipolinha.dstipolinha||decode(linhatelefonica.cdfixomovel,'F',' FIXO',NULL),
+						 (CASE
+							WHEN linhatelefonica.cdfixomovel = 'N' THEN
+								'LD NÃO VIVO'
+							ELSE
+								SUBSTR(TIPOLINHA.DSTIPOLINHA, 1, 18)||decode(linhatelefonica.cdfixomovel,'F',' FIXO',NULL)
+							END
+						 ),
+						 decode (reason.SBSCRP_ID,null,(SUBSTR((ESTADOLINHA.DSESTADOLINHA || ' ' || LINHABASE.DSMOTIVOESTADO), 1, 25)),'Bloqueio Pré-Ativação'),
+						 to_char(trunc(linhatelefonica.dthabilitacao), 'DD/MM/YYYY'),
+						 linhatelefonica.indivulgacaonrlinha,
+						 linhatelefonica.dtexpiracao
+					FROM linha.linhatelefonica,
+						 linha.ACCESS_NBR_HOTLN_REASON REASON,
+						 linha.linhabase,
+						 apoio.arearegistro,
+						 apoio.estadolinha,
+						 apoio.tipolinha,
+						   (select p.idpessoadepara,
+								   p.idpessoa,
+								   pl.idlinhatelefonica
+						   from customer.pessoadepara p,
+								customer.pessoalinha pl
+						   where idpessoa=:sId
+						   and   pl.IDPESSOADEPARA=p.IDPESSOADEPARA
+						   and   pl.IDTIPORELACIONAMENTO=2 )pessoadepara
+					 WHERE linhabase.idlinhabase                = linhatelefonica.idlinhabase
+					   AND arearegistro.idarearegistro          = linhabase.idarearegistro
+					   AND estadolinha.idestadolinha            = linhabase.idestadolinha
+					   AND tipolinha.idtipolinha                = linhatelefonica.idtipolinha
+					   AND linhatelefonica.idlinhatelefonica    = pessoadepara.idlinhatelefonica
+					   AND LINHATELEFONICA.IDLINHASISTEMAORIGEM=REASON.SBSCRP_ID(+)
+					   and REASON.HOTLN_REASON_CD(+) = 'PRE ACTIVATION'
+					   AND linhatelefonica.idlinhatelefonica = :sinIdLinhaTelefonica;
+					   ;
+
+        }
+        else
+        {
+        EXEC SQL DECLARE CursorbuscarPorDadosFiltro CURSOR FOR
+          SELECT pessoadepara.idpessoa,
+                 linhatelefonica.idlinhatelefonica,
+                 arearegistro.cdarearegistro,
+                 linhabase.nrlinha,
+                 //tipolinha.dstipolinha||decode(linhatelefonica.cdfixomovel,'F',' FIXO',NULL),
+				 (CASE 
+					WHEN linhatelefonica.cdfixomovel = 'N' THEN
+						'LD NÃO VIVO'
+					ELSE
+						SUBSTR(TIPOLINHA.DSTIPOLINHA, 1, 18)||decode(linhatelefonica.cdfixomovel,'F',' FIXO',NULL)
+					END
+				 ),
+                 decode (reason.SBSCRP_ID,null,(SUBSTR((ESTADOLINHA.DSESTADOLINHA || ' ' || LINHABASE.DSMOTIVOESTADO), 1, 25)),'Bloqueio Pré-Ativação'),
+                 to_char(trunc(linhatelefonica.dthabilitacao), 'DD/MM/YYYY'),
+                 linhatelefonica.indivulgacaonrlinha,
+                 linhatelefonica.dtexpiracao
+            FROM linha.linhatelefonica,
+                 linha.ACCESS_NBR_HOTLN_REASON REASON,
+                 linha.linhabase,
+                 apoio.arearegistro,
+                 apoio.estadolinha,
+                 apoio.tipolinha,
+                   (select p.idpessoadepara,
+                           p.idpessoa,
+                           pl.idlinhatelefonica
+                   from customer.pessoadepara p,
+                        customer.pessoalinha pl
+                   where idpessoa=:sId
+                   and   pl.IDPESSOADEPARA=p.IDPESSOADEPARA
+                   and   pl.IDTIPORELACIONAMENTO=2 )pessoadepara
+             WHERE linhabase.idlinhabase                = linhatelefonica.idlinhabase
+               AND arearegistro.idarearegistro          = linhabase.idarearegistro
+               AND estadolinha.idestadolinha            = linhabase.idestadolinha
+               AND tipolinha.idtipolinha                = linhatelefonica.idtipolinha
+               AND linhatelefonica.idlinhatelefonica    = pessoadepara.idlinhatelefonica
+               AND LINHATELEFONICA.IDLINHASISTEMAORIGEM=REASON.SBSCRP_ID(+)
+               and REASON.HOTLN_REASON_CD(+) = 'PRE ACTIVATION'
+               and rownum<=50
+            UNION
+              SELECT pessoadepara.idpessoa,
+                     linhatelefonica.idlinhatelefonica,
+                     arearegistro.cdarearegistro,
+                     linhabase.nrlinha,
+                     //tipolinha.dstipolinha||decode(linhatelefonica.cdfixomovel,'F',' FIXO',NULL),
+					 (CASE 
+						WHEN linhatelefonica.cdfixomovel = 'N' THEN
+							'LD NÃO VIVO'
+						ELSE
+							SUBSTR(TIPOLINHA.DSTIPOLINHA, 1, 18)||decode(linhatelefonica.cdfixomovel,'F',' FIXO',NULL)
+						END
+					 ),
+                     decode (reason.SBSCRP_ID,null,(SUBSTR((ESTADOLINHA.DSESTADOLINHA || ' ' || LINHABASE.DSMOTIVOESTADO), 1, 25)),'Bloqueio Pré-Ativação'),
+                     to_char(trunc(linhatelefonica.dthabilitacao), 'DD/MM/YYYY'),
+                     linhatelefonica.indivulgacaonrlinha,
+                     linhatelefonica.dtexpiracao
+                FROM linha.linhatelefonica,
+                     linha.ACCESS_NBR_HOTLN_REASON REASON,
+                     linha.linhabase,
+                     apoio.arearegistro,
+                     apoio.estadolinha,
+                     apoio.tipolinha,
+                       (select p.idpessoadepara,
+                               p.idpessoa,
+                               pl.idlinhatelefonica
+                       from customer.pessoadepara p,
+                            customer.pessoalinha pl
+                       where idpessoa=:sId
+                       and   pl.IDPESSOADEPARA=p.IDPESSOADEPARA
+                       and   pl.IDTIPORELACIONAMENTO=2 )pessoadepara
+                 WHERE linhabase.idlinhabase                = linhatelefonica.idlinhabase
+                   AND arearegistro.idarearegistro          = linhabase.idarearegistro
+                   AND estadolinha.idestadolinha            = linhabase.idestadolinha
+                   AND tipolinha.idtipolinha                = linhatelefonica.idtipolinha
+                   AND linhatelefonica.idlinhatelefonica    = pessoadepara.idlinhatelefonica
+                   AND LINHATELEFONICA.IDLINHASISTEMAORIGEM=REASON.SBSCRP_ID(+)
+                   and REASON.HOTLN_REASON_CD(+) = 'PRE ACTIVATION'
+                   and arearegistro.CDAREAREGISTRO = :sDDD
+					   and linhabase.NRLINHA = :sLinha
+					   ;
+		}
+
+            /*
+            SELECT pessoadepara.idpessoa,
+                   linhatelefonica.idlinhatelefonica,
+                   arearegistro.cdarearegistro,
+                   linhabase.nrlinha,
+                   tipolinha.dstipolinha,
+                   decode (reason.SBSCRP_ID,null,(SUBSTR((ESTADOLINHA.DSESTADOLINHA || ' ' || LINHABASE.DSMOTIVOESTADO), 1, 25)),'Bloqueio Pré-Ativação'),
+                   to_char(trunc(linhatelefonica.dthabilitacao), 'DD/MM/YYYY'),
+                   linhatelefonica.indivulgacaonrlinha,
+                   linhatelefonica.dtexpiracao
+              FROM linha.linhatelefonica,
+                   linha.ACCESS_NBR_HOTLN_REASON REASON,
+                   linha.linhabase,
+                   apoio.arearegistro,
+                   apoio.estadolinha,
+                   apoio.tipolinha,
+                   customer.pessoalinha,
+                   customer.pessoadepara,
+                   customer.tiporelacionamento
+             WHERE linhabase.idlinhabase                = linhatelefonica.idlinhabase
+               AND arearegistro.idarearegistro          = linhabase.idarearegistro
+               AND estadolinha.idestadolinha            = linhabase.idestadolinha
+               AND tipolinha.idtipolinha                = linhatelefonica.idtipolinha
+               AND linhatelefonica.idlinhatelefonica    = pessoalinha.idlinhatelefonica
+               AND pessoadepara.idpessoadepara          = pessoalinha.idpessoadepara
+               AND pessoalinha.idtiporelacionamento     = tiporelacionamento.idtiporelacionamento
+               AND LINHATELEFONICA.IDLINHASISTEMAORIGEM=REASON.SBSCRP_ID(+)
+               and REASON.HOTLN_REASON_CD(+) = 'PRE ACTIVATION'
+               AND tiporelacionamento.sgtiporelacionamento = 'C'
+               AND pessoadepara.idpessoaorigem   IN (
+                   SELECT idpessoaorigem 
+                  FROM customer.pessoadepara p 
+                 WHERE p.idpessoa =:sId
+                  );    
+            */
+
+    if (pcIdLinhaTelefonica[0])
+    {
+    	EXEC SQL OPEN CursorbuscarPorDadosFiltroTelefonica;
+    }
+    else
+    {
+	EXEC SQL OPEN CursorbuscarPorDadosFiltro;
+    }
+
+    ULOG( ">>> Abrindo Cursor..." );
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+    CAreaRegistroBloqueado pclAreaRegistroBloqueado;
+	for (iCont = 1;;iCont++) 
+    {
+        memset( sIdPessoa, 0x00, sizeof(sIdPessoa) );
+        memset( sIdLinhaTelefonica, 0x00, sizeof(sIdLinhaTelefonica) );
+        memset( sCdAreaRegistro, 0x00, sizeof(sCdAreaRegistro) );
+        memset( sNrLinha, 0x00, sizeof(sNrLinha) );
+        memset( sDsTipoLinha, 0x00, sizeof(sDsTipoLinha) );
+        memset( sDsEstadoLinha, 0x00, sizeof(sDsEstadoLinha) );
+        memset( sDtHabilitacaoOut, 0x00, sizeof(sDtHabilitacaoOut) );
+        memset( sInDivulgacaoNrLinha, 0x00, sizeof(sInDivulgacaoNrLinha) );
+        memset( sDtTerminoContrato, 0x00, sizeof(sDtTerminoContrato) );
+
+        if (pcIdLinhaTelefonica[0])
+        {
+			EXEC SQL FETCH CursorbuscarPorDadosFiltroTelefonica
+					  INTO  :sIdPessoa:iIdPessoa_ora
+						   ,:sIdLinhaTelefonica:iIdLinhaTelefonica_ora
+						   ,:sCdAreaRegistro:iCdAreaRegistro_ora
+						   ,:sNrLinha:iNrLinha_ora
+						   ,:sDsTipoLinha:iDsTipoLinha_ora
+						   ,:sDsEstadoLinha:iDsEstadoLinha_ora
+						   ,:sDtHabilitacaoOut:iDtHabilitacaoOut_ora
+						   ,:sInDivulgacaoNrLinha:iInDivulgacaoNrLinha_ora
+						   ,:sDtTerminoContrato:iDtTerminoContrato_ora;
+        }
+        else
+        {
+		EXEC SQL FETCH CursorbuscarPorDadosFiltro
+                  INTO  :sIdPessoa:iIdPessoa_ora
+                       ,:sIdLinhaTelefonica:iIdLinhaTelefonica_ora
+                       ,:sCdAreaRegistro:iCdAreaRegistro_ora
+                       ,:sNrLinha:iNrLinha_ora
+                       ,:sDsTipoLinha:iDsTipoLinha_ora
+                       ,:sDsEstadoLinha:iDsEstadoLinha_ora
+                       ,:sDtHabilitacaoOut:iDtHabilitacaoOut_ora
+                       ,:sInDivulgacaoNrLinha:iInDivulgacaoNrLinha_ora
+                       ,:sDtTerminoContrato:iDtTerminoContrato_ora;
+        }
+		ULOG( "iCont [%d]", iCont );
+		ULOG( "iIni  [%d]", iIni );
+		ULOG( "iFim  [%d]", iFim );
+
+        if( iCont >= iIni && iCont <  iFim )
+		{
+            alltrim(sCdAreaRegistro);
+            
+            pclAreaRegistroBloqueado.setCdAreaRegistro(sCdAreaRegistro);
+            if ( pclAreaRegistroBloqueado.DDDBloqueado() == true )
+            {
+                ULOG("LocalABC");
+                continue;
+            }
+
+            alltrim(sIdPessoa);
+            alltrim(sIdLinhaTelefonica);
+            alltrim(sNrLinha);
+            alltrim(sDsTipoLinha);
+            alltrim(sDsEstadoLinha);
+            alltrim(sDtHabilitacaoOut);
+            alltrim(sInDivulgacaoNrLinha);
+            alltrim(sDtTerminoContrato);
+
+            EXEC SQL WHENEVER NOT FOUND CONTINUE;
+            memset( sNmServico, 0x0, sizeof(sNmServico) );
+            iNmServico_ora = -1;
+            //Recuperando plano e contrato
+            EXEC SQL 
+                SELECT planoservico.nmservico
+                  INTO :sNmServico:iNmServico_ora
+                  FROM linha.planoservicolinha  planoservicolinha
+                     , linha.planoservico       planoservico
+                 WHERE planoservicolinha.idlinhatelefonica = :sIdLinhaTelefonica
+                   AND ( planoservicolinha.dtvigenciafinal >= SYSDATE OR
+                         planoservicolinha.dtvigenciafinal IS NULL )
+                   AND planoservicolinha.dtexpiracao IS NULL
+                   AND planoservicolinha.idservico = planoservico.idservico
+                   AND planoservicolinha.inplano   = 1
+                   AND ROWNUM <= 1;
+
+            alltrim( sNmServico );
+            pXmlG->createTag(XML_OUT_NO_LISTA);
+                pXmlG->addItem( XML_OUT_IDPESSOA, sIdPessoa );
+                pXmlG->addItem( XML_OUT_IDLINHA, sIdLinhaTelefonica );
+                pXmlG->addItem( XML_OUT_NRCODAREA, sCdAreaRegistro );
+                pXmlG->addItem( XML_OUT_NRLINHA, sNrLinha );
+                pXmlG->addItem( XML_OUT_DSTIPOLINHA, sDsTipoLinha );
+                pXmlG->addItem( XML_OUT_DSPLANOSERVICO, sNmServico );
+                pXmlG->addItem( XML_OUT_DSSTATUSLINHA, sDsEstadoLinha );
+                pXmlG->addItem( XML_OUT_DTHABILITACAO, sDtHabilitacaoOut );
+                pXmlG->addItem( XML_OUT_INDIVULGANUMERO, sInDivulgacaoNrLinha );
+                pXmlG->addItem( XML_OUT_DTTERMINOCONTRATO, sDtTerminoContrato );
+                pXmlG->addItem( XML_OUT_DSTIPOCONTRATO, "");
+                if(clParametro.buscaIdSistemaOrigem( sNrLinha, sCdAreaRegistro, szIdSistemaOrigem ) == true)
+                {
+                    iNroReg++;
+                    bFlagLegado = clParametro.buscaLegado( clParametro.getIdUfOperador(), szIdSistemaOrigem );
+                    if(bFlagLegado == false)
+                    {
+                        pXmlG->addItem(XML_OUT_INLEGADO, "1");
+                    }
+                    else
+                    {
+                        pXmlG->addItem(XML_OUT_INLEGADO, "0");
+                    }
+                }
+                else
+                {
+                    pXmlG->addItem(XML_OUT_INLEGADO, "0");
+                }
+    
+                ULOG("local8");
+            pXmlG->closeTag();
+
+                //int index = iNroObjLocal-1;
+	
+                
+			// iNroReg++;
+		}//if( iCont >= iIni || iCont <=  iFim )
+	}//for (;; iNroObjLocal++) 
+
+	if (pcIdLinhaTelefonica[0])
+	{
+		EXEC SQL CLOSE CursorbuscarPorDadosFiltroTelefonica;
+	}
+	else
+	{
+    EXEC SQL CLOSE CursorbuscarPorDadosFiltro;
+	}
+
+    /*
+    *iProximaPagina = 0;
+	if( iCont > iFim )
+		*iProximaPagina = 1;
+    */
+    
+	sprintf( cContadorPagina, "%d página(s)", (iCont/iregistrosPPagina)+1 );
+
+    ULOG("buscarPorDadosFiltro ->> cContadorPagina[%s]", cContadorPagina); 
+    //ULOG("buscarPorDadosFiltro ->> iProximaPagina[%d]", *iProximaPagina); 
+
+
+
+            ULOG("iNroReg(%d)", iNroReg);
+
+            // pXmlG->addItem(XML_OUT_TOTALLINHAS, CBuscaDadosLinha::getTotalReg(pcParam1, NULL, NULL, NULL, NULL));
+            pXmlG->addItem(XML_OUT_TOTALLINHAS, 0 );
+            pXmlG->addItem(XML_OUT_TOTALRETORNADA, iNroReg);
+
+            CUsuario oUsu(pcParam2);
+
+            int qtLinhasAtivas = 0;
+            int qtLinhasInativas = 0;
+
+            //bInformaQtdLinhas = false;
+            if ( bInformaQtdLinhas == true )
+            {
+                CBuscaDadosLinha::obterQtdEstadoLinhaCarregaTI(oUsu.getIdPessoaDePara(),qtLinhasAtivas,qtLinhasInativas);
+    
+                pXmlG->addItem(XML_OUT_QTDLINHAATIVA, qtLinhasAtivas);
+                pXmlG->addItem(XML_OUT_QTDLINHAINATIVA, qtLinhasInativas);
+                pXmlG->addItem(XML_OUT_QTDLINHAS, qtLinhasAtivas+qtLinhasInativas);
+            }
+            ULOG("local9");
+
+            pXmlG->createTag(XML_OUT_NO_DADOS);
+                //CUsuario oUsu(pcParam2);
+                pXmlG->createTag(XML_OUT_NO_USUARIO);
+                    pXmlG->addItem(XML_OUT_IDPESSOA, oUsu.getIdPessoa());
+                    pXmlG->addItem(XML_OUT_NMUSUARIO, oUsu.getNmPessoa());
+                    pXmlG->addItem(XML_OUT_IDDOCUM, oUsu.getIdDocumento());
+                    pXmlG->addItem(XML_OUT_TPDOCUM, oUsu.getSgTipoDocumento());
+                    pXmlG->addItem(XML_OUT_NRDOCUM, oUsu.getNrDocumento());
+                    pXmlG->addItem(XML_OUT_TPCONTATO, oUsu.getDsTipoComunicacao());
+                    pXmlG->addItem(XML_OUT_NRCONTATO, oUsu.getDsContato());
+                    pXmlG->addItem(XML_OUT_VLRENTAB, oUsu.getVlRentabilidade());
+                    pXmlG->addItem(XML_OUT_DSCARGO, oUsu.getDsCargoContato());
+                pXmlG->closeTag();
+
+                oPSL = CPlanoServicoLinha::RecuperarTodosServico(&iNroReg, pcParam2);
+                if ( oPSL )
+                {
+                    for (iAux=0; iAux < iNroReg; iAux++) 
+                    {
+                        pXmlG->createTag(XML_OUT_NO_SERVICO);
+                            pXmlG->addItem(XML_OUT_IDSERVICO, oPSL[iAux].getIdServicoLinha());
+                            pXmlG->addItem(XML_OUT_INPLANO, oPSL[iAux].getInPlano());
+                            pXmlG->addItem(XML_OUT_IDPACOTE, "");
+                            pXmlG->addItem(XML_OUT_NMSERVICO, oPSL[iAux].getNmServico());
+                            pXmlG->addItem(XML_OUT_DTEXPIRA, oPSL[iAux].getDataFinal());
+                        pXmlG->closeTag();
+                    }
+                }
+
+                pXmlG->addItem(XML_OUT_INDIVULGANUMERO, oUsu.getInDivulgacaoNrLinha());
+                pXmlG->addItem(XML_OUT_DATAULTIMAALT, oUsu.getDtUltimaAlteracao());
+
+
+                ULOG("local10");
+
+                switch ( idTipoLinha )
+				{
+					case 1: case 2: case 4: case 5: case 6: case 7:
+					{
+						try
+						{
+
+
+							xmlDetalheLinha.addItem("ProxyLinha", pcNrLinha);
+							xmlDetalheLinha.addItem("ProxyOperacao", "getDetalheLinha");
+							xmlDetalheLinha.addItem("idlinhasistemaorigem", pcIdLinSisOrig);
+							//Estava faltando esta TAG, que eh obrigatoria, agora esta fixa mas depois tem que colocar no global.h
+							xmlDetalheLinha.addItem("usuario", "FO");
+
+							remoteService = new TuxRemoteService();
+							inputMessage = new TuxMessage();
+
+							inputMessage->setUser(getUser());
+							inputMessage->setService("LupaLinhaIni");
+							inputMessage->setMessageBody(&xmlDetalheLinha);
+
+							// Repassa configuracoes ao manipulador do serviço remoto e invoca o servico.
+							// mudança realizada para contemplar o desmembramento do TuxProxy
+							if(idTipoLinha==1 || idTipoLinha==5)
+							{
+
+								remoteService->setServiceName("DTUXATLYSBE");
+							}
+
+							else if(idTipoLinha==2 || idTipoLinha==6 || idTipoLinha==4 || idTipoLinha==7)
+							{
+
+								remoteService->setServiceName("DTUXNGINBE");
+							}
+
+							//end mudança de servidor
+							remoteService->setInputMessage(inputMessage);
+
+							if(remoteService->remoteCall() != TUXFWRET_OK)
+							{
+
+								//throw new TuxBasicSvcException("24E0999","Erro de comunicação com sistema de pontos");
+								pXmlG->addItem("erro", "Detalhe linha fora");
+							}
+
+							else
+							{
+
+								if(remoteService->getOutputMessage()->getStatusCode() != NULL && strlen(remoteService->getOutputMessage()->getStatusCode()) >= 3 && remoteService->getOutputMessage()->getStatusCode()[2] !='I')
+								{
+
+									pXmlG->addItem("erro", "Detalhe linha fora");
+									//throw new TuxBasicSvcException(inputMessage->getStatusCode(), inputMessage->getStatusText());
+								}
+								else
+								{
+
+
+
+									pParam = remoteService->getOutputMessage()->getMessageBody();
+
+									pParser =  new XercesDOMParser;
+									pMemBuf =  new MemBufInputSource( (const XMLByte*)pParam, strlen(pParam), pMemBufId);
+									pParam  = NULL;
+
+									pParser->parse(*pMemBuf);
+									DOMNode* pDoc = pParser->getDocument();
+
+									pParam = walkTree(pDoc, "modelo", 0);
+									if ( STRLENNULL( pParam ) <= 0 )
+										pXmlG->addItem("modelo", " ");
+									else
+
+										pXmlG->addItem("modelo", pParam );
+
+									if (pParam)
+										XMLString::release(&pParam);
+
+									pParam = walkTree(pDoc, "descricao", 0);
+									if ( STRLENNULL( pParam ) <= 0 )
+										pXmlG->addItem("descricao", " ");
+									else
+
+										pXmlG->addItem("descricao", pParam);
+
+									if (pParam)
+										XMLString::release(&pParam);
+
+									pParam = walkTree(pDoc, "marca", 0);
+									if ( STRLENNULL( pParam ) <= 0 )
+										pXmlG->addItem("marca", " ");
+									else
+
+										pXmlG->addItem("marca", pParam);
+
+									if (pParam)
+										XMLString::release(&pParam);
+
+									pParam = walkTree(pDoc, "esn", 0);
+									if ( STRLENNULL( pParam ) <= 0 )
+										pXmlG->addItem("esn", " ");
+									else
+
+										pXmlG->addItem("esn", pParam);
+
+									if (pParam)
+										XMLString::release(&pParam);
+
+									pParam = walkTree(pDoc, "dsTecnologia", 0);
+									if ( STRLENNULL( pParam ) <= 0 )
+										pXmlG->addItem("dsTecnologia", " ");
+									else
+
+										pXmlG->addItem("dsTecnologia", pParam);
+
+									if (pParam)
+										XMLString::release(&pParam);
+
+									pParam = walkTree(pDoc, "dsMultaContrato", 0);
+									if ( STRLENNULL( pParam ) <= 0 )
+										pXmlG->addItem("dsMultaContrato", " ");
+									else
+
+										pXmlG->addItem("dsMultaContrato", pParam);
+
+									if (pParam)
+										XMLString::release(&pParam);
+
+									pParam = walkTree(pDoc, "ContratoFidelizacao", 0);
+									if ( STRLENNULL( pParam ) <= 0 )
+										pXmlG->addItem("ContratoFidelizacao", " ");
+									else
+
+										pXmlG->addItem("ContratoFidelizacao", pParam);
+
+									if( pParam )
+										XMLString::release(&pParam);
+
+									delete pParser;
+									delete pMemBuf;
+								}
+							}
+
+
+							delete remoteService;
+							delete inputMessage;
+
+							ULOG("Inicio de getFidelizacao");
+							XMLGen oEntrada;
+							oEntrada.addItem("ProxyLinha","");
+							oEntrada.addItem("ProxyOperacao","getFidelizacao");
+							ULOG("pcIdLinSisOrig[%s]", pcIdLinSisOrig);
+							oEntrada.addItem("idlinhasistemaorigem", pcIdLinSisOrig);
+
+							remoteServiceFidelizacao = new TuxRemoteService();
+							inputMessageFidelizacao = new TuxMessage();
+							inputMessageFidelizacao->setUser(getUser());
+							inputMessageFidelizacao->setService("DTuxProxyBE");
+							inputMessageFidelizacao->setMessageBody(&oEntrada);
+
+							ULOG("local1");
+							remoteServiceFidelizacao->setServiceName("DTuxProxyBE");
+							remoteServiceFidelizacao->setInputMessage(inputMessageFidelizacao);
+							ULOG("local1.1");
+							if(remoteServiceFidelizacao->remoteCall() != TUXFWRET_OK)
+							{
+
+								ULOG("local2");
+								bFlagErro=true;
+							}
+
+							else
+							{
+
+								pStatusCode = remoteServiceFidelizacao->getOutputMessage()->getStatusCode();
+								ULOG("pStatusCode[%s]", pStatusCode ? pStatusCode : "...NULL...");
+								if(pStatusCode == NULL) {
+									bFlagErro=true;
+								}
+
+								else if((strlen(pStatusCode) >= 3) && (pStatusCode[2] =='I')) 
+								{
+
+									pRetorno = remoteServiceFidelizacao->getOutputMessage()->getMessageBody();
+									ULOG("pRetorno[%s]", pRetorno ? pRetorno : "...NULL...");
+			
+
+									pParserFidelizacao = new XercesDOMParser;
+									pMemBufFidelizacao = new MemBufInputSource((const XMLByte*)pRetorno, strlen(pRetorno), pMemBufId);
+			
+
+									if(pParserFidelizacao && pMemBufFidelizacao) 
+									{
+
+										ULOG("local A");
+										pParserFidelizacao->parse(*pMemBufFidelizacao);
+										pDocFidelizacao = pParserFidelizacao->getDocument();
+										ULOG("pDocFidelizacao(%p)", pDocFidelizacao);
+			
+
+										if((pParam=walkTree(pDocFidelizacao, "contrato", 0 )) == NULL)
+											pXmlG->addItem("dsTipoContrato", "Indisponivel");
+										else
+
+											pXmlG->addItem("dsTipoContrato", pParam);
+
+										if( pParam )
+											XMLString::release(&pParam);
+
+										if((pParam=walkTree(pDocFidelizacao, "dtFimContrato", 0 )) == NULL) 
+											pXmlG->addItem("dtTerminoContrato", "Indisponivel");
+										else
+
+											pXmlG->addItem("dtTerminoContrato", pParam);
+
+										if( pParam )
+											XMLString::release(&pParam);
+									}
+									else
+
+
+										bFlagErro=true;
+								}
+								else
+
+
+									bFlagErro=true;
+							}
+
+
+							if(bFlagErro == true)
+							{
+
+								pXmlG->addItem("dsTipoContrato", "Indisponivel");
+								pXmlG->addItem("dtTerminoContrato", "Indisponivel");
+							}
+
+							ULOG("localA");
+							if(pRetorno)
+								free(pRetorno);
+							if(pStatusCode)
+								free(pStatusCode);
+
+							if(remoteServiceFidelizacao)
+								delete remoteServiceFidelizacao;
+							if(inputMessageFidelizacao)
+								delete inputMessageFidelizacao;
+						}
+						catch(...)
+						{
+
+							ULOG("localB");
+
+							if(pRetorno)
+								free(pRetorno);
+							if(pStatusCode)
+								free(pStatusCode);
+
+							if(remoteServiceFidelizacao)
+								delete remoteServiceFidelizacao;
+							if(inputMessageFidelizacao)
+								delete inputMessageFidelizacao;
+
+							if(pParserFidelizacao)
+								delete pParserFidelizacao;
+							if(pMemBufFidelizacao)
+								delete pMemBufFidelizacao;
+
+							if ( NULL != remoteService )
+							{
+								delete remoteService;							
+							}
+							
+							if ( NULL != inputMessage )
+							{
+								delete inputMessage;
+							}
+
+							if ( NULL != pParser )
+							{
+								delete pParser;							
+							}
+							
+							if ( NULL != pMemBuf )
+							{
+								delete pMemBuf;
+							}
+							
+							pXmlG->addItem("erro", "Detalhe linha fora");
+						}
+						break;
+					}
+					
+					default: /* LINHA INDIVIDUAL, LINHA PRIVATIVA */
+					{
+					}
+				}
+          
+            pXmlG->closeTag();
+            
+            //Mensagem indicando o total de pagina, eh um texto
+            pXmlG->addItem("totalPagina", cContadorPagina );
+            //Indica se eh ou nao a ultima pagina, se tem proxima eu envio 1
+            pXmlG->addItem("inProxima"  , iProximaPagina );
+
+        pXmlG->closeTag();
+
+        pParam = 0;
+
+        //Liberando memoria alocada
+        if( oEL )
+            free(oEL);
+        if( oTL )
+            free(oTL);
+        if( poBDL )
+            free(poBDL);
+        if( oPSL )
+            free(oPSL);
+    }
+    catch(...)
+    {
+        //Liberando memoria alocada
+        if( oEL )
+            free(oEL);
+        if( oTL )
+            free(oTL);
+        if( poBDL )
+            free(poBDL);
+        if( oPSL )
+            free(oPSL);
+
+        throw;  //repassando o erro para nucleo
+    }
+
+    ULOG_END( "implLupaLinhaIni::Execute()" );
+
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}
+
+
+
+/***************************************************************************************/
+void alltrim(char *pszString)
+{
+    l_trim(pszString);
+    r_trim(pszString);
+}
+
+/***************************************************************************************/
+void l_trim(char *pszString)
+{
+    register unsigned int iPos;
+    unsigned int iLen;
+    char *pszTmp, *pszAlocado;
+
+    iLen=strlen(pszString);
+
+    if((pszAlocado = (char *)malloc(iLen + LEN_EOS)) == NULL)
+        return; 
+
+    strcpy(pszAlocado, pszString);
+
+    pszTmp=pszAlocado;
+
+
+    for(iPos=0; iPos < iLen; iPos++)
+        if(pszString[iPos] == 0x20)
+            pszTmp++;
+        else
+            break;
+
+    strcpy(pszString, pszTmp);
+
+    free(pszAlocado);
+}
+
+/***************************************************************************************/
+void r_trim(char *pszString)
+{
+    register int iPos;
+
+    for(iPos=strlen(pszString)-1; iPos >= 0; iPos--)
+        if(pszString[iPos] == 0x20)
+            pszString[iPos] = 0x00;
+        else
+            break;
+}

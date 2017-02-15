@@ -1,0 +1,93 @@
+//
+// $Id: sel_excecao.pcpp,v 1.1 2009/07/31 15:34:02 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+int sel_excecao(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+   
+  EXEC SQL BEGIN DECLARE SECTION;
+  int     idCaracteristicaOfertaAceita;
+  int     idOfertaRealizada;
+  VARCHAR nrLinha[255];
+  VARCHAR nmLoginUsuario[255];
+  VARCHAR dataHora[255];
+  VARCHAR dsIntencao[255];
+  VARCHAR dsDestino[255];
+  VARCHAR nmOferta[255];
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  EXEC SQL WHENEVER NOT FOUND DO break;
+
+  try{
+    // Definicao dos cursores
+    EXEC SQL DECLARE crsOfExc CURSOR FOR
+     
+	 SELECT idCaracteristicaOfertaAceita, 
+			 nmOferta,
+			 nmLoginUsuario,
+			TO_CHAR(dtInclusao,'dd/mm/yyyy'),  
+			nrLinha, 
+			idOfertaRealizada, 
+			dsIntencao, 
+			dsDestino
+      FROM  retencao.ofertaRealizadaV01
+      WHERE  vlPropriedade = '1'
+	  AND   IDCARACTERISTICAOFERTA IN (SELECT IDCARACTERISTICAOFERTA
+	  							   	   FROM RETENCAO.CARACTERISTICAOFERTA
+									   WHERE SGCARACTERISTICAOFERTA='EX')
+	  AND ROWNUM <=100		
+	  ORDER BY dtInclusao DESC; 
+
+    EXEC SQL OPEN crsOfExc;
+
+    for(;;)
+	{
+      EXEC SQL 
+		fetch crsOfExc	into :idCaracteristicaOfertaAceita, 
+							 :nmOferta, 
+							 :nmLoginUsuario, 
+							 :dataHora, 
+							 :nrLinha, 
+							 :idOfertaRealizada, 
+							 :dsIntencao, 
+							 :dsDestino;
+    
+      endOraStr(nmOferta);
+      endOraStr(nmLoginUsuario);
+      endOraStr(dataHora);
+      endOraStr(nrLinha);
+      endOraStr(dsIntencao);
+      endOraStr(dsDestino);
+
+      /*ulog_int(idCaracteristicaOfertaAceita);
+      ulog_var(nmLoginUsuario);
+      ulog_var(dataHora);
+      ulog_var(nrLinha);
+      ulog_var(dsIntencao);
+      ulog_var(dsDestino);
+      ulog_int(idOfertaRealizada);
+      ulog_var(nmOferta);*/
+
+      xml->createTag("tns:OfertaExecaoVO");
+      xml->addItem("idCaracOfertaAceita",idCaracteristicaOfertaAceita);
+      xml->addItem("login",(char *)nmLoginUsuario.arr);
+      xml->addItem("dataHora",(char *)dataHora.arr);
+      xml->addItem("linha",(char *)nrLinha.arr);
+      xml->addItem("intencao",(char *)dsIntencao.arr);
+      xml->addItem("destino",(char *)dsDestino.arr);
+      xml->addItem("idOfertaAceita",idOfertaRealizada);
+      xml->addItem("nmOfertaAceita",(char *)nmOferta.arr);
+      xml->closeTag();
+    }
+  
+    EXEC SQL CLOSE crsOfExc;
+  }
+  catch(...)
+  {
+		throw;
+  }
+  
+  return 1;
+}

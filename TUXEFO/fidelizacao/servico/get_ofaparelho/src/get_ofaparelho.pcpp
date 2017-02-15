@@ -1,0 +1,504 @@
+//
+// $Id: get_ofaparelho.pcpp,v 1.1.2.1 2010/08/06 14:22:46 a5110706 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+//bool ValidaEstoqueGSM( int idMatrizAparelhoPrm, char * idLinhaTelefonicaPrm,int idtipopessoa );
+
+int get_ofaparelho(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  ULOG_START("get_ofaparelho()");
+  char parm[255];
+
+  int iMsgBloqueio=0;
+  char szVlAparelho[15];
+  char szMsgBloqueio[255];
+
+  memset(&szMsgBloqueio,0,sizeof(char[255]));
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  int	  iCtr=0;
+  int     idUfOperadora;
+  int     idUF;
+  int     idTipoPessoa;
+  VARCHAR sgTipoPessoa[5];
+  int     idSegmentacao;
+  int     idMatrizAparelho;
+  int     idAparelhoCor;
+  int	  idMarca;
+  VARCHAR nmMarca[255];
+  int	  idGrupo;
+  VARCHAR dsModelo[255];
+  VARCHAR nmCor[255];
+  VARCHAR CDSAPAPARELHO[255]; 
+  short i_CDSAPAPARELHO = -1;
+  double     vlAparelho;
+  VARCHAR dsManualURL[255];
+  int	  idUser=usuario;
+  varchar sgOferta[4];
+
+  int	  idTipoPagto;
+  VARCHAR dsTipoPagto[255];
+  //short   dsManualURLInd;
+
+  int	  idTipoContratoPJ;
+  VARCHAR dsTipoContratoPJ[255];
+
+  VARCHAR idLinhaTelefonica[65];
+  int idLinha = 0;
+  int	  iBloqueio=0; //Variavel de controle para 
+					   //bloqueio de oferta de aparelho por mais de 365 dias
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+ 
+ 
+ 
+  try{
+    //  Obtendo dados do xml
+    get_tag(parm,dnode,"idUfOperadora",0,0);
+    //idUF = atoi(parm);
+    idUfOperadora = atoi(parm);
+
+    get_tag(parm,dnode,"idTipoPessoa",0,0);
+	//idTipoPessoa=atoi(parm);
+	strToOra(sgTipoPessoa,parm);
+    
+    get_tag(parm,dnode,"idSegmentacao",0,0);
+    idSegmentacao = atoi(parm);
+
+	get_tag(parm,dnode,"idGrupo",0,0);
+    idGrupo = atoi(parm);
+
+	get_tag(parm,dnode,"inExcecao",0,0);
+	iCtr=atoi(parm);
+
+	get_tag(parm,dnode,"idLinhaTelefonica",0,0);
+    strToOra(idLinhaTelefonica,parm);
+
+	get_tag(parm,dnode,"sgOferta",0,0);
+    strToOra(sgOferta,parm);
+    
+	/*MPOG: TIAGO COSTA 06/08/2010
+	  Devido a unificacao do Atlys hoje os clientes possume linhas e outras regionais e neste caso a matriz
+	  esta sendo apresentada para a reginal do cliente e nao da linha.
+	  Nesta alteração sempre ira validar a UF DA LINHA e nao mais do cliente.
+	*/
+	exec sql
+	 select idufoperadora 
+        into :idUfOperadora
+        from apoio.arearegistro ar,
+             linha.linhabase lb,
+             linha.linhatelefonica lt
+        where lb.idlinhabase=lt.idlinhabase
+		and   lb.idarearegistro=ar.idarearegistro
+		and   lt.idlinhatelefonica=:idLinhaTelefonica;
+
+    // Definicao dos cursores
+    // idTipoPessoa == 0 -> fazer pesquisa restringindo apenas UF
+
+
+    EXEC SQL DECLARE crsApar_1 CURSOR FOR
+    SELECT idmatrizaparelho, dsmodelo, nmcor, vlaparelho, dsmanualurl, idmarca,
+           nmmarca, cdsapaparelho, idaparelhocor
+    FROM retencao.matrizaparelhov03
+    WHERE idufoperadora = :idUfOperadora
+    AND idtipopessoa = :idTipoPessoa;
+
+    EXEC SQL
+		select idTipoPessoa 
+		into :idTipoPessoa 
+		from apoio.tipopessoa
+		where sgTipoPessoa=:sgTipoPessoa
+		and rownum < 2;
+
+	ULOG_INT(idTipoPessoa);	
+	
+	/*
+	EXEC SQL
+	SELECT 
+	   idufoperadora 
+	INTO
+	   :idUfOperadora
+	FROM 
+	   customer.ufoperadora 
+	WHERE 
+	   iduf = :idUF;
+	*/
+	
+    if (iCtr==1)
+    {	
+	    //Foi criado a view para facilitar qualquer tipo de alteração nesta regra
+	    //uma vez que para TESTES sempre realizamos com a mesma linha.
+	    //OBS a view possui a regra de prazo (365 dias)
+	    EXEC SQL
+		    SELECT QUANTIDADE 
+		    INTO   :iBloqueio
+		    FROM   RETENCAO.BLOQUEIOOFERTAAPARELHOV01
+		    WHERE IDLINHATELEFONICA= :idLinhaTelefonica;
+
+        //capturando o idTipoPessoa pelo sgTipoPessoa
+
+
+	    if(!iBloqueio)
+	    {
+		    EXEC SQL WHENEVER NOT FOUND DO break;
+	        EXEC SQL DECLARE crsApar_0 CURSOR FOR
+			SELECT   idaparelho, idaparelhocor, dsmodelo, nmcor, vlaparelho,
+			         dsmanualurl, idmarca, nmmarca, cdsapaparelho
+			    FROM retencao.matrizaparelhov01
+			   WHERE idufoperadora = :idUfOperadora
+			     AND idtipopessoa = :idTipoPessoa
+			     AND idsegmentacao = :idSegmentacao
+			     AND idgrupo = :idGrupo
+			ORDER BY vlaparelho;
+    
+	    ULOG("Abrindo cursor para oferta normal");
+	    EXEC SQL OPEN crsApar_0;
+
+		    for(;;)
+		    {
+			    ULOG("EXEC SQL FETCH para oferta normal");
+
+			    EXEC SQL FETCH crsApar_0 INTO	  :idMatrizAparelho,
+											      :idAparelhoCor,
+											      :dsModelo, 
+											      :nmCor, 
+											      :vlAparelho,
+											      :dsManualURL,
+											      :idMarca,
+											      :nmMarca,
+											      :CDSAPAPARELHO:i_CDSAPAPARELHO;
+				
+			    endOraStr(dsModelo);
+			    endOraStr(nmCor);
+			    endOraStr(nmMarca);
+			    endOraStr(dsManualURL);
+			    endOraStr(CDSAPAPARELHO);
+				sprintf(szVlAparelho,"%6.2f",vlAparelho);
+
+                ULOG( "idMatrizAparelho [%d]",idMatrizAparelho );
+                ULOG( "idAparelhoCor [%d]",idAparelhoCor );
+                ULOG( "dsModelo [%s]",(char*)dsModelo.arr );
+                ULOG( "nmCor [%s]",(char*)nmCor.arr );
+                
+                
+                //idLinha = atoi((char *)idLinhaTelefonica.arr);
+                // if ( ValidaEstoqueGSM( idMatrizAparelho,(char *)idLinhaTelefonica.arr,idTipoPessoa) == false )
+                // {
+                   
+				   // ULOG(">>> NAO EXISTE ESTOQUE GSM PARA O APARELHO SELECIONADO...");
+					// continue;
+                // }
+				    
+
+
+	  			    
+				    
+			      xml->createTag("tns:itemOfertaAparelhoVO");
+				      xml->addItem("idMatrizAparelho",idMatrizAparelho);
+				      xml->addItem("idAparelhoCor",idAparelhoCor);//SAP
+				      xml->addItem("modelo",(char *)dsModelo.arr);
+				      xml->addItem("cor",(char *)nmCor.arr);
+				      xml->addItem("preco",szVlAparelho);
+				      xml->addItem("dsManual",(char *)dsManualURL.arr);
+				      xml->addItem("idMarca",idMarca);
+				      xml->addItem("nmMarca",(char *)nmMarca.arr);
+				      xml->addItem("multa","");
+				      xml->addItem("SAP",(char *)CDSAPAPARELHO.arr);
+			    xml->closeTag();
+
+		    
+		    }
+		    
+		    EXEC SQL CLOSE crsApar_0;
+		    
+
+			    xml->createTag("tns:fidelizacaoListaGeralVO");
+		    
+			    EXEC SQL DECLARE crsFrmPagto CURSOR FOR
+			    SELECT idtipopagamentoaparelho,
+				       dstipopagamentoaparelho
+			    FROM retencao.tipopagamentoaparelho
+			    WHERE sgtipopessoa=:sgTipoPessoa
+				AND	  SGOFERTAAPARELHO =:sgOferta
+			    AND  indoacao!=1;
+				
+				/* SELECT idtipopagamentoaparelho,
+				       dstipopagamentoaparelho
+			    FROM retencao.tipopagamentoaparelho
+			    WHERE sgtipopagamentoaparelho!='RD';*/
+
+
+
+
+			    EXEC SQL OPEN crsFrmPagto;
+
+			    for(;;)
+			    {
+				    EXEC SQL FETCH crsFrmPagto INTO	:idTipoPagto,
+												    :dsTipoPagto;
+			    
+					    endOraStr(dsTipoPagto);
+
+				    xml->createTag("tns:itemListaVO");
+				      xml->addItem("id",idTipoPagto);
+				      xml->addItem("descricao",(char *)dsTipoPagto.arr);
+				    xml->closeTag(); //itemListaVO
+			    }
+			    
+			    EXEC SQL CLOSE crsFrmPagto;
+		    
+			    
+
+
+		    xml->closeTag();//itemOfertaAparelhoVO
+
+	    }//	if(!iBloqueio)
+	    else
+	    {
+		     iMsgBloqueio=1;
+		     sprintf(szMsgBloqueio,"Cliente já possui Subsídio");
+		    
+	    }
+	}
+    else
+	{
+    
+   	
+	    ULOG("Abrir Cursor para oferta de excecao");
+	    EXEC SQL OPEN crsApar_1;
+
+        for(;;)
+        {
+            i_CDSAPAPARELHO = -1;
+            ULOG("EXEC SQL FETCH para oferta excecao");	
+            EXEC SQL FETCH crsApar_1 INTO :idMatrizAparelho,
+                                              :dsModelo, 
+                                              :nmCor, 
+                                              :vlAparelho,
+                                              :dsManualURL,
+                                              :idMarca,
+                                              :nmMarca,
+                                              :CDSAPAPARELHO:i_CDSAPAPARELHO,
+                                              :idAparelhoCor;
+                    
+                    
+                    endOraStr(dsModelo);
+                    endOraStr(nmCor);
+                    endOraStr(nmMarca);
+                    endOraStr(dsManualURL);
+                    endOraStr(CDSAPAPARELHO);
+
+                      sprintf(szVlAparelho,"%6.2f",vlAparelho);
+                
+                        
+                  xml->createTag("tns:itemOfertaAparelhoVO");
+                      xml->addItem("idMatrizAparelho",idMatrizAparelho);
+                      xml->addItem("idAparelhoCor",idAparelhoCor);//SAP
+                      xml->addItem("modelo",(char *)dsModelo.arr);
+                      xml->addItem("cor",(char *)nmCor.arr);
+                      xml->addItem("preco",szVlAparelho);
+                      xml->addItem("dsManual",(char *)dsManualURL.arr);
+                      xml->addItem("idMarca",idMarca);
+                      xml->addItem("nmMarca",(char *)nmMarca.arr);
+                      xml->addItem("multa","");
+                      xml->addItem("SAP",(char *)CDSAPAPARELHO.arr);
+                  xml->closeTag();
+        }
+        EXEC SQL CLOSE crsApar_1;
+
+        xml->createTag("tns:fidelizacaoListaGeralVO");
+    
+        EXEC SQL DECLARE crsFrmPagto1 CURSOR FOR
+        SELECT idtipopagamentoaparelho,
+               dstipopagamentoaparelho
+        FROM retencao.tipopagamentoaparelho
+        WHERE sgtipopessoa=:sgTipoPessoa
+        AND	  SGOFERTAAPARELHO =:sgOferta;
+			    		
+
+
+        EXEC SQL OPEN crsFrmPagto1;
+
+        for(;;)
+        {
+            EXEC SQL FETCH crsFrmPagto1 INTO	:idTipoPagto,
+                                                :dsTipoPagto;
+        
+                endOraStr(dsTipoPagto);
+
+            xml->createTag("tns:itemListaVO");
+              xml->addItem("id",idTipoPagto);
+              xml->addItem("descricao",(char *)dsTipoPagto.arr);
+            xml->closeTag(); //itemListaVO
+        }
+        
+        EXEC SQL CLOSE crsFrmPagto1;
+    
+        xml->closeTag(); //fidelizacaoListaGeralVO
+
+		    
+	}//else
+
+
+	if(idTipoPessoa==2)
+	  {
+		 ULOG("idTipoPessoa==2");
+			xml->createTag("listaPrazoVigenciaVO");
+		    
+			    EXEC SQL DECLARE crsFrmContrato CURSOR FOR
+			    SELECT IDTIPOCONTRATOPJ,
+				       DSTIPOCONTRATOPJ
+			    FROM RETENCAO.TIPOCONTRATOPJ
+			    WHERE SGOFERTAAPARELHO =:sgOferta;	
+			    		
+
+
+			    EXEC SQL OPEN crsFrmContrato;
+
+			    for(;;)
+			    {
+				    EXEC SQL FETCH crsFrmContrato INTO	:idTipoContratoPJ,
+														:dsTipoContratoPJ;
+			    
+					    endOraStr(dsTipoContratoPJ);
+
+				    xml->createTag("tns:itemListaVO");
+				      xml->addItem("id",idTipoContratoPJ);
+				      xml->addItem("descricao",(char *)dsTipoContratoPJ.arr);
+				    xml->closeTag(); //itemListaVO
+			    }
+			    
+			    EXEC SQL CLOSE crsFrmContrato;
+		    
+			     xml->closeTag(); //fidelizacaoListaGeralVO
+
+	  }
+
+
+	xml->createTag("msgErro");
+		xml->addItem("codErro",iMsgBloqueio);
+		xml->addItem("dsErro",szMsgBloqueio);
+	xml->closeTag();
+
+  }
+  catch(...)
+  {
+	throw;
+  }
+
+  ULOG_END("get_ofaparelho()");
+  return 1;
+}
+
+
+
+
+// bool ValidaEstoqueGSM( int idMatrizAparelhoPrm, char * idLinhaTelefonicaPrm,int idtipopessoa )
+// {
+    // ULOG_START( "ValidaEstoqueGSM" );
+
+    // EXEC SQL BEGIN DECLARE SECTION;
+    
+        // int idMatrizAparelho = idMatrizAparelhoPrm;
+        // VARCHAR idLinhaTelefonica[65];
+        // int qtEstoque = 0;
+        // int idTipoAparelho = -1;
+        // int idAreaRegistro = -1;
+		// int idTipop=idtipopessoa;
+
+        // short i_qtEstoque = -1;
+        // short i_idTipoAparelho = -1;
+        // short i_idAreaRegistro = -1;
+
+    // EXEC SQL END DECLARE SECTION;
+
+    // strToOra(idLinhaTelefonica,idLinhaTelefonicaPrm);
+
+
+    // EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+	// EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    // ULOG( "Identificando idMatrizAparelho [%d], idLinhaTelefonica [%s]", 
+           // idMatrizAparelho,(char *)idLinhaTelefonica.arr );
+
+
+    // EXEC SQL
+        // SELECT 
+            // RA.IDTIPOAPARELHO
+        // INTO 
+            // :idTipoAparelho:i_idTipoAparelho
+        // FROM
+            // RETENCAO.APARELHO RA
+        // WHERE
+            // RA.IDAPARELHO = 
+            // ( SELECT MTAP.IDAPARELHO FROM RETENCAO.MATRIZAPARELHO MTAP WHERE MTAP.IDMATRIZAPARELHO = :idMatrizAparelho );
+
+    // ULOG( "Encontrou idTipoAparelho [%d]",idTipoAparelho );
+
+    // if ( idTipoAparelho == 1 )  // Aparelho Sem CHIP/CDMA
+    // {
+        // ULOG( ">>> Aparelho sem chip, irah disponibilizar na matriz de aparelhos" );
+        // ULOG_END( "ValidaEstoqueGSM" );
+        // return true;
+    // }
+
+    // EXEC SQL
+        // SELECT 
+            // LB.IDAREAREGISTRO
+        // INTO 
+            // :idAreaRegistro:i_idAreaRegistro
+        // FROM
+            // LINHA.LINHABASE LB
+        // WHERE
+            // LB.IDLINHABASE = 
+            // ( SELECT LT.IDLINHABASE FROM LINHA.LINHATELEFONICA LT WHERE LT.IDLINHATELEFONICA = :idLinhaTelefonica );
+
+    // ULOG( "Encontrou idAreaRegistro [%d]",idAreaRegistro );
+
+    // if ( idTipoAparelho == 2 )  // CHIP Avulso
+    // {
+        // EXEC SQL
+            // SELECT 
+                // RE.QTCHIPAVULSO
+            // INTO 
+                // :qtEstoque:i_qtEstoque
+            // FROM
+                // RETENCAO.ESTOQUECHIPSAP RE
+            // WHERE
+                // RE.IDESTOQUECHIP =(SELECT IDESTOQUECHIP FROM RETENCAO.ESTOQUECHIP
+								   // WHERE IDAREAREGISTRO = :idAreaRegistro)
+			// AND IDTIPOPESSOA=:idTipop;
+        // if ( qtEstoque > 0 )
+        // {
+            // ULOG( "Aparelho para Chip Avulso pode ser vendido, possui estoque" );
+            // return true;
+        // }
+    // }
+
+    // if ( idTipoAparelho == 3 )  // CHIP Pre-Programado
+    // {
+        // EXEC SQL
+            // SELECT 
+                // RE.QTCHIPPREPROG
+			// INTO 
+                // :qtEstoque:i_qtEstoque
+            // FROM
+                // RETENCAO.ESTOQUECHIPSAP RE
+            // WHERE
+                // RE.IDESTOQUECHIP =(SELECT IDESTOQUECHIP FROM RETENCAO.ESTOQUECHIP
+								   // WHERE IDAREAREGISTRO = :idAreaRegistro)
+			// AND IDTIPOPESSOA=:idTipop;
+        // if ( qtEstoque > 0 )
+        // {
+            // ULOG( "Aparelho para Chip Pre-Programado pode ser vendido, possui estoque" );
+            // return true;
+        // }
+    // }
+
+    // ULOG_END( "ValidaEstoqueGSM" );
+
+    // return false;
+// }

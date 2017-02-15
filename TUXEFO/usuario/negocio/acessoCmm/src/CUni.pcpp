@@ -1,0 +1,868 @@
+/*****************************************************************************
+ *
+ * Modulo:    CUni
+ * Arquivo:   CUni.cpp
+ * Proposito: Funcao de Negocios 
+ * Historico:
+ * Data        Autor                 Descricao
+ * ----------  --------------------  -----------------------------------------
+ * 18/05/2004  C_RECOliveira         Criacao
+ * 18/05/2004  C_EMartins            Criacao
+ *
+ ****************************************************************************/
+/**************************************************************************
+ * Notas:
+ *
+ **************************************************************************/
+
+//Definicao Global
+#define CUniCPP
+
+//Header
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+#include "CUni.h"
+#include "CSafePointer.h"
+
+char* CUni::RTrim(char *pszString)
+{
+    ULOG_START("CUni::RTrim()");	
+    int iLen;
+
+    iLen=strlen(pszString);
+
+    for(;;)
+    {
+        if(pszString[iLen-1] != ' ')
+            break;
+
+        iLen--;
+
+        if(iLen == 0)
+            break;
+    }
+    pszString[iLen] = 0x00;
+    ULOG_END("CUni::RTrim()");	
+	return pszString;
+}
+
+//Classe:
+int CUni::UniLista(DOMNode*dnode,XMLGen*xml_g)
+{
+	ULOG_START("CUni::UniLista()");	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	CSafePointer oSafePointer;
+	
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct Tstruct {
+			int idUnidade; 
+			char ccdUnidade[256];
+			char cnmUnidade[256];
+			int inDetalhe;
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidUnidade, scdUnidade, snmUnidade, sinDetalhe;
+		} tstructindicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct));
+		memset( &tstructindicator, 0, sizeof(Tstructindicator));
+	
+		sqlca.sqlcode=0;
+		
+		EXEC SQL 
+			DECLARE 
+				tsqlcursor1 CURSOR FOR
+			SELECT 
+				IDUNIDADE,
+				CDUNIDADE,
+				NMUNIDADE,
+				INDETALHE
+			FROM 
+				PAGINAUNI
+			WHERE 
+				IDUNIDADE > 0
+			ORDER BY
+				UPPER(NMUNIDADE);
+	
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		EXEC SQL OPEN tsqlcursor1;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CUni::UniLista()");	
+			return 4;
+		}
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;) {
+			EXEC SQL FETCH tsqlcursor1 INTO :tstruct:tstructindicator;
+			xml_g->createTag("UnidadeSimplVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			xml_g->addItem("idUnidade",tstruct.idUnidade);
+			xml_g->addItem("cdUnidade",RTrim(tstruct.ccdUnidade));
+			xml_g->addItem("nmUnidade",RTrim(tstruct.cnmUnidade));
+			xml_g->addItem("inDetalhe",tstruct.inDetalhe);
+			xml_g->closeTag();
+		}
+		EXEC SQL CLOSE tsqlcursor1;
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CUni::UniLista()");	
+	if(sqlca.sqlcode)
+		return 4;
+	else
+		return 0;
+
+//Tratamento de Exception
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CUni::UniEditar(DOMNode*dnode,XMLGen*xml_g,
+				    char* cLogUser)
+{
+	ULOG_START("CUni::UniEditar()");	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cLogUserOra = cLogUser;
+		int   iCont;
+
+		struct Tstruct {
+			int idUnidade; 
+			char ccdUnidade[256];
+			char cnmUnidade[256];
+			int inDetalhe;
+		} tstruct;
+
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct));
+	
+		if ( ( tstruct.idUnidade = atoi( oSafePointer.getTag( dnode, "idUnidade", 0 ) ) ) <= 0 ) 
+		{
+			ULOG_END("CUni::UniEditar()");	
+			return 1;
+		}
+	
+		strcpy(tstruct.ccdUnidade , oSafePointer.getTag(dnode,"cdUnidade",0) );
+		if ( strlen( tstruct.ccdUnidade ) == 0 )
+		{
+			ULOG_END("CUni::UniEditar()");	
+			return 2;
+		}
+	
+		strcpy(tstruct.cnmUnidade , oSafePointer.getTag(dnode,"nmUnidade",0) );
+		if ( strlen( tstruct.cnmUnidade ) == 0 )
+	    {
+			ULOG_END("CUni::UniEditar()");	
+			return 3;
+		}
+	
+		sqlca.sqlcode=0;
+	
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		EXEC SQL
+			SELECT
+				COUNT( IDUNIDADE )
+			INTO
+				:iCont
+			FROM
+				ACESSO.UNIDADE
+			WHERE
+				UPPER(CDUNIDADE) = UPPER( :tstruct.ccdUnidade )
+			AND
+				IDUNIDADE <> :tstruct.idUnidade;
+				
+		if( iCont > 0 )
+		{
+			ULOG_END("CUni::UniEditar()");	
+			return 5;
+		}
+	
+		EXEC SQL 
+			UPDATE
+				acesso.Unidade 
+			SET 
+				cdUnidade = :tstruct.ccdUnidade,
+	       		nmUnidade = :tstruct.cnmUnidade,
+				IDUSUARIOALTERACAO = :cLogUserOra, 
+				DTULTIMAALTERACAO  = SYSDATE
+			WHERE
+				idUnidade = :tstruct.idUnidade;
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CUni::UniEditar()");	
+	if(sqlca.sqlcode) 
+		return 4; 
+	else
+		return 0;
+
+//Tratamento de Exception
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CUni::UniListaPar(DOMNode*dnode,XMLGen*xml_g)
+{
+	ULOG_START("CUni::UniListaPar()");	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		struct Tstruct {
+			int idUnidade; 
+			char ccdUnidade[256];
+			char cnmUnidade[256];
+			int inDetalhe;
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidUnidade, scdUnidade, snmUnidade, sinDetalhe;
+		} tstructindicator;
+
+		char vcLike[256];
+
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct));
+		memset( &tstructindicator, 0, sizeof(Tstructindicator));
+	
+		strcpy( tstruct.ccdUnidade, oSafePointer.getTag(dnode,"nmURL",0) );
+		if ( ( tstruct.ccdUnidade ) == NULL )
+			strcpy( tstruct.ccdUnidade, "" );
+	
+		char *pc = oSafePointer.getTag(dnode,"nmUnidade",0);
+		if ( pc == NULL ) {
+			strcpy( tstruct.cnmUnidade, "" );
+		} else {
+			strcpy( tstruct.cnmUnidade, pc);
+		}
+		
+		sqlca.sqlcode=0;
+		
+		if ( strlen(tstruct.cnmUnidade)==0 ) {
+			UniLista(dnode,xml_g);
+		} else {
+			sprintf( vcLike, "%s%s", tstruct.cnmUnidade, "%" ); 
+		
+			EXEC SQL 
+				DECLARE 
+					tsqlcursor3 CURSOR FOR
+				SELECT 
+					idUnidade, 
+					cdUnidade, 
+					nmUnidade 
+				FROM 
+					acesso.Unidade
+				WHERE 
+					nmUnidade LIKE :vcLike
+				ORDER BY 
+					UPPER(nmUnidade);
+	
+			EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+			EXEC SQL OPEN tsqlcursor3;
+	
+			if(sqlca.sqlcode)
+			{
+				ULOG_END("CUni::UniListaPar()");	
+				return 4;
+			}
+			else
+			{
+				EXEC SQL WHENEVER NOT FOUND DO break;
+				xml_g->createTag("UnidadesDisponiveisVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+				for(;;) {
+					EXEC SQL FETCH tsqlcursor3 INTO :tstruct INDICATOR :tstructindicator;
+					xml_g->createTag("UnidadesExistentesUsuarioVO");
+					xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+					xml_g->addItem("idUnidade",tstruct.idUnidade);
+					xml_g->addItem("nmUnidade",RTrim(tstruct.cnmUnidade));
+					xml_g->closeTag();
+				}
+				EXEC SQL CLOSE tsqlcursor3;
+				xml_g->closeTag();
+			}
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CUni::UniListaPar()");	
+	return 0;
+
+//Tratamento de Exception
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CUni::UniInserir(DOMNode*dnode,XMLGen*xml_g,
+				     char* cLogUser)
+{
+	ULOG_START("CUni::UniInserir()");	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cLogUserOra = cLogUser;
+		char cidPagina[256];
+		int  iidPaginaUnidade;
+		int  iCont;
+		struct Tstruct {
+			int idUnidade; 
+			char ccdUnidade[256];
+			char cnmUnidade[256];
+			int inDetalhe;
+		} tstruct;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct));
+	
+		strcpy(tstruct.ccdUnidade , oSafePointer.getTag(dnode,"cdUnidade",0) );
+		if ( strlen( tstruct.ccdUnidade ) == 0 )
+		{
+			ULOG_END("CUni::UniInserir()");	
+			return -1;
+		}
+	
+		strcpy(tstruct.cnmUnidade , oSafePointer.getTag(dnode,"nmUnidade",0) );
+		if ( strlen( tstruct.cnmUnidade ) == 0 )
+		{
+			ULOG_END("CUni::UniInserir()");	
+			return -2;
+		}
+	
+		strcpy(cidPagina , oSafePointer.getTag(dnode,"idPagina",0) );
+		if ( strlen( cidPagina ) == 0 )
+		{
+			ULOG_END("CUni::UniInserir()");	
+			return -3;
+		}
+	
+		sqlca.sqlcode=0;
+	
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+		EXEC SQL
+			SELECT
+				COUNT( IDUNIDADE )
+			INTO
+				:iCont
+			FROM
+				ACESSO.UNIDADE
+			WHERE
+				UPPER(CDUNIDADE) = UPPER( :tstruct.ccdUnidade );
+				
+		if( iCont > 0 )
+		{
+			ULOG_END("CUni::UniInserir()");	
+			return -5;
+		}
+	
+		//Recupera o id de unidade
+		EXEC SQL
+			SELECT acesso.Unidadesq.nextval
+			INTO :tstruct.idUnidade
+			FROM dual;
+	
+		//insere unidade
+		EXEC SQL 
+			INSERT INTO ACESSO.UNIDADE 
+			  (IDUNIDADE, 
+			   CDUNIDADE, 
+			   NMUNIDADE, 
+			   IDUSUARIOALTERACAO, 
+			   DTULTIMAALTERACAO)
+			VALUES
+			  (:tstruct.idUnidade, 
+			   TRIM(SUBSTR(:tstruct.ccdUnidade,1,255)), 
+			   TRIM(SUBSTR(:tstruct.cnmUnidade,1,255)),
+			   :cLogUserOra,
+			   SYSDATE);
+	
+		//Se nao deu erro, insere relacao entre unidade e pagina
+		if(!sqlca.sqlcode)
+		{
+			//Recupera o id de paginaunidade
+			EXEC SQL
+				SELECT acesso.PaginaUnidadesq.nextval
+				INTO :iidPaginaUnidade
+				FROM dual;
+	
+			//insere paginaunidade
+			EXEC SQL 
+				INSERT INTO acesso.PaginaUnidade 
+				  (IDPAGINAUNIDADE, 
+				   IDUNIDADE, 
+				   IDPAGINA, IDUSUARIOALTERACAO, DTULTIMAALTERACAO)
+				VALUES
+				  ( :iidPaginaUnidade,
+				    :tstruct.idUnidade,
+					:cidPagina,
+					:cLogUserOra,
+					SYSDATE);
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CUni::UniInserir()");	
+	if(sqlca.sqlcode)
+		return -4; 
+	else { 
+		return tstruct.idUnidade;
+	}
+
+
+//Tratamento de Exception
+ErrorF:
+	if( sqlca.sqlcode == -1 )
+	{
+		ULOG_END("CUni::UniInserir()");	
+		return -5;
+	}
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CUni::UniRemover(DOMNode*dnode, XMLGen*xml_g,
+				     char* cLogUser)
+{
+	ULOG_START("CUni::UniRemover()");	
+	// Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	// Declarar Objetos
+	CSafePointer oSafePointer;
+
+	// Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		int  iCont;
+		char *cidUnidade;
+		char *cidPagina;
+	EXEC SQL END DECLARE SECTION;
+
+	//Se o ID nao for numerico entao retornar com codigo de erro
+	cidUnidade = oSafePointer.getTag(dnode,"idUnidade",0);
+	if ( strlennull( cidUnidade ) <= 0 )
+	{
+		ULOG_END("CUni::UniRemover()");	
+		return 1;
+	}
+	cidPagina = oSafePointer.getTag(dnode,"idPagina",0);
+	if ( strlennull( cidPagina ) <= 0 )
+	{
+		ULOG_END("CUni::UniRemover()");	
+		return 2;
+	}
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	sqlca.sqlcode = 0;
+
+	//Verifica se existe alguma relacao com perfil
+	EXEC SQL
+		SELECT
+			COUNT(IDUNIDADE)
+		INTO
+			:iCont
+		FROM
+			ACESSO.ROLEUNIDADE
+		WHERE
+			IDUNIDADE = :cidUnidade;
+
+	if( iCont > 0 )
+	{
+		ULOG_END("CUni::UniRemover()");	
+		return 3;
+	}
+
+	//Verifica se existe alguma relacao com grupamento
+	EXEC SQL
+		SELECT
+			COUNT(IDUNIDADE)
+		INTO
+			:iCont
+		FROM
+			ACESSO.GRUPAMENTOUNIDADE
+		WHERE
+			IDUNIDADE = :cidUnidade;
+
+	if( iCont > 0 )
+	{
+		ULOG_END("CUni::UniRemover()");	
+		return 4;
+	}
+
+	//Deleta as unidades de  uma pagina especificamente
+	EXEC SQL
+		DELETE FROM 
+			ACESSO.PAGINAUNIDADE 
+		WHERE 
+			IDUNIDADE = :cidUnidade 
+		AND
+			IDPAGINA = :cidPagina;
+
+	EXEC SQL
+		DELETE FROM 
+			ACESSO.UNIDADE 
+		WHERE 
+			IDUNIDADE = :cidUnidade;
+
+	ULOG_END("CUni::UniRemover()");	
+	return 0;//Sucesso
+
+// Tratamento de Exception
+ErrorF:
+	
+	if( sqlca.sqlcode == -2292 )
+	{
+		ULOG_END("CUni::UniRemover()");	
+		return 5;
+	}
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+long CUni::UniListaId(DOMNode*dnode, XMLGen*xml_g)
+{
+	ULOG_START("CUni::UniListaId()");	
+	ULOG_END("CUni::UniListaId()");	
+	return UniListaIdUni(dnode, xml_g, NULL);
+}
+
+long CUni::UniListaIdUni(DOMNode*dnode, XMLGen*xml_g, char* cidUni)
+{
+	ULOG_START("CUni::UniListaIdUni()");	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		int  iRegistros = 0;		
+		int  iidSistema = 0;
+		int  iidSubSistema = 0;
+		int  iidPagina = 0;
+		int  iCont = 0;
+		char cidSistema[256];
+		char cidSubSistema[256];
+		char cidPagina[256];
+		char cidUnidade[256];
+		char* cnmUnidade;
+		char* ccdUnidade;
+		char cnmUnidadeLike[256];
+		char ccdUnidadeLike[256];
+		struct Tstruct {
+			int  idSistema;
+			char cnmSistema[256];
+			int  idSubSistema;
+			char cnmSubSistema[256];
+			int  idPagina;
+			char cnmPagina[256];
+			int  idUnidade; 
+			char ccdUnidade[256];
+			char cnmUnidade[256];
+			int inDetalhe;
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidsistema, 
+				  snmsistema, 
+				  sidsubsistema, 
+				  snmsubsistema, 
+				  sidpagina, 
+				  snmpagina, 
+				  sidUnidade, 
+				  scdUnidade, 
+				  snmUnidade, 
+				  sinDetalhe;
+		} tstructindicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memset( &tstruct, 0, sizeof(Tstruct));
+	memset( &tstructindicator, 0, sizeof(Tstructindicator));
+
+	strcpy( cidSistema, oSafePointer.getTag( dnode, "idSistema", 0 ) );
+	strcpy( cidSubSistema, oSafePointer.getTag( dnode, "idSubSistema", 0 ) );
+	strcpy( cidPagina, oSafePointer.getTag( dnode, "idPagina", 0 ) );
+	if( cidUni == NULL )
+		strcpy( cidUnidade, oSafePointer.getTag( dnode, "idUnidade", 0 ) );
+	else
+		strcpy( cidUnidade, cidUni );
+	cnmUnidade = oSafePointer.getTag( dnode, "nmUnidade", 0 );
+	ccdUnidade = oSafePointer.getTag( dnode, "cdUnidade", 0 );
+
+	if( strlen( cidSistema ) <= 0 )
+		strcpy( cidSistema, "-1" );
+
+	if( strlen( cidSubSistema ) <= 0 )
+		strcpy( cidSubSistema, "-1" );
+
+	if( strlen( cidPagina ) <= 0 )
+		strcpy( cidPagina, "-1" );
+
+	
+	if( strlen( cidUnidade ) <= 0 )
+		strcpy( cidUnidade, "-1" );
+
+	if( strlen( cnmUnidade ) <= 0 )
+		strcpy( cnmUnidadeLike, "-1" );
+	else
+		sprintf( cnmUnidadeLike, "%%%s%%", cnmUnidade );
+
+	if( strlen( ccdUnidade ) <= 0 )
+		strcpy( ccdUnidadeLike, "-1" );
+	else
+		sprintf( ccdUnidadeLike, "%%%s%%", ccdUnidade );
+
+	sqlca.sqlcode=0;
+
+	EXEC SQL 
+		DECLARE 
+			tcursor1 CURSOR FOR
+          SELECT 
+        	    SUBSISTEMA.IDSISTEMA,
+        	    SISTEMA.NMSISTEMAOPERACIONAL,
+        	    SUBSISTEMA.IDSUBSISTEMA,
+        	    SUBSISTEMA.NMSUBSISTEMA,
+        	    PAGINAUNIDADE.IDPAGINA,
+        	    PAGINA.NMPAGINA,
+        	    PAGINAUNIDADE.IDUNIDADE, 
+        	    UNIDADE.CDUNIDADE, 
+        	    UNIDADE.NMUNIDADE, 
+        	    UNIDADE.INDETALHE
+           FROM ACESSO.SISTEMA SISTEMA,
+               ACESSO.SUBSISTEMA SUBSISTEMA,
+               ACESSO.PAGINA PAGINA,
+               ACESSO.UNIDADE UNIDADE,
+               ACESSO.PAGINAUNIDADE PAGINAUNIDADE
+         WHERE PAGINAUNIDADE.IDPAGINA = PAGINA.IDPAGINA
+           AND PAGINAUNIDADE.IDUNIDADE = UNIDADE.IDUNIDADE
+           AND PAGINA.IDSUBSISTEMA = SUBSISTEMA.IDSUBSISTEMA
+           AND SUBSISTEMA.IDSISTEMA = SISTEMA.IDSISTEMA
+           AND (SUBSISTEMA.IDSISTEMA = :cidSistema OR :cidSistema = '-1') 
+        		AND (SUBSISTEMA.IDSUBSISTEMA = :cidSubSistema OR :cidSubSistema = '-1') 
+        		AND (PAGINAUNIDADE.IDPAGINA = :cidPagina OR :cidPagina = '-1') 
+        		AND (PAGINAUNIDADE.IDUNIDADE = :cidUnidade OR :cidUnidade = '-1') 
+        		AND (UPPER(UNIDADE.NMUNIDADE) LIKE UPPER(:cnmUnidadeLike) OR :cnmUnidadeLike = '-1') 
+        		AND (UPPER(UNIDADE.CDUNIDADE) LIKE UPPER(:ccdUnidadeLike) OR :ccdUnidadeLike = '-1')
+        		ORDER BY 
+        			UPPER(SISTEMA.NMSISTEMAOPERACIONAL), UPPER(SUBSISTEMA.NMSUBSISTEMA), UPPER(PAGINA.NMPAGINA), UPPER(UNIDADE.NMUNIDADE);
+
+/*
+		SELECT 
+			IDSISTEMA,
+		    NMSISTEMAOPERACIONAL,
+		    IDSUBSISTEMA,
+			NMSUBSISTEMA,
+			IDPAGINA,
+			NMPAGINA,
+		    IDUNIDADE, 
+		    CDUNIDADE, 
+			NMUNIDADE, 
+			INDETALHE
+		FROM 
+			ACESSO.PAGINAUNIDADEbezeroum PAGINAUNIDADE
+		WHERE 
+			(IDSISTEMA = :cidSistema OR :cidSistema = '-1') 
+		AND (IDSUBSISTEMA = :cidSubSistema OR :cidSubSistema = '-1') 
+		AND (IDPAGINA = :cidPagina OR :cidPagina = '-1') 
+		AND (IDUNIDADE = :cidUnidade OR :cidUnidade = '-1') 
+		AND (UPPER(NMUNIDADE) LIKE UPPER(:cnmUnidadeLike) OR :cnmUnidadeLike = '-1') 
+		AND (UPPER(CDUNIDADE) LIKE UPPER(:ccdUnidadeLike) OR :ccdUnidadeLike = '-1')
+		ORDER BY 
+			UPPER(NMSISTEMAOPERACIONAL), UPPER(NMSUBSISTEMA), UPPER(NMPAGINA), UPPER(NMUNIDADE);
+
+*/
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	EXEC SQL OPEN tcursor1;
+
+	if(sqlca.sqlcode)
+	{
+		ULOG_END("CUni::UniListaIdUni()");	
+		return 1;
+	}
+
+	for(;;)
+	{
+		EXEC SQL FETCH tcursor1 INTO :tstruct:tstructindicator;
+		iRegistros++;
+		if( iidSistema != tstruct.idSistema ) 
+		{
+			if( iidSistema != 0 )
+			{
+				xml_g->closeTag();
+				iCont--;
+			}
+			if( iidSubSistema != 0 )
+			{
+				xml_g->closeTag();
+				iCont--;
+			}
+			if( iidPagina != 0 )
+			{
+				xml_g->closeTag();
+				iCont--;
+			}
+			xml_g->createTag("ListaUnidadesPesquisaVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			xml_g->addItem("idSistema",tstruct.idSistema);
+			xml_g->addItem("dsSistema",RTrim( tstruct.cnmSistema) );
+			iidSistema = tstruct.idSistema;
+			iCont++;
+			xml_g->createTag("SubSistemaUnidadesVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			xml_g->addItem("idSubSistema",tstruct.idSubSistema);
+			xml_g->addItem("dsSubSistema",RTrim( tstruct.cnmSubSistema) );
+			iidSubSistema = tstruct.idSubSistema;
+			iCont++;
+			xml_g->createTag("PaginaUnidadesVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			xml_g->addItem("idPagina",tstruct.idPagina);
+			xml_g->addItem("nmPagina",RTrim( tstruct.cnmPagina) );
+			iidPagina = tstruct.idPagina;
+			iCont++;
+		}
+		else
+		{
+			if( iidSubSistema != tstruct.idSubSistema ) 
+			{
+				if( iidSubSistema != 0 )
+				{
+					xml_g->closeTag();
+					iCont--;
+				}
+				if( iidPagina != 0 )
+				{
+					xml_g->closeTag();
+					iCont--;
+				}
+				xml_g->createTag("SubSistemaUnidadesVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idSubSistema",tstruct.idSubSistema);
+				xml_g->addItem("dsSubSistema",RTrim( tstruct.cnmSubSistema) );
+				iidSubSistema = tstruct.idSubSistema;
+				iCont++;
+				xml_g->createTag("PaginaUnidadesVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idPagina",tstruct.idPagina);
+				xml_g->addItem("nmPagina",RTrim( tstruct.cnmPagina) );
+				iidPagina = tstruct.idPagina;
+				iCont++;
+			}
+			else
+			{
+				if( iidPagina != tstruct.idPagina ) 
+				{
+					if( iidPagina != 0 )
+					{
+						xml_g->closeTag();
+						iCont--;
+					}
+					xml_g->createTag("PaginaUnidadesVO");
+					xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+					xml_g->addItem("idPagina",tstruct.idPagina);
+					xml_g->addItem("nmPagina",RTrim( tstruct.cnmPagina) );
+					iidPagina = tstruct.idPagina;
+					iCont++;
+				}
+			}
+		}
+		
+		xml_g->createTag("UnidadeSimplVO");
+		xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+		xml_g->addItem("idUnidade",tstruct.idUnidade);
+		xml_g->addItem("cdUnidade",RTrim(tstruct.ccdUnidade));
+		xml_g->addItem("nmUnidade",RTrim(tstruct.cnmUnidade));
+		xml_g->addItem("inDetalhe",tstruct.inDetalhe);
+		xml_g->closeTag();
+	}
+	while( iCont )
+	{
+		iCont--;
+		xml_g->closeTag();
+	}
+
+	//Caso a pesquisa nao tenha retornado nada, monta um XML vazio
+	if( iRegistros <= 0 )
+	{	
+		xml_g->createTag("ListaUnidadesPesquisaVO");
+		xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+		xml_g->addItem("idSistema", "");
+		xml_g->addItem("dsSistema", "");
+
+		xml_g->createTag("SubSistemaUnidadesVO");
+		xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+		xml_g->addItem("idSubSistema", "");
+		xml_g->addItem("dsSubSistema", "");
+
+		xml_g->createTag("PaginaUnidadesVO");
+		xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+		xml_g->addItem("idPagina", "");
+		xml_g->addItem("nmPagina", "");
+
+		xml_g->createTag("UnidadeSimplVO");
+		xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+		xml_g->addItem("idUnidade", "");
+		xml_g->addItem("cdUnidade", "");
+		xml_g->addItem("nmUnidade", "");
+		xml_g->addItem("inDetalhe", "");
+	}
+	ULOG_END("CUni::UniListaIdUni()");	
+	return 0;
+
+//Tratamento de Exception
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+

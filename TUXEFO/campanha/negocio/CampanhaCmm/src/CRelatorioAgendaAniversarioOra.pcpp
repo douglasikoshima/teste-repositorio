@@ -1,0 +1,141 @@
+//////////////////////////////////////////////////////////////////////
+// CRelatorioAgAni.cpp: CRelatorioAgAni class.
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+EXEC SQL INCLUDE SQLCA;
+
+#include <SRelatorioCampanha.h>
+#include <SRelatorioAgendaAniversario.h>
+#include <CRelatorioAgendaAniversario.h>
+#include <CGetHeader.h>
+
+// Monta o relatório
+void CRelatorioAgAni::montaRelatorio( struct SRelatorioCampanha *sRelatorioCampanha,
+									  XMLGen *ptXML) 
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		varchar oszLinha[255+1];
+		varchar oszDtAniversario[255+1];
+		varchar oszAniversariante[255+1];
+		varchar oszOperador[255+1];
+		varchar oszDtAtendimento[255+1];
+		//varchar oszPeriodoDia[255+1];
+		short iLinha;
+		short iDtAniversario;
+		short iAniversariante;
+		short iOperador;
+		short iDtAtendimento;
+		varchar oszDtInicio[255+1];
+		varchar oszDtFim[255+1];
+		varchar osznrTelefone[255+1];
+		varchar oszdtAniversario[255+1];
+		varchar oszidOperador[255+1];
+		varchar oszsgOperador[255+1];
+	EXEC SQL END DECLARE SECTION;
+	int iConta=0;
+
+	CGetHeader Header(sRelatorioCampanha, ptXML);
+
+	ULOGI("RelAniversario - Entrando");
+
+	STRCPY_TO_ORA( oszDtInicio, sRelatorioCampanha->pcdtInicio ); 
+	STRCPY_TO_ORA( oszDtFim, sRelatorioCampanha->pcdtFim ); 
+	STRCPY_TO_ORA( osznrTelefone, sRelatorioCampanha->pcnrLinha ); 
+	STRCPY_TO_ORA( oszdtAniversario, sRelatorioCampanha->pcdtAniversario ); 
+	STRCPY_TO_ORA( oszidOperador, sRelatorioCampanha->pcidOperador ); 
+	STRCPY_TO_ORA( oszsgOperador, sRelatorioCampanha->pcsgOperador ); 
+
+	ULOGI("RelAniversario - Valores [%s] [%s] [%s] [%s] [%s] [%s]",
+		oszDtInicio.arr,
+		oszDtFim.arr,
+		osznrTelefone.arr,
+		oszdtAniversario.arr,
+		oszidOperador.arr,
+		oszsgOperador.arr);
+
+	EXEC SQL WHENEVER NOT FOUND do break;
+	EXEC SQL DECLARE RelAge1 CURSOR for
+	SELECT   
+		lis.nrtelefone linha, 
+		to_char(ate.dtaniversario,'DD/MM/YYYY') dataaniversario,
+		lis.nmcontato aniversariante, 
+		usuario.NMLOGINUSUARIO,
+		to_char(ate.dtatendimento,'DD/MM/YYYY') dataatendimento
+	FROM 
+		campanha.atendimentocampanha ate,
+		campanha.listaconteudo lis,
+		acesso.usuario usuario
+	WHERE 
+		   lis.idlistaconteudo = ate.idlistaconteudo
+		AND 
+			( '-1' = :oszDtInicio OR ate.DTATENDIMENTO >= TO_DATE(:oszDtInicio || ' 00:00:00','DD/MM/YYYY HH24:MI:SS') )
+		AND
+			( '-1' = :oszDtFim    OR ate.DTATENDIMENTO <= TO_DATE(:oszDtFim || ' 23:59:59','DD/MM/YYYY HH24:MI:SS') )
+		AND 
+			(lis.nrtelefone = :osznrTelefone or '-1' = :osznrTelefone)
+		AND
+	      ('-1' = :oszdtAniversario OR TO_CHAR(ate.dtaniversario, 'DD/MM/YYYY') = TO_CHAR(to_date(:oszdtAniversario,'DD/MM/YYYY'), 'DD/MM/YYYY')  )
+		AND 
+			(ate.idpessoausuario = :oszidOperador OR :oszidOperador = '-1')
+	   AND
+	      ( ('-1' = :oszsgOperador AND ate.dtaniversario IS NOT NULL) OR usuario.nmloginusuario = :oszsgOperador )
+		AND
+	      (ate.idpessoausuario = usuario.IDPESSOAUSUARIO(+) );
+
+	ULOGI("RelAniversario - Depois do select");
+
+	ptXML->createTag("RelaAgendaAniversarioVO");
+	ptXML->addProp("xmlns","campanha.fo.vivo.com.br/vo");
+
+	Header.Executar(); 
+
+	EXEC SQL OPEN RelAge1;
+ULOGI("RelAniversario - Abriu cursor");
+	for(;;)
+	{
+ULOGI("RelAniversario - Dentro do fetch");
+		EXEC SQL FETCH RelAge1 INTO
+			:oszLinha:iLinha,
+			:oszDtAniversario:iDtAniversario,
+			:oszAniversariante:iAniversariante,
+			:oszOperador:iOperador,
+			:oszDtAtendimento:iDtAtendimento;
+
+		//Coloca tamanho nos campos
+		oszLinha.arr[oszLinha.len]=0;
+		oszDtAniversario.arr[oszDtAniversario.len]=0;
+		oszAniversariante.arr[oszAniversariante.len]=0;
+		oszOperador.arr[oszOperador.len]=0;
+		oszDtAtendimento.arr[oszDtAtendimento.len]=0;
+		//oszPeriodoDia.arr[oszPeriodoDia.len]=0;
+
+		//Prepara o xml de retorno
+		ptXML->createTag("linhaAniversario");
+		ptXML->addItem("linha",(char *)oszLinha.arr);
+		ptXML->addItem("dataAniversario",(char *)oszDtAniversario.arr);
+		ptXML->addItem("aniversariante",(char *)oszAniversariante.arr);
+		ptXML->addItem("operador",(char *)oszOperador.arr);
+		ptXML->addItem("dataAtendimento",(char *)oszDtAtendimento.arr);
+		//ptXML->addItem("periodoDia",(char *)oszPeriodoDia.arr);
+		ptXML->closeTag();
+		iConta++;
+	}
+	ULOGI("RelAniversario - Saindo do fetch");
+	if(iConta==0)
+	{
+		ptXML->createTag("linhaAniversario");
+		ptXML->addItem("linha","A Pesquisa Não Retornou Resultado");
+		ptXML->addItem("dataAniversario","");
+		ptXML->addItem("aniversariante","");
+		ptXML->addItem("operador","");
+		ptXML->addItem("dataAtendimento","");
+		//ptXML->addItem("periodoDia","");
+		ptXML->closeTag();
+	}
+	ptXML->closeTag();
+	ULOGI("RelAniversario - Saindo");
+}

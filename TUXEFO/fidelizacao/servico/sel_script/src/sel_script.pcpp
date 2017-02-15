@@ -1,0 +1,105 @@
+//
+// $Id: sel_script.pcpp,v 1.1 2009/07/31 15:35:04 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+int sel_script(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char parm[255];
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  int     idUfOperadora;
+  int     idIntencao;
+  int     idResposta;
+  VARCHAR dsResposta[2000];
+  int     idTipoPessoa;
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  EXEC SQL WHENEVER NOT FOUND DO break;
+
+  try{
+    //  Obtendo dados do xml
+    get_tag(parm,dnode,"idUfOperadora",0,0);
+    idUfOperadora = atoi(parm);
+
+    get_tag(parm,dnode,"idIntencao",0,0);
+    idIntencao = atoi(parm);
+
+	get_tag(parm, dnode, "idTipoPessoa", 0, 0);
+    idTipoPessoa = atoi(parm);
+	
+ 
+    // Definicao dos cursores
+    // (destinos previstos - destinos selecionados 
+    EXEC SQL DECLARE crsDstPrv CURSOR FOR
+      select distinct idResposta,
+			 dsResposta
+      from questionario.resposta
+      where inDisponibilidade != 0
+      and   idPergunta = 2
+      and   idResposta not in ( select idResposta2 
+				from  retencao.respostaUnidade
+				where inAtivo != 0 
+				and   idResposta1 = :idIntencao 
+				and   idUfOperadora = :idUfOperadora
+				and    idtipopessoa	=:idTipoPessoa)
+	  order by UPPER(dsResposta);
+									   
+   
+    // destinos selecionados 
+    EXEC SQL DECLARE crsSelDst CURSOR FOR
+      select distinct idResposta2,
+			 dsResposta
+      from   retencao.respostaUnidadeV01
+      where  inAtivo != 0 
+      and    idResposta1 = :idIntencao 
+      and    idUfOperadora = :idUfOperadora
+	  and    idtipopessoa	=:idTipoPessoa
+	  order by UPPER(dsResposta);
+
+
+    // select destinos totais menos selecionados
+    EXEC SQL OPEN crsDstPrv;   
+  
+    xml->createTag("tns:fidelizacaoListaGeralVO");
+    for(;;) 
+	{
+      EXEC SQL FETCH crsDstPrv into :idResposta,dsResposta;
+
+      endOraStr(dsResposta);
+      ULOG_INT(idResposta);
+      ULOG_VAR(dsResposta);
+      xml->createTag("tns:itemListaVO");
+      xml->addItem("id",idResposta);
+      xml->addItem("descricao",(char *)dsResposta.arr);
+      xml->closeTag();
+    }
+    xml->closeTag();
+
+    // select destinos selecionados
+    EXEC SQL OPEN crsSelDst;
+
+    xml->createTag("tns:fidelizacaoListaGeralVO");
+    for(;;) 
+	{
+      EXEC SQL FETCH crsSelDst into :idResposta,dsResposta;
+
+      endOraStr(dsResposta);
+      ULOG_INT(idResposta);
+      ULOG_VAR(dsResposta);
+      xml->createTag("tns:itemListaVO");
+      xml->addItem("id",idResposta);
+      xml->addItem("descricao",(char *)dsResposta.arr);
+      xml->closeTag();
+    }
+    xml->closeTag();
+
+    EXEC SQL CLOSE crsDstPrv;
+    EXEC SQL CLOSE crsSelDst; 
+  }catch(...){throw;}
+
+  return 1;
+}
+
+

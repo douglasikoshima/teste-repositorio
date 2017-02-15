@@ -1,0 +1,196 @@
+/*
+ * Serviço de cadastro de dados comportamentais de cliente - Traz todos os atributos com 
+ * filhos (valorLivre, vlor possível selecionado e não selecionado)
+ * Versão inicial, 09/06/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../include/CadCompCliAtt.h"
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classCstAtributo.h";
+
+DECLARE_TUXEDO_SERVICE(CadCompCliAtt);
+
+void implCadCompCliAtt::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+	CCstAtributo* poAtt = NULL;
+	CValorLivre* poVLivre = NULL;
+	CCstValorPossivel* poVPoss = NULL;
+	int iNroReg = 0;
+	int iAux = 0;
+	int iAuxSub = 0;
+
+	char* pcIdPessoa;
+	int iIdPessoa;
+	char* pcIdSubAss;
+	int iIdSubAss;
+
+	char* pcIdGrupo;
+    int iIdGrupo;
+	char* pcIdCanal;
+    int iIdCanal;
+
+    ULOG_START( "implCadCompCliAtt::Execute()" );
+    
+    try{	
+         // Recupera os campos obrigatórios
+         pcIdPessoa = walkTree(dnode, XML_IN_ID_PESSOA, 0);
+         if (pcIdPessoa == NULL) {
+             ERROR(NRO_ID_PESSOA_NE);
+             TAG_INEXISTENTE(XML_IN_ID_PESSOA);
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if (!*pcIdPessoa) {
+             ERROR(NRO_ID_PESSOA_VV);
+             TAG_VALOR_VAZIO(XML_IN_ID_PESSOA);
+
+             XMLString::release(&pcIdPessoa);
+
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if ((iIdPessoa = atoi(pcIdPessoa)) <= 0) {
+             ERROR(NRO_ID_PESSOA_VI);
+             TAG_VALOR_INVALIDO(XML_IN_ID_PESSOA);
+
+             XMLString::release(&pcIdPessoa);
+
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if (pcIdPessoa) XMLString::release(&pcIdPessoa);
+
+         pcIdSubAss = walkTree(dnode, XML_IN_ID_ID_SUB_ASS, 0);
+         if (pcIdSubAss == NULL) {
+             ERROR(NRO_ID_SUBASSUNTO_NR_NE);
+             TAG_INEXISTENTE(XML_IN_ID_ID_SUB_ASS);
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if (!*pcIdSubAss) {
+             ERROR(NRO_ID_SUBVASSUNTO_NR_VI);
+             TAG_VALOR_VAZIO(XML_IN_ID_ID_SUB_ASS);
+
+             XMLString::release(&pcIdSubAss);
+
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if ((iIdSubAss = atoi(pcIdSubAss)) <= 0) {
+             ERROR(NRO_ID_SUBVASSUNTO_NR_VI);
+             TAG_VALOR_INVALIDO(XML_IN_ID_ID_SUB_ASS);
+
+             XMLString::release(&pcIdSubAss);
+
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+
+         //Somente um dos parametros abaixo será enviado
+         pcIdGrupo = walkTree(dnode, XML_IN_ID_GRUPO, 0);
+         if (!pcIdGrupo || !*pcIdSubAss) {
+            if (pcIdGrupo) XMLString::release(&pcIdGrupo);
+            iIdGrupo = -1;
+         }
+         else{
+             if ( !IsNumeric(pcIdGrupo) ) {
+                 ERROR(NRO_ID_GRUPO_VI);
+                 TAG_VALOR_INVALIDO(XML_IN_ID_GRUPO);
+
+                 if (pcIdSubAss) XMLString::release(&pcIdSubAss);
+                 if (pcIdGrupo) XMLString::release(&pcIdGrupo);
+
+                 throw new TuxBasicSvcException(sNrMsg, sMsg);
+             }
+            iIdGrupo = atoi(pcIdGrupo);
+         }
+         if (pcIdSubAss) XMLString::release(&pcIdSubAss);
+         if (pcIdGrupo) XMLString::release(&pcIdGrupo);
+
+         pcIdCanal = walkTree(dnode, XML_IN_ID_CANAL, 0);
+         if (!pcIdCanal || !*pcIdCanal) {
+            iIdCanal = -1;
+         }
+         else{
+             if ( !IsNumeric(pcIdCanal) ) {
+                 ERROR(NRO_ID_CANAL_VI);
+                 TAG_VALOR_INVALIDO(XML_IN_ID_CANAL);
+
+                 if (pcIdCanal) XMLString::release(&pcIdCanal);
+
+                 throw new TuxBasicSvcException(sNrMsg, sMsg);
+             }
+            iIdCanal = atoi(pcIdCanal);
+         }
+         if ( iIdCanal == -1  && iIdGrupo == -1 ){
+            ERROR(NRO_ID_CANAL_OU_ID_GRUPO);
+            TAG_VALOR_VAZIO("IdCanal ou IdGrupo");
+
+            if (pcIdCanal) XMLString::release(&pcIdCanal);
+
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if (pcIdCanal) XMLString::release(&pcIdCanal);
+
+
+         // Busca todos os assuntos e subassuntos.
+         if (iIdGrupo == -1)
+            poAtt = CCstAtributo::RecuperarPorIdSubAssIdPessoaIdCanal(&iNroReg, iIdSubAss, iIdPessoa, iIdCanal);
+         else
+            poAtt = CCstAtributo::RecuperarPorIdSubAssIdPessoaIdGrupo(&iNroReg, iIdSubAss, iIdPessoa, iIdGrupo);
+
+         // Monta XML de saída
+         xml_g->createTag(XML_OUT_ROOT);
+         xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+         for (iAux = 0; iAux < iNroReg; iAux++) {
+             xml_g->createTag(XML_OUT_ATRIBUTO);
+             xml_g->addItem(XML_OUT_ID_ATRIBUTO, poAtt[iAux].getIdAtributo());
+             xml_g->addItem(XML_OUT_DS_ATRIBUTO, poAtt[iAux].getDsAtributo());
+             xml_g->addItem(XML_OUT_ID_TP_APRES, poAtt[iAux].getIdTAPergunta());
+             xml_g->addItem(XML_OUT_SQ_APRES, poAtt[iAux].getSqApresentacao());
+
+             for (iAuxSub = 0; iAuxSub < poAtt[iAux].getNrValoresLivres(); iAuxSub++) {
+                 poVLivre = poAtt[iAux].getValoresLivres();
+                 xml_g->createTag(XML_OUT_VALOR_LIVRE);
+                 xml_g->addItem(XML_OUT_ID_VALOR_LIVRE, poVLivre[iAuxSub].getIdValorLivre());
+                 xml_g->addItem(XML_OUT_DS_VALOR_LIVRE, poVLivre[iAuxSub].getDsValor());
+                 xml_g->closeTag();
+             }
+             if (poAtt[iAux].getNrValoresLivres() <= 0) {
+                 xml_g->createTag(XML_OUT_VALOR_LIVRE);
+                 xml_g->closeTag();
+             }
+
+             for (iAuxSub = 0; iAuxSub < poAtt[iAux].getNrValoresPossiveis(); iAuxSub++) {
+                 poVPoss = poAtt[iAux].getValoresPossiveis();
+                 xml_g->createTag(XML_OUT_VALOR_POSS);
+                 xml_g->addItem(XML_OUT_ID_VALOR_POSS, poVPoss[iAuxSub].getIdValorPossivel());
+                 xml_g->addItem(XML_OUT_DS_VALOR_POSS, poVPoss[iAuxSub].getDsValorPossivel());
+                 xml_g->addItem(XML_OUT_VP_IN_SEL, poVPoss[iAuxSub].getInSelecionado());
+                 xml_g->closeTag();
+             }
+             if (poAtt[iAux].getNrValoresPossiveis() <= 0) {
+                 xml_g->createTag(XML_OUT_VALOR_POSS);
+                 xml_g->closeTag();
+             }
+
+             xml_g->closeTag();
+         }
+         xml_g->closeTag();
+
+         // Libera memória
+         free(poAtt);
+    }catch(...){
+        throw;
+    }
+
+	// Execução OK.
+	INFORMATION(NRO_OK);
+
+    ULOG_END( "implCadCompCliAtt::Execute()" );
+	setStatusCode(sNrMsg, MSG_OK);
+}

@@ -1,0 +1,637 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CContatoGrupo.h"
+
+CContatoGrupo::CContatoGrupo()
+{
+}
+
+CContatoGrupo::~CContatoGrupo()
+{
+}
+
+int CContatoGrupo::InsertCopiaCRI(
+								 char* cidContatoOrigem
+								,char* cidContatoDestino
+								,char* cidUser
+							  )
+{
+    ULOG_START("CContatoGrupo::InsertCopiaCRI()");        
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidContatoOrigemAux = cidContatoOrigem;
+		char* cidContatoDestinoAux = cidContatoDestino;
+		char* cidUserAux = cidUser;
+		struct
+		{
+			VARCHAR stidGrupoPerfil[21+1];
+			VARCHAR stidPerfil[21+1];
+			VARCHAR stidGrupo[21+1];
+			VARCHAR stidContatoPerfil[21+1];
+			VARCHAR stidContato[21+1];
+		} stRegistro;
+		struct
+		{
+			short sidGrupoPerfil;
+			short sidPerfil;
+			short sidGrupo;
+			short sidContatoPerfil;
+			short sidContato;
+		} stRegistroInd;
+	EXEC SQL END DECLARE SECTION;
+
+	memset( &sqlca, 0, sizeof( sqlca ) );
+
+	//Ativa as acoes decorrentes de erros ORACLE
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsertCopiaCRI;
+
+	EXEC SQL
+	DECLARE 
+		CursorInsertCopiaCRI CURSOR FOR
+	SELECT 
+		CONTATOADM.GRUPOPERFILSQ.NEXTVAL,
+		GRUPOPERFIL.IDPERFIL,
+		GRUPOPERFIL.IDGRUPO,
+		CONTATOADM.CONTATOPERFILSQ.NEXTVAL,
+		:cidContatoDestinoAux
+	FROM 
+		CONTATOADM.GRUPOPERFIL GRUPOPERFIL,
+		CONTATOADM.CONTATOPERFIL CONTATOPERFIL
+	WHERE
+		GRUPOPERFIL.IDGRUPOPERFIL = CONTATOPERFIL.IDGRUPOPERFIL
+	AND
+		CONTATOPERFIL.DTEXCLUSAO IS NULL
+	AND
+		GRUPOPERFIL.DTEXPIRACAO IS NULL
+	AND
+		IDCONTATO = :cidContatoOrigemAux;
+
+	EXEC SQL OPEN CursorInsertCopiaCRI;
+	for(;;)
+	{
+		memset( &stRegistro, 0, sizeof( stRegistro ) );
+		EXEC SQL
+		FETCH
+			CursorInsertCopiaCRI
+		INTO
+			:stRegistro:stRegistroInd;
+
+		//Insere o grupoperfil
+		EXEC SQL
+		INSERT INTO CONTATOADM.GRUPOPERFIL
+		( 
+			 IDGRUPOPERFIL 
+			,IDPERFIL 
+			,IDGRUPO 
+			,IDUSUARIOALTERACAO
+			,DTULTIMAALTERACAO
+		)
+		VALUES
+		(
+			:stRegistro.stidGrupoPerfil,
+			:stRegistro.stidPerfil,
+			:stRegistro.stidGrupo,
+			:cidUserAux,
+			 SYSDATE
+		);
+
+		//insere contato grupoperfil
+		EXEC SQL
+		INSERT INTO CONTATOADM.CONTATOPERFIL
+		( 
+			 IDCONTATOPERFIL  
+			,IDCONTATO  
+			,IDGRUPOPERFIL  
+			,IDUSUARIOALTERACAO
+			,DTULTIMAALTERACAO
+		)
+		VALUES
+		(
+			:stRegistro.stidContatoPerfil,
+			:stRegistro.stidContato,
+			:stRegistro.stidGrupoPerfil,
+			:cidUserAux,
+			 SYSDATE
+		);
+	}//for(;;)
+
+	EXEC SQL CLOSE CursorInsertCopiaCRI;
+
+    ULOG_END("CContatoGrupo::InsertCopiaCRI()");        
+	return 1;
+
+GotoInsertCopiaCRI:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoGrupo::InsertCopiaRC(
+								 char* cidContatoOrigem
+								,char* cidContatoDestino
+								,char* cidUser
+							  )
+{
+    ULOG_START("CContatoGrupo::InsertCopiaRC()");        
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+    
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidContatoOrigemAux = cidContatoOrigem;
+		char* cidContatoDestinoAux = cidContatoDestino;
+		char* cidUserAux = cidUser;
+	EXEC SQL END DECLARE SECTION;
+
+	memset( &sqlca, 0, sizeof( sqlca ) );
+
+	//Ativa as acoes decorrentes de erros ORACLE
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsertCopiaRC;
+
+	//Insere um registro
+	EXEC SQL 
+	INSERT INTO CONTATOADM.CONTATOGRUPORC
+	( 
+		 IDCONTATOGRUPORC
+		,IDCONTATO
+		,IDGRUPO
+		,IDUSUARIOALTERACAO
+		,DTULTIMAALTERACAO
+	)
+	SELECT
+		  CONTATOADM.CONTATOGRUPORCSQ.NEXTVAL
+		,:cidContatoDestinoAux
+		, IDGRUPO
+		,:cidUserAux
+		, SYSDATE
+	FROM
+		CONTATOADM.CONTATOGRUPORC
+	WHERE
+		IDCONTATO = :cidContatoOrigemAux;
+
+    ULOG_END("CContatoGrupo::InsertCopiaRC()");        
+	return 1;
+
+GotoInsertCopiaRC:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoGrupo::Insert( 
+								char* cidContato,
+								char* cidGrupo,
+								char* cidUsuarioAlteracao
+							 )
+{
+    ULOG_START("CContatoGrupo::Insert()");        
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+		char* cAuxidGrupo = cidGrupo;
+		VARCHAR stidContatoGrupo[21+1];
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		memset( &stidContatoGrupo, 0, sizeof(stidContatoGrupo) );
+
+		//Recupera um id unico
+		EXEC SQL
+			SELECT
+				CONTATOADM.CONTATOGRUPOSQ.NEXTVAL
+			INTO
+				:stidContatoGrupo
+			FROM DUAL;
+		
+		//Realiza o insert
+		EXEC SQL 
+			INSERT INTO CONTATOADM.CONTATOGRUPO
+			(	IDCONTATOGRUPO,
+				IDCONTATO,
+				IDGRUPO,
+				IDUSUARIOALTERACAO,
+				DTULTIMAALTERACAO
+			)
+			VALUES 
+			(	:stidContatoGrupo,
+				:cAuxidContato,
+				:cAuxidGrupo,
+				:cAuxidUsuarioAlteracao,
+				SYSDATE
+			);
+
+		//Adiciona a classe
+		Add( 	
+			(char*)stidContatoGrupo.arr,
+			cAuxidContato, 
+			cAuxidGrupo
+		);
+		
+        ULOG_END("CContatoGrupo::Insert()");        
+		return 0;//Sucesso
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CContatoGrupo::Update( 
+								char* cidContatoGrupo,
+								char* cidContato,
+								char* cidGrupo,
+								char* cidUsuarioAlteracao 
+							 )
+{
+    ULOG_START("CContatoGrupo::Update()");        
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContatoGrupo = cidContatoGrupo;
+		char* cAuxidContato = cidContato;
+		char* cAuxidGrupo = cidGrupo;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoGrupo();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+			UPDATE CONTATOADM.CONTATOGRUPO
+			SET
+				IDCONTATO = :cAuxidContato,
+				IDGRUPO = :cAuxidGrupo,
+				IDUSUARIOALTERACAO = :cAuxidUsuarioAlteracao,
+				DTULTIMAALTERACAO = SYSDATE
+			WHERE
+				IDCONTATOGRUPO = :cAuxidContatoGrupo;
+				
+		ULOG_END("CContatoGrupo::Update()");
+		//conta quantos existem
+		return 0;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoUpdate:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CContatoGrupo::Delete( char* cidContatoGrupo )
+{
+    ULOG_START("CContatoGrupo::Delete()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidContatoGrupo = cidContatoGrupo; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoGrupo();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL 
+			DELETE FROM 
+				CONTATOADM.CONTATOGRUPO
+			WHERE 
+				IDCONTATOGRUPO = :cAuxidContatoGrupo;
+		
+		ULOG_END("CContatoGrupo::Delete()");
+		return 0;//Sucesso
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if( sqlca.sqlcode == -2292 )
+		return 1;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoGrupo::ListId( char* cidContatoGrupo ) 
+{
+    ULOG_START("CContatoGrupo::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContatoGrupo = cidContatoGrupo; 
+		struct
+		{
+			VARCHAR stidContatoGrupo[21+1];
+			VARCHAR stidContato[21+1];
+			VARCHAR stidGrupo[21+1];
+		} stContatoGrupoRegistro;
+		struct
+		{
+			short iidContatoGrupo;
+			short iidContato;
+			short iidGrupo;
+		} stContatoGrupoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoGrupo();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL 
+   			DECLARE 
+   				CursorContatoGrupoId CURSOR FOR 
+   			SELECT 	
+   				IDCONTATOGRUPO,
+				IDCONTATO,
+				IDGRUPO
+			FROM 
+				CONTATOADM.CONTATOGRUPO
+			WHERE 
+				IDCONTATOGRUPO = :cAuxidContatoGrupo;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorContatoGrupoId;
+
+		//Caso inexista registros sair do loop
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			//Zera a estrutura de restorno
+			memset( &stContatoGrupoRegistro, 0, sizeof(stContatoGrupoRegistro) );
+			//Pega um registro no CURSOR
+			EXEC SQL FETCH CursorContatoGrupoId INTO :stContatoGrupoRegistro:stContatoGrupoIndicator;
+			//Adiciona a classe
+			Add( 	
+				(char*)stContatoGrupoRegistro.stidContatoGrupo.arr,
+				(char*)stContatoGrupoRegistro.stidContato.arr, 
+				(char*)stContatoGrupoRegistro.stidGrupo.arr
+			);
+			//conta quantos existem
+			iCont++;
+		}
+		//Fecha o CURSOR
+		EXEC SQL CLOSE CursorContatoGrupoId;
+		
+		ULOG_END("CContatoGrupo::ListId()");
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+	//Retorna a quantidade de registros
+	return iCont;
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CContatoGrupo::ListAll( void )
+{
+    ULOG_START("CContatoGrupo::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidContatoGrupo[21+1];
+			VARCHAR stidContato[21+1];
+			VARCHAR stidGrupo[21+1];
+		} stContatoGrupoRegistro;
+		struct
+		{
+			short iidContatoGrupo;
+			short iidContato;
+			short iidGrupo;
+		} stContatoGrupoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoGrupo();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorContatoGrupoAll CURSOR FOR
+   			SELECT 	
+   				IDCONTATOGRUPO,
+				IDCONTATO,
+				IDGRUPO
+			FROM 
+				CONTATOADM.CONTATOGRUPO
+			WHERE
+				IDCONTATOGRUPO > 0; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorContatoGrupoAll;
+
+		//Caso inexista registros sair do loop
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			//Zera a estrutura de restorno
+			memset( &stContatoGrupoRegistro, 0, sizeof(stContatoGrupoRegistro) );
+			//Pega um registro no CURSOR
+			EXEC SQL FETCH CursorContatoGrupoAll INTO :stContatoGrupoRegistro:stContatoGrupoIndicator;
+			//Adiciona a classe
+			Add( 	
+				(char*)stContatoGrupoRegistro.stidContatoGrupo.arr,
+				(char*)stContatoGrupoRegistro.stidContato.arr, 
+				(char*)stContatoGrupoRegistro.stidGrupo.arr
+			);
+			//conta quantos existem
+			iCont++;
+		}
+		//Fecha o cursor
+		EXEC SQL CLOSE CursorContatoGrupoAll;
+		
+		ULOG_END("CContatoGrupo::ListAll()");
+	}
+	catch(...)
+	{
+		throw;
+	}
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CContatoGrupo::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idContatoGrupo", Registro(x)->cidContatoGrupo );
+				xml->addItem("idContato", Registro(x)->cidContato ); 
+				xml->addItem("idGrupo", Registro(x)->cidGrupo ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+
+int CContatoGrupo::RelacaoPorIdContato( char* cidContato ) 
+{
+    ULOG_START("CContatoGrupo::RelacaoPorIdContato()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		struct
+		{
+			VARCHAR stidContatoGrupo[21+1];
+			VARCHAR stidContato[21+1];
+			VARCHAR stidGrupo[21+1];
+		} stContatoGrupoRegistro;
+		struct
+		{
+			short iidContatoGrupo;
+			short iidContato;
+			short iidGrupo;
+		} stContatoGrupoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoGrupo();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacaoPorIdContato;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL 
+   			DECLARE 
+   				CursorRelacaoPorIdContato CURSOR FOR 
+   			SELECT 	
+   				IDCONTATOGRUPO,
+				IDCONTATO,
+				IDGRUPO
+			FROM 
+				CONTATOADM.CONTATOGRUPO
+			WHERE 
+				IDCONTATO = :cAuxidContato;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorRelacaoPorIdContato;
+
+		//Caso inexista registros sair do loop
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			//Zera a estrutura de restorno
+			memset( &stContatoGrupoRegistro, 0, sizeof(stContatoGrupoRegistro) );
+			//Pega um registro no CURSOR
+			EXEC SQL FETCH CursorRelacaoPorIdContato INTO :stContatoGrupoRegistro:stContatoGrupoIndicator;
+			//Adiciona a classe
+			Add( 	
+				(char*)stContatoGrupoRegistro.stidContatoGrupo.arr,
+				(char*)stContatoGrupoRegistro.stidContato.arr, 
+				(char*)stContatoGrupoRegistro.stidGrupo.arr
+			);
+			//conta quantos existem
+			iCont++;
+		}
+		//Fecha o CURSOR
+		EXEC SQL CLOSE CursorRelacaoPorIdContato;
+		
+		ULOG_END("CContatoGrupo::RelacaoPorIdContato()");
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+	//Retorna a quantidade de registros
+	return iCont;
+GotoRelacaoPorIdContato:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}

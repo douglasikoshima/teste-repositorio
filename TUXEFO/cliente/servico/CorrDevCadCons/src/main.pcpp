@@ -1,0 +1,117 @@
+/*
+ * Serviço de Correspondencia devolvida - Consulta de clientes para cadastro de correspondencia
+ * Versão inicial, 27/05/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../include/CorrDevCadCons.h"
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/BuscaPessoaCorrespondencia.h";
+
+DECLARE_TUXEDO_SERVICE(CorrDevCadCons);
+
+void implCorrDevCadCons::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+    CBuscaPessoaCorrespondencia* poBuscaPess;
+
+    char* pcNrLinha = NULL;
+    char* pcNrConta = NULL;
+    char* pcIdPessoa = NULL;
+    int iIdPessoa = 0;
+    int iNroReg = 0;
+    int iAux;
+
+    ULOG_START( "implCorrDevCadCons::Execute()" );
+    
+    try{
+         // Navega o XML e recupera as informacoes obrigatorias
+         // Nr de linha
+         pcNrLinha = walkTree(dnode, XML_IN_NR_LINHA, 0);
+         if (pcNrLinha == NULL || !*pcNrLinha) {
+             // Nr de linha não encontrado, procura por NrConta
+             pcNrConta = walkTree(dnode, XML_IN_NR_CONTA, 0);
+             if (pcNrConta == NULL || !*pcNrConta) {
+                 // Linha e conta vieram nulos, checa por Id Pessoa
+                 pcIdPessoa = walkTree(dnode, XML_IN_ID_PESSOA, 0);
+                 if (pcIdPessoa == NULL || !*pcIdPessoa) 
+                 {
+                     ERROR(NRO_CHAVE_NAO_INFORMADA);
+                     if (pcIdPessoa) XMLString::release(&pcIdPessoa);
+                     throw new TuxBasicSvcException(sNrMsg, MSG_CHAVE_NAO_INFORMADA);
+                 }
+                 iIdPessoa = atoi(pcIdPessoa);
+                 if (pcIdPessoa) XMLString::release(&pcIdPessoa);
+                 if (iIdPessoa <= 0) {
+                     ERROR(NRO_CHAVE_NAO_INFORMADA);
+                     throw new TuxBasicSvcException(sNrMsg, MSG_CHAVE_NAO_INFORMADA);
+                 }
+             }
+         }
+
+         // Separou os argumentos de busca. Dispara a busca.
+         if (pcNrLinha != NULL && *pcNrLinha)
+             poBuscaPess = CBuscaPessoaCorrespondencia::buscaPorLinha(pcNrLinha, &iNroReg);
+         else if (pcNrConta != NULL && *pcNrConta)
+             poBuscaPess = CBuscaPessoaCorrespondencia::buscaPorConta(pcNrConta, &iNroReg);
+         else
+             poBuscaPess = CBuscaPessoaCorrespondencia::buscaPorCliente(iIdPessoa, &iNroReg);
+
+         // Monta o XML de saída
+         xml_g->createTag(XML_OUT_ROOT);
+         xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+         for (iAux = 0; iAux < iNroReg; iAux++) {
+             xml_g->createTag("ListaCorrespCliente");
+             xml_g->addItem(XML_OUT_ID_PESSOA, poBuscaPess[iAux].getIdPessoa());
+             if (pcNrLinha && *pcNrLinha)
+                 xml_g->addItem(XML_OUT_ID_LINHA, *(poBuscaPess[iAux].getIdLinha()));
+             else if (pcNrConta && *pcNrConta)
+                 xml_g->addItem(XML_OUT_ID_CONTA, *(poBuscaPess[iAux].getIdConta()));
+             xml_g->addItem(XML_OUT_NM_CLIENTE, rtrim(poBuscaPess[iAux].getNmCliente()));
+             xml_g->addItem(XML_OUT_NR_DOCTO, rtrim(poBuscaPess[iAux].getNrDocumento()));
+             xml_g->addItem(XML_OUT_TP_DOCUMENTO,rtrim(poBuscaPess[iAux].getTipoDocumento()));
+             xml_g->addItem(XML_OUT_DS_TIPO_END, rtrim(poBuscaPess[iAux].getDsTipoEndereco()));
+
+             xml_g->createTag(XML_OUT_END_BASE);
+             xml_g->addItem(XML_OUT_DS_END, rtrim(poBuscaPess[iAux].getDsEndereco()));
+             xml_g->addItem(XML_OUT_NR_END, rtrim(poBuscaPess[iAux].getNrEndereco()));
+             xml_g->addItem(XML_OUT_DS_COMPLEMENTO, rtrim(poBuscaPess[iAux].getDsComplemento()));
+             xml_g->addItem(XML_OUT_DS_BAIRRO, rtrim(poBuscaPess[iAux].getDsBairro()));
+             xml_g->addItem(XML_OUT_DS_CIDADE, rtrim(poBuscaPess[iAux].getDsCidade()));
+             xml_g->addItem(XML_OUT_NR_CEP, rtrim(poBuscaPess[iAux].getNrCEP()));
+
+             xml_g->createTag(XML_OUT_UF_VO);
+             xml_g->addItem(XML_OUT_ID_UF,poBuscaPess[iAux].getIdUF());
+             xml_g->addItem(XML_OUT_SG_UF,rtrim(poBuscaPess[iAux].getSgUF()));
+             xml_g->addItem(XML_OUT_NM_UF,rtrim(poBuscaPess[iAux].getNmUF()));
+             xml_g->closeTag();
+
+             xml_g->createTag(XML_OUT_PAIS_VO);
+             xml_g->addItem(XML_OUT_ID_PAIS,poBuscaPess[iAux].getIdPais());
+             xml_g->addItem(XML_OUT_SG_PAIS,rtrim(poBuscaPess[iAux].getSgPais()));
+             xml_g->addItem(XML_OUT_NM_PAIS,rtrim(poBuscaPess[iAux].getNmPais()));
+             xml_g->closeTag();
+
+             xml_g->closeTag();
+
+             xml_g->closeTag();
+         }
+         xml_g->closeTag();
+
+         //Liberando memoria
+         if (poBuscaPess)
+            free(poBuscaPess);
+    }catch(...){
+        throw;
+    }
+
+    // Execução OK.
+    INFORMATION(NRO_OK);
+
+    ULOG_END( "implCorrDevCadCons::Execute()" );
+    setStatusCode(sNrMsg, MSG_OK);
+}

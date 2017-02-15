@@ -1,0 +1,207 @@
+//--------------------------------------------------------------------------
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+//--------------------------------------------------------------------------
+#include <tuxfw.h>
+#include "../include/Exception.h"
+//--------------------------------------------------------------------------
+#undef MSG_NONE
+#define MSG_NONE
+#include "../include/Messages.h"
+//--------------------------------------------------------------------------
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../include/classPPValPreAtv.h";
+
+//--------------------------------------------------------------------------
+// Metodo setUsuarioAlteracao
+// Usuário de alteração
+//--------------------------------------------------------------------------
+
+void classPPValPreAtv::setUsuarioAlteracao(char* value) {
+
+}
+
+//--------------------------------------------------------------------------
+// Metodo classPPValPreAtv
+// Constructor
+//--------------------------------------------------------------------------
+
+classPPValPreAtv::classPPValPreAtv()
+{
+    memset(&tValida, 0 , sizeof(tValida));
+}
+
+//--------------------------------------------------------------------------
+// Metodo setNtTelefone
+// Coloca numero de telefone na str
+//--------------------------------------------------------------------------
+
+void classPPValPreAtv::setNrTelefone(char *pDado)
+{
+
+ char str[256] = {NULL}; 
+
+    if ( pDado == NULL )
+    {
+        tValida.iNrTelefone  = 0;
+        tValida.iDDDTelefone = 0;
+    }
+    else
+    {
+	strncpy( str, pDado, 2 ); 
+	STRCPY_TO_ORA(tValida.sDDDTelefone, str);
+	strcpy( str, &pDado[2] ); 
+        STRCPY_TO_ORA(tValida.sNrTelefone, str);
+        tValida.iNrTelefone  = 0;
+        tValida.iDDDTelefone = 0;
+    }
+}
+
+//--------------------------------------------------------------------------
+
+char *classPPValPreAtv::getIdPessoa()
+{
+   static char s[256]={NULL}; 
+
+   STRCPY_FROM_ORA( s, tValida.sidPessoa ); 
+
+   return (char *) s; 
+}
+
+//--------------------------------------------------------------------------
+
+char *classPPValPreAtv::getIdTipoPessoa()
+{
+   static char s[256]={NULL}; 
+
+   STRCPY_FROM_ORA( s, tValida.sTipoPessoa ); 
+
+   return (char *) s; 
+}
+
+//--------------------------------------------------------------------------
+
+char *classPPValPreAtv::getIdLinhaTelefonica()
+{
+   static char s[256]={NULL}; 
+
+   STRCPY_FROM_ORA( s, tValida.sidLinhaTelefonica ); 
+
+   return (char *) s; 
+}
+
+//--------------------------------------------------------------------------
+
+void classPPValPreAtv::setSistemaDefault()
+{
+	    STRCPY_TO_ORA(tValida.sSistemaOrigem, SYS_DEFAULT );
+		tValida.iSistemaOrigem = 0;
+}
+
+//--------------------------------------------------------------------------
+
+void classPPValPreAtv::setSistemaOrigem( char *pDado )
+{
+    if ( pDado == NULL )
+        tValida.iSistemaOrigem  = -1;
+	else
+	{
+	    STRCPY_TO_ORA(tValida.sSistemaOrigem, pDado );
+		tValida.iSistemaOrigem = 0;
+	}
+}
+
+char * classPPValPreAtv::getDigito()
+{ 
+   return (char *) tValida.sDigito.arr; 
+} 
+
+//--------------------------------------------------------------------------
+
+int classPPValPreAtv::BuscaValPreAtv()
+{
+
+int ret = OK; 
+
+struct sqlca sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+	VARCHAR tmpc[255]; 
+	short contador; 
+    short itmpc=-1; 
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+EXEC SQL
+            SELECT 	
+				BASE.NRDIGITOLINHA, 
+				PESSOA.IDPESSOAdepara, 
+				TELEFONE.IDLINHATELEFONICA
+				into 
+					:tValida.sDigito, 
+					:tValida.sidPessoa:itmpc,
+					:tValida.sidLinhaTelefonica:tValida.iidLinhaTelefonica
+			FROM
+				CUSTOMER.PESSOALINHA PESSOA,
+				LINHA.LINHATELEFONICA TELEFONE,
+				LINHA.LINHABASE BASE,
+				APOIO.AREAREGISTRO AREA
+			WHERE
+					 BASE.NRLINHA 				=  :tValida.sNrTelefone
+				AND  TELEFONE.IDLINHATELEFONICA =  PESSOA.IDLINHATELEFONICA (+)
+--				AND  TELEFONE.IDSISTEMAORIGEM 	=  :tValida.sSistemaOrigem
+				AND  BASE.IDLINHABASE   		=  TELEFONE.IDLINHABASE
+				AND  AREA.CDAREAREGISTRO        =  :tValida.sDDDTelefone
+				AND  BASE.IDAREAREGISTRO		=  AREA.IDAREAREGISTRO
+				AND  PESSOA.IDTIPORELACIONAMENTO (+) = '2'
+				AND ROWNUM = 1;
+
+  if (sqlca.sqlerrd[2])
+  {
+		memset( &sidpessoa, 0, sizeof( sidpessoa) ); 
+
+		EXEC SQL 
+		     SELECT COUNT(1) INTO :contador FROM CUSTOMER.PESSOA P, CUSTOMER.PESSOADEPARA D
+			     WHERE D.IDPESSOADEPARA = :tValida.sidPessoa 
+				  AND P.IDPESSOA = D.IDPESSOA; 
+
+		if ( contador > 0 ) 
+		{
+		EXEC SQL 
+		     SELECT P.IDPESSOA, P.IDTIPOPESSOA
+			 INTO :tmpc:itmpc , :tValida.sTipoPessoa:tValida.iTipoPessoa
+			 FROM CUSTOMER.PESSOA P, CUSTOMER.PESSOADEPARA D
+			     WHERE D.IDPESSOADEPARA = :tValida.sidPessoa 
+				  AND P.IDPESSOA = D.IDPESSOA;
+
+		 if ( itmpc != -1 ) 
+			 STRCPY_FROM_ORA( sidpessoa,  tmpc );
+			 ret = OK; 
+		}
+		else
+		{
+			memset( &sidpessoa, 0, sizeof( sidpessoa) ); 
+			ret = NOK; 
+		}
+		
+		
+  }
+  else
+     return -6701;
+  
+  return ret;
+
+sqlErrorLista:
+throw  new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,
+	sqlca.sqlerrm.sqlerrml);
+}
+
+
+

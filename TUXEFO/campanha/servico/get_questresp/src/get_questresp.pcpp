@@ -1,0 +1,185 @@
+
+//------------------------------------------------------------------------------------------------------------------------
+// Service: ConsultaQuestoesRespostas
+// Date   : 12-01-2005
+// Author : Roberto Borges
+//------------------------------------------------------------------------------------------------------------------------
+//
+//
+//------------------------------------------------------------------------------------------------------------------------
+
+#undef SQLCA
+#define SQLCA_NONE
+#include "../../negocio/cmputil/include/campanha.hpp"
+
+//------------------------------------------------------------------------------------------------------------------------
+// Function ConsultaQuestoesRespostas
+//------------------------------------------------------------------------------------------------------------------------
+
+int ConsultaQuestoesRespostas(int usuario, DOMNode*XMLIn, XMLGen*XMLOut)
+{
+  struct sqlca sqlca;
+  TuxHelper tuxHelper;
+  int   PerguntaAnt;
+  int   cont = 0; 
+  char * param; 
+
+
+  //------------------------------------------------------------------------------------------------------------------------
+  EXEC SQL BEGIN DECLARE SECTION;
+
+	  int         idAtendimentoCampanha;
+	  int         idPergunta;
+	  int         idResposta;
+	  VARCHAR     dsPergunta[2000];
+	  VARCHAR     dsResposta[2000];
+
+  EXEC SQL END DECLARE SECTION;
+  //------------------------------------------------------------------------------------------------------------------------
+
+  EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+
+  //------------------------------------------------------------------------------------------------------------------------
+  try
+  {
+
+	param = NULL; 
+    param = tuxHelper.walkTree(XMLIn,"idAtendimentoCampanha",0);
+
+	if ( param ) 
+	{
+		idAtendimentoCampanha = atoi( param ); 
+		XMLString::release(&param);
+	}
+
+
+    EXEC SQL WHENEVER NOT FOUND GOTO ArvoreVazia;
+ 
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+	//------------------------------------------------------------------------------------------------------------------------
+    // Declaracao dos cursores    
+	//------------------------------------------------------------------------------------------------------------------------
+
+    EXEC SQL DECLARE QueryQR CURSOR FOR 
+	SELECT 
+			   agenda.idpergunta, 
+			   pergunta.dsscriptpergunta,
+			   andamento.idresposta, 
+			   resposta.dsscriptresposta
+		  FROM campanha.andamentopergunta agenda,
+			   questionario.pergunta pergunta,
+			   campanha.andamentoresposta andamento,
+			   questionario.resposta resposta
+		 WHERE (    (pergunta.idpergunta = agenda.idpergunta)
+				AND (agenda.idandamentopergunta = andamento.idandamentopergunta)
+				AND (pergunta.idpergunta = resposta.idpergunta)
+				AND (resposta.idresposta = andamento.idresposta)
+				AND (agenda.idatendimentocampanha = :idAtendimentoCampanha)
+			   )
+	UNION	   
+		SELECT 
+			   agenda.idpergunta, 
+			   pergunta.dsscriptpergunta,
+			   0, 
+			   textolivre.dstextolivre
+		  FROM campanha.andamentopergunta agenda,
+			   questionario.pergunta pergunta,
+			   campanha.andamentorespostatextolivre textolivre
+		 WHERE (    (pergunta.idpergunta = agenda.idpergunta)
+				AND (agenda.idandamentopergunta = textolivre.idandamentopergunta)
+				AND (agenda.idatendimentocampanha = :idAtendimentoCampanha)
+			   );
+
+	//------------------------------------------------------------------------------------------------------------------------
+ 	// Abre o cursor e varre ate o fim, ou sai se registros não forem encontrados
+	//------------------------------------------------------------------------------------------------------------------------
+
+	EXEC SQL OPEN QueryQR;
+
+	PerguntaAnt = 0; 
+
+	//------------------------------------------------------------------------------------------------------------------------
+
+	for( ;; )	
+	{
+			EXEC SQL WHENEVER NOT FOUND GOTO ArvoreVazia;
+			EXEC SQL FETCH QueryQR INTO :idPergunta , :dsPergunta, :idResposta , :dsResposta;
+
+			endOraStr(dsPergunta);
+			endOraStr(dsResposta);
+
+			if ( PerguntaAnt != idPergunta )
+			{
+				//------------------------------------------------------------------------------------------------------------------------
+				if ( !PerguntaAnt )
+				{
+					XMLOut->createTag("ItemArvoreVO");
+					XMLOut->addProp("xmlns","campanha.fo.vivo.com.br/vo");
+					XMLOut->addProp("xsi:schemaLocation","campanha.fo.vivo.com.br/vo");
+					XMLOut->addProp("xmlns:xsi","http://www.w3.org/2001/XMLSchema-instance");
+				}
+				//------------------------------------------------------------------------------------------------------------------------
+				if (  PerguntaAnt ) 
+					XMLOut->closeTag();
+
+				XMLOut->createTag("ItemArvoreVO");
+				XMLOut->addItem( "codigo",				idPergunta				);
+				XMLOut->addItem( "tipo",				3						);
+				XMLOut->addItem( "descricao",			(char*)dsPergunta.arr	);
+				XMLOut->addItem( "idTipoApresentacao",	2						);
+				XMLOut->addItem( "inFinal",				0 );
+				PerguntaAnt = idPergunta; 
+				cont++; 
+			}
+
+			XMLOut->createTag("ItemArvoreVO");
+			XMLOut->addItem( "codigo",				idResposta );
+			XMLOut->addItem( "tipo",				4 );
+			XMLOut->addItem( "descricao",			(char*)dsResposta.arr );
+			XMLOut->addItem( "idTipoApresentacao",	2 );
+			XMLOut->addItem( "inFinal",				0 );
+			XMLOut->closeTag();
+	}
+
+	EXEC SQL CLOSE QueryQR;
+
+	//------------------------------------------------------------------------------------------------------------------------
+
+	XMLOut->closeTag();
+	XMLOut->closeTag();
+
+	return 1;	
+
+	//------------------------------------------------------------------------------------------------------------------------
+
+	UndefinedError:
+		throw new TuxBasicOraException( sqlca.sqlcode , sqlca.sqlerrm.sqlerrmc , 
+						sqlca.sqlerrm.sqlerrml );
+
+	return 1;	
+
+	//------------------------------------------------------------------------------------------------------------------------
+
+	ArvoreVazia:
+	if ( !cont ) {
+		XMLOut->createTag("ItemArvoreVO");
+		XMLOut->addProp("xmlns","campanha.fo.vivo.com.br/vo");
+		XMLOut->addProp("xsi:schemaLocation","campanha.fo.vivo.com.br/vo");
+		XMLOut->addProp("xmlns:xsi","http://www.w3.org/2001/XMLSchema-instance");
+		XMLOut->closeTag();
+	}
+
+	//------------------------------------------------------------------------------------------------------------------------
+
+	}  
+
+  	catch(...)  
+	{	
+		throw;  
+	}
+
+	return 1;
+
+}
+//------------------------------------------------------------------------------------------------------------------------

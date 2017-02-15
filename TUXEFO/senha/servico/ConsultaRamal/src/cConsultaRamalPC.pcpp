@@ -1,0 +1,105 @@
+/* $Id: cConsultaRamalPC.pcpp,v 1.1 2009/07/31 15:33:32 a5110702 Exp $ */
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#define CONV(O) \
+{\
+	##O.arr[##O.len]=0; \
+}
+
+#include <tuxfw.h>
+
+void sql_error_consultaramal(sqlca*sqlca);
+void registraRetorno(int idRamal, char* dsRamal, int nrRamal, int idCallCenter, char* dsCallCenter, XMLGen* xml_g);
+
+bool proCConsultaRamal(int idCallCenter, XMLGen*xml_g)
+{
+   ULOG_START("proCConsultaRamal()");
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idcallcenter = idCallCenter;
+
+		int idRamal;
+		int nrRamal;
+		VARCHAR dsRamal[256];
+		VARCHAR dsCallCenter[256];
+
+		short i_idRamal;
+		short i_nrRamal;
+		short i_dsRamal;
+		short i_dsCallCenter;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_consultaramal(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE ramais CURSOR FOR
+		SELECT
+			idRamal,
+			dsRamal,
+			nrRamal,
+			dsCallCenter
+		FROM
+			callcenter.ramal Ramal,
+			callcenter.callcenter CallCenter
+		WHERE
+			Ramal.IDCALLCENTER = CallCenter.IDCALLCENTER AND
+			Ramal.idCallCenter = :idcallcenter
+		ORDER BY
+			dsRamal;
+
+	EXEC SQL OPEN ramais;
+
+	while (true)
+	{
+		EXEC SQL FETCH 
+			ramais
+		INTO 
+			:idRamal:i_idRamal,
+			:dsRamal:i_dsRamal,
+			:nrRamal:i_nrRamal,
+			:dsCallCenter:i_dsCallCenter;
+
+		CONV(dsRamal);
+		CONV(dsCallCenter);
+
+		registraRetorno(
+						idRamal, 
+						(char*)dsRamal.arr, 
+						nrRamal, 
+						idCallCenter, 
+						(char*)dsCallCenter.arr, 
+						xml_g
+					   );
+	}
+
+	EXEC SQL CLOSE ramais;
+	
+	ULOG_END("proCConsultaRamal()");
+
+	return true;
+}
+
+void registraRetorno(int idRamal, char* dsRamal, int nrRamal, int idCallCenter, char* dsCallCenter, XMLGen* xml_g) 
+{
+
+	xml_g->createTag("RamalVO");
+		xml_g->addItem("idRamal", idRamal);
+		xml_g->addItem("dsRamal", dsRamal);
+		xml_g->addItem("nrRamal", nrRamal);
+		xml_g->addItem("idCallCenter", idCallCenter);
+		xml_g->addItem("dsCallCenter", dsCallCenter);
+	xml_g->closeTag();
+	
+}
+
+void sql_error_consultaramal(sqlca*sqlca)
+{
+	throw TuxBasicOraException(sqlca->sqlcode);
+}

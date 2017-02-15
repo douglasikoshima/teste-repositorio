@@ -1,0 +1,73 @@
+// PessoaComunicacao.cpp: implementation of the PessoaComunicacao class.
+//
+//////////////////////////////////////////////////////////////////////
+
+#include "../include/PessoaComunicacao.h"
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+PessoaComunicacao::PessoaComunicacao()
+{
+
+}
+
+PessoaComunicacao::~PessoaComunicacao()
+{
+
+}
+
+int PessoaComunicacao::listPessoaComunicacao(char*idPessoa,ListListaContato&listListaContato)
+{
+	tuxfw_getlogger()->debug("PessoaComunicacao::listPessoaComunicacao");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct param{
+			VARCHAR idContato[21];
+			VARCHAR idTipoContatoSelecionado[21];
+			VARCHAR dsContato[256];
+			VARCHAR nmContato[256];
+		}m_param;
+		struct iparam{
+			short idContato;
+			short idTipoContatoSelecionado;
+			short dsContato;
+			short nmContato;
+		}m_iparam;
+		char *cidPessoa = idPessoa;
+	EXEC SQL END DECLARE SECTION;	
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	EXEC SQL DECLARE CURSORPESSOACOMUNICACAO CURSOR FOR
+		SELECT
+			PESSOACOMUNICACAO.IDPESSOACOMUNICACAO,
+			PESSOACOMUNICACAO.IDTIPOCOMUNICACAO,
+			PESSOACOMUNICACAO.DSCONTATO,
+			PESSOACOMUNICACAO.NMCONTATO
+		FROM
+			CUSTOMER.PESSOACOMUNICACAO  PESSOACOMUNICACAO
+		WHERE
+		PESSOACOMUNICACAO.IDPESSOA = :cidPessoa;
+	EXEC SQL OPEN CURSORPESSOACOMUNICACAO;
+	for(;;)
+	{
+		memset(&m_param,0,sizeof(param));
+		memset(&m_iparam,0,sizeof(m_iparam));
+		EXEC SQL FETCH CURSORPESSOACOMUNICACAO INTO :m_param:m_iparam;	
+		ListaContato *contato = new ListaContato();
+		contato->setIdContato((char*)m_param.idContato.arr);
+		contato->setIdTipoContatoSelecionado((char*)m_param.idTipoContatoSelecionado.arr);
+		contato->setDsContato((char*)m_param.dsContato.arr);
+		contato->setNmContato((char*)m_param.nmContato.arr);
+		listListaContato.add(contato);
+	}	
+	EXEC SQL CLOSE CURSORPESSOACOMUNICACAO;
+	return 1;
+Error:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);	
+}

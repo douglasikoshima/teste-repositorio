@@ -1,0 +1,72 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../include/LogGSM.h"
+#include <tuxfw.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+LogGSM::LogGSM(void)
+{
+}
+
+LogGSM::~LogGSM(void)
+{
+}
+
+/*******************************************************************************************************/
+void LogGSM::insereLogGSM(TLogGSM *ptLogGSM)
+{
+    ULOG_START("LogGSM::insereLogGSM");
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLogGSM[LEN_IDLOGGSM];
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszIP[LEN_IP];
+        VARCHAR oszICCID[LEN_ICCID];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, ptLogGSM->szIdLinhaTelefonica);
+    STRCPY_TO_ORA(oszIP, ptLogGSM->szIP);
+    STRCPY_TO_ORA(oszIdUsuarioAlteracao, ptLogGSM->szIdUsuarioAlteracao);
+    STRCPY_TO_ORA(oszICCID, ptLogGSM->szICCID);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+    EXEC SQL SELECT infra.loggsmsq.nextval
+               INTO :oszIdLogGSM
+               FROM DUAL;
+
+    ULOG("oszIdLogGSM[%.*s]", oszIdLogGSM.len, oszIdLogGSM.arr);
+
+    EXEC SQL INSERT INTO infra.loggsm
+                       ( idloggsm
+                       , ip
+                       , idusuarioalteracao
+                       , iccid
+                       , dtultimaalteracao
+                       , idlinhatelefonica )
+                VALUES ( :oszIdLogGSM
+                       , :oszIP
+                       , :oszIdUsuarioAlteracao
+                       , :oszICCID
+                       , SYSDATE
+                       , :oszIdLinhaTelefonica);
+
+    STRCPY_FROM_ORA(ptLogGSM->szIdLogGSM, oszIdLogGSM);
+
+    ULOGI("Finalizando LogGSM::insereLogGSM <OK>");
+    ULOG_END("LogGSM::insereLogGSM");
+    return;
+
+    erro:
+        ULOGE("Finalizando LogGSM::insereLogGSM <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}

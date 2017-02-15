@@ -1,0 +1,938 @@
+// AtendimentoConsultor.cpp: implementation of the AtendimentoConsultor class.
+//
+//////////////////////////////////////////////////////////////////////
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/AtendimentoConsultor.h"
+#include "../include/svcWFAtdGetConsul.h"
+
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+AtendimentoConsultor::AtendimentoConsultor()
+{
+
+}
+
+AtendimentoConsultor::~AtendimentoConsultor()
+{
+
+}
+
+int AtendimentoConsultor::getConsultorByLinha(struct stData *buf)
+{
+	ULOG_START("AtendimentoConsultor::getConsultorByLinha()");
+
+	struct sqlca sqlca;
+
+	if ( buf->nrLinha == 0 || buf->cdAreaRegistro == 0 )
+	{
+		return MSG_CODE_PARAMETROS_INVALIDOS;
+	}
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		struct nmParam
+        {
+			VARCHAR idAtendimento[255+1];
+			VARCHAR nmLoginUsuarioCTI[255+1];
+			VARCHAR dtAbertura[64];
+        } m_nmParam;
+
+		struct inmParam
+        {
+			short idAtendimento;
+			short nmLoginUsuarioCTI;
+			short dtAbertura;
+        } m_inmParam;
+
+		char *linha = buf->nrLinha;
+		char *ddd = buf->cdAreaRegistro;
+		//char qtDias[21+1];
+
+	EXEC SQL END DECLARE SECTION;
+
+	if( *linha == 0 || *ddd == 0 )
+	{
+		return MSG_CODE_PARAMETROS_INVALIDOS;
+	}
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorGetConsByLinha;
+	//EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+	memset(&m_nmParam,0,sizeof(nmParam));
+	memset(&m_inmParam,0,sizeof(inmParam));
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+	// EXEC SQL
+	//    SELECT
+	//    		IDATENDIMENTO,NMLOGINUSUARIOCTI,DTABERTURA
+    //    INTO
+    //         :m_nmParam:m_inmParam
+	//    FROM
+	//    (
+	// 	    SELECT DISTINCT 
+	// 			G.IDATENDIMENTO,
+	// 			U.NMLOGINUSUARIOCTI,
+	// 			G.DTABERTURA
+	// 	    FROM 
+	// 			ATENDIMENTO.GRUPOCRI G,
+	// 			CUSTOMER.PESSOALINHAHISTORICO P,
+	// 			ACESSO.USUARIO U,
+	// 			ATENDIMENTO.ATENDIMENTOCRI A,
+	// 			ATENDIMENTO.ATENDIMENTOFECHAMENTO AF
+	// 		WHERE
+	// 			P.NRLINHA = TO_NUMBER(:linha)
+	// 		AND P.CDAREAREGISTRO = TO_NUMBER(:ddd)
+	// 		AND G.IDPESSOALINHAHISTORICO = P.IDPESSOALINHAHISTORICO
+	// 		AND G.IDATENDIMENTO = AF.IDATENDIMENTO (+)
+	// 		AND AF.IDATENDIMENTO IS NULL
+	// 		AND G.IDATENDIMENTO = A.IDATENDIMENTO (+)
+	// 		AND A.IDPESSOAUSUARIO = U.IDPESSOAUSUARIO (+)
+	// 		ORDER BY
+	// 			G.DTABERTURA DESC
+	// 	)
+	// 	WHERE ROWNUM < 2;
+
+	EXEC SQL
+	   SELECT
+	   		IDATENDIMENTO,NMLOGINUSUARIOCTI,DTABERTURA
+       INTO
+            :m_nmParam:m_inmParam
+	   FROM
+	   (
+		    SELECT DISTINCT 
+				GRUPOCRI.IDATENDIMENTO,
+				USUARIO.NMLOGINUSUARIOCTI,
+				GRUPOCRI.DTABERTURA
+		    FROM 
+				ATENDIMENTO.GRUPOCRI GRUPOCRI,
+				CUSTOMER.PESSOALINHAHISTORICO PESSOALINHAHISTORICO,
+				ACESSO.USUARIO USUARIO,
+				ATENDIMENTO.ATENDIMENTOCRI ATENDIMENTOCRI,
+				ATENDIMENTO.ATENDIMENTOPRIORIZACAO ATENDIMENTOPRIORIZACAO
+			WHERE
+				PESSOALINHAHISTORICO.NRLINHA = TO_NUMBER(:linha)
+			AND PESSOALINHAHISTORICO.CDAREAREGISTRO = TO_NUMBER(:ddd)
+			AND GRUPOCRI.IDPESSOALINHAHISTORICO = PESSOALINHAHISTORICO.IDPESSOALINHAHISTORICO
+			AND GRUPOCRI.IDATENDIMENTO = ATENDIMENTOPRIORIZACAO.IDATENDIMENTO
+			AND GRUPOCRI.IDATENDIMENTO = ATENDIMENTOCRI.IDATENDIMENTO (+)
+			AND ATENDIMENTOCRI.IDPESSOAUSUARIO = USUARIO.IDPESSOAUSUARIO (+)
+			ORDER BY
+				GRUPOCRI.DTABERTURA DESC
+		)
+		WHERE ROWNUM < 2;
+
+	if (sqlca.sqlcode == 1403)
+	{
+		return MSG_CODE_PROCESSO_NAO_ENCONTRADO;
+	}
+
+	strcpy(buf->idAtendimento,(char*)m_nmParam.idAtendimento.arr);
+	strcpy(buf->nmLoginUsuarioCTI,(char*)m_nmParam.nmLoginUsuarioCTI.arr);
+	
+	ULOG_END("AtendimentoConsultor::getConsultorByLinha()");
+
+	return 1;
+
+ErrorGetConsByLinha:
+	ULOG("AtendimentoConsultor::getConsultorByLinha sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int AtendimentoConsultor::getConsultorByProcesso(struct stData *buf)
+{
+	ULOG_START("AtendimentoConsultor::getConsultorByProcesso()");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct nmParam
+        {
+			VARCHAR nmLoginUsuarioCTI[255+1];
+			VARCHAR nrLinha[21+1];
+        } m_nmParam;
+
+		struct inmParam
+        {
+			short nmLoginUsuarioCTI;
+			short nrLinha;
+        } m_inmParam;
+		//char qtDias[21+1];
+		char *vidAtendimento = buf->idAtendimento;
+	EXEC SQL END DECLARE SECTION;
+
+	if( buf->idAtendimento == NULL )
+	{
+		return MSG_CODE_PARAMETROS_INVALIDOS;
+	}
+
+	if( !strcmp(buf->idAtendimento,"") )
+	{
+		return MSG_CODE_PARAMETROS_INVALIDOS;
+	}
+
+	memset(&m_nmParam,0,sizeof(nmParam));
+	memset(&m_inmParam,0,sizeof(inmParam));
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorGetConsByProcesso;
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+	// EXEC SQL
+	// 	SELECT DISTINCT
+	// 	 U.NMLOGINUSUARIOCTI,
+	// 	'(' || AREAREGISTRO.CDAREAREGISTRO || ')' || ' ' || LINHABASE.NRLINHA AS NRLINHA
+	// 	INTO
+	// 		:m_nmParam:m_inmParam
+	// 	FROM
+	// 		ATENDIMENTO.GRUPOCRI G,
+	// 		CUSTOMER.PESSOALINHAHISTORICO P,
+	// 		LINHA.LINHATELEFONICA LINHATELEFONICA,
+	// 		LINHA.LINHABASE LINHABASE,
+	// 		APOIO.AREAREGISTRO AREAREGISTRO,
+	// 		ACESSO.USUARIO U,
+	// 		ATENDIMENTO.ATENDIMENTOCRI A,
+	// 		ATENDIMENTO.ATENDIMENTOFECHAMENTO AF
+	// 	WHERE
+	// 		G.IDATENDIMENTO = :vidAtendimento
+	// 		AND G.IDATENDIMENTO = AF.IDATENDIMENTO (+)
+	// 		AND AF.IDATENDIMENTO IS NULL
+	// 		AND G.IDATENDIMENTO = A.IDATENDIMENTO (+)
+	// 		AND A.IDPESSOAUSUARIO = U.IDPESSOAUSUARIO (+)
+	// 		AND G.IDPESSOALINHAHISTORICO = P.IDPESSOALINHAHISTORICO 
+	// 		AND P.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA
+	// 		AND LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+	// 		AND AREAREGISTRO.IDAREAREGISTRO = LINHABASE.IDAREAREGISTRO
+	// 		AND ROWNUM < 2;
+
+	EXEC SQL
+		SELECT DISTINCT
+            USUARIO.NMLOGINUSUARIOCTI,
+            '(' || AREAREGISTRO.CDAREAREGISTRO || ')' || ' ' || LINHABASE.NRLINHA AS NRLINHA
+		INTO
+			:m_nmParam:m_inmParam
+		FROM
+			ATENDIMENTO.GRUPOCRI GRUPOCRI,
+			LINHA.LINHATELEFONICA LINHATELEFONICA,
+			LINHA.LINHABASE LINHABASE,
+			APOIO.AREAREGISTRO AREAREGISTRO,
+			ACESSO.USUARIO USUARIO,
+			ATENDIMENTO.ATENDIMENTOCRI ATENDIMENTOCRI,
+			ATENDIMENTO.ATENDIMENTOPRIORIZACAO ATENDIMENTOPRIORIZACAO
+		WHERE
+			GRUPOCRI.IDATENDIMENTO = :vidAtendimento
+			AND GRUPOCRI.IDATENDIMENTO = ATENDIMENTOPRIORIZACAO.IDATENDIMENTO
+			AND GRUPOCRI.IDATENDIMENTO = ATENDIMENTOCRI.IDATENDIMENTO (+)
+			AND ATENDIMENTOCRI.IDPESSOAUSUARIO = USUARIO.IDPESSOAUSUARIO (+)
+			AND ATENDIMENTOPRIORIZACAO.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA
+			AND LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+			AND AREAREGISTRO.IDAREAREGISTRO = LINHABASE.IDAREAREGISTRO
+			AND ROWNUM < 2;
+
+	ULOG("\nAtendimentoConsultor::getConsultorByProcesso sqlca.sqlcode = %d",sqlca.sqlcode);
+
+	if(sqlca.sqlcode == 1403)
+	{
+		return MSG_CODE_PROCESSO_NAO_ENCONTRADO;
+	}
+
+	strcpy(buf->nmLoginUsuarioCTI,(char*)m_nmParam.nmLoginUsuarioCTI.arr);
+	strcpy(buf->nrLinha,(char*)m_nmParam.nrLinha.arr);
+	
+	ULOG_END("AtendimentoConsultor::getConsultorByProcesso()");
+
+	return 1;
+
+ErrorGetConsByProcesso:
+	ULOG("AtendimentoConsultor::getConsultorByProcesso sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int AtendimentoConsultor::getPrazoAtendimentoCRI(char*dsPrazo)
+{
+	ULOG_START("AtendimentoConsultor::getPrazoAtendimentoCRI()");
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		struct nmParam
+        {
+			VARCHAR qtDias[21+1];
+        } m_nmParam;
+
+		struct inmParam
+        {
+			short qtDias;
+        } m_inmParam;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memset(&m_nmParam,0,sizeof(nmParam));
+	memset(&m_inmParam,0,sizeof(inmParam));
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorGetPzAtdCRI;
+	
+	EXEC SQL
+		SELECT QTDIAS INTO m_nmParam:m_inmParam FROM ATENDIMENTO.PRAZOATENDIMENTOCRI WHERE ROWNUM = 1;
+
+	if(sqlca.sqlcode == 1403)
+	{
+		return 0;
+	}
+
+	strcpy(dsPrazo,(char*)m_nmParam.qtDias.arr);
+	
+	ULOG_END("AtendimentoConsultor::getPrazoAtendimentoCRI()");
+
+	return 1;
+
+ErrorGetPzAtdCRI:
+	ULOG("AtendimentoConsultor::getPrazoAtendimentoCRI sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int AtendimentoConsultor::buscarNotasInbox(struct stPesquisaNotas *buf,XMLGen*xml)
+{
+	ULOG_START("AtendimentoConsultor::buscarNotasInbox()");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct param
+        {
+			VARCHAR idAtendimento[21+1];
+			VARCHAR nrLinha[20+1];
+			VARCHAR dtCriacaoNota[25+1];
+			VARCHAR reConsultor[255+1];
+			VARCHAR nmConsultor[255+1];
+			VARCHAR idTipoNotaAtendimento[255+1];
+			VARCHAR idAtendimentoNota[21+1];
+			VARCHAR cliContatado[2];
+			VARCHAR dtAberturaFim[25+1];
+            VARCHAR idAtendimentoProtocolo[38+1];
+        } m_param;
+
+		struct iparam
+        {
+			short idAtendimento;
+			short nrLinha;
+			short dtCriacaoNota;
+			short reConsultor;
+			short nmConsultor;
+			short idTipoNotaAtendimento;
+			short idAtendimentoNota;
+			short cliContatado;
+			short dtAberturaFim;
+            short idAtendimentoProtocolo;
+        } m_iparam;
+
+		char *idAtendimento = buf->idAtendimento;
+        char *idAtendimentoProtocolo = buf->idAtendimentoProtocolo;
+		char *idTipoNotaAtendimento = buf->idTipoNotaAtendimento;
+		char *cliTransferido = buf->cliTransferido;
+		char *cliContatado = buf->cliContatado;
+		char *dtAberturaIni = buf->dtAberturaIni;
+		char *dtAberturaFim = buf->dtAberturaFim;
+		char *idUsuario = buf->idUsuario;
+		char *idMotivo = buf->idMotivo;
+		char *idOperacao = buf->idOperacao;
+		int nrRegistros;
+	EXEC SQL END DECLARE SECTION;
+
+	UtilWorkflow::format(buf->idAtendimento,"0");
+	UtilWorkflow::format(buf->idAtendimentoProtocolo,"0");
+	UtilWorkflow::format(buf->idTipoNotaAtendimento,"-1");
+	UtilWorkflow::format(buf->dtAberturaIni,"0");
+	UtilWorkflow::format(buf->dtAberturaFim,"0");
+	UtilWorkflow::format(buf->cliTransferido,"-1");
+	UtilWorkflow::format(buf->cliContatado,"-1");
+	UtilWorkflow::format(buf->idMotivo,"0");
+	UtilWorkflow::format(buf->idOperacao,"0");
+	buf->nrRegistros = 0;
+	// se for para trazer os clientes transferidos
+	if(!strcmp(buf->cliTransferido,"1"))
+	{
+		strcpy(buf->idTipoNotaAtendimento,"0");
+		strcpy(buf->cliTransferido,"-1");
+	}
+	else
+	if(!strcmp(buf->cliTransferido,"0"))
+	{
+		strcpy(buf->cliTransferido,"0");
+		strcpy(buf->idTipoNotaAtendimento,"-1");
+	}
+	ULOG("cliContatado = %s",cliContatado);
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorBuscarNotasInbox;
+
+	EXEC SQL DECLARE CURSORNOTA CURSOR FOR
+		SELECT
+            DISTINCT
+            AN.IDATENDIMENTO,
+            '(' || PLH.CDAREAREGISTRO || ') ' || PLH.NRLINHA AS NRLINHA,
+            TO_CHAR(AN.DTCRIACAONOTA,'DD/MM/YYYY HH24:MI:SS') AS DTCRIACAONOTA,
+            NVL(PD.NRDOCUMENTO,'') AS NRDOCUMENTO,	
+            P.NMPESSOA,
+            AN.IDTIPONOTAATENDIMENTO || '-' || TNA.DSTIPONOTA AS IDTIPONOTAATENDIMENTO,
+            AN.IDATENDIMENTONOTA,
+            NVL(AN.INCONTATADO,0) AS INCONTATADO,
+            TO_CHAR(AN.DTFECHAMENTO,'DD/MM/YYYY'),
+            ATD.IDATENDIMENTOPROTOCOLO
+		FROM
+			ATENDIMENTO.ATENDIMENTONOTA AN,
+			(SELECT D.NRDOCUMENTO,PD.IDPESSOA
+             FROM CUSTOMER.PESSOADOCUMENTO PD, CUSTOMER.DOCUMENTO D, APOIO.TIPODOCUMENTO TD
+			 WHERE IDPESSOA = :idUsuario
+             AND PD.IDDOCUMENTO = D.IDDOCUMENTO
+             AND D.IDTIPODOCUMENTO = TD.IDTIPODOCUMENTO
+             AND PD.IDDOCUMENTO = D.IDDOCUMENTO
+             AND TD.SGTIPODOCUMENTO(+) = 'RE'
+		    ) PD,
+			CUSTOMER.PESSOA P,			
+			CUSTOMER.PESSOALINHAHISTORICO PLH,
+			ATENDIMENTO.ATENDIMENTOCRI ACRI,
+			APOIO.TIPONOTAATENDIMENTO TNA,
+			ATENDIMENTO.ATENDIMENTONOTAHISTORICO ANH,
+			ATENDIMENTO.ATENDIMENTONOTAMOTIVO ANM,
+			ATENDIMENTO.MOTIVO M,
+			ATENDIMENTO.ATENDIMENTO ATD
+        WHERE
+            AN.IDPESSOAUSUARIO = PD.IDPESSOA(+)
+        AND P.IDPESSOA = AN.IDPESSOAUSUARIO			 
+        AND PLH.IDPESSOALINHAHISTORICO = ACRI.IDPESSOALINHAHISTORICO
+        AND AN.IDATENDIMENTO = ACRI.IDATENDIMENTO		
+        AND AN.IDTIPONOTAATENDIMENTO = TNA.IDTIPONOTAATENDIMENTO
+        AND AN.IDATENDIMENTONOTA = ANH.IDATENDIMENTONOTA(+)
+        AND ANH.IDATENDIMENTONOTAHISTORICO = ANM.IDATENDIMENTONOTAHISTORICO(+)
+        AND ANM.IDMOTIVO = M.IDMOTIVO(+)
+        AND ANH.IDOPERACAONOTAATENDIMENTO = DECODE(:idOperacao,0,ANH.IDOPERACAONOTAATENDIMENTO,:idOperacao)
+        AND ANM.IDMOTIVO = DECODE(:idMotivo,0,ANM.IDMOTIVO,:idMotivo)
+        AND AN.IDATENDIMENTO = DECODE(:idAtendimento,0,AN.IDATENDIMENTO,:idAtendimento)
+        AND AN.IDTIPONOTAATENDIMENTO = DECODE(:idTipoNotaAtendimento,-1,AN.IDTIPONOTAATENDIMENTO,:idTipoNotaAtendimento)
+        AND (AN.IDTIPONOTAATENDIMENTO <> :cliTransferido OR :cliTransferido = -1)
+        AND NVL(AN.INCONTATADO,0) = DECODE(:cliContatado,-1,NVL(AN.INCONTATADO,0),:cliContatado)
+        AND ACRI.IDPESSOAUSUARIO = :idUsuario
+        AND TRUNC(AN.DTCRIACAONOTA) >= DECODE(:dtAberturaIni,'0',TRUNC(AN.DTCRIACAONOTA),TO_DATE(:dtAberturaIni,'DD/MM/YYYY'))
+        AND TRUNC(AN.DTCRIACAONOTA) <= DECODE(:dtAberturaFim,'0',TRUNC(AN.DTCRIACAONOTA),TO_DATE(:dtAberturaFim,'DD/MM/YYYY'))
+        AND ATD.IDATENDIMENTOPROTOCOLO = DECODE(:idAtendimentoProtocolo,0,ATD.IDATENDIMENTOPROTOCOLO,:idAtendimentoProtocolo)
+        AND ATD.IDATENDIMENTO = ACRI.IDATENDIMENTO
+        AND ROWNUM < 100
+        ORDER BY
+            AN.IDATENDIMENTONOTA ASC;
+
+	EXEC SQL OPEN CURSORNOTA;
+	for(;;)
+	{
+		memset(&m_param,0,sizeof(param));
+		memset(&m_iparam,0,sizeof(iparam));
+		EXEC SQL FETCH CURSORNOTA INTO m_param:m_iparam;
+		if(sqlca.sqlcode == 1403)
+        {
+			break;
+        }
+		else
+		{
+			xml->createTag("WFAtdNotaVO");
+			xml->addItem("idAtendimento",(char*)m_param.idAtendimento.arr);
+			xml->addItem("nrProtocolo",(char*)m_param.idAtendimentoProtocolo.arr);
+			xml->addItem("nrLinha",(char*)m_param.nrLinha.arr);
+			xml->addItem("dtAberturaIni",(char*)m_param.dtCriacaoNota.arr);
+			xml->addItem("reConsultor",(char*)m_param.reConsultor.arr);
+			xml->addItem("nmUsuario",(char*)m_param.nmConsultor.arr);
+			xml->addItem("tipoNotaAtendimento",(char*)m_param.idTipoNotaAtendimento.arr);
+			xml->addItem("idAtendimentoNota",(char*)m_param.idAtendimentoNota.arr);
+			xml->addItem("cliContatado",(char*)m_param.cliContatado.arr);
+			xml->addItem("dtAberturaFim",(char*)m_param.dtAberturaFim.arr);
+			xml->closeTag();
+			buf->nrRegistros++;
+		}
+	}
+	EXEC SQL CLOSE CURSORNOTA;
+
+	if(buf->nrRegistros >= 99)
+	{
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:nrRegistros
+		FROM
+			ATENDIMENTO.ATENDIMENTONOTA;
+		buf->totalRegistros = nrRegistros;		
+	}
+	else
+		buf->totalRegistros = buf->nrRegistros;
+		
+	ULOG_END("AtendimentoConsultor::buscarNotasInbox()");
+		
+	return 1;
+ErrorBuscarNotasInbox:
+	ULOG("AtendimentoConsultor::buscarNotasInbox sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+int AtendimentoConsultor::buscarNotasAtendimento(struct stPesquisaNotas *buf,XMLGen*xml)
+{
+	ULOG_START("AtendimentoConsultor::buscarNotasAtendimento()");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct param{
+			VARCHAR idAtendimento[21+1];
+			VARCHAR nrLinha[20+1];
+			VARCHAR dtCriacaoNota[25+1];
+			VARCHAR reConsultor[255+1];
+			VARCHAR nmConsultor[255+1];
+			VARCHAR idTipoNotaAtendimento[255+1];
+			VARCHAR idAtendimentoNota[21+1];
+			VARCHAR cliContatado[2];
+			VARCHAR nmGrupo[255+1];
+			VARCHAR dtAberturaFim[25+1];
+            VARCHAR idAtendimentoProtocolo[38+1];
+		}m_param;
+		struct iparam{
+			short idAtendimento;
+			short nrLinha;
+			short dtCriacaoNota;
+			short reConsultor;
+			short nmConsultor;
+			short idTipoNotaAtendimento;
+			short idAtendimentoNota;
+			short cliContatado;
+			short nmGrupo;
+			short dtAberturaFim;
+            short idAtendimentoProtocolo;
+		}m_iparam;
+		char *idAtendimento = buf->idAtendimento;
+        char *idAtendimentoProtocolo = buf->idAtendimentoProtocolo;
+		char *idTipoNotaAtendimento = buf->idTipoNotaAtendimento;
+		char *cliTransferido = buf->cliTransferido;
+		char *cliContatado = buf->cliContatado;
+		char *dtAberturaIni = buf->dtAberturaIni;
+		char *dtAberturaFim = buf->dtAberturaFim;
+		char *idUsuario = buf->idUsuario;
+		char *reConsultor = buf->reConsultor;
+		char *nmUsuario = buf->nmUsuario;
+		char *notaConsultor = buf->notaConsultor;
+		char nmUsuarioFormat[260];
+		char *login = buf->login;
+		char loginFormat[260];
+		int nrRegistros;
+	EXEC SQL END DECLARE SECTION;
+
+	UtilWorkflow::format(buf->idAtendimento,"0");
+	UtilWorkflow::format(buf->idAtendimentoProtocolo,"0");
+	UtilWorkflow::format(buf->idTipoNotaAtendimento,"-1");
+	UtilWorkflow::format(buf->dtAberturaIni,"0");
+	UtilWorkflow::format(buf->dtAberturaFim,"0");
+	UtilWorkflow::format(buf->cliTransferido,"-1");
+	UtilWorkflow::format(buf->cliContatado,"-1");
+	UtilWorkflow::format(buf->reConsultor,"0");
+	UtilWorkflow::format(buf->nmUsuario,"0");
+	UtilWorkflow::format(buf->login,"0");
+	UtilWorkflow::format(buf->notaConsultor,"0");
+	buf->nrRegistros = 0;
+	memset(&nmUsuarioFormat,0,260);
+	memset(&loginFormat,0,260);
+	// se for para trazer os clientes transferidos
+	if(!strcmp(buf->cliTransferido,"1"))
+	{
+		strcpy(buf->idTipoNotaAtendimento,"0");
+		strcpy(buf->cliTransferido,"-1");
+	}
+	else
+	if(!strcmp(buf->cliTransferido,"0"))
+	{
+		strcpy(buf->cliTransferido,"0");
+		strcpy(buf->idTipoNotaAtendimento,"-1");
+	}
+	if(strcmp(buf->nmUsuario,"0"))
+	{		
+		sprintf(nmUsuarioFormat,"%s%%",buf->nmUsuario);
+	}
+	if(strcmp(buf->login,"0"))
+	{		
+		sprintf(loginFormat,"%s%%",buf->login);
+	}
+	ULOG("cliContatado = %s",cliContatado);
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorBuscarNotasAtd;
+
+	if(!strcmp(buf->notaConsultor,"0"))
+	{		
+		EXEC SQL DECLARE CURSORNOTAATD CURSOR FOR
+		SELECT
+			AN.IDATENDIMENTO,
+			'(' || PLH.CDAREAREGISTRO || ') ' || PLH.NRLINHA AS NRLINHA,
+			TO_CHAR(AN.DTCRIACAONOTA,'DD/MM/YYYY HH24:MI:SS') AS DTCRIACAONOTA,
+			PD.NRDOCUMENTO,	
+			P.NMPESSOA,
+			AN.IDTIPONOTAATENDIMENTO || '-' || TNA.DSTIPONOTA AS IDTIPONOTAATENDIMENTO,
+			AN.IDATENDIMENTONOTA,
+			NVL(AN.INCONTATADO,0) AS INCONTATADO,
+			G.NMGRUPO,
+			TO_CHAR(AN.DTFECHAMENTO,'DD/MM/YYYY') AS DTFECHAMENTO,
+			ATD.IDATENDIMENTOPROTOCOLO
+		FROM
+			ATENDIMENTO.ATENDIMENTONOTA AN,
+			(SELECT D.NRDOCUMENTO,PD.IDPESSOA 
+			   FROM CUSTOMER.PESSOADOCUMENTO PD, CUSTOMER.DOCUMENTO D, APOIO.TIPODOCUMENTO TD
+			  WHERE PD.IDDOCUMENTO = D.IDDOCUMENTO
+			    AND D.IDTIPODOCUMENTO = TD.IDTIPODOCUMENTO
+			    AND PD.IDDOCUMENTO = D.IDDOCUMENTO
+			    AND TD.SGTIPODOCUMENTO(+) = 'RE'
+			) PD,
+			CUSTOMER.PESSOA P,			
+			CUSTOMER.PESSOALINHAHISTORICO PLH,
+			ATENDIMENTO.ATENDIMENTOCRI ACRI,
+			APOIO.TIPONOTAATENDIMENTO TNA,
+			ATENDIMENTO.GRUPOCRI GCRI,
+			ACESSO.GRUPO G,
+			ACESSO.USUARIO U,
+			ATENDIMENTO.ATENDIMENTO ATD
+		WHERE
+			AN.IDPESSOAUSUARIO = PD.IDPESSOA(+)
+		AND P.IDPESSOA = AN.IDPESSOAUSUARIO			 
+		AND PLH.IDPESSOALINHAHISTORICO = ACRI.IDPESSOALINHAHISTORICO
+		AND AN.IDATENDIMENTO = ACRI.IDATENDIMENTO		
+		AND AN.IDTIPONOTAATENDIMENTO = TNA.IDTIPONOTAATENDIMENTO
+		AND GCRI.IDATENDIMENTO = AN.IDATENDIMENTO
+		AND GCRI.IDGRUPO = G.IDGRUPO
+		AND AN.IDPESSOAUSUARIO = U.IDPESSOAUSUARIO
+		AND (AN.IDATENDIMENTO = :idAtendimento OR :idAtendimento = 0)
+		AND (AN.IDTIPONOTAATENDIMENTO = :idTipoNotaAtendimento OR :idTipoNotaAtendimento = -1)
+		AND (AN.IDTIPONOTAATENDIMENTO <> :cliTransferido OR :cliTransferido = -1)
+		AND (NVL(AN.INCONTATADO,0) = :cliContatado OR :cliContatado = -1)
+		AND (:dtAberturaIni = '0' OR TRUNC(AN.DTCRIACAONOTA) >= TO_DATE(:dtAberturaIni,'DD/MM/YYYY'))
+		AND (:dtAberturaFim = '0' OR TRUNC(AN.DTCRIACAONOTA) <= TO_DATE(:dtAberturaFim,'DD/MM/YYYY'))
+		AND (:reConsultor = '0' OR PD.NRDOCUMENTO = :reConsultor) 
+		AND (:nmUsuario = '0' OR P.NMPESSOA LIKE :nmUsuarioFormat)
+		AND (:login = '0' OR U.NMLOGINUSUARIOCTI LIKE :loginFormat)			 
+		AND ATD.IDATENDIMENTOPROTOCOLO = DECODE(:idAtendimentoProtocolo,0,ATD.IDATENDIMENTOPROTOCOLO,:idAtendimentoProtocolo)
+		AND ATD.IDATENDIMENTO = ACRI.IDATENDIMENTO
+		AND ROWNUM < 100	
+		ORDER BY
+            AN.IDATENDIMENTONOTA ASC;
+
+        EXEC SQL OPEN CURSORNOTAATD;
+		for(;;)
+		{
+			memset(&m_param,0,sizeof(param));
+			memset(&m_iparam,0,sizeof(iparam));
+			EXEC SQL FETCH CURSORNOTAATD INTO m_param:m_iparam;
+			if(sqlca.sqlcode == 1403)
+				break;
+			else
+			{
+				xml->createTag("WFAtdNotaVO");
+				xml->addItem("idAtendimento",(char*)m_param.idAtendimento.arr);
+				xml->addItem("nrLinha",(char*)m_param.nrLinha.arr);
+				xml->addItem("dtAberturaIni",(char*)m_param.dtCriacaoNota.arr);
+				xml->addItem("reConsultor",(char*)m_param.reConsultor.arr);
+				xml->addItem("nmUsuario",(char*)m_param.nmConsultor.arr);
+				xml->addItem("tipoNotaAtendimento",(char*)m_param.idTipoNotaAtendimento.arr);
+				xml->addItem("idAtendimentoNota",(char*)m_param.idAtendimentoNota.arr);
+				xml->addItem("cliContatado",(char*)m_param.cliContatado.arr);
+				xml->addItem("nmGrupo",(char*)m_param.nmGrupo.arr);
+				xml->addItem("dtAberturaFim",(char*)m_param.dtAberturaFim.arr);
+				xml->closeTag();
+				buf->nrRegistros++;
+			}
+		}
+		EXEC SQL CLOSE CURSORNOTAATD;
+	}
+	else
+	{		
+		EXEC SQL DECLARE CURSORNOTAATD2 CURSOR FOR
+		SELECT
+			AN.IDATENDIMENTO,
+			'(' || PLH.CDAREAREGISTRO || ') ' || PLH.NRLINHA AS NRLINHA,
+			TO_CHAR(AN.DTCRIACAONOTA,'DD/MM/YYYY HH24:MI:SS') AS DTCRIACAONOTA,
+			'' AS nrdocumento,	
+			'' AS NMPESSOA,
+			AN.IDTIPONOTAATENDIMENTO || '-' || TNA.DSTIPONOTA AS IDTIPONOTAATENDIMENTO,
+			AN.IDATENDIMENTONOTA,
+			NVL(AN.INCONTATADO,0) AS INCONTATADO,
+			G.NMGRUPO,
+			TO_CHAR(AN.DTFECHAMENTO,'DD/MM/YYYY')
+		FROM
+			ATENDIMENTO.ATENDIMENTONOTA AN,
+			CUSTOMER.PESSOALINHAHISTORICO PLH,
+			APOIO.TIPONOTAATENDIMENTO TNA,
+			ATENDIMENTO.GRUPOCRI GCRI,
+			ACESSO.GRUPO G
+		WHERE	
+			 GCRI.IDPESSOALINHAHISTORICO = PLH.IDPESSOALINHAHISTORICO
+			 AND AN.IDTIPONOTAATENDIMENTO = TNA.IDTIPONOTAATENDIMENTO
+			 AND GCRI.IDATENDIMENTO = AN.IDATENDIMENTO
+			 AND GCRI.IDGRUPO = G.IDGRUPO
+			 AND (NVL(AN.IDPESSOAUSUARIO,0) = 0)
+			 AND (AN.IDATENDIMENTO = :idAtendimento OR :idAtendimento = 0)
+			 AND (AN.IDTIPONOTAATENDIMENTO = :idTipoNotaAtendimento OR :idTipoNotaAtendimento = -1)
+			 AND (AN.IDTIPONOTAATENDIMENTO <> :cliTransferido OR :cliTransferido = -1)
+			 AND (NVL(AN.INCONTATADO,0) = :cliContatado OR :cliContatado = -1)
+			 AND (:dtAberturaIni = '0' OR TRUNC(AN.DTCRIACAONOTA) >= TO_DATE(:dtAberturaIni,'DD/MM/YYYY'))
+			 AND (:dtAberturaFim = '0' OR TRUNC(AN.DTCRIACAONOTA) <= TO_DATE(:dtAberturaFim,'DD/MM/YYYY'))	 
+			 AND ROWNUM < 100
+		ORDER BY AN.IDATENDIMENTONOTA ASC;
+		EXEC SQL OPEN CURSORNOTAATD2;
+		for(;;)
+		{
+			memset(&m_param,0,sizeof(param));
+			memset(&m_iparam,0,sizeof(iparam));
+			EXEC SQL FETCH CURSORNOTAATD2 INTO m_param:m_iparam;
+			if(sqlca.sqlcode == 1403)
+				break;
+			else
+			{
+				xml->createTag("WFAtdNotaVO");
+				xml->addItem("idAtendimento",(char*)m_param.idAtendimento.arr);
+				xml->addItem("nrLinha",(char*)m_param.nrLinha.arr);
+				xml->addItem("dtAberturaIni",(char*)m_param.dtCriacaoNota.arr);
+				xml->addItem("reConsultor",(char*)m_param.reConsultor.arr);
+				xml->addItem("nmUsuario",(char*)m_param.nmConsultor.arr);
+				xml->addItem("tipoNotaAtendimento",(char*)m_param.idTipoNotaAtendimento.arr);
+				xml->addItem("idAtendimentoNota",(char*)m_param.idAtendimentoNota.arr);
+				xml->addItem("cliContatado",(char*)m_param.cliContatado.arr);
+				xml->addItem("nmGrupo",(char*)m_param.nmGrupo.arr);
+				xml->addItem("dtAberturaFim",(char*)m_param.dtAberturaFim.arr);
+				xml->closeTag();
+				buf->nrRegistros++;
+			}
+		}
+		EXEC SQL CLOSE CURSORNOTAATD2;
+	}
+
+	if(buf->nrRegistros >= 99)
+	{
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:nrRegistros
+		FROM
+			ATENDIMENTO.ATENDIMENTONOTA;
+		buf->totalRegistros = nrRegistros;		
+	}
+	else
+		buf->totalRegistros = buf->nrRegistros;
+		
+	ULOG_END("AtendimentoConsultor::buscarNotasAtendimento()");	
+	return 1;
+
+ErrorBuscarNotasAtd:
+	ULOG("AtendimentoConsultor::buscarNotasAtendimento sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int AtendimentoConsultor::getDadosNota(struct stPesquisaNotas *buf,XMLGen*xml)
+{
+	ULOG_START("AtendimentoConsultor::getDadosNota()");
+
+    //int ret = 1 ;
+
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct param{
+			VARCHAR idAtendimento[21+1];
+			VARCHAR idAtendimentoNota[21+1];
+			VARCHAR tipoNotaAtendimento[276+1];
+			VARCHAR dtCriacaoNota[25+1];
+			VARCHAR dsComentario[1500+1];
+			VARCHAR dtAberturaFim[25+1];
+		}m_param;
+		struct iparam{
+			short idAtendimento;
+			short idAtendimentoNota;
+			short tipoNotaAtendimento;
+			short dtCriacaoNota;
+			short dsComentario;
+			short dtAberturaFim;
+		}m_iparam;
+		char *idAtendimentoNota = buf->idAtendimentoNota;
+	EXEC SQL END DECLARE SECTION;
+
+	memset(&m_param,0,sizeof(param));
+	memset(&m_iparam,0,sizeof(iparam));
+
+    int ret = 1 ;
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorGetDadosNota;
+
+	EXEC SQL
+		SELECT
+			AN.IDATENDIMENTO,
+			AN.IDATENDIMENTONOTA,
+			AN.IDTIPONOTAATENDIMENTO || '-' || TNA.DSTIPONOTA AS TIPONOTAATENDIMENTO,
+			TO_CHAR(AN.DTCRIACAONOTA,'DD/MM/YYYY HH24:MI:SS'),
+			an.DSCOMENTARIO,
+			TO_CHAR(AN.DTFECHAMENTO,'DD/MM/YYYY')
+		INTO
+		:m_param:m_iparam
+		FROM
+			ATENDIMENTO.ATENDIMENTONOTA AN,
+			ATENDIMENTO.ATENDIMENTOCRI ACRI,
+			CUSTOMER.PESSOA P,
+			APOIO.TIPONOTAATENDIMENTO TNA
+		WHERE
+			 AN.IDATENDIMENTO = ACRI.IDATENDIMENTO
+			 AND ACRI.IDPESSOAUSUARIO = P.IDPESSOA
+			 AND AN.IDTIPONOTAATENDIMENTO = TNA.IDTIPONOTAATENDIMENTO
+			 AND AN.IDATENDIMENTONOTA = :idAtendimentoNota;
+   
+	if(sqlca.sqlcode == 1403)
+	{
+		ret = -1;
+	}
+	else
+	{		
+		xml->addItem("idAtendimento",(char*)m_param.idAtendimento.arr);
+		xml->addItem("idAtendimentoNota",(char*)m_param.idAtendimentoNota.arr);
+		xml->addItem("tipoNotaAtendimento",(char*)m_param.tipoNotaAtendimento.arr);
+		xml->addItem("dtAberturaIni",(char*)m_param.dtCriacaoNota.arr);
+		xml->addItem("comentario",(char*)m_param.dsComentario.arr);
+		xml->addItem("dtAberturaFim",(char*)m_param.dtAberturaFim.arr);
+		this->getOperacaoNota(xml);
+		this->getNotaHistorico(buf->idAtendimentoNota,xml);
+	}
+	
+	ULOG_END("AtendimentoConsultor::getDadosNota()");
+	
+	return ret;
+
+ErrorGetDadosNota:
+	ULOG("AtendimentoConsultor::getDadosNota sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int AtendimentoConsultor::getNotaHistorico(char*idAtendimentoNota,XMLGen*xml)
+{
+	ULOG_START("AtendimentoConsultor::getNotaHistorico()");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct param{
+			VARCHAR idAtendimentoHistorico[21+1];
+			VARCHAR dsObservacao[255+1];
+			VARCHAR idMotivo[21+1];
+			VARCHAR dsMotivo[255+1];
+			VARCHAR dsOperacaoNotaAtendimento[255+1];
+			VARCHAR dtOperacao[25];
+			VARCHAR nmPessoa[255+1];
+		}m_param;
+		struct iparam{
+			short idAtendimentoHistorico;
+			short dsObservacao;
+			short idMotivo;
+			short dsMotivo;
+			short dsOperacaoNotaAtendimento;
+			short dtOperacao;
+			short nmPessoa;
+		}m_iparam;
+		char *cidAtendimentoNota = idAtendimentoNota;
+	EXEC SQL END DECLARE SECTION;
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorGetNotaHistorico;
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	EXEC SQL DECLARE CURSORHISTORICO CURSOR FOR
+	SELECT 
+		 ANH.IDATENDIMENTONOTAHISTORICO,
+		 ANH.DSOBSERVACAO,
+		 NVL(ANM.IDMOTIVO,0) AS IDMOTIVO,
+		 NVL(M.DSMOTIVO,'') AS DSMOTIVO,
+		 ONA.DSOPERACAONOTAATENDIMENTO,
+		 TO_CHAR(ANH.DTOPERACAO,'DD/MM/YYYY HH24:MI:SS') AS DTOPERACAO,
+		 P.NMPESSOA
+	FROM	  
+		 ATENDIMENTO.ATENDIMENTONOTAHISTORICO ANH,
+		 ATENDIMENTO.ATENDIMENTONOTAMOTIVO ANM,
+		 ATENDIMENTO.MOTIVO M,
+		 ATENDIMENTO.OPERACAONOTAATENDIMENTO ONA,
+		 CUSTOMER.PESSOA P
+	WHERE
+		 ANH.IDATENDIMENTONOTA = :cidAtendimentoNota
+		 AND ANH.IDATENDIMENTONOTAHISTORICO = ANM.IDATENDIMENTONOTAHISTORICO(+)
+		 AND ANM.IDMOTIVO = M.IDMOTIVO(+)
+		 AND ANH.IDOPERACAONOTAATENDIMENTO = ONA.IDOPERACAONOTAATENDIMENTO
+		 AND ANH.IDPESSOAUSUARIO = P.IDPESSOA;
+	EXEC SQL OPEN CURSORHISTORICO;
+	for(;;)
+	{
+		memset(&m_param,0,sizeof(param));
+		memset(&m_iparam,0,sizeof(iparam));
+		EXEC SQL FETCH CURSORHISTORICO INTO :m_param:m_iparam;
+		xml->createTag("WFAtdNotaHistVO");
+		xml->addItem("idAtendimentoHistorico",(char*)m_param.idAtendimentoHistorico.arr);
+		xml->addItem("dsObservacao",(char*)m_param.dsObservacao.arr);
+		xml->addItem("idMotivo",(char*)m_param.idMotivo.arr);
+		xml->addItem("dsMotivo",(char*)m_param.dsMotivo.arr);
+		xml->addItem("dsOperacao",(char*)m_param.dsOperacaoNotaAtendimento.arr);
+		xml->addItem("dtOperacao",(char*)m_param.dtOperacao.arr);
+		xml->addItem("nmPessoa",(char*)m_param.nmPessoa.arr);
+		xml->closeTag();
+	}
+	EXEC SQL CLOSE CURSORHISTORICO;	 	
+	
+	ULOG_END("AtendimentoConsultor::getNotaHistorico()");		 
+	
+	return 1;
+ErrorGetNotaHistorico:
+	ULOG("AtendimentoConsultor::getNotaHistorico sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int AtendimentoConsultor::getOperacaoNota(XMLGen*xml)
+{
+	ULOG_START("AtendimentoConsultor::getOperacaoNota()");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct param{
+			VARCHAR idOperacaoNotaAtendimento[21+1];
+			VARCHAR dsOperacaoNotaAtendimento[255+1];
+		}m_param;
+		struct iparam{
+			short idOperacaoNotaAtendimento;
+			short dsOperacaoNotaAtendimento;
+		}m_iparam;
+
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorGetOperacaoNota;
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE CURSOROPERACAO CURSOR FOR
+		SELECT 
+			   IDOPERACAONOTAATENDIMENTO,
+			   DSOPERACAONOTAATENDIMENTO
+		FROM
+			   ATENDIMENTO.OPERACAONOTAATENDIMENTO
+		ORDER BY
+			  IDOPERACAONOTAATENDIMENTO ASC;
+
+	EXEC SQL OPEN CURSOROPERACAO;
+
+	for(;;)
+	{
+		memset(&m_param,0,sizeof(param));
+		memset(&m_iparam,0,sizeof(m_iparam));
+
+		EXEC SQL FETCH CURSOROPERACAO INTO :m_param:m_iparam;
+
+		xml->createTag("WFAcaoVO");
+		xml->addItem("idAtividade",(char*)m_param.idOperacaoNotaAtendimento.arr);
+		xml->addItem("dsAtividade",(char*)m_param.dsOperacaoNotaAtendimento.arr);
+		xml->closeTag();
+	}
+
+	EXEC SQL CLOSE CURSOROPERACAO;
+	
+	ULOG_END("AtendimentoConsultor::getOperacaoNota()");
+
+	return 1;
+
+ErrorGetOperacaoNota:
+	ULOG("AtendimentoConsultor::getOperacaoNota sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}

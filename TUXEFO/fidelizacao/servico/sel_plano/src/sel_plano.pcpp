@@ -1,0 +1,207 @@
+//
+// $Id: sel_plano.pcpp,v 1.1 2009/07/31 15:34:52 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+int sel_plano(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char parm[255];
+  int  whFlag;
+  int  rgFlag;
+  int  iTipoPessoa=0;
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  int     idPlano;
+  VARCHAR nmPlano[255];
+  int     idUfOperadora;
+  int	  idTipoPessoa;
+  int     idTipoLinha;
+  VARCHAR sgTipoPessoa[3];
+  VARCHAR nmUf[255];
+  VARCHAR whClause[255];
+  VARCHAR dsTipoPessoa[255];
+  EXEC SQL END DECLARE SECTION;
+  
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  
+
+  try
+  {
+    //  Obtendo dados do xml
+    get_tag(parm,dnode,"texto",0,0);
+    sprintf((char *)whClause.arr,"%%%s%%",parm);
+    whClause.len = strlen(parm) + 2;
+    whFlag = (strlen(parm)==0);
+
+    get_tag(parm,dnode,"idufop",0,0);
+    idUfOperadora = atoi(parm);
+    rgFlag = (idUfOperadora == 0);
+
+    get_tag(parm,dnode,"idTipoLinha",0,0);
+    idTipoLinha = atoi(parm);
+    
+
+	iTipoPessoa=get_tag(parm,dnode,"idTipoPessoa",0,-1);
+	//Não veio a Tag idTipoPessoa
+		if(iTipoPessoa==-1)
+			{
+				get_tag(parm,dnode,"sgTipoPessoa",0,0);
+				strToOra(sgTipoPessoa,parm);
+				EXEC SQL
+					SELECT IDTIPOPESSOA,DSTIPOPESSOA
+					INTO :idTipoPessoa,:dsTipoPessoa
+					FROM APOIO.TIPOPESSOA
+					WHERE SGTIPOPESSOA=:sgTipoPessoa;
+			}
+		else
+		{
+			idTipoPessoa = atoi(parm);
+			EXEC SQL
+					SELECT DSTIPOPESSOA
+					INTO :dsTipoPessoa
+					FROM APOIO.TIPOPESSOA
+					WHERE IDTIPOPESSOA=:idTipoPessoa;
+
+			
+
+		}
+	
+	endOraStr(dsTipoPessoa);
+	ULOG_INT(idTipoPessoa);
+	
+	EXEC SQL WHENEVER NOT FOUND DO break;
+    // reg=0( todas ); texto=*
+	
+    EXEC SQL DECLARE crsPlnAll CURSOR FOR
+      select idPlano,
+			 nvl(nmPlano,'Nao Cadastrado'), 
+			 idUfOperadora, 
+			 nmUf
+      from   retencao.planoV01
+      where  inAtivo != 0
+	  and	 idTipoPessoa = :idTipoPessoa
+      and    idtipolinha  = :idTipoLinha;
+
+    // reg=0; texto=xxx
+    EXEC SQL DECLARE crsPlnTxt CURSOR FOR
+      select idPlano, 
+			 nvl(nmPlano,'Nao Cadastrado'), 
+			 idUfOperadora, 
+			 nmUf
+      from   retencao.planoV01
+      where  inAtivo != 0
+      and    UPPER(nmPlano) like UPPER(:whClause)
+	  and	 idTipoPessoa  = :idTipoPessoa
+      and    idtipolinha   = :idTipoLinha;
+
+    // reg=n; texto=*
+    EXEC SQL DECLARE crsPlnReg CURSOR FOR
+      select idPlano, 
+			 nvl(nmPlano,'Nao Cadastrado'), 
+			 idUfOperadora, 
+			 nmUf
+      from   retencao.planoV01
+      where  inAtivo != 0
+      and    idUfOperadora = :idUfOperadora
+	  and	 idTipoPessoa  = :idTipoPessoa
+      and    idtipolinha   = :idTipoLinha;
+
+    // reg=n; texto=xxx
+    EXEC SQL DECLARE crsPlnRegTxt CURSOR FOR
+      select idPlano, 
+			 nvl(nmPlano,'Nao Cadastrado'), 
+			 idUfOperadora,
+			 nmUf
+      from   retencao.planoV01
+      where  inAtivo != 0
+      and    idUfOperadora = :idUfOperadora
+      and    UPPER(nmPlano) like UPPER(:whClause)
+	  and	 idTipoPessoa  = :idTipoPessoa
+      and    idtipolinha   = :idTipoLinha;
+
+
+    if ((whFlag == 1) && (rgFlag == 1))
+	{
+      ULOG("OPEN crsPlnAll\n");
+	  
+      EXEC SQL OPEN crsPlnAll;
+    }
+	else if ((whFlag == 1) && (rgFlag == 0))
+	{
+      ULOG("OPEN crsPlnReg\n");
+      EXEC SQL OPEN crsPlnReg;
+    }
+	else if ((whFlag == 0) && (rgFlag == 1))
+	{
+      ULOG("OPEN crsPlnTxt\n");
+      EXEC SQL OPEN crsPlnTxt;
+    }
+	else 
+	{
+      ULOG("OPEN crsPlnRegTxt;\n");
+      EXEC SQL OPEN crsPlnRegTxt;
+    }
+
+    for(;;) 
+	{
+      if ((whFlag == 1) && (rgFlag == 1))
+	  {
+			EXEC SQL FETCH crsPlnAll INTO :idPlano,:nmPlano,:idUfOperadora,:nmUf;
+      }
+	  else if ((whFlag == 1) && (rgFlag == 0))
+	  {
+			EXEC SQL FETCH crsPlnReg INTO :idPlano,:nmPlano,:idUfOperadora,:nmUf;
+      }
+	  else if ((whFlag == 0) && (rgFlag == 1))
+	  {
+			EXEC SQL FETCH crsPlnTxt INTO :idPlano,:nmPlano,:idUfOperadora,:nmUf;
+      }
+	  else 
+	  {
+			EXEC SQL FETCH crsPlnRegTxt INTO :idPlano,:nmPlano,:idUfOperadora,:nmUf;
+      }
+
+      endOraStr(nmPlano);
+      endOraStr(nmUf);
+
+      ULOG_VAR(nmPlano);
+      ULOG_INT(idPlano);
+      ULOG_INT(idUfOperadora);
+      ULOG_VAR(nmUf);
+      xml->createTag("tns:planoVO");
+      xml->addItem("id",idPlano);
+      xml->addItem("descricao",(char *)nmPlano.arr);
+      xml->addItem("idReg",idUfOperadora);
+      xml->addItem("regional",(char *)nmUf.arr);
+	  xml->addItem("idTipoPessoa",idTipoPessoa);
+      xml->addItem("dsTipoPessoa",(char *)dsTipoPessoa.arr);
+      xml->closeTag();
+    }
+  
+    if ((whFlag == 1) && (rgFlag == 1))
+	{
+      EXEC SQL CLOSE crsPlnAll;
+    }
+	else if ((whFlag == 1) && (rgFlag == 0))
+	{
+      EXEC SQL CLOSE crsPlnReg;
+    }
+	else if ((whFlag == 0) && (rgFlag == 1))
+	{
+      EXEC SQL CLOSE crsPlnTxt;
+    }
+	else 
+	{
+      EXEC SQL CLOSE crsPlnRegTxt;
+    }
+
+  }
+  catch(...)
+  {
+		throw;
+  }
+
+  return 1;
+}
+

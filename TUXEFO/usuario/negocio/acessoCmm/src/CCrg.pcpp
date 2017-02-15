@@ -1,0 +1,401 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "CCrg.h"
+
+CCrg::CCrg()
+{
+}
+
+CCrg::~CCrg()
+{
+}
+
+char* CCrg::RTrim(char *pszString)
+{
+    ULOG_START("CCrg::RTrim()");
+   
+    int iLen;
+
+    iLen=strlen(pszString);
+
+    for(;;)
+    {
+        if(pszString[iLen-1] != ' ')
+            break;
+
+        iLen--;
+
+        if(iLen == 0)
+            break;
+    }
+    pszString[iLen] = 0x00;
+    
+    ULOG_END("CCrg::RTrim()");
+	return pszString;
+}
+
+int CCrg::Insert( char* cnmCargo,
+				  char* cLogUser )
+{
+	
+	ULOG_START("CCrg::Insert( )");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidCargo[21+1];
+		char* cAuxnmCargo  = cnmCargo;
+	EXEC SQL END DECLARE SECTION;
+	
+	try
+	{
+		ZeraCargo();
+		
+		memset( &cAuxidCargo, 0, sizeof(cAuxidCargo) );
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		sqlca.sqlcode=0;
+		
+		//Pega um id unico e sequencia para a insercao
+		EXEC SQL
+			SELECT CARGO.CARGOSQ.NEXTVAL
+			INTO :cAuxidCargo
+			FROM DUAL;
+	
+		EXEC SQL 
+			INSERT INTO ACESSO.CARGO
+			  (IDCARGO, 
+			   NMCARGO )
+			VALUES
+			  (:cAuxidCargo, 
+			   :cAuxnmCargo );
+	}
+	catch(...)
+	{
+		throw;
+	}
+		
+	if( sqlca.sqlcode == 0 )
+	{
+	    ULOG_END("CCrg::Insert( )");
+		return 1;
+	}
+	else
+	{
+		SetErro( "Falha na inclusao de Cargos" );
+		ULOG_END("CCrg::Insert(  )");
+		return 0;
+	}
+
+GotoInsert:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CCrg::Update( char* cidCargo, 
+				  char* cnmCargo,
+				  char* cLogUser )
+{
+	ULOG_START(" CCrg::Update( )");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidCargo  = cidCargo;
+		char* cAuxnmCargo  = cnmCargo;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		
+		ZeraCargo();
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+		sqlca.sqlcode=0;
+		
+		EXEC SQL 
+			UPDATE ACESSO.CARGO
+			   SET NMCARGO = :cAuxnmCargo
+			 WHERE IDCARGO = :cAuxidCargo;  
+	
+	}
+	catch(...)
+	{
+		throw;
+	}
+	if( sqlca.sqlcode == 0 )
+	{
+		ULOG_END("CCrg::Update( )");
+		return 1;
+	}
+	else
+	{
+		SetErro( "Falha no Update de Cargos" );
+		ULOG_END("CCrg::Update(  )");
+		return 0;
+	}
+
+GotoUpdate:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CCrg::ListId( char* cid )
+{
+	ULOG_START("CCrg::ListId( )");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidOra = cid;
+		struct
+		{
+			VARCHAR stidCargo[21+1];
+			VARCHAR stnmCargo[255+1];
+		} stCargo;
+		struct
+		{
+			short iidCargo;
+			short inmCargo;
+		} stCargoInd;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+			
+		ZeraCargo();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL 
+	   		DECLARE 
+	   			CursorCargoListId CURSOR FOR
+			SELECT 
+				IDCARGO
+			   ,NMCARGO 
+			  FROM 
+			  	ACESSO.CARGO
+			 WHERE 
+			 	IDCARGO = :cidOra;
+	
+		EXEC SQL OPEN CursorCargoListId;
+	
+		if(sqlca.sqlcode)
+		{
+			SetErro( "Erro ao abrir o cursor CursorCargoListId" );
+			ULOG_END("CCrg::ListId( )");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stCargo, 0, sizeof(stCargo) );
+				EXEC SQL FETCH CursorCargoListId INTO :stCargo:stCargoInd;
+	
+				Add( (char*)stCargo.stidCargo.arr, (char*)stCargo.stnmCargo.arr );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorCargoListId;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+	if(sqlca.sqlcode)
+	{
+		SetErro( "Erro ao fechar o cursor CursorCargoListId" );
+		ULOG_END("CCrg::ListId( )");
+		return 0;
+	}
+	ULOG_END("CCrg::ListId( )");
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CCrg::ListAll( void )
+{
+	ULOG_START("CCrg::ListAll(  )");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidCargo[21+1];
+			VARCHAR stnmCargo[255+1];
+		} stCargo;
+		struct
+		{
+			short iidCargo;
+			short inmCargo;
+		} stCargoInd;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+			
+		ZeraCargo();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorCargoListAll CURSOR FOR
+			SELECT IDCARGO, 
+			       NMCARGO 
+			  FROM ACESSO.CARGO;
+	
+		EXEC SQL OPEN CursorCargoListAll;
+	
+		if(sqlca.sqlcode)
+		{
+			SetErro( "Erro ao abrir o cursor CursorCargoListAll" );
+			ULOG_END("CCrg::ListAll(  )");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stCargo, 0, sizeof(stCargo) );
+				EXEC SQL FETCH CursorCargoListAll INTO :stCargo:stCargoInd;
+	
+				Add( (char*)stCargo.stidCargo.arr, (char*)stCargo.stnmCargo.arr );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorCargoListAll;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+		
+	if(sqlca.sqlcode)
+	{
+		SetErro( "Erro ao abrir o cursor CursorCargoListAll" );
+	    ULOG_END("CCrg::ListAll(  )");
+		return 0;
+	}
+	ULOG_END("CCrg::ListAll( )");
+	return iCont;
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CCrg::InsertUpdateCargoUsuario( char* cidPessoa
+                                   ,char* cidCargo
+                                   ,char* cidUser )
+{
+	ULOG_START("CCrg::InsertUpdateCargoUsuario( )");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stidUsuarioCargo[21+1];
+		char* cAuxidPessoa = cidPessoa;
+		char* cAuxidCargo = cidCargo;
+		char* cAuxidUser = cidUser;
+	EXEC SQL END DECLARE SECTION;
+	memset( &stidUsuarioCargo, 0, sizeof( stidUsuarioCargo ) );
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsertUpdateCargoUsuario;
+	sqlca.sqlcode=0;
+	
+	EXEC SQL
+		DELETE FROM 
+			ACESSO.USUARIOCARGO
+		WHERE
+			IDPESSOAUSUARIO = :cAuxidPessoa;
+
+	sqlca.sqlcode=0;
+
+	//Recupera um ID da sequence	
+	EXEC SQL
+		SELECT 
+			ACESSO.USUARIOCARGOSQ.NEXTVAL
+		INTO
+			:stidUsuarioCargo
+		FROM DUAL;
+
+	//Insere a relacao Usuario Cargo
+	EXEC SQL
+		INSERT INTO ACESSO.USUARIOCARGO
+		  (IDUSUARIOCARGO,
+		   IDCARGO,
+		   IDPESSOAUSUARIO,
+		   IDUSUARIOALTERACAO,
+		   DTULTIMAALTERACAO)
+		VALUES
+		  ( :stidUsuarioCargo
+		   ,:cAuxidCargo
+		   ,:cAuxidPessoa
+		   ,:cAuxidUser
+		   ,SYSDATE);
+	
+	ULOG_END("CCrg::InsertUpdateCargoUsuario( )");
+	
+	if(sqlca.sqlcode)
+		return 0;
+	
+	return 1;
+
+GotoInsertUpdateCargoUsuario:
+	throw TuxBasicOraException(sqlca.sqlcode);
+		   
+}
+
+void CCrg::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	ULOG_START("CCrg::GetXml( )");
+	
+	if( Quantidade() > 0 )
+	{
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			xml->createTag(cNomeTag);
+			xml->addProp(	"xmlns", "usuario.fo.vivo.com.br/vo" );
+			if( Registro( x ) != NULL )
+			{
+				xml->addItem("idCargo"   , Registro(x)->cidCargo   );
+				xml->addItem("nmCargo"   , Registro(x)->cnmCargo   );
+			}
+			xml->closeTag();
+		}
+	}
+	
+	ULOG_END("CCrg::GetXml( )");
+}
+
+void CCrg:: SetErro( char* cErro )
+{
+	ULOG_START(" CCrg:: SetErro( )");
+	
+	if( strlennull( cErro ) > 255 )
+	{
+		strncpy( _cErro, &cErro[0], 255 );
+	}
+	else
+	{
+		if( strlennull( cErro ) == 0 )
+			memset( _cErro, 0, sizeof( _cErro ) );
+		else
+			strcpy( _cErro, cErro );
+	}
+	
+	ULOG_END("CCrg:: SetErro( )");
+}

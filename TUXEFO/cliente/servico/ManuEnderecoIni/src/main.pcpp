@@ -1,0 +1,157 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Fonte   : main.cpp
+//* Servico : ManuEnderecoIni
+//* Servidor: LupaCliente
+//*
+//* Ficheiro: TUXEFO/cliente/LupaCliente/ManuEnderecoIni/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson Martins
+//*
+//* Fecha primeira version:13/06/2004
+//*
+//* Version actual: 01.00
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Monta XML de retorno com conteudo de TipoEndereco, Estado e Pais.
+//* 
+//* Review:
+//*
+//* Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+//*//-------------------------------------------------------------------------------
+//*  ALTERACAO  DESCRICAO
+//*    01.00    Alteracao do nome do servico internamente a pedida do equipe 
+//*             de Suporte Tecnologico. 30/08/2004
+//---------------------------------------------------------------------
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+#include "../include/ManuEnderecoIni.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classTipoEndereco.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/UF.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/Pais.h";
+
+DECLARE_TUXEDO_SERVICE(MANUENDERECOI);
+
+void implMANUENDERECOI::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    int iNroReg=0;
+    int iAux;
+    CTipoEndereco* poTpEnd=0;
+    CUF* poUF=0;
+    CPais* poPais=0;
+
+    ULOG_START( "implMANUENDERECOI::Execute()" );
+    try{
+        pXmlG->createTag(XML_OUT_NO_ROOT);
+        pXmlG->addProp("xmlns", XML_OUT_PROP);
+
+        poPais = CPais::lista(&iNroReg);
+
+        ULOG("Local1");
+        ULOG("iNroReg(%d)", iNroReg);
+        for (iAux=0; iAux < iNroReg; iAux++) 
+        {
+            /* deve estar em primeiro na lista */
+            if(!strcmp(rtrim(poPais[iAux].getSgPais()), "BRA"))
+            {
+                ULOG("Local2");
+                pXmlG->createTag(XML_OUT_NO_LISTAPAIS);
+                    pXmlG->createTag(XML_OUT_PAIS);
+                        pXmlG->addItem(XML_OUT_IDPAIS, poPais[iAux].getIdPais());
+                        pXmlG->addItem(XML_OUT_SGPAIS, rtrim(poPais[iAux].getSgPais()));
+                        pXmlG->addItem(XML_OUT_NMPAIS, rtrim(poPais[iAux].getNmPais()));
+                    pXmlG->closeTag();
+                pXmlG->closeTag();
+
+                ULOG("iAux(%d)", iAux);
+                break;
+            }
+        }
+
+        ULOG("Local3");
+        for (iAux=0; iAux < iNroReg; iAux++) 
+        {
+            if(strcmp(rtrim(poPais[iAux].getSgPais()), "BRA"))
+            {
+                pXmlG->createTag(XML_OUT_NO_LISTAPAIS);
+                    pXmlG->createTag(XML_OUT_PAIS);
+                        pXmlG->addItem(XML_OUT_IDPAIS, poPais[iAux].getIdPais());
+                        pXmlG->addItem(XML_OUT_SGPAIS, rtrim(poPais[iAux].getSgPais()));
+                        pXmlG->addItem(XML_OUT_NMPAIS, rtrim(poPais[iAux].getNmPais()));
+                    pXmlG->closeTag();
+                pXmlG->closeTag();
+            }
+        }
+        ULOG("Local4");
+        ULOG("2.iAux(%d)", iAux);
+
+        poUF = CUF::lista(&iNroReg);
+        for (iAux=0; iAux < iNroReg; iAux++) 
+        {
+            pXmlG->createTag(XML_OUT_NO_LISTAUF);
+                pXmlG->createTag(XML_OUT_UF);
+                    pXmlG->addItem(XML_OUT_IDUF, poUF[iAux].getIdUF());
+                    pXmlG->addItem(XML_OUT_SGUF, rtrim(poUF[iAux].getSgUF()));
+                    pXmlG->addItem(XML_OUT_NMUF, rtrim(poUF[iAux].getNmUF()));
+                pXmlG->closeTag();
+            pXmlG->closeTag();
+        }
+
+        poTpEnd= CTipoEndereco::RecuperarTodos(&iNroReg);
+        for (iAux=0; iAux < iNroReg; iAux++) 
+        {
+            pXmlG->createTag(XML_OUT_NO_TPENDERECO);
+                pXmlG->createTag(XML_OUT_TPENDERECO);
+                    pXmlG->addItem(XML_OUT_IDTIPOENDERECO, poTpEnd[iAux].getId());
+                    pXmlG->addItem(XML_OUT_SGTIPOENDERECO, poTpEnd[iAux].getSigla());
+                    pXmlG->addItem(XML_OUT_NMTIPOENDERECO, poTpEnd[iAux].getDescricao());
+                pXmlG->closeTag();
+            pXmlG->closeTag();
+        }
+
+        pXmlG->closeTag();
+
+        //Liberando memoria alocada
+        if ( poTpEnd ) free(poTpEnd);
+        if ( poUF ) free(poUF);
+        if ( poPais ) free(poPais);
+    }
+    catch(...){
+        if ( poTpEnd ) free(poTpEnd);
+        if ( poUF ) free(poUF);
+        if ( poPais ) free(poPais);
+        throw;  //repassando o erro para nucleo
+    }
+
+    ULOG_END( "implMANUENDERECOI::Execute()" );
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}
+
+
+

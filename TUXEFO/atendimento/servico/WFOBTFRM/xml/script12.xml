@@ -1,0 +1,115 @@
+
+
+
+//Imports;
+#import WFAtdFrm:ObtemFormulario;
+
+//Definições;
+string  txt;
+string  query;
+
+XMLGen  xml;
+DOMNODE dom;
+
+RECORDSET rs;
+
+int    idAtendimento;
+int    idUsuario;
+int    idContato;
+int    count;
+
+#debug;
+
+idUsuario = GetHdrData("user");
+
+//Verifica as entradas;
+idAtendimento = XML:idAtendimento;
+
+if( idAtendimento < 1 )
+    txt = "O código do atendimento [idAtendimento]=[" + idAtendimento + "] é obrigatório ou maior que zero.";
+    throw("00E9901", txt);
+fi;
+
+//Obtém os dados da árvore;
+xml += "<ArvoreAtendimentoVO xmlns=\"admsistemas.fo.vivo.com.br/vo\">";
+
+Clean(query);
+query = "SELECT idContato FROM atendimento.AtendimentoB00 WHERE idAtendimento = :idAtendimento";
+
+rs = OpenRecordset(query);
+
+count = rs.RowCount();
+
+if( count != 0 )
+	idContato = rs.GetValue("idContato");
+
+        txt  = "<idContato>";
+        txt += idContato;
+        txt += "</idContato>";
+else
+        txt  = "<idContato/>";
+fi;
+xml += txt;
+
+Clean(query);
+query = "SELECT idFormaRetorno,  dsTipoComunicacao FROM (SELECT tc.idFormaRetorno, tc.dsTipoComunicacao FROM atendimento.AtendimentoContatoComunicB00 ac, Apoio.TipoComunicacaoB00 tc " + 
+        " WHERE tc.idTipoComunicacao = ac.idTipoComunicacao AND ac.idAtendimento = :idAtendimento ORDER BY nrOrdemUtilizacao) WHERE rownum < 2";
+
+println(query);
+
+rs = OpenRecordset(query);
+
+count = rs.RowCount();
+
+if( count != 0 )
+        txt  = "<idTipoComunicacao>";
+        txt += rs.GetValue("idFormaRetorno");
+        txt += "</idTipoComunicacao>";
+        txt += "<dsTipoComunicacao>";
+        txt += rs.GetValue("dsTipoComunicacao");
+        txt += "</dsTipoComunicacao>";
+	xml += txt;
+fi;
+
+Clean(query);
+
+query = "SELECT ac.nrTelefoneContato nrTelefoneContato, lt.idTipoLinha idTipoLinha ";
+query += "FROM atendimento.AtendimentoContato ac, atendimento.AtendimentoLinha al, "; 
+query += "customer.PessoaLinhaHistorico plh, linha.LinhaTelefonica lt "; 
+query += "WHERE ac.idAtendimento = al.idAtendimento "; 
+query += "AND al.idPessoaLinhaHistorico = plh.idPessoaLinhaHistorico "; 
+query += "AND plh.idLinhaTelefonica = lt.idLinhaTelefonica ";
+query += "AND ac.idAtendimento = :idAtendimento";
+
+println(query);
+	
+rs = OpenRecordset(query);
+count = rs.RowCount();
+
+if (count != 0)
+	txt = "<BuscaFormulario>\n\t" +
+		"<idContato>" + idContato + "</idContato>\n\t" +
+		"<nrTelefone>" + rs.GetValue("nrTelefoneContato") + "</nrTelefone>\n\t" +
+		"<idTipoLinha>" + rs.GetValue("idTipoLinha") + "</idTipoLinha>\n\t" +
+		"<idFaseProcesso>2</idFaseProcesso>\n" +
+	      "</BuscaFormulario>";
+
+	println(txt);
+	
+	dom = txt;
+
+	xml += "<FormularioVO xmlns=\"admsistemas.fo.vivo.com.br/vo\" xmlns:ns1=\"workflow.fo.vivo.com.br/vo\">";
+	
+	xml =  WFAtdFrm.ObtemFormulario(dom);
+	
+	xml += "</FormularioVO>";
+else
+	xml += "<FormularioVO/>";
+fi;
+
+xml += "</ArvoreAtendimentoVO>";
+
+//Retorna processamento;
+return xml;
+
+			

@@ -1,0 +1,119 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Modulo: main.pcpp
+//* Servico: AbaServico
+//* Servidor: LupaLinha
+//*
+//* Ficheiro: TUXEFO/cliente/LupaLinha/AbaServico/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson Martins
+//*
+//* Fecha primeira version:24/06/2004
+//*
+//* Version actual: 01.00
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Cria o XML com todos os Servicos de uma derteminada LinhaTelefonica da LupaLinha.
+//* 
+//*
+//*//-------------------------------------------------------------------------------
+//---------------------------------------------------------------------
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Exception.h"
+
+#include "../include/AbaServico.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classPlanoServicoLinha.h";
+
+DECLARE_TUXEDO_SERVICE(AbaServico);
+
+void implAbaServico::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+int iNroReg=0;
+int iAux;
+char* pParam1=0;
+CPlanoServicoLinha* oPSL;
+
+    ULOG_START( "implAbaServico::Execute()" );
+        
+    try{
+        pParam1 = walkTree(pDnode, XML_IDLINHA, 0);
+        if(!pParam1)
+        {
+            ERROR(NRO_ID_LINHA_NE);
+            TAG_INEXISTENTE(XML_IDLINHA);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !*pParam1)
+        {
+            ERROR(NRO_ID_LINHA_VV);
+            TAG_VALOR_VAZIO(XML_IDLINHA);
+            if (pParam1) XMLString::release(&pParam1);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !IsNumeric(pParam1) ){
+            ERROR(NRO_ID_LINHA_VI);
+            TAG_VALOR_INVALIDO(XML_IDLINHA);
+            if (pParam1) XMLString::release(&pParam1);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        oPSL = CPlanoServicoLinha::RecuperarTodosServico(&iNroReg, pParam1);
+
+        pXmlG->createTag(XML_ROOT);
+        pXmlG->addProp("xmlns", XML_PROP);
+            pXmlG->createTag(XML_NO_DADOS);
+                for (iAux=0; iAux < iNroReg; iAux++) 
+                {
+                    pXmlG->createTag(XML_NO_SERVICO);
+                        pXmlG->addItem(XML_IDSERVICO, oPSL[iAux].getIdServicoLinha());
+                        pXmlG->addItem(XML_INPLANO, oPSL[iAux].getInPlano());
+                        pXmlG->addItem(XML_IDPACOTE, oPSL[iAux].getIdPacote());
+                        pXmlG->addItem(XML_NMSERVICO, oPSL[iAux].getNmServico());
+                        pXmlG->addItem(XML_DTEXPIRA, oPSL[iAux].getDataFinal());
+	                pXmlG->closeTag();
+                }
+
+            pXmlG->closeTag();
+        pXmlG->closeTag();
+        //Liberando memoria alocada
+        if (pParam1) XMLString::release(&pParam1);
+        free(oPSL);
+    }
+    catch(...){
+        throw;  //repassando o erro para nucleo
+    }
+
+	// Execução OK.
+	INFORMATION(NRO_OK);
+
+    ULOG_END( "implAbaServico::Execute()" );
+	setStatusCode(sNrMsg, MSG_OK);
+}
+
+
+

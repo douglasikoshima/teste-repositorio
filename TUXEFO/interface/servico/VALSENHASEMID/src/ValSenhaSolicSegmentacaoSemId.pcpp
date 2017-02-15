@@ -1,0 +1,300 @@
+/**
+ * @modulo  Cliente
+ * @usecase Ura
+ * @author  Luiz Carlos Fonseca
+ * @author  Bruno Pereira Soares
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:34:16 $
+ **/
+
+/**
+ * Serviço de validação de senha e solicitação de segmetação de 
+ * cliente, sem identificação, ativado via URA
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <stdio.h>
+#include <sqlca.h>
+#include <sqlda.h>
+#include <string.h>
+#include <iostream.h>
+
+#include <tuxfw.h>
+#include "ValSenhaSolicSegmentacaoSemId.hpp"
+#include "../../../negocio/commons/include/Commom.hpp"
+#include "../../../negocio/commons/include/stLinha.hpp"
+
+extern sqlca sqlca;
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../../../negocio/commons/include/stLinha.hpp"
+EXEC SQL END DECLARE SECTION;
+
+void RecuperarDados( struct stStatuslinha *stLinha )
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct stStatuslinha* o_stLinha;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(o_stLinha, ERR_DATABASE);
+	EXEC SQL WHENEVER NOT FOUND DO sql_error(o_stLinha, ERR_NOT_FOUND_OR_DISABLED);
+
+	o_stLinha = stLinha;
+
+	// recupera idlinhatelefonica
+	// recupera idpessoa do cliente
+	// indicador de estado da linha
+	// tipo de linha
+	// tipo de carteira do cliente
+
+	tuxfw_getlogger()->debug("o_stLinha.ntLinha: %i", o_stLinha->ntLinha);
+	tuxfw_getlogger()->debug("o_stLinha.ntArea: %i", o_stLinha->ntArea);
+
+	EXEC SQL SELECT 
+		LT.IDLINHATELEFONICA,
+		EL.SGCLASSIFICACAO,
+		decode(TL.SGTIPOLINHA, 'PRÉ', '00', 'POS', '01', TL.SGTIPOLINHA)
+	INTO	
+		:o_stLinha->dblIdlinhatelefonica,
+                :o_stLinha->chrEstadolinha,
+                :o_stLinha->chrTipolinha		
+	FROM
+		LINHA.LINHABASE LB,
+		LINHA.LINHATELEFONICA LT,
+		APOIO.AREAREGISTRO AR,
+		APOIO.ESTADOLINHA EL,
+		APOIO.TIPOLINHA TL
+	WHERE
+		LB.IDAREAREGISTRO = AR.IDAREAREGISTRO AND
+		LB.IDLINHABASE = LT.IDLINHABASE AND
+		LB.IDESTADOLINHA = EL.IDESTADOLINHA AND
+		TL.IDTIPOLINHA = LT.IDTIPOLINHA AND
+		LB.NRLINHA = TO_NUMBER(:o_stLinha->ntLinha) AND
+		AR.CDAREAREGISTRO = TO_NUMBER(:o_stLinha->ntArea);
+
+        if (sqlca.sqlcode == 1403) {
+                tuxfw_getlogger()->information("Linha não encontrada.");
+                o_stLinha->ntStatus = ERR_NOT_FOUND_OR_DISABLED;
+                return;
+        } else {
+                tuxfw_getlogger()->debug("Id da linha: %f", o_stLinha->dblIdlinhatelefonica);
+                tuxfw_getlogger()->debug("Estado da linha: %s", o_stLinha->chrEstadolinha);
+                tuxfw_getlogger()->debug("Tipo da linha: %s", o_stLinha->chrTipolinha);
+	}
+
+	DecodeEstadoLinha(o_stLinha);
+
+        // recupera idpessoa do cliente
+        // tipo de carteira do cliente
+        EXEC SQL 
+	SELECT
+		PessoaLinha.IDPESSOALINHA,
+		Pessoa.idPessoa, 
+		DECODE(Pessoa.idtipocarteira, 0, -1, 13, -1,Pessoa.idtipocarteira)			
+	INTO    
+		:o_stLinha->dblIdpessoalinha,
+                :o_stLinha->dblIdcliente,
+                :o_stLinha->ntCarteira
+	FROM
+		apoio.arearegistro AreaRegistro,
+		linha.linhaBase LinhaBase,
+		linha.linhaTelefonica LinhaTelefonica,		
+		customer.pessoalinha PessoaLinha,
+		customer.pessoadepara PessoaDePara,
+		customer.Pessoa Pessoa,
+		customer.TipoRelacionamento TipoRelacionamento		
+	WHERE
+		 LinhaBase.NRLINHA =  TO_NUMBER(:o_stLinha->ntLinha) AND
+		 LinhaBase.IDAREAREGISTRO = AreaRegistro.IDAREAREGISTRO AND
+		 AreaRegistro.CDAREAREGISTRO =  TO_NUMBER(:o_stLinha->ntArea) AND
+		 LinhaBase.idlinhabase = LinhaTelefonica.IDLINHABASE AND
+		 LinhaTelefonica.IDLINHATELEFONICA = PessoaLinha.IDLINHATELEFONICA AND
+		 PessoaLinha.IDPESSOADEPARA = PessoaDePara.IDPESSOADEPARA AND
+		 PessoaDePara.IDPESSOA = Pessoa.IDPESSOA AND
+		 PessoaLinha.idtiporelacionamento = TipoRelacionamento.idTipoRelacionamento AND
+		 UPPER(TipoRelacionamento.sgTipoRelacionamento) =   'C';
+
+        if (sqlca.sqlcode == 1403 || o_stLinha->dblIdpessoalinha == 0) {
+                tuxfw_getlogger()->information("Linha sem cliente cadastrado, tipo linha = %s", o_stLinha->chrTipolinha);
+                if (strcmp("00",o_stLinha->chrTipolinha) == 0)
+                        o_stLinha->ntStatus = RET_OK;
+                else {
+                        tuxfw_getlogger()->information("Linha pós paga sem cliente!");
+                        o_stLinha->ntStatus = ERR_NOT_FOUND_OR_DISABLED;
+                }
+		tuxfw_getlogger()->information("Status = %f", stLinha->ntStatus);
+                return;
+        } else {
+		tuxfw_getlogger()->debug("Id do cliente: %f", o_stLinha->dblIdcliente);
+		tuxfw_getlogger()->debug("Id do cliente (pessoalinha): %f", o_stLinha->dblIdpessoalinha);
+		tuxfw_getlogger()->debug("Código de carteira: %02d", o_stLinha->ntCarteira);
+	}
+
+	// recupera idpessoa do usuario
+	EXEC SQL SELECT	idpessoa, 
+			idpessoalinha
+		INTO	:o_stLinha->dblIdusuario,
+			:o_stLinha->dblIdpessoalinhausr
+		FROM	customer.pessoalinhaB01
+		WHERE	nrlinha = TO_NUMBER(:o_stLinha->ntLinha)
+		AND	cdarearegistro = TO_NUMBER(:o_stLinha->ntArea)
+		AND	sgtiporelacionamento = 'U';
+	tuxfw_getlogger()->debug("Id do usuário: %f", o_stLinha->dblIdusuario);
+	tuxfw_getlogger()->debug("Id do usuário (pessoalinha): %f", o_stLinha->dblIdpessoalinhausr);
+
+	VerificaLinha( o_stLinha );
+}
+
+void VerificaLinha( struct stStatuslinha *stLinha )
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct stStatuslinha* o_stLinha;
+		short iReinic;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(o_stLinha, ERR_DATABASE);
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	o_stLinha = stLinha;
+
+	// segmento do cliente
+	EXEC SQL SELECT decode(idsegmentacao, 11, -1, idsegmentacao) INTO :o_stLinha->ntSegmento
+				FROM customer.pessoasegmentacaoB01
+					WHERE idpessoa = TO_NUMBER(:o_stLinha->dblIdcliente) AND ROWNUM < 2;
+	if (sqlca.sqlcode == 1403) {
+		o_stLinha->ntSegmento = -1;
+		tuxfw_getlogger()->debug("Segmento não existe, setado para -1 (não classificado)");
+	}
+	tuxfw_getlogger()->debug("Segmento: %i", o_stLinha->ntSegmento);
+
+	o_stLinha->ntIdcanal = 1;
+
+        // senha cripto cliente
+        EXEC SQL SELECT a.cdsenha, a.inTrocaSenha
+                                INTO :o_stLinha->chrSenhacliente,
+                                     :o_stLinha->chrReinicsenhacliente:iReinic
+                                FROM customer.senha a
+                                        WHERE a.idpessoa = TO_NUMBER(:o_stLinha->dblIdcliente);
+        if (sqlca.sqlcode == 1403 || o_stLinha->chrReinicsenhacliente[0]=='1') {
+		tuxfw_getlogger()->debug("Senha cliente não encontrada OU flag reinício setada");
+                sprintf(o_stLinha->chrReinicsenhacliente,"S");
+        } else {
+                sprintf(o_stLinha->chrReinicsenhacliente,"N");
+		tuxfw_getlogger()->debug("Senha encontrada: %s", o_stLinha->chrSenhacliente);
+	}
+
+        // senha cripto usuario
+        EXEC SQL SELECT a.cdsenha, a.inTrocaSenha
+                                INTO :o_stLinha->chrSenhausuario,
+                                     :o_stLinha->chrReinicsenhausuario:iReinic
+                                FROM customer.senha a
+                                        WHERE a.idpessoalinha = TO_NUMBER(:o_stLinha->dblIdpessoalinhausr);
+        if (sqlca.sqlcode == 1403 || o_stLinha->chrReinicsenhausuario[0]=='1') {
+		tuxfw_getlogger()->debug("Senha cliente não encontrada OU flag reinício setada");
+                sprintf(o_stLinha->chrReinicsenhausuario,"S");
+        } else {
+		tuxfw_getlogger()->debug("Senha encontrada: %s", o_stLinha->chrSenhacliente);
+                sprintf(o_stLinha->chrReinicsenhausuario,"N");
+	}
+	
+	// senha lojista
+	// na tabela apoio.tiposenha haverá um ID representando senha lojista
+	// ligado em customer.senha
+	EXEC SQL SELECT a.cdsenha INTO :o_stLinha->chrSenhacliente
+			   FROM customer.senha a, customer.pessoalinhab01 b, apoio.tiposenha c
+			  WHERE b.sgtiporelacionamento = 'C'
+				AND b.idpessoalinha = TO_NUMBER(:o_stLinha->dblIdpessoalinha)
+				AND b.idpessoa = a.idpessoa
+				AND a.idtiposenha = c.idtiposenha
+				AND c.sgtiposenha = 'LOJ';
+
+	// prioridade do lojista
+	// default = 04 (nenhuma)
+	strcpy( o_stLinha->chrPrioridadelojista, "04" );
+
+	// indicador do cadastro pré-pago
+	// ainda não sabemos como recuperar essa informação
+	// default = cadastro incompleto
+	strcpy( o_stLinha->chrSituacaocadastro, "" );
+}
+
+void sql_error(struct stStatuslinha *stLinha, int Status)
+{
+        EXEC SQL WHENEVER SQLERROR CONTINUE;
+	tuxfw_getlogger()->debug("Erro oracle %d", sqlca.sqlcode);
+        stLinha->ntStatus = Status;
+}
+/**
+ * Decodifica o Estado da linha conforme tabela passada pela VIVO
+	- Atlys
+
+	H = Hotline (bloqueios)
+	D = Disable (suspenso ou desabilitado)
+	E = Ativo
+	S = NPD (bloqueio total)
+
+	- NGIN
+
+	PACT 		PRE_ATIVADO
+	ACT 		ATIVADO
+	BAR		BARRADO 
+	DES 		DESACTIVADO
+	EXP 		EXPIRADO
+ */
+void DecodeEstadoLinha(struct stStatuslinha *stLinha)
+{	
+	char estadoLinha[255+1];
+	char *pEstadoLinha = NULL;
+	memset(&estadoLinha,0,sizeof(estadoLinha));
+	strcpy(estadoLinha,stLinha->chrEstadolinha);
+	pEstadoLinha = strtok(estadoLinha," ");
+	memset(stLinha->chrEstadolinha,0,sizeof(stLinha->chrEstadolinha));
+	tuxfw_getlogger()->information("Estado da linha: %s", pEstadoLinha);
+
+	if(strcmp(pEstadoLinha,"H") == 0)
+	{		
+		strncpy(stLinha->chrEstadolinha,"02",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"D") == 0)
+	{		
+		strncpy(stLinha->chrEstadolinha,"01",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"A") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"00",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"S") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"03",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"P") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"04",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"A") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"00",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"B") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"05",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"D") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"06",2);
+	}
+	else
+	if(strcmp(pEstadoLinha,"B") == 0)
+	{
+		strncpy(stLinha->chrEstadolinha,"07",2);
+	}
+	stLinha->chrEstadolinha[2]=0;
+}

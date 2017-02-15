@@ -1,0 +1,1022 @@
+/**
+ * @author  Renato Teixeira
+ * @version $Revision: 1.1.2.9.6.2 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/05 17:03:16 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+#include "../include/cWFAndamento.h"
+#include "../include/stWFAndamento.h"
+
+void proCAlterarWFAndamentoTrans(st_Andamento* dados, st_vlAndamento* status);
+bool fimVidaProcessoSimNao(int idAgrupamentoEstadoTpProc);
+void sql_error_WFAndamento(sqlca*sqlca);
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+    #include "../include/stWFAndamento.h"
+EXEC SQL END DECLARE SECTION;
+
+long proCIncluirWFAndamento(st_Andamento* dados, st_vlAndamento* status, XMLDPR *xmlDpr, XMLGen* saida)
+{
+    ULOG_START( "proCIncluirWFAndamento()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_Andamento   *oDados = dados;
+        struct st_vlAndamento *oStatus = status;
+        int numRegs;
+        short i_numRegs = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAndamento(&sqlca);
+
+    EXEC SQL SELECT andamento.AndamentoSQ.NEXTVAL INTO :oDados->idAndamento FROM DUAL;
+
+    ULOG( "idAgrupamentoEstadoTpProc=[%d]",oDados->idAgrupamentoEstadoTpProc );
+    ULOG( "              idAndamento=[%ld]",oDados->idAndamento );
+    ULOG( "            idAtendimento=[%d]",oDados->idAtendimento );
+
+    EXEC SQL
+        INSERT INTO
+            andamento.Andamento
+            (
+                idAndamento,
+                idAtividade,
+                idAgrupamentoEstadoTpProc,
+                idAtendimento,
+                idPessoaUsuario,
+                idGrupo,
+                dtAndamento,
+                idUsuarioAlteracao,
+                dtUltimaAlteracao
+            )
+            VALUES
+            (
+                :oDados->idAndamento,
+                :oDados->idAtividade,
+                :oDados->idAgrupamentoEstadoTpProc,
+                :oDados->idAtendimento,
+                :oDados->idPessoaUsuario,
+                DECODE(:oStatus->idGrupo, -1, 1, :oDados->idGrupo),
+                SYSDATE,
+                DECODE(:oStatus->idUsuarioAlteracao, -1, NULL, :oDados->idUsuarioAlteracao),
+                SYSDATE
+            );
+
+    // ATENDIMENTO.ATENDIMENTOANDAMENTOATUAL aponta para o andamento mais novo (sempre!).
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL
+    //     SELECT
+    //         COUNT(1)
+    //     INTO
+    //         :numRegs:i_numRegs
+    //     FROM 
+    //         ATENDIMENTO.ATENDIMENTOANDAMENTOATUAL
+    //     WHERE
+    //         IDATENDIMENTO = :oDados->idAtendimento;
+    // 
+    // if ( 0 == numRegs )
+    // {
+    //     EXEC SQL
+    //         INSERT INTO
+    //             ATENDIMENTO.ATENDIMENTOANDAMENTOATUAL
+    //             (
+    //                 IDATENDIMENTO,
+    //                 IDANDAMENTO,
+    //                 IDUSUARIOALTERACAO,
+    //                 DTULTIMAALTERACAO
+    //             )
+    //             VALUES
+    //             (
+    //                 :oDados->idAtendimento,
+    //                 :oDados->idAndamento,
+    //                 DECODE(:oStatus->idUsuarioAlteracao, -1, NULL, :oDados->idUsuarioAlteracao),
+    //                 TO_DATE(DECODE(:oStatus->dtUltimaAlteracao, -1, NULL, :oDados->dtUltimaAlteracao),'DD/MM/YYYY HH24:MI:SS')
+    //             );
+    // }
+    // else
+    // {
+    //     EXEC SQL
+    //         UPDATE
+    //             ATENDIMENTO.ATENDIMENTOANDAMENTOATUAL
+    //         SET
+    //             IDANDAMENTO = :oDados->idAndamento,
+    //             IDUSUARIOALTERACAO = DECODE(:oStatus->idUsuarioAlteracao, -1, NULL, :oDados->idUsuarioAlteracao),
+    //             DTULTIMAALTERACAO = TO_DATE(DECODE(:oStatus->dtUltimaAlteracao, -1, NULL, :oDados->dtUltimaAlteracao),'DD/MM/YYYY HH24:MI:SS')
+    //         WHERE
+    //             IDATENDIMENTO = :oDados->idAtendimento;
+    // }
+
+    // ==> Remodelagem de ATENDIMENTO.ATENDIMENTO - Fev/2007 - Cassio
+    // Versão piloto. Nesta versão devido a data de entrega muito próxima
+    // estou apenas atualizando os campos novos que foram desnormalizados
+    // junto com as tabelas respectivas para em uma segunda versão, com mais
+    // tempo poder criar métodos especificos e mais rápidos para a atualização
+    // destes campos em objetos respectivos às tabelas sendo atualizadas.
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTO
+        SET
+            IDANDAMENTOATUAL = :oDados->idAndamento,
+            IDAGRUPAMENTOESTADOTPPROC = :oDados->idAgrupamentoEstadoTpProc,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE
+            IDATENDIMENTO = :oDados->idAtendimento;
+    // <== Remodelagem de ATENDIMENTO.ATENDIMENTO - Fev/2007 - Cassio
+
+    // Se processo chegou ao final de sua vida no workflow (esta sendo fechado,
+    // cancelado, etc). Remove o processo da tabela de priorização e seus respectivos
+    // andamentos transitórios para fins de ganho de performance nas pesquisas.
+    if ( fimVidaProcessoSimNao(oDados->idAgrupamentoEstadoTpProc) == true )
+    {
+        EXEC SQL
+            DELETE
+                ATENDIMENTO.ATENDIMENTOAGRUPADO
+            WHERE
+                IDATENDIMENTO = :oDados->idAtendimento;
+
+        ULOG( "Excluiu processo de atendimentoAgrupado" );
+
+        EXEC SQL
+            DELETE
+                ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+            WHERE
+                IDATENDIMENTO = :oDados->idAtendimento;
+
+        ULOG( "Excluiu processo de atendimentoPriorizacao" );
+
+        EXEC SQL
+            DELETE
+                ANDAMENTO.ANDAMENTOTRANS
+            WHERE
+                IDATENDIMENTO = :oDados->idAtendimento;
+
+        ULOG( "Excluiu registro(s) de andamentotrans" );
+    }
+    else
+    {
+        EXEC SQL 
+            SELECT 
+                COUNT(1)
+            INTO
+                :numRegs:i_numRegs
+            FROM
+                ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+            WHERE
+                IDATENDIMENTO = :oDados->idAtendimento;
+
+        ULOG( "contador=%d",numRegs );
+
+        // Só pode existir em ANDAMENTOTRANS se também existir em ATENDIMENTOPRIORIZACAO...
+        if ( numRegs )
+        {
+            ULOG( "Inserindo andamentotrans ..." );
+
+            EXEC SQL 
+                INSERT INTO
+                    andamento.AndamentoTrans
+                    (
+                        idAndamento,
+                        idAtividade,
+                        idAgrupamentoEstadoTpProc,
+                        idAtendimento,
+                        idPessoaUsuario,
+                        idGrupo,
+                        dtAndamento,
+                        idUsuarioAlteracao,
+                        dtUltimaAlteracao
+                    )
+                    VALUES
+                    (
+                        :oDados->idAndamento,
+                        :oDados->idAtividade,
+                        :oDados->idAgrupamentoEstadoTpProc,
+                        :oDados->idAtendimento,
+                        :oDados->idPessoaUsuario,
+                        DECODE(:oStatus->idGrupo, -1, 1, :oDados->idGrupo),
+                        TO_DATE(:oDados->dtAndamento,'DD/MM/YYYY HH24:MI:SS'),
+                        DECODE(:oStatus->idUsuarioAlteracao, -1, NULL, :oDados->idUsuarioAlteracao),
+                        DECODE(:oStatus->dtUltimaAlteracao, -1, SYSDATE, TO_DATE(:oDados->dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS'))
+                    );
+
+            // ==> Remodelagem de ATENDIMENTO.ATENDIMENTO - Fev/2007 - Cassio
+            // Versão piloto. Nesta versão devido a data de entrega muito próxima
+            // estou apenas atualizando os campos novos que foram desnormalizados
+            // junto com as tabelas respectivas para em uma segunda versão, com mais
+            // tempo poder criar métodos especificos e mais rápidos para a atualização
+            // destes campos em objetos respectivos às tabelas sendo atualizadas.
+            EXEC SQL
+                UPDATE
+                    ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+                SET
+                    IDANDAMENTOATUAL = :oDados->idAndamento,
+                    IDAGRUPAMENTOESTADOTPPROC = :oDados->idAgrupamentoEstadoTpProc,
+                    DTULTIMAALTERACAO = SYSDATE
+                WHERE
+                    IDATENDIMENTO = :oDados->idAtendimento;
+            // <== Remodelagem de ATENDIMENTO.ATENDIMENTO - Fev/2007 - Cassio
+        }
+    }
+
+    if ( saida )
+    {
+        saida->createTag("Registro");
+            saida->addItem("idAndamento", oDados->idAndamento);
+        saida->closeTag();
+    }
+
+    // ==> SM324--DPR--DEZ/2006--Cassio
+    if ( xmlDpr )
+    {
+        AndamentoDPR andamentodpr;
+
+        andamentodpr.setIdAtendimento(oDados->idAtendimento);
+        andamentodpr.setDtAndamento(oDados->dtAndamento);
+        andamentodpr.setIdAgrupamentoEstadoTpProc(oDados->idAgrupamentoEstadoTpProc);
+        andamentodpr.setIdAndamento(oDados->idAndamento);
+        andamentodpr.setIdAtividade(oDados->idAtividade);
+        andamentodpr.setIdGrupo(oStatus->idGrupo==-1?1:oDados->idGrupo);
+        andamentodpr.setIdPessoaUsuario(oDados->idPessoaUsuario);
+        andamentodpr.setOpCode(OPCODE_INSERT);
+        xmlDpr->andamentovo.inserir(&andamentodpr);
+    }
+    // <== SM324--DPR--DEZ/2006--Cassio
+
+    ULOG_END( "proCIncluirWFAndamento()" );
+
+    return oDados->idAndamento;
+}
+
+bool proCAlterarWFAndamento(st_Andamento* dados, st_vlAndamento* status, XMLGen* saida)
+{
+    ULOG_START( "proCAlterarWFAndamento()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_Andamento   oDados;
+        struct st_vlAndamento oStatus;
+
+        char query[800] = "UPDATE andamento.Andamento SET ";
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamento(&sqlca);
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    bool separa = false;
+
+    if (status->idAtividade != -1) 
+        montaUpdate("idAtividade", oDados.idAtividade, TIPO_INT);
+
+    if (status->idAgrupamentoEstadoTpProc != -1) 
+        montaUpdate("idAgrupamentoEstadoTpProc", oDados.idAgrupamentoEstadoTpProc, TIPO_INT);
+
+    if (status->idAtendimento != -1) 
+        montaUpdate("idAtendimento", oDados.idAtendimento, TIPO_ULONG);
+
+    if (status->idPessoaUsuario != -1) 
+        montaUpdate("idPessoaUsuario", oDados.idPessoaUsuario, TIPO_INT);
+
+    if (status->dtAndamento != -1) 
+        montaUpdate("dtAndamento", oDados.dtAndamento, TIPO_DATAHORA);
+
+    if (status->idUsuarioAlteracao != -1) 
+        montaUpdate("idUsuarioAlteracao", oDados.idUsuarioAlteracao, TIPO_INT);
+
+    if (status->dtUltimaAlteracao != -1) 
+        montaUpdate("dtUltimaAlteracao", oDados.dtUltimaAlteracao, TIPO_DATAHORA);
+
+    sprintf(query, "%s WHERE idAndamento = %i", query, dados->idAndamento);
+
+    EXEC SQL EXECUTE IMMEDIATE :query;
+
+    // Sincroniza o update em ANDAMENTOTRANS
+    proCAlterarWFAndamentoTrans(dados,status);
+
+    ULOG_END( "proCAlterarWFAndamento()");
+
+    return true;
+}
+
+void proCAlterarWFAndamentoTrans(st_Andamento* dados, st_vlAndamento* status)
+{
+    ULOG_START( "proCAlterarWFAndamentoTrans()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_Andamento   oDados;
+        struct st_vlAndamento oStatus;
+
+        char query[800] = "UPDATE andamento.AndamentoTrans SET ";
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamento(&sqlca);
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    bool separa = false;
+
+    if (status->idAtividade != -1) 
+        montaUpdate("idAtividade", oDados.idAtividade, TIPO_INT);
+
+    if (status->idAgrupamentoEstadoTpProc != -1) 
+        montaUpdate("idAgrupamentoEstadoTpProc", oDados.idAgrupamentoEstadoTpProc, TIPO_INT);
+
+    if (status->idAtendimento != -1) 
+        montaUpdate("idAtendimento", oDados.idAtendimento, TIPO_ULONG);
+
+    if (status->idPessoaUsuario != -1) 
+        montaUpdate("idPessoaUsuario", oDados.idPessoaUsuario, TIPO_INT);
+
+    if (status->dtAndamento != -1) 
+        montaUpdate("dtAndamento", oDados.dtAndamento, TIPO_DATAHORA);
+
+    if (status->idUsuarioAlteracao != -1) 
+        montaUpdate("idUsuarioAlteracao", oDados.idUsuarioAlteracao, TIPO_INT);
+
+    if (status->dtUltimaAlteracao != -1) 
+        montaUpdate("dtUltimaAlteracao", oDados.dtUltimaAlteracao, TIPO_DATAHORA);
+
+    sprintf(query, "%s WHERE idAndamento = %i", query, dados->idAndamento);
+
+    ULOG( "QUERY [%s]", query );
+
+    EXEC SQL EXECUTE IMMEDIATE :query;
+
+    ULOG_END( "proCAlterarWFAndamentoTrans()" );
+}
+
+//===========================================================================================
+// Andamentos nunca são excluidos - fev/2007 - cassio
+//
+// bool proCExcluirWFAndamento(st_Andamento* dados, st_vlAndamento* status, XMLGen* saida)
+// {
+//     ULOG_START( "proCExcluirWFAndamento()" );
+// 
+//     struct sqlca sqlca;
+// 
+//     EXEC SQL BEGIN DECLARE SECTION;
+// 
+//         int idAndamento = dados->idAndamento;
+// 
+//     EXEC SQL END DECLARE SECTION;
+// 
+//     EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamento(&sqlca);
+// 
+//     ULOG( "Removendo idAndamento [%d]", idAndamento );
+// 
+//     EXEC SQL 
+//         DELETE
+//             andamento.Andamento
+//         WHERE
+//             idAndamento = :idAndamento;
+// 
+//     EXEC SQL 
+//         DELETE
+//             andamento.AndamentoTrans
+//         WHERE
+//             idAndamento = :idAndamento;
+// 
+//     ULOG_END( "proCExcluirWFAndamento()" );
+// 
+//     return true;
+// }
+
+bool proCConsultaWFAndamento(st_Andamento* dados, st_vlAndamento* status, char* order, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFAndamento()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAndamento;
+        int  idAtividade;
+        int  idAgrupamentoEstadoTpProc;
+        long idAtendimento;
+        int  idPessoaUsuario;
+        VARCHAR dtAndamento[256];
+        int idUsuarioAlteracao;
+        VARCHAR dtUltimaAlteracao[256];
+
+        short i_idUsuarioAlteracao;
+        short i_dtUltimaAlteracao;
+
+        char query[1024] = "SELECT idAndamento,idAtividade,idAgrupamentoEstadoTpProc,idAtendimento,"
+                                  "idPessoaUsuario,"
+                                  "TO_CHAR(dtAndamento,'DD/MM/YYYY HH24:MI') AS dtAndamento,"
+                                  "idUsuarioAlteracao,"
+                                  "TO_CHAR(dtUltimaAlteracao,'DD/MM/YYYY HH24:MI') AS dtUltimaAlteracao "
+                             "FROM andamento.Andamento ";
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    bool separa = false;
+
+    if (status->idAndamento != -1) 
+        montaWhere("idAndamento", dados->idAndamento, TIPO_INT);
+
+    if (status->idAtividade != -1) 
+        montaWhere("idAtividade", dados->idAtividade, TIPO_INT);
+
+    if (status->idAgrupamentoEstadoTpProc != -1) 
+        montaWhere("idAgrupamentoEstadoTpProc", dados->idAgrupamentoEstadoTpProc, TIPO_INT);
+
+    if (status->idAtendimento != -1) 
+        montaWhere("idAtendimento", dados->idAtendimento, TIPO_ULONG);
+
+    if (status->idPessoaUsuario != -1) 
+        montaWhere("idPessoaUsuario", dados->idPessoaUsuario, TIPO_INT);
+
+    if (status->dtAndamento != -1) 
+        montaWhere("dtAndamento", dados->dtAndamento, TIPO_DATAHORA);
+
+    if (status->idUsuarioAlteracao != -1) 
+        montaWhere("idUsuarioAlteracao", dados->idUsuarioAlteracao, TIPO_INT);
+
+    if (status->dtUltimaAlteracao != -1) 
+        montaWhere("dtUltimaAlteracao", dados->dtUltimaAlteracao, TIPO_DATAHORA);
+
+    if (strlen(order) > 0) 
+        sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamento(&sqlca);
+
+    ULOG( "QUERY [%s]", query );
+
+    EXEC SQL PREPARE consultaAndamento FROM :query;
+    EXEC SQL DECLARE consulta CURSOR FOR consultaAndamento;
+
+    EXEC SQL OPEN consulta;
+
+    while (true)
+    {
+        EXEC SQL FETCH 
+            consulta 
+        INTO 
+            :idAndamento, 
+            :idAtividade, 
+            :idAgrupamentoEstadoTpProc,
+            :idAtendimento,
+            :idPessoaUsuario,
+            :dtAndamento,
+            :idUsuarioAlteracao:i_idUsuarioAlteracao,
+            :dtUltimaAlteracao:i_dtUltimaAlteracao;
+
+        CONV(dtAndamento);
+        CONVIND(dtUltimaAlteracao, i_dtUltimaAlteracao);
+
+        if ( saida )
+        {
+            saida->createTag("WFAndamentoVO");
+                saida->addItem("idAndamento", idAndamento);
+                saida->addItem("idAtividade", idAtividade);
+                saida->addItem("idAgrupamentoEstadoTpProc", idAgrupamentoEstadoTpProc);
+                saida->addItem("idAtendimento", idAtendimento);
+                saida->addItem("idPessoaUsuario", idPessoaUsuario);
+                saida->addItem("dtAndamento", (char*)dtAndamento.arr);
+                saida->addItem("idUsuarioAlteracao", idUsuarioAlteracao);
+                saida->addItem("dtUltimaAlteracao", (char*)dtUltimaAlteracao.arr);
+            saida->closeTag();
+        }
+    }
+
+    EXEC SQL CLOSE consulta;
+
+    ULOG_END( "proCConsultaWFAndamento()" );
+
+    return true;
+}
+
+bool proCObtemWFHistoricoAtendimento(long sIdAtendimento, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFHistoricoAtendimento()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = sIdAtendimento;
+        long  idAndamento;
+        VARCHAR dsEstado[256];
+        VARCHAR dsSubEstado[256];
+        VARCHAR dsAtividade[256];
+        VARCHAR dataAndamento[256];
+        VARCHAR dsComentario[1001];
+        VARCHAR nmLoginUsuario[256];
+        VARCHAR dsMotivo[256];
+        VARCHAR nmGrupo[256];
+        
+        short i_idAndamento;
+        short i_dsEstado;
+        short i_dsSubEstado;
+        short i_dsAtividade;
+        short i_dataAndamento;
+        short i_dsComentario;
+        short i_nmLoginUsuario;
+        short i_dsMotivo;
+        short i_nmGrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE consultaHistoricoAtendimento CURSOR FOR
+    SELECT 
+        IDANDAMENTO,
+        DSESTADO, 
+        DSSUBESTADO, 
+        DSATIVIDADE,
+        TO_CHAR(DTANDAMENTO, 'DD/MM/YYYY HH24:MI:SS') DATAANDAMENTO,
+        // Incidência 3383, REOPEN de 05/05/2006.
+        // O 'REPLACE' abaixo se fez necessário pois o framework esta dando
+        // erro na buferização de resultados de pesquisas que contenha caracteres
+        // especiais '%' ou '/' fazendo com que o servidor do serviço caia.
+        //
+        REPLACE(REPLACE(DSCOMENTARIO,'/','-'),'%','(porcento)'),
+        NMLOGINUSUARIO,
+        NMGRUPO,
+        DSMOTIVO
+    FROM 
+        ATENDIMENTO.ATENDIMENTOHISTORICOV01
+    WHERE 
+        IDATENDIMENTO = :idAtendimento
+    ORDER BY IDANDAMENTO;
+    
+    EXEC SQL OPEN consultaHistoricoAtendimento;
+
+    while (true)
+    {
+        EXEC SQL FETCH consultaHistoricoAtendimento INTO
+            :idAndamento:i_idAndamento,
+            :dsEstado:i_dsEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :dsAtividade:i_dsAtividade,
+            :dataAndamento:i_dataAndamento,
+            :dsComentario:i_dsComentario,
+            :nmLoginUsuario:i_nmLoginUsuario,
+            :nmGrupo:i_nmGrupo,
+            :dsMotivo:i_dsMotivo;
+
+        CONVIND(dsEstado, i_dsEstado);
+        CONVIND(dsSubEstado, i_dsSubEstado);
+        CONVIND(dsAtividade, i_dsAtividade);
+        CONVIND(dataAndamento, i_dataAndamento);
+        CONVIND(dsComentario, i_dsComentario);
+        CONVIND(nmLoginUsuario, i_nmLoginUsuario);
+        CONVIND(nmGrupo, i_nmGrupo);
+        CONVIND(dsMotivo, i_dsMotivo);
+            
+        if ( saida )
+        {
+            saida->createTag("AtendimentoHistoricoVO");
+    
+                saida->addItem("idAtendimento", idAtendimento);
+                saida->addItem("idAndamento", idAndamento);
+                saida->addItem("dsEstado", (char*)dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                saida->addItem("dsGrupo", (char*)nmGrupo.arr);
+                saida->addItem("nmNome", (char*)nmLoginUsuario.arr);
+                saida->addItem("dsOperacao", (char*)dsAtividade.arr);
+                saida->addItem("dtTratamento", (char*)dataAndamento.arr);
+                saida->addItem("dsComentario", (char*)dsComentario.arr);
+                saida->addItem("dsMotivo", (char*)dsMotivo.arr);
+
+            saida->closeTag();
+        }
+
+    }
+
+    EXEC SQL CLOSE consultaHistoricoAtendimento;
+
+    ULOG_END( "proCObtemWFHistoricoAtendimento()" );
+
+    return true;
+}
+
+bool proCObtemWFHistAtdPesqEst(st_Andamento* dados, st_vlAndamento* status, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFHistAtdPesqEst()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long idAtendimento;
+        int  idEstado;
+        int  idSubEstado;
+
+        long    idAndamento;
+        VARCHAR dsEstado[256];
+        VARCHAR dsSubEstado[256];
+        VARCHAR dsAtividade[256];
+        VARCHAR dataAndamento[256];
+        VARCHAR dsComentario[1001];
+        VARCHAR nmPessoaLoginUsuario[512];
+        VARCHAR dsMotivo[256];
+        VARCHAR nmGrupo[256];
+        
+        short i_idAndamento;
+        short i_dsEstado;
+        short i_dsSubEstado;
+        short i_dsAtividade;
+        short i_dataAndamento;
+        short i_dsComentario;
+        short i_nmPessoaLoginUsuario;
+        short i_dsMotivo;
+        short i_nmGrupo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG( "idAtendimento - v1 = %ld", dados->idAtendimento );
+    ULOG( "idEstado - v1 = %d", dados->idEstado );
+    ULOG( "idEstado - s1 = %d", status->idEstado );
+    ULOG( "idSubEstado - v1 = %d", dados->idSubEstado );
+    ULOG( "idSubEstado - s1 = %d", status->idSubEstado );
+
+    if (status->idAtendimento != -1) 
+        idAtendimento = dados->idAtendimento;
+    else
+        idAtendimento = -1;
+
+    if (status->idEstado != -1) 
+        idEstado = dados->idEstado;
+    else
+        idEstado = -1;
+
+    if (status->idSubEstado != -1) 
+        idSubEstado = dados->idSubEstado;
+    else
+        idSubEstado = -1;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE cursorObtemWFHistAtdPesqEst CURSOR FOR
+    SELECT 
+        ATDHISV01.IDANDAMENTO,
+        ATDHISV01.DSESTADO, 
+        ATDHISV01.DSSUBESTADO, 
+        ATDHISV01.DSATIVIDADE,
+        TO_CHAR(ATDHISV01.DTANDAMENTO, 'DD/MM/YYYY HH24:MI:SS') DATAANDAMENTO,
+        // Incidência 3383, REOPEN de 05/05/2006.
+        // O 'REPLACE' abaixo se fez necessário pois o framework esta dando
+        // erro na buferização de resultados de pesquisas que contenha caracteres
+        // especiais '%' ou '/' fazendo com que o servidor do serviço caia.
+        //
+        REPLACE(REPLACE(ATDHISV01.DSCOMENTARIO,'/','-'),'%','(porcento)'),
+        ATDHISV01.NMLOGINUSUARIO||'-'||ATDHISV01.NMPESSOA,
+        ATDHISV01.NMGRUPO,
+        ATDHISV01.DSMOTIVO
+    FROM 
+        ATENDIMENTO.ATENDIMENTOHISTORICOV01 ATDHISV01
+    WHERE 
+        ATDHISV01.IDATENDIMENTO = :idAtendimento
+        AND ATDHISV01.IDSUBESTADO = (SELECT DECODE(:idSubEstado,-1,ATDHISV01.IDSUBESTADO,:idSubEstado) FROM DUAL)
+        AND ATDHISV01.IDESTADO = (SELECT DECODE(:idEstado,-1,ATDHISV01.IDESTADO,:idEstado) FROM DUAL)
+    ORDER BY ATDHISV01.DTANDAMENTO;
+
+    EXEC SQL OPEN cursorObtemWFHistAtdPesqEst;
+
+    while (true)
+    {
+        i_idAndamento=i_dsEstado=i_dsSubEstado=i_dsAtividade=i_dataAndamento=i_dsComentario=
+        i_nmPessoaLoginUsuario=i_dsMotivo=i_nmGrupo=-1;
+
+        EXEC SQL FETCH cursorObtemWFHistAtdPesqEst INTO
+            :idAndamento:i_idAndamento,
+            :dsEstado:i_dsEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :dsAtividade:i_dsAtividade,
+            :dataAndamento:i_dataAndamento,
+            :dsComentario:i_dsComentario,
+            :nmPessoaLoginUsuario:i_nmPessoaLoginUsuario,
+            :nmGrupo:i_nmGrupo,
+            :dsMotivo:i_dsMotivo;
+
+        CONVIND(dsEstado, i_dsEstado);
+        CONVIND(dsSubEstado, i_dsSubEstado);
+        CONVIND(dsAtividade, i_dsAtividade);
+        CONVIND(dataAndamento, i_dataAndamento);
+        CONVIND(dsComentario, i_dsComentario);
+        CONVIND(nmPessoaLoginUsuario, i_nmPessoaLoginUsuario);
+        CONVIND(nmGrupo,i_nmGrupo);
+        CONVIND(dsMotivo,i_dsMotivo);
+            
+        if ( saida )
+        {
+            saida->createTag("AtendimentoHistoricoVO");
+    
+                saida->addItem("idAndamento", idAndamento);
+                saida->addItem("dsEstado", (char*)dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                saida->addItem("dsGrupo", (char*)nmGrupo.arr);
+                saida->addItem("nmNome", (char*)nmPessoaLoginUsuario.arr);
+                saida->addItem("dsOperacao", (char*)dsAtividade.arr);
+                saida->addItem("dtTratamento", (char*)dataAndamento.arr);
+                saida->addItem("dsComentario", (char*)dsComentario.arr);
+                saida->addItem("dsMotivo", (char*)dsMotivo.arr);
+
+            saida->closeTag();
+        }
+    }
+
+    EXEC SQL CLOSE cursorObtemWFHistAtdPesqEst;
+
+    ULOG_END( "proCObtemWFHistAtdPesqEst()" );
+
+    return true;
+}
+
+
+
+bool proCObtemWFHistAtdPesqEstEx(st_AndamentoEx* dados, st_vlAndamento* status, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFHistAtdPesqEstEx()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long idAtendimento;
+        VARCHAR idEstado[256];
+        VARCHAR idSubEstado[256];
+
+        long    idAndamento;
+        VARCHAR dsEstado[256];
+        VARCHAR dsSubEstado[256];
+        VARCHAR dsAtividade[256];
+        VARCHAR dataAndamento[256];
+        VARCHAR dsComentario[1001];
+        VARCHAR nmPessoaLoginUsuario[512];
+        VARCHAR dsMotivo[256];
+        VARCHAR nmGrupo[256];
+        
+        short i_idAndamento;
+        short i_dsEstado;
+        short i_dsSubEstado;
+        short i_dsAtividade;
+        short i_dataAndamento;
+        short i_dsComentario;
+        short i_nmPessoaLoginUsuario;
+        short i_dsMotivo;
+        short i_nmGrupo;
+    EXEC SQL END DECLARE SECTION;
+
+	memset( &idEstado, 0x0, sizeof(idEstado) );
+	memset( &idSubEstado, 0x0, sizeof(idSubEstado) );
+
+    ULOG( "idAtendimento - v1 = %ld", dados->idAtendimento );
+    ULOG( "idEstado - v1 = [%s]", dados->idEstado );
+    ULOG( "idSubEstado - v1 = [%s]", dados->idSubEstado );
+
+    if (status->idAtendimento != -1) 
+        idAtendimento = dados->idAtendimento;
+    else
+        idAtendimento = -1;
+
+    if (status->idEstado != -1) 
+    {
+    	strcpy( (char*)idEstado.arr, dados->idEstado );
+    	idEstado.len = strlen( dados->idEstado );
+    }
+
+    if (status->idSubEstado != -1) 
+    {
+    	strcpy( (char*)idSubEstado.arr, dados->idSubEstado );
+    	idSubEstado.len = strlen( dados->idSubEstado );
+    }
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE cursorObtemWFHistAtdPesqEstEx CURSOR FOR
+    SELECT
+        ANDAMENTO.IDANDAMENTO,
+        ANDAMENTO.DSESTADO,
+        ANDAMENTO.DSSUBESTADO,
+        ANDAMENTO.DSATIVIDADE,
+        TO_CHAR(ANDAMENTO.DTANDAMENTO, 'DD/MM/YYYY HH24:MI:SS') DATAANDAMENTO,
+        REPLACE(REPLACE(ANDAMENTO.DSANDAMENTOOBSERVACAO,'/','-'),'%','(porcento)'),
+        ANDAMENTO.NMLOGINUSUARIO||'-'||PESSOA.NMPESSOA AS NMPESSOA,
+        ANDAMENTO.NMGRUPO,
+        ANDAMENTO.DSMOTIVO AS DSMOTIVO
+    FROM
+        CUSTOMER.PESSOA PESSOA,
+        FOHIST_OW.ANDAMENTO ANDAMENTO,
+        WORKFLOW.AGRUPAMENTOESTADOTPPROC AGRUPAMENTOESTADOTPPROC,
+        WORKFLOW.AGRUPAMENTOESTADO AGRUPAMENTOESTADO
+    WHERE
+        PESSOA.IDPESSOA = ANDAMENTO.IDPESSOAUSUARIO
+    AND ANDAMENTO.IDAGRUPAMENTOESTADOTPPROC = AGRUPAMENTOESTADOTPPROC.IDAGRUPAMENTOESTADOTPPROC
+    AND AGRUPAMENTOESTADOTPPROC.IDAGRUPAMENTOESTADO = AGRUPAMENTOESTADO.IDAGRUPAMENTOESTADO
+    AND ANDAMENTO.IDATENDIMENTO = :idAtendimento
+    AND ANDAMENTO.DSSUBESTADO = (SELECT DECODE(:idSubEstado,'-1',ANDAMENTO.DSSUBESTADO,:idSubEstado) FROM DUAL)
+    AND ANDAMENTO.DSESTADO = (SELECT DECODE(:idEstado,'-1',ANDAMENTO.DSESTADO,:idEstado) FROM DUAL)
+    ORDER BY ANDAMENTO.DTANDAMENTO;
+
+    EXEC SQL OPEN cursorObtemWFHistAtdPesqEstEx;
+
+    while (true)
+    {
+        i_idAndamento=i_dsEstado=i_dsSubEstado=i_dsAtividade=i_dataAndamento=i_dsComentario=
+        i_nmPessoaLoginUsuario=i_dsMotivo=i_nmGrupo=-1;
+
+        EXEC SQL FETCH cursorObtemWFHistAtdPesqEstEx INTO
+            :idAndamento:i_idAndamento,
+            :dsEstado:i_dsEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :dsAtividade:i_dsAtividade,
+            :dataAndamento:i_dataAndamento,
+            :dsComentario:i_dsComentario,
+            :nmPessoaLoginUsuario:i_nmPessoaLoginUsuario,
+            :nmGrupo:i_nmGrupo,
+            :dsMotivo:i_dsMotivo;
+
+        CONVIND(dsEstado, i_dsEstado);
+        CONVIND(dsSubEstado, i_dsSubEstado);
+        CONVIND(dsAtividade, i_dsAtividade);
+        CONVIND(dataAndamento, i_dataAndamento);
+        CONVIND(dsComentario, i_dsComentario);
+        CONVIND(nmPessoaLoginUsuario, i_nmPessoaLoginUsuario);
+        CONVIND(nmGrupo,i_nmGrupo);
+        CONVIND(dsMotivo,i_dsMotivo);
+            
+        if ( saida )
+        {
+            saida->createTag("AtendimentoHistoricoVO");
+    
+                saida->addItem("idAndamento", idAndamento);
+                saida->addItem("dsEstado", (char*)dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                saida->addItem("dsGrupo", (char*)nmGrupo.arr);
+                saida->addItem("nmNome", (char*)nmPessoaLoginUsuario.arr);
+                saida->addItem("dsOperacao", (char*)dsAtividade.arr);
+                saida->addItem("dtTratamento", (char*)dataAndamento.arr);
+                saida->addItem("dsComentario", (char*)dsComentario.arr);
+                saida->addItem("dsMotivo", (char*)dsMotivo.arr);
+
+            saida->closeTag();
+        }
+    }
+
+    EXEC SQL CLOSE cursorObtemWFHistAtdPesqEstEx;
+
+    ULOG_END( "proCObtemWFHistAtdPesqEstEx()" );
+
+    return true;
+}
+
+
+
+bool proCObtemWFHistoricoAtdPesquisa(long sIdAtendimento, int sIdEstado, int sIdSubEstado, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFHistoricoAtdPesquisa()" );
+
+    st_Andamento dados;
+    st_vlAndamento status;
+
+    memset(&dados,0,sizeof(dados));
+    memset(&status,-1,sizeof(status));
+
+    dados.idAtendimento = sIdAtendimento;
+    dados.idEstado = sIdEstado;
+    dados.idSubEstado = sIdSubEstado;
+
+    status.idAtendimento = 1;
+    status.idEstado = sIdEstado == 0 ? -1 : 1;
+    status.idSubEstado = sIdSubEstado == 0 ? -1 : 1;
+
+    bool retorno = proCObtemWFHistAtdPesqEst( &dados, &status, saida);
+
+    ULOG_END( "proCObtemWFHistoricoAtdPesquisa()" );
+
+    return retorno;
+}
+
+bool proCObtemWFHistoricoAtdPesquisaCRI(long sIdAtendimento, int sIdEstado, int sIdSubEstado, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFHistoricoAtdPesquisaCRI()" );
+
+    st_Andamento dados;
+    st_vlAndamento status;
+
+    memset(&dados,0,sizeof(dados));
+    memset(&status,-1,sizeof(status));
+
+    dados.idAtendimento = sIdAtendimento;
+    dados.idEstado = sIdEstado;
+    dados.idSubEstado = sIdSubEstado;
+
+    status.idAtendimento = 1;
+    status.idEstado = 1;
+    status.idSubEstado = 1;
+
+    bool retorno = proCObtemWFHistAtdPesqEst( &dados, &status, saida);
+
+    ULOG_END( "proCObtemWFHistoricoAtdPesquisaCRI()" );
+
+    return retorno;
+}
+
+int procBuscaAndamentoDTRACAO(long _idAtendimento)
+{
+    ULOG_START( "procBuscaAndamentoDTRACAO()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long idAtendimento = _idAtendimento;
+
+        int idPessoaUsuario;
+        short i_idPessoaUsuario = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("idAtendimento = %ld", idAtendimento);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL 
+    SELECT 
+        idPessoaUsuario 
+    INTO
+        idPessoaUsuario:i_idPessoaUsuario
+    FROM
+        ATENDIMENTO.ATENDIMENTOBAIXAATUAL ABA,
+        ATENDIMENTO.ATENDIMENTOBAIXAHISTORICO ABH
+    WHERE 
+        ABA.IDATENDIMENTOBAIXAHISTORICO = ABH.IDATENDIMENTOBAIXAHISTORICO
+        AND ABA.IDATENDIMENTO = :idAtendimento;
+
+    if (i_idPessoaUsuario == -1)
+        idPessoaUsuario = -1;
+
+    ULOG( "idPessoaUsuarioRetornado = %d", idPessoaUsuario );
+
+    ULOG_END( "procBuscaAndamentoDTRACAO()" );
+
+    return idPessoaUsuario;
+}
+
+// Verifica se processo esta sendo fechado, cancelado, etc ...
+bool fimVidaProcessoSimNao(int idAgrupamentoEstadoTpProc)
+{
+    ULOG_START( "fimVidaProcessoSimNao()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int varOraIdAgrupEstadoTpProc = idAgrupamentoEstadoTpProc;
+        int varOraCount;
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("idAgrupamentoEstadoTpProc=%d",varOraIdAgrupEstadoTpProc);
+
+    EXEC SQL
+        SELECT
+            COUNT(1)
+        INTO
+            :varOraCount
+        FROM
+            WORKFLOW.AGRUPAMENTOESTADOTPPROC AGRUPAMENTOESTADOTPPROC,
+            WORKFLOW.AGRUPAMENTOESTADO AGRUPAMENTOESTADO,
+            WORKFLOW.ESTADO ESTADO
+        WHERE
+            AGRUPAMENTOESTADOTPPROC.IDAGRUPAMENTOESTADOTPPROC = :varOraIdAgrupEstadoTpProc
+        AND AGRUPAMENTOESTADOTPPROC.IDAGRUPAMENTOESTADO = AGRUPAMENTOESTADO.IDAGRUPAMENTOESTADO
+        AND AGRUPAMENTOESTADO.IDESTADO = ESTADO.IDESTADO
+        AND ESTADO.DSESTADO IN ('FECHADO','CANCELADO');
+
+    ULOG("fimVida=%d",varOraCount);
+
+    ULOG_END("fimVidaProcessoSimNao()");
+
+    return varOraCount ? true : false;
+}
+
+void sql_error_WFAndamento(sqlca*sqlca)
+{
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

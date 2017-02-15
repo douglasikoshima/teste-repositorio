@@ -1,0 +1,94 @@
+//
+// $Id: get_grupoperfil.pcpp,v 1.1 2009/07/31 15:34:25 a5110702 Exp $
+//
+
+#include "../../negocio/cmputil/include/campanha.hpp"
+
+int get_grupoperfil(char * usuario,DOMNode*dnode,XMLGen*xml)
+{
+    char parm[256];  
+
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int     idGrupo; 
+        VARCHAR nmGrupo[255];
+	int     idSubCampanhaFixa;
+	int     idSubCampanhaHistorico;
+        int     idSubCampanhaGrupoUsuario;
+	int     idPessoaUsuarioAlteracao;
+	int     inAtivo;
+	VARCHAR nmSubCampanha[255+1];
+	short   inmSubCampanha;
+    EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    //  Obtendo dados do xml
+    get_tag(parm, dnode, "idSubCampanhaHistorico", 0, 0);
+    idSubCampanhaHistorico = atoi(parm);
+
+    // Pegando id do usuario
+    idPessoaUsuarioAlteracao = get_idUsuario(usuario);
+
+    inAtivo = 1;
+
+    if( idSubCampanhaHistorico != 0)
+    {
+        EXEC SQL DECLARE crsGrupoPerfil CURSOR FOR
+   	    SELECT NVL(GRUPO.idGrupo,0),
+		   GRUPO.nmGrupo,
+		   NVL(SUBCAMPANHAGRUPOUSUARIO.idsubcampanhafixa,0),
+		   NVL(SUBCAMPANHAHISTORICO.idsubcampanhahistorico,0),
+                   NVL(SUBCAMPANHAGRUPOUSUARIO.idsubcampanhagrupousuario,0),
+		   SUBCAMPANHAHISTORICO.nmsubcampanha
+	     FROM  acesso.grupo GRUPO,
+		   contatoadm.subcampanhagrupousuario SUBCAMPANHAGRUPOUSUARIO,
+		   campanha.subcampanhahistorico SUBCAMPANHAHISTORICO
+	     WHERE SUBCAMPANHAHISTORICO.idsubcampanhahistorico = :idSubCampanhaHistorico
+	     AND   SUBCAMPANHAGRUPOUSUARIO.IDSUBCAMPANHAFIXA = SUBCAMPANHAHISTORICO.IDSUBCAMPANHAFIXA
+	     AND   GRUPO.IDGRUPO = SUBCAMPANHAGRUPOUSUARIO.IDGRUPO
+         AND    SUBCAMPANHAGRUPOUSUARIO.inativo = 1
+
+	     ORDER BY GRUPO.nmGrupo;
+        EXEC SQL OPEN crsGrupoPerfil;
+
+        for(;;) 
+        {
+            EXEC SQL FETCH crsGrupoPerfil INTO 
+		:idGrupo, 
+		:nmGrupo, 
+		:idSubCampanhaFixa, 
+		:idSubCampanhaHistorico, 
+		:idSubCampanhaGrupoUsuario,
+		:nmSubCampanha:inmSubCampanha;
+
+            endOraStr(nmGrupo);  
+            endOraStr(nmSubCampanha);  
+
+            xml->createTag("ApoioPerfilVO");
+                xml->addItem("idSubCampanhaGrupoUsuario",idSubCampanhaGrupoUsuario);
+                xml->addItem("idGrupo",idGrupo);
+                xml->addItem("nmGrupo",(char *)nmGrupo.arr);
+                xml->addItem("idSubCampanhaHistorico",idSubCampanhaHistorico);
+                xml->addItem("idSubCampanhaFixa",idSubCampanhaFixa);
+                xml->addItem("ginAtivo",1);
+		if(inmSubCampanha>=0)
+			xml->addItem("nmSubCampanha",(char *)nmSubCampanha.arr);
+		else
+			xml->addItem("nmSubCampanha","");
+
+            xml->closeTag();
+
+        }  
+        EXEC SQL CLOSE crsGrupoPerfil;
+    }
+    else
+    {
+            xml->createTag("ApoioPerfilVO");
+            xml->closeTag();
+
+    } 
+
+    return 1;
+}
+

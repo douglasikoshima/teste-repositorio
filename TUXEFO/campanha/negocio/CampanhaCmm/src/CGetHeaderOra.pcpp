@@ -1,0 +1,336 @@
+//------------------------------------------------------------------------------		
+// Author - Roberto Borges 
+// Data   - 01-Feb-2005
+//------------------------------------------------------------------------------		
+// CGetHeaderOra - Pro-C Implementation 
+//------------------------------------------------------------------------------		
+
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "CGetHeader.h"
+
+extern struct sqlca sqlca;
+
+//------------------------------------------------------------------------------		
+// getSysDate - Current system date & time 
+//------------------------------------------------------------------------------		
+
+bool CGetHeader::getSysDate()
+{
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	  char     dsSysdate[256];
+	EXEC SQL END DECLARE SECTION;
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+
+	EXEC SQL 
+		SELECT TO_CHAR(SYSDATE, 'DD/MM/YYYY HH24:MI') into :dsSysdate FROM DUAL;
+	
+	DataEmissao = TString(dsSysdate).Trim();
+
+	return true;
+
+}
+
+//------------------------------------------------------------------------------		
+// sql_error - Oracle´s exception handler
+//------------------------------------------------------------------------------		
+
+void CGetHeader::sql_error()
+{
+	throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+//------------------------------------------------------------------------------		
+// GetOperador - Return Operator data
+//------------------------------------------------------------------------------		
+
+void CGetHeader::getOperador() 
+{
+
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char  *osgOperador      = sgOperador.c_str(); 
+		char   oidOperador[256] = {NULL};
+		short  iidOperador	    = -1; 
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+
+	EXEC SQL 
+	SELECT 
+		USUARIO.IDPESSOAUSUARIO 
+	INTO 
+		:oidOperador:iidOperador
+	FROM 
+		ACESSO.USUARIO USUARIO
+	WHERE 
+		USUARIO.IDPESSOAUSUARIO = :osgOperador; 
+
+	if ( iidOperador >= 0 )
+	   idOperador  = TString(oidOperador).Trim();
+
+}
+
+void CGetHeader::getUsuario() 
+{
+
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char   oNmUsuario[256] = {NULL};
+		char  *oIDUsuario      = idTxUsuario.c_str(); 
+		short  iNmUsuario	   = -1; 
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+
+	EXEC SQL 
+	SELECT 
+		USUARIO.NMLOGINUSUARIO 
+	INTO 
+		:oNmUsuario:iNmUsuario
+	FROM 
+		ACESSO.USUARIO USUARIO
+	WHERE 
+		USUARIO.IDPESSOAUSUARIO = :oIDUsuario; 
+
+	if ( iNmUsuario >= 0 ) 
+	   Usuario  = TString(oNmUsuario).Trim();
+
+}
+//------------------------------------------------------------------------------		
+// GetData - Return basic data stream
+//------------------------------------------------------------------------------		
+
+int CGetHeader::getData() 
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char oDataEmissao         [256] = {NULL}; 
+		char oCampanha            [256] = {NULL};
+		char oVersao              [256] = {NULL};
+		char oPerfil              [256] = {NULL};
+		char oInicioVigencia      [256] = {NULL};
+		char oFimVigencia		  [256] = {NULL};
+		char oPublicoAlvo         [256] = {NULL};
+		char oOperadorRelatorio   [256] = {NULL};
+		char oSubCampanha         [256] = {NULL};
+		char oStatusSubCamp       [256] = {NULL};
+		char oCanal               [256] = {NULL};
+		char oOperadorSelecionado [256] = {NULL};
+		char oUsuario             [256] = {NULL};
+		char oMetaDiaria          [256] = {NULL};
+		char oOperadora           [256] = {NULL};
+		char onmGrupo             [256] = {NULL};
+		char onmRegional          [256] = {NULL};
+		char ocdAreaRegistro      [256] = {NULL};
+
+		char*oSemValor = "-1";
+
+		// Parameter received
+		char *oszidSubCampanha			= idSubCampanha.c_str();
+		char *oszidCanalCampanha		= idCanalCampanha.c_str();
+		char *oszidGrupo				= idGrupo.c_str();
+		char *oszidRegional				= idRegional.c_str();
+		char *oszidAreaRegistro			= idAreaRegistro.c_str();
+
+
+
+		short iDataEmissao        = -1; 
+		short iCampanha           = -1; 
+		short iVersao             = -1; 
+		short iPerfil             = -1; 
+		short iPeriodoDatas       = -1; 
+		short iInicioVigencia	  = -1; 
+		short iFimVigencia		  = -1; 
+		short iPublicoAlvo        = -1; 
+		short iOperadorRelatorio  = -1; 
+		short iSubCampanha        = -1; 
+		short iStatusSubCamp      = -1; 
+		short iCanal              = -1; 
+		short iOperadorSelecionado= -1; 
+		short iUsuario            = -1; 
+		short iMetaDiaria         = -1; 
+		short iOperadora          = -1; 
+
+	EXEC SQL END DECLARE SECTION;
+
+
+	// Inicializa Grupo, Regional e Area Registro
+	onmGrupo[0] = '\0';
+	onmRegional[0] = '\0';
+	ocdAreaRegistro[0] = '\0';
+
+
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+	EXEC SQL WHENEVER NOT FOUND GOTO GotoSemRetorno;
+
+	memset( &sqlca, 0, sizeof( sqlca ) );
+	if( strlen( oszidCanalCampanha ) <= 0 )
+		oszidCanalCampanha = oSemValor;
+
+	EXEC SQL 
+	SELECT 
+		   NVL(PAR.NRPUBLICOTOTAL,0) PUBLICO_ALVO, 
+		   SUB.NMSUBCAMPANHA		SUBCAMPANHA,
+		   CAM.SGCAMPANHA			CAMPANHA, 
+		   TIP.NMTIPOCAMPANHA		STATUSSUBCAMP,
+           TO_CHAR(SUB.DTINICIO, 'DD/MM/YYYY') AS DTINICIO,
+           TO_CHAR(SUB.DTTERMINO, 'DD/MM/YYYY') AS DTTERMINO,
+		   CANAL.NMCANAL			CANAL, 
+		   NVL(PAR.NRMETADIARIACAMPANHA,0) METADIARIACAMPANHA,
+		   UFOP.IDUFOPERADORA, 
+		   SUB.SQVERSAO
+	INTO  
+		   oPublicoAlvo:iPublicoAlvo,
+		   oSubCampanha:iSubCampanha,
+		   oCampanha:iCampanha,
+		   oStatusSubCamp:iStatusSubCamp,
+		   oInicioVigencia:iInicioVigencia,
+		   oFimVigencia:iFimVigencia,
+		   oCanal:iCanal,
+		   oMetaDiaria:iMetaDiaria,
+		   oOperadora:iOperadora,
+		   oVersao:iVersao
+	  FROM 
+  		   CAMPANHA.PARAMETRIZACAOCAMPANHA	PAR  ,
+		   CAMPANHA.CANALCAMPANHA 			CAN  ,
+		   CAMPANHA.SUBCAMPANHAHISTORICO		SUB  ,
+		   APOIO.TIPOCAMPANHA 				TIP  ,
+		   CAMPANHA.CANALUFOPERADORA 		UFO  ,
+		   CAMPANHA.SUBCAMPANHAFIXA 			FIXA ,
+		   APOIO.CANAL 						CANAL,
+		   CAMPANHA.CANALUFOPERADORA 		UFOP,
+		   APOIO.CAMPANHA CAM
+		WHERE (    
+			    (FIXA.IDSUBCAMPANHAFIXA 	   = SUB.IDSUBCAMPANHAFIXA		 )
+			AND (SUB.IDSUBCAMPANHAHISTORICO    = CAN.IDSUBCAMPANHAHISTORICO	 )
+			AND (SUB.IDTIPOCAMPANHA            = TIP.IDTIPOCAMPANHA 		 )
+ 	   		AND (CAN.IDCANALCAMPANHA     	   = PAR.IDCANALCAMPANHA(+)		 )
+			AND (
+					CAN.IDCANALCAMPANHA		   = :oszidCanalCampanha
+				OR
+					:oszidCanalCampanha = '-1' 
+				)			
+			AND (CAN.IDCANALUFOPERADORA 	   = UFO.IDCANALUFOPERADORA		 )
+			AND (UFO.IDCANAL 				   = CANAL.IDCANAL				 )
+			AND (UFOP.IDCANALUFOPERADORA 	   = CAN.IDCANALUFOPERADORA(+)	 )
+			AND (SUB.IDSUBCAMPANHAHISTORICO	   = :oszidSubCampanha  		 )
+			AND (CAM.IDCAMPANHA = FIXA.IDCAMPANHA)
+			AND ROWNUM = 1
+		);
+
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+		// Pega o nome da Regional caso tenha sido passada como filtro
+		if( strlen(oszidRegional) > 0 )
+		{
+			EXEC SQL 
+			
+			SELECT 
+				UF.SGUF || ' - ' || GRUPOOPERADORA.NMGRUPOOPERADORA NM
+			INTO
+				:onmRegional
+			FROM
+				CUSTOMER.OPERADORA	 OPERADORA,
+				CUSTOMER.UFOPERADORA UFOPERADORA,
+				CUSTOMER.GRUPOOPERADORA	GRUPOOPERADORA,
+				APOIO.UF					UF
+			WHERE  GRUPOOPERADORA.IDGRUPOOPERADORA=OPERADORA.IDGRUPOOPERADORA
+			AND	   UFOPERADORA.IDPESSOADEPARAOPERADORA=OPERADORA.IDPESSOADEPARAOPERADORA
+			AND	   UF.IDUF=UFOPERADORA.IDUF 
+			AND	   UFOPERADORA.IDUFOPERADORA = :oszidRegional;
+		}
+		else
+		{
+			strcpy(onmRegional, "");
+		}
+
+
+
+		// Pega o nome da Regional caso tenha sido passada como filtro
+		if( atoi(oszidGrupo) >= 0 )
+		{
+			EXEC SQL 
+			SELECT 
+				NMGRUPO
+			INTO
+				:onmGrupo
+			FROM
+				ACESSO.GRUPO
+			WHERE
+				IDGRUPO = :oszidGrupo;
+		}
+		else
+		{
+			strcpy(onmGrupo, "");
+		}
+
+		// Pega o código da Área Registro
+		if( strlen(oszidAreaRegistro) > 0 ) {
+			if( atoi(oszidAreaRegistro) >= 0 )
+			{
+				EXEC SQL 
+				SELECT 
+					CDAREAREGISTRO
+				INTO
+					:ocdAreaRegistro
+				FROM	 
+					APOIO.AREAREGISTRO
+				WHERE	 
+					IDAREAREGISTRO = :oszidAreaRegistro;
+			}
+		}
+
+
+
+		if ( iPublicoAlvo >= 0 ) 
+		   PublicoAlvo	   = TString(oPublicoAlvo).Trim();
+
+		if ( iSubCampanha >= 0 )
+		   SubCampanha	   = TString(oSubCampanha).Trim();
+
+		if ( iCampanha >= 0 )
+		   Campanha		   = TString(oCampanha).Trim();
+
+		if ( iStatusSubCamp >= 0 )
+		   StatusSubCamp   = TString(oStatusSubCamp).Trim();
+
+		if ( iInicioVigencia >= 0 )
+		   InicioVigencia = TString(oInicioVigencia).Trim();
+
+		if ( iFimVigencia >= 0 )
+		   FimVigencia  = TString(oFimVigencia).Trim();
+
+		if ( iCanal >= 0 )
+		   Canal		= TString(oCanal).Trim();
+
+		if ( iMetaDiaria >= 0 )
+		   MetaDiaria	= TString(oMetaDiaria).Trim();
+
+		if ( iOperadora >= 0 )
+		   Operadora	= TString(oOperadora).Trim();
+
+		if ( iVersao >= 0 )
+		   Versao		= TString(oVersao).Trim();
+
+		if ( strlen(onmGrupo) >= 0 )
+		   nmGrupo		= TString(onmGrupo).Trim();
+
+		if ( strlen(onmRegional) >= 0 )
+		   nmRegional		= TString(onmRegional).Trim();
+
+		if ( strlen(ocdAreaRegistro) >= 0 )
+		   cdAreaRegistro	= TString(ocdAreaRegistro).Trim();
+
+	return 1;
+
+GotoSemRetorno:
+	return 0;
+}
+

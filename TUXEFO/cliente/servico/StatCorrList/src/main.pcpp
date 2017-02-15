@@ -1,0 +1,70 @@
+/*
+ * Serviço de cadastro básico de status de correspondencia
+ * Versão inicial, 19/05/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/StatusCorrespondencia.h";
+
+#include "../include/StatusCorrespondenciaConsulta.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include <tuxfw.h>
+
+DECLARE_TUXEDO_SERVICE(StatCorrList);
+
+void implStatCorrList::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+    CStatusCorrespondencia* poStatCorr;
+    CUnidade* poUnidade;
+    int nroReg = 0;
+    int iAux = 0;
+    int iAuxUn = 0;
+    
+    ULOG_START( "implStatCorrList::Execute()" );
+    // Consulta o objeto no banco de dados
+    poStatCorr = CStatusCorrespondencia::listaComUnidades(&nroReg);
+
+    // Monta o XML de saída
+    xml_g->createTag(XML_OUT_ROOT);
+    xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+    for (; iAux < nroReg; iAux++) {
+        xml_g->createTag(XML_OUT_TIPO_OBJETO);
+        xml_g->addItem(XML_OUT_ID_TIPO, poStatCorr[iAux].getIdStatusCorrespondencia());
+        xml_g->addItem(XML_OUT_SG_TIPO, rtrim(poStatCorr[iAux].getSgStatus()));
+        xml_g->addItem(XML_OUT_DS_TIPO, rtrim(poStatCorr[iAux].getDsStatus()));
+        if (poStatCorr[iAux].getQtDiasValido() != NULL)
+            xml_g->addItem(XML_OUT_QT_DIAS_VALIDO, *(poStatCorr[iAux].getQtDiasValido()));
+        if (poStatCorr[iAux].getIdProximoStatus() != NULL)
+            xml_g->addItem(XML_OUT_ID_PROXIMO, *(poStatCorr[iAux].getIdProximoStatus()));
+        xml_g->addItem(XML_OUT_IN_DISP, poStatCorr[iAux].getInDisponibilidade());
+
+        // Coloca as unidades
+        xml_g->createTag(XML_OUT_UNIDADE_VO);
+        xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+        poUnidade = poStatCorr[iAux].getUnidades();
+        for (iAuxUn = 0; iAuxUn < poStatCorr[iAux].getNrUnidades(); iAuxUn++) {
+            xml_g->createTag(XML_OUT_UNIDADE_SEL);
+            xml_g->addItem(XML_OUT_ID_UNIDADE, poUnidade[iAuxUn].getIdUnidade());
+            xml_g->addItem(XML_OUT_NM_UNIDADE, rtrim(poUnidade[iAuxUn].getNmUnidade()));
+            xml_g->closeTag();
+        }
+        if (poUnidade)
+        {
+            free( poUnidade );
+        }
+        xml_g->closeTag();
+
+        xml_g->closeTag();
+    }
+    xml_g->closeTag();
+
+    // Libera a memória
+    free(poStatCorr);
+
+    ULOG_END( "implStatCorrList::Execute()" );
+
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}

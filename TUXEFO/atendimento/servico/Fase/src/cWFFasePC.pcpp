@@ -1,0 +1,226 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include"../../../commons/queryMacro.h"
+
+
+#include "../include/cWFFase.h"
+#include "../include/stWFFase.h"
+
+void sql_error_WFFase(sqlca*sqlca);
+
+    // Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+        #include "../include/stWFFase.h"
+    EXEC SQL END DECLARE SECTION;
+
+bool proCIncluirWFFase(st_Fase* dados, st_vlFase* status, XMLGen* saida)
+{
+    ULOG_START("proCIncluirWFFase()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_Fase   oDados;
+        struct st_vlFase oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFase(&sqlca);
+
+    EXEC SQL SELECT workflow.FaseSQ.NEXTVAL INTO :oDados.idFase FROM DUAL;
+
+    EXEC SQL 
+        INSERT INTO
+            workflow.Fase
+            (
+                idFase,
+                sgFase,
+                dsFase
+            )
+            VALUES
+            (
+                :oDados.idFase,
+                :oDados.sgFase,
+                :oDados.dsFase
+            );
+
+    saida->createTag("Registro");
+        saida->addItem("idFase", oDados.idFase);
+    saida->closeTag();
+
+    ULOG_END("proCIncluirWFFase()");
+
+    return true;
+}
+
+bool proCAlterarWFFase(st_Fase* dados, st_vlFase* status, XMLGen* saida)
+{
+
+    ULOG_START("proCAlterarWFFase()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_Fase   oDados;
+        struct st_vlFase oStatus;
+
+        char query[800] = "UPDATE workflow.Fase SET ";
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFase(&sqlca);
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    bool separa = false;
+
+    if (status->idFase != -1) 
+        montaUpdate("idFase", oDados.idFase, 1);
+
+    if (status->sgFase != -1)
+        montaUpdate("sgFase", dados->sgFase, 2);
+
+    if (status->dsFase != -1)
+        montaUpdate("dsFase", dados->dsFase, 2);
+
+    sprintf(query, "%s WHERE idFase = %i", query, dados->idFase);
+
+    EXEC SQL EXECUTE IMMEDIATE :query;
+
+   ULOG_END("proCAlterarWFFase()");
+
+    return true;
+}
+
+bool proCExcluirWFFase(st_Fase* dados, st_vlFase* status, XMLGen* saida)
+{
+
+    ULOG_START("proCExcluirWFFase()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idFase = dados->idFase;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFase(&sqlca);
+
+    EXEC SQL 
+        DELETE
+            workflow.Fase
+        WHERE
+            idFase = :idFase;
+
+    ULOG_END("proCExcluirWFFase()");
+
+    return true;
+}
+
+bool proCConsultaWFFase(st_Fase* dados, st_vlFase* status, char *order, Collection &ColFase)
+{
+    ULOG_START("proCConsultaWFFase()");
+    struct sqlca sqlca;
+    struct st_Fase *dadosFase;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idFase;
+        VARCHAR sgFase[256];
+        VARCHAR dsFase[256];
+
+        char query[800] = "SELECT idFase, sgFase, dsFase FROM workflow.Fase ";
+
+    EXEC SQL END DECLARE SECTION;
+
+    bool separa = false;
+
+    if ( dados && status )
+    {
+        if (status->idFase != -1) 
+            montaWhere("idFase", dados->idFase, 1);
+
+        if (status->sgFase != -1)
+            montaWhere("sgFase", dados->sgFase, 2);
+
+        if (status->dsFase != -1)
+            montaWhere("dsFase", dados->dsFase, 2);
+
+        if (strlen(order) > 0) 
+            sprintf( query, "%s ORDER BY %s ", query, order);
+    }
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFase(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL PREPARE consultaFase FROM :query;
+    EXEC SQL DECLARE consulta CURSOR FOR consultaFase;
+
+    EXEC SQL OPEN consulta;
+
+    while (true)
+    {
+        EXEC SQL FETCH consulta INTO :idFase, :sgFase, :dsFase;
+
+        CONV(sgFase);
+        CONV(dsFase);
+
+        if ( dadosFase = new st_Fase,dadosFase )
+        {
+            dadosFase->idFase = idFase;
+            strncpy(dadosFase->sgFase,(char *)sgFase.arr,sizeof(dadosFase->sgFase)-1);
+            strncpy(dadosFase->dsFase,(char *)dsFase.arr,sizeof(dadosFase->dsFase)-1);
+
+            ColFase.AddItem(dadosFase);
+        }
+        else
+        {
+            ULOGE("Erro de alocação de memória");
+        }
+    }
+
+    EXEC SQL CLOSE consulta;
+
+    ULOG_END("proCConsultaWFFase()");
+
+    return true;
+
+}
+
+bool proCConsultaWFFase(Collection &collectionFases,XMLGen* saida)
+{
+    ULOG_START("proCConsultaWFFase()");
+
+    struct st_Fase *dadosFase;
+    int qtde = collectionFases.GetCount();
+
+    for (int it=0;it<qtde;it++)
+    {
+        dadosFase = (st_Fase *)collectionFases.GetItem(it);
+
+        saida->createTag("WFFaseVO");
+            saida->addItem("idFase", dadosFase->idFase);
+            saida->addItem("sgFase", dadosFase->sgFase);
+            saida->addItem("dsFase", dadosFase->dsFase);
+        saida->closeTag();
+    }
+
+    ULOG_END("proCConsultaWFFase()");
+
+    return true;
+}
+
+void sql_error_WFFase(sqlca*sqlca)
+{
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

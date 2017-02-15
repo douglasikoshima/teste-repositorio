@@ -1,0 +1,106 @@
+//
+// $Id: ins_tipocampanha.pcpp,v 1.1 2009/07/31 15:33:58 a5110702 Exp $
+//
+
+#include "../../negocio/cmputil/include/campanha.hpp"
+
+int ins_tipocampanha(char * usuario, DOMNode*dnode, XMLGen*xml)
+{
+	char parm[2000];
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR sgTipoCampanha[2000];
+		VARCHAR nmTipoCampanha[2000];
+		int     idPessoaUsuarioAlteracao;
+		int	inAtivo;
+                int     idTipoCampanha = 0;
+	EXEC SQL END DECLARE SECTION;
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    //  Obtendo dados do xml
+
+	get_tag(parm, dnode, "sgTipoCampanha", 0, 0);
+	strToOra(sgTipoCampanha,parm);
+
+    //  Obtendo dados do xml
+
+	get_tag(parm, dnode, "nmTipoCampanha", 0, 0);
+	strToOra(nmTipoCampanha,parm);
+
+    //  Pegando id do usuario
+	idPessoaUsuarioAlteracao = get_idUsuario(usuario);
+
+	inAtivo = 1;
+
+	/* Verifica se existe o item a adcionar */
+	EXEC SQL DECLARE crsTipoCampanha CURSOR FOR
+		SELECT TIPOCAMPANHA.idtipocampanha
+		FROM apoio.tipocampanha TIPOCAMPANHA
+		WHERE  TIPOCAMPANHA.sgtipocampanha = :sgTipoCampanha;
+
+	EXEC SQL OPEN crsTipoCampanha;
+
+	for(;;) 
+	{
+		EXEC SQL FETCH crsTipoCampanha INTO :idTipoCampanha;
+		break;
+	}
+  
+	EXEC SQL CLOSE crsTipoCampanha;	
+	
+	if(idTipoCampanha == 0)
+	{
+
+		/* Insert linha */
+		EXEC SQL INSERT INTO apoio.tipocampanha(idtipocampanha,
+		   				sgtipocampanha,
+						nmtipocampanha,
+						dtinclusao,
+						dtalteracao,
+						idpessoausuarioinclusao,
+						idpessoausuarioalteracao,
+						inativo)
+					 VALUES(apoio.tipocampanhasq.nextval,
+						:sgTipoCampanha,
+						:nmTipoCampanha,
+						sysdate,
+						sysdate,
+						:idPessoaUsuarioAlteracao,
+						:idPessoaUsuarioAlteracao,
+						:inAtivo);
+
+		if (sqlca.sqlcode)
+		{
+               	 	throw new TuxBasicSvcException("00E1000","INSERT INTO apoio.tipocampanha ");
+		}
+
+		/* insert OK */
+		xml->createTag("TIPOCAMPANHA");
+		xml->addItem("INSERT",1);
+		xml->closeTag();
+	}
+	
+        if(idTipoCampanha > 0)
+	{
+		EXEC SQL UPDATE apoio.tipocampanha
+		    SET inativo = :inAtivo,
+                        nmtipocampanha = :nmTipoCampanha,
+			idPessoaUsuarioAlteracao = :idPessoaUsuarioAlteracao,
+			dtAlteracao = sysdate
+		    WHERE idtipocampanha = :idTipoCampanha;
+											  
+		if (sqlca.sqlcode)
+		{
+			throw new TuxBasicSvcException("00E1000","UPDATE apoio.tipocampanha ");
+		}
+		
+		/* insert modificado para update OK */
+		xml->createTag("TIPOCAMPANHA");
+		xml->addItem("ID",idTipoCampanha);
+		xml->addItem("UPDATE",1);
+		xml->closeTag();
+	}
+
+	return 1;
+
+}

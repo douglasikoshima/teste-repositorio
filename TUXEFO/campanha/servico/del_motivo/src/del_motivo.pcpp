@@ -1,0 +1,140 @@
+//
+// $Id: del_motivo.pcpp,v 1.1 2009/07/31 15:34:06 a5110702 Exp $
+//
+
+#include "../../negocio/cmputil/include/campanha.hpp"
+int iValidaDependencias(int iIdTipoMotivoCampanha, XMLGen*xml);
+void ItemNaoApagado(XMLGen*xml);
+void ItemApagado(XMLGen*xml);
+
+int del_motivo(char * usuario, DOMNode*dnode,XMLGen*xml)
+{
+	char parm[256];
+	int	iDependencias =0;
+	EXEC SQL BEGIN DECLARE SECTION;
+		int		idMotivo = 0;
+		int		inAtivo = 0;
+		int     idPessoaUsuarioAlteracao = 0;
+	EXEC SQL END DECLARE SECTION;
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    //  Obtendo dados do xml
+
+	get_tag(parm, dnode, "idMotivo", 0, 0);
+		idMotivo = atoi(parm);
+	
+	// Pegando id do usuario
+	idPessoaUsuarioAlteracao = get_idUsuario(usuario);
+	
+	inAtivo = 0;
+
+
+	iDependencias = iValidaDependencias(idMotivo, xml);
+	if (iDependencias == 1)
+	{
+		return 1;
+	}
+
+	/* Update linha */
+	EXEC SQL UPDATE apoio.tipomotivocampanha
+	    SET inativo = :inAtivo,
+			idPessoaUsuarioAlteracao = :idPessoaUsuarioAlteracao,
+			dtAlteracao = sysdate,
+			idusuarioalteracao=:idPessoaUsuarioAlteracao,
+			dtultimaalteracao=sysdate
+		WHERE idtipomotivocampanha = :idMotivo;
+  
+	if (sqlca.sqlcode)
+	{
+		throw new TuxBasicSvcException("00E1000","UPDATE apoio.tipomotivocampanha ");
+	}
+  
+	/*------------------------------------------------------------------------------*/
+	/*Se elimina porque se hace la validacion de dependencias. CVA 26/08/2004		*/
+	/*------------------------------------------------------------------------------*/
+	/* update OK */
+	/*xml->createTag("MOTIVO");
+		xml->addItem("UPDATE",sqlca.sqlerrd[2]);
+		xml->closeTag();
+	*/
+	/*------------------------------------------------------------------------------*/
+
+	ItemApagado(xml);
+  
+	return 1;
+}
+
+
+
+/*Modificaciones para validar la existencia de campanhas previas. CVA 26/08/2004*/
+int iValidaDependencias(int iIdTipoMotivoCampanha, XMLGen*xml)
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		int     idTipoMotivoCampanha = 0;
+		int		idMotivo = 0;
+		
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND GOTO DependenciaVacia;
+  
+	try{
+		idTipoMotivoCampanha = iIdTipoMotivoCampanha;
+
+/*================================================================================*/	
+/*======================= Valida Dependencias CanalCampanha ======================*/
+/*================================================================================*/
+	
+		EXEC SQL DECLARE crsMotivoCampanha CURSOR FOR
+                SELECT idTipoMotivoCampanha
+                FROM   campanha.MotivoCampanha
+                WHERE  (idTipoMotivoCampanha = :idTipoMotivoCampanha );
+
+		EXEC SQL OPEN crsMotivoCampanha;
+
+		for(;;) 
+		{
+			EXEC SQL FETCH crsMotivoCampanha INTO :idMotivo;
+			break;
+		}
+  
+		EXEC SQL CLOSE crsMotivoCampanha;	
+
+		if(idMotivo != 0)
+		{
+			ItemNaoApagado(xml);
+			return 1;
+		}
+
+
+	return 1;
+
+	DependenciaVacia:
+		ULOG("Sin Dependencias");
+		
+
+  }catch(...){throw;}
+
+  return 0;
+}
+
+
+
+void ItemNaoApagado(XMLGen*xml)
+{
+	xml->createTag("tns:retornoVO");
+    xml->addProp("xmlns:tns","retornotux.fo.vivo.com.br/vo");    
+    xml->addProp("xmlns:xsi","http://www.w3.org/2001/XMLSchema-instance");
+	xml->addItem("descricao","Item não apagado");
+	xml->addItem("valor","0");
+    xml->closeTag();
+}
+
+void ItemApagado(XMLGen*xml)
+{
+	xml->createTag("tns:retornoVO");
+    xml->addProp("xmlns:tns","retornotux.fo.vivo.com.br/vo");    
+    xml->addProp("xmlns:xsi","http://www.w3.org/2001/XMLSchema-instance");
+	xml->addItem("descricao","Item apagado");
+	xml->addItem("valor","1");
+    xml->closeTag();
+}

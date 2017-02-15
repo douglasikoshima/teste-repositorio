@@ -1,0 +1,215 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Miguel Benaventes
+ * @version $Revision: 1.1.2.1.100.2 $
+ * @CVS     $Author: a5114878 $ - $Date: 2012/06/12 21:48:49 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/selectData.h"
+
+#include "../../commons/queryMacro.h"
+
+int GruposRequest::QueryFluxosAtendimento()
+{
+   ULOG_START("GruposRequest::QueryFluxosAtendimento()"); 
+
+   INITIALIZE_SQL;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR varOraSgFluxoAtendimento[10];
+		short statOraSgFluxoAtendimento = -1;
+        VARCHAR whereClause[255];
+	EXEC SQL END DECLARE SECTION;
+
+    TO_VARCHAR(whereClause,pnode);
+
+    EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+    EXEC SQL WHENEVER NOTFOUND CONTINUE;
+
+    ULOG("whereClause=%s",whereClause.arr);
+
+	EXEC SQL
+		SELECT
+			SGFLUXOATENDIMENTO
+		INTO
+			:varOraSgFluxoAtendimento:statOraSgFluxoAtendimento
+		FROM
+			CONTATOADM.CONTATOFOLHA
+		WHERE
+			IDCONTATO = :whereClause;
+
+	if ( sqlca.sqlcode==0 )
+	{
+		CONVIND(varOraSgFluxoAtendimento,statOraSgFluxoAtendimento);
+		pxml->addItem("sgFluxoAtendimentoAtual",(char*)varOraSgFluxoAtendimento.arr);
+        ULOG("sgFluxoAtendimentoAtual=%s",varOraSgFluxoAtendimento.arr);
+	}
+    else
+    {
+        ULOG("idcontatofolha não encontrado.");
+    }
+
+    pxml->createTag("FluxoAtendimentoVO");
+		pxml->addItem("sgFluxoAtendimento","MC1");
+		pxml->addItem("dsFluxoAtendimento","Meu Cliente 1");
+    pxml->closeTag();
+
+    pxml->createTag("FluxoAtendimentoVO");
+		pxml->addItem("sgFluxoAtendimento","MC2");
+		pxml->addItem("dsFluxoAtendimento","Meu Cliente 2");
+    pxml->closeTag();
+
+    pxml->createTag("FluxoAtendimentoVO");
+		pxml->addItem("sgFluxoAtendimento","MC3");
+		pxml->addItem("dsFluxoAtendimento","Meu Cliente 3");
+    pxml->closeTag();
+
+
+    ULOG_END("GruposRequest::QueryFluxosAtendimento()"); 
+    return 1;
+
+UndefinedError:
+    throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+int GruposRequest::QueryTypes( char eseq_type, char *tagName )
+{
+   ULOG_START("GruposRequest::QueryTypes()"); 
+
+   INITIALIZE_SQL;
+
+   EXEC SQL BEGIN DECLARE SECTION;
+        struct
+        {
+            long idSequencia;
+            long idGrupo;
+            long idContatoGrupo;
+            VARCHAR nmGrupo[255];
+            VARCHAR status[255];
+            long idOrder;
+        } oraGrpA;
+        VARCHAR whereClause[255];
+        long seq_type;
+        char cPesquisa[2048];
+
+    EXEC SQL END DECLARE SECTION;
+
+    TO_VARCHAR(whereClause,pnode);
+    seq_type=eseq_type;
+
+    sprintf(cPesquisa,
+       "SELECT "
+           "SEQUENCIAV01.IDSEQUENCIA, "
+           "SEQUENCIAV01.IDGRUPO, "
+           "SEQUENCIAV01.IDCONTATOGRUPO, "
+           "SEQUENCIAV01.NMGRUPO, "
+           "0 AS STATUS, "
+           //"( "
+           //    "SELECT "
+           //        "COUNT(1) "
+           //    "FROM "
+           //        "ATENDIMENTO.ATENDIMENTOGRUPOATUAL AGA "
+           //    "WHERE "
+           //        "AGA.IDATENDIMENTO = "
+           //        "( "
+           //            "SELECT "
+           //                "IDATENDIMENTO  "
+           //            "FROM "
+           //                "ATENDIMENTO.ATENDIMENTO  "
+           //            "WHERE "
+           //                "IDCONTATO = SEQUENCIAV01.IDCONTATO  "
+           //            "AND "
+           //                "IDTIPOSEQUENCIA = SEQUENCIAV01.IDTIPOSEQUENCIA  "
+           //            "AND "
+           //                "ROWNUM < 2 "
+           //        ") "
+           //    "AND "
+           //        "AGA.IDGRUPO = SEQUENCIAV01.IDGRUPO "
+           //") AS STATUS, "
+           "SEQUENCIAV01.SQORDEM "
+       "FROM "
+           "ATENDIMENTO.SEQUENCIAV01 SEQUENCIAV01 "
+       "WHERE "
+           "SEQUENCIAV01.IDTIPOSEQUENCIA = %ld "
+       "AND "
+           "SEQUENCIAV01.IDCONTATO = %s "
+       "AND "
+           "SEQUENCIAV01.DTEXCLUSAOGRP IS NULL "
+       "AND "
+           "SEQUENCIAV01.DTEXCLUSAOSEQ IS NULL "
+       /*"group by "
+       "SEQUENCIAV01.IDGRUPO, "
+       "  SEQUENCIAV01.IDCONTATOGRUPO, "
+       "  SEQUENCIAV01.NMGRUPO, "
+       "  SEQUENCIAV01.SQORDEM "*/
+       "ORDER BY "
+           "SEQUENCIAV01.SQORDEM",seq_type,(char*)whereClause.arr );
+
+    ULOG("%s",cPesquisa);
+
+    EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+
+    EXEC SQL PREPARE qPesquisa FROM :cPesquisa;
+    EXEC SQL DECLARE vwSequencia CURSOR FOR qPesquisa;
+    EXEC SQL OPEN vwSequencia;
+
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    if ( tagName )
+    {
+        pxml->createTag(tagName);
+    }
+    else
+    {
+        pxml->createTag("GruposUndefined");
+    }
+
+    pxml->createTag("GrupoProcessoVO");
+    pxml->createTag("ArvoreContatoVO");
+    pxml->addItem("codigo",pnode);
+    pxml->closeTag();
+
+    for(;;)
+    {
+        EXEC SQL FETCH vwSequencia INTO :oraGrpA;
+        CL_FETCH(oraGrpA.nmGrupo);
+        CL_FETCH(oraGrpA.status);
+        pxml->createTag("GrupoVO");
+        if( xtra == 1 )
+        {
+            pxml->addItem("codigo",oraGrpA.idSequencia);
+        }
+        else
+        {
+            pxml->addItem("codigo",oraGrpA.idGrupo);
+        }
+
+        pxml->addItem("descricao",(char*)oraGrpA.nmGrupo.arr);
+        pxml->addItem("status",(char*)oraGrpA.status.arr);
+        pxml->addItem("order",oraGrpA.idOrder);
+        pxml->closeTag();
+    }
+
+    EXEC SQL CLOSE vwSequencia;
+
+    pxml->closeTag();
+    pxml->closeTag();
+
+    ULOG_END("GruposRequest::QueryTypes()"); 
+    return 1;
+
+UndefinedError:
+    throw new 
+        TuxBasicOraException(
+                                sqlca.sqlcode,
+                                sqlca.sqlerrm.sqlerrmc,
+                                sqlca.sqlerrm.sqlerrml
+                            );
+}

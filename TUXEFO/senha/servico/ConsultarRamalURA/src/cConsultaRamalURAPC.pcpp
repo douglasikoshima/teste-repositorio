@@ -1,0 +1,194 @@
+/* $Id: cConsultaRamalURAPC.pcpp,v 1.1 2009/07/31 15:34:07 a5110702 Exp $ */
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include <tuxfw.h>
+
+#define CONV(O) \
+{\
+	##O.arr[##O.len]=0; \
+}
+
+#include <tuxfw.h>
+class TuxHelperImpl:public TuxHelper
+{
+public:
+	DOMNode * walkDOMImpl( DOMNode*a , char*b , int*c , int d )
+	{
+		return walkDOM( a , b , c , d );
+	}
+};
+
+void sql_error_consultaramalura(sqlca*sqlca);
+
+bool proCConsultaRamalURA(int idRamalSenha, XMLGen*xml_g)
+{                    
+   ULOG_START("proCConsultaRamalURA()");
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idramalsenha = idRamalSenha;
+
+		int idCallCenter;
+		VARCHAR dsCallCenter[256];
+		int idSenhaUra;
+		VARCHAR dsSenhaUra[256];
+		int idRamalSenhaUra;
+		VARCHAR dsRamalSenhaUra[256];
+		int nrRamal;
+		VARCHAR dsRamalSenha[256];
+
+		short i_idCallCenter;
+		short i_dsCallCenter;
+		short i_idSenhaUra;
+		short i_dsSenhaUra;
+		short i_idRamalSenhaUra;
+		short i_dsRamalSenhaUra;
+		short i_nrRamal;
+		short i_dsRamalSenha;
+
+	EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_consultaramalura(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE ramaisURA CURSOR FOR
+		SELECT
+			callcenter.idCallCenter,
+			dsCallCenter,
+			RamalSenhaUra.idSenhaUra,
+			dsSenhaUra,
+			idRamalSenhaUra,
+			dsRamalSenhaUra,
+			nrRamal,
+			dsRamalSenha
+		FROM
+			callcenter.RamalSenhaUra	RamalSenhaUra,
+			callcenter.RamalSenha 		  RamalSenha,
+			callcenter.SenhaUra             SenhaUra,
+			callcenter.callcenter             CallCenter		
+		WHERE
+			 RamalSenhaUra.IDRAMALSENHA = RamalSenha.IDRAMALSENHA
+			AND RamalSenhaUra.idRamalSenha = :idramalsenha
+			AND RamalSenhaUra.IDSENHAURA = SenhaUra.IDSENHAURA
+			AND callcenter.IDCALLCENTER  = RamalSenha.IDCALLCENTER
+		ORDER BY
+			dsSenhaUra;
+
+	EXEC SQL OPEN ramaisURA;
+
+	while (true)
+	{
+		EXEC SQL FETCH 
+			ramaisURA
+		INTO 
+			:idCallCenter:i_idCallCenter,
+			:dsCallCenter:i_dsCallCenter,
+			:idSenhaUra:i_idSenhaUra,
+			:dsSenhaUra:i_dsSenhaUra,
+			:idRamalSenhaUra:i_idRamalSenhaUra,
+			:dsRamalSenhaUra:i_dsRamalSenhaUra,
+			:nrRamal:i_nrRamal,
+			:dsRamalSenha:i_dsRamalSenha;
+
+		CONV(dsCallCenter);
+		CONV(dsSenhaUra);
+		CONV(dsRamalSenhaUra);
+		CONV(dsRamalSenha);
+
+		xml_g->createTag("RamalUraVO");
+			xml_g->addItem("idCallCenter",    idCallCenter);
+			xml_g->addItem("dsCallCenter",    (char*)dsCallCenter.arr);
+			xml_g->addItem("idSenhaUra",      idSenhaUra);
+			xml_g->addItem("dsSenhaUra",      (char*)dsSenhaUra.arr);
+			xml_g->addItem("idRamalSenhaUra", idRamalSenhaUra);
+			xml_g->addItem("dsRamalSenhaUra", (char*)dsRamalSenhaUra.arr);
+			xml_g->addItem("nrRamal",         nrRamal);
+			xml_g->addItem("idRamalSenha",    idramalsenha);
+			xml_g->addItem("dsRamalSenha",    (char*)dsRamalSenha.arr);
+		xml_g->closeTag();
+	
+	}
+
+	EXEC SQL CLOSE ramaisURA;
+                                  
+   ULOG_END("proCConsultaRamalURA()");                                  
+   
+	return true;
+}
+
+
+
+bool proCConsultaNavegacaoURA( DOMNode*dnode, XMLGen*xml_g )
+{
+   ULOG_START("proCConsultaNavegacaoURA()");
+   
+	DOMNode  *pNoCodigo;
+	TuxHelper tuxHelper;
+	TuxHelperImpl tuxhelperIMPL;
+	
+   struct sqlca sqlca;
+   char *pIdSenhaWrk;
+   register int idx = 0;
+
+	int SubnoAtual = 0;
+	int Subno = 0;
+   
+   
+   EXEC SQL BEGIN DECLARE SECTION;
+
+		VARCHAR dsSenhaURAWrk[256];
+		char *ORA_pIdSenha;
+
+		short i_dsSenhaURAWrk;
+
+	EXEC SQL END DECLARE SECTION;
+
+   EXEC SQL WHENEVER SQLERROR  DO sql_error_consultaramalura(&sqlca);
+
+   xml_g->createTag("ArvoreNavegacaoUraVO");
+   xml_g->addProp( "xmlns","senha.fo.vivo.com.br/vo" );
+   for( ;; )
+   {
+	   Subno = 0;
+		pNoCodigo = tuxhelperIMPL.walkDOMImpl( dnode,"itemArvoreNavegacaoUraVO",&Subno,SubnoAtual++ );
+		if ( pNoCodigo == NULL )
+		   break;
+
+      pIdSenhaWrk = tuxHelper.walkTree( pNoCodigo, "codigo", 0 );
+      if ( pIdSenhaWrk == NULL )
+         break;
+      
+      ORA_pIdSenha = pIdSenhaWrk;
+      EXEC SQL 
+         SELECT 
+            dsSenhaURA INTO :dsSenhaURAWrk:i_dsSenhaURAWrk
+         FROM
+            CallCenter.SenhaUra
+         WHERE
+            idSenhaURA = :ORA_pIdSenha;
+   
+         CONV(dsSenhaURAWrk);
+         xml_g->createTag("itemArvoreNavegacaoUraVO");
+   			xml_g->addItem("codigo",atoi(ORA_pIdSenha) );
+   			xml_g->addItem("descricao",(char*)dsSenhaURAWrk.arr);
+	      xml_g->closeTag();		
+	      
+   }
+   xml_g->closeTag();
+
+   ULOG_END("proCConsultaNavegacaoURA()");
+   
+	return true;
+}
+
+
+
+void sql_error_consultaramalura(sqlca*sqlca)
+{
+	throw TuxBasicOraException(sqlca->sqlcode);
+}

@@ -1,0 +1,181 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:50 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+#include "../include/cWFAtendimentoClickFolha.h"
+
+void WFAtdClickFolhaErro(sqlca*sqlca);
+
+extern bool proCObterContatoAcao( st_AtendimentoClickFolha *dados
+                                    , st_vlAtendimentoClickFolha *status
+                                    , XMLGen *saida
+                                    , DOMNode *dnode )
+{
+    
+    if ( -1 == status->idTipoLinha )
+    {
+        char *p = "Parametro 'idTipoLinha' não informado";
+        ULOG(p);
+        throw new TuxBasicSvcException("04E9999",mensagemSimples(p));
+    }
+
+    if ( -1 == status->idUFOperadora )
+    {
+        char *p = "Parametro 'idUFOperadora' não informado";
+        ULOG(p);
+        throw new TuxBasicSvcException("04E9999",mensagemSimples(p));
+    }
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR nmURLContatoAcao[256];
+        short i_nmURLContatoAcao=-1;
+        
+        int idContato = dados->idContato;
+        int idTipoLinha = dados->idTipoLinha;
+        int idUFOperadora = dados->idUFOperadora;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL 
+    SELECT 
+    	nmURLContatoAcao
+    INTO  
+    	:nmURLContatoAcao:i_nmURLContatoAcao
+    FROM 
+    	contatoadm.ContatoAcao 
+    WHERE 
+    	idContato = :idContato 
+    	AND idTipoLinha = :idTipoLinha
+    	AND idUfOperadora = :idUFOperadora;
+
+    if (i_nmURLContatoAcao != -1)       
+    {        
+        CONVIND (nmURLContatoAcao,i_nmURLContatoAcao);
+
+        ULOG("URL de Contato: %s", (char*)nmURLContatoAcao.arr);
+
+        saida->addItem("nmURLContatoAcao",(char*)nmURLContatoAcao.arr);
+
+        ULOG("proCObterContatoAcao::nmURLContatoAcao='%s'",(char*)nmURLContatoAcao.arr);
+
+        return true;
+    }
+
+    saida->createTag("nmURLContatoAcao");
+    saida->closeTag();
+
+    ULOG("Valor de 'nmURLContatoAcao' nao encontrado");
+
+    return false;
+}
+
+extern bool proCObterIdAgroEstTpProc( st_AtendimentoClickFolha *dados
+                                        , st_vlAtendimentoClickFolha *status
+                                        , XMLGen *saida
+                                        , DOMNode *dnode )
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idContato;
+        int idTipoProcesso;
+        int idAgrupamentoEstadoTpProc;
+    EXEC SQL END DECLARE SECTION;
+
+    idContato = dados->idContato;
+
+    EXEC SQL WHENEVER NOT FOUND GO TO notFoundTipoProcesso;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdClickFolhaErro(&sqlca);
+
+    EXEC SQL SELECT IDTIPOPROCESSO INTO :idTipoProcesso
+               FROM CONTATOADM.CONTATOFOLHA
+              WHERE IDCONTATO = :idContato;
+
+    EXEC SQL WHENEVER NOT FOUND GO TO notFoundAgrEstTpProc;
+
+    EXEC SQL SELECT IDAGRUPAMENTOESTADOTPPROC INTO :idAgrupamentoEstadoTpProc 
+               FROM WORKFLOW.AGRUPAMENTOESTADOTPPROC
+              WHERE IDTIPOPROCESSO = :idTipoProcesso
+                AND INESTADOINICIAL = 1;
+
+    dados->idAgrupamentoEstadoTpProc = idAgrupamentoEstadoTpProc;
+
+    return true;
+
+notFoundTipoProcesso:
+    ULOG("'idTipoProcesso' não encontrado em CONTATOADM.CONTATOFOLHA "
+                     "para idContato=%d",idContato);
+    goto saida;
+
+notFoundAgrEstTpProc:
+    ULOG("'idAgrupamentoEstadoTpProc' não encontrado em WORKFLOW.AGRUPAMENTOESTADOTPPROC "
+                     "para idTipoProcesso=%d",idTipoProcesso);
+saida:
+    return false;
+}
+
+extern bool proCObterPath( st_AtendimentoClickFolha *dados
+                             , st_vlAtendimentoClickFolha *status
+                             , XMLGen *saida )
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idContato;
+        short i_path;
+        VARCHAR path[4096];
+    EXEC SQL END DECLARE SECTION;
+
+    idContato = dados->idContato;
+
+    EXEC SQL WHENEVER NOT FOUND GO TO PathNotFound;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdClickFolhaErro(&sqlca);
+
+    EXEC SQL SELECT NMPATH INTO :path:i_path
+               FROM CONTATOADM.CONTATO
+              WHERE IDCONTATO = :idContato;
+
+    CONVIND(path,i_path);
+
+    saida->addItem("descricaoCompleta",(char*)path.arr);
+
+    ULOG("'path' para idContato=%d ==> '%s'",idContato,(char*)path.arr);
+
+    return true;
+
+PathNotFound:
+    ULOG("'path' não encontrado em CONTATOADM.CONTATO "
+                     "para idContato=%d",idContato,(char*)path.arr);
+
+    saida->createTag("descricaoCompleta");
+    saida->closeTag();
+
+    return false;
+}
+
+void WFAtdClickFolhaErro(sqlca*sqlca)
+{
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOGE("WFAtdClickFolhaErro:sqlcode=%d,sqlerrmc=%.70s"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

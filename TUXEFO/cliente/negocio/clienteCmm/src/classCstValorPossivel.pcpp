@@ -1,0 +1,382 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#undef MSG_NONE
+#define MSG_NONE
+#include "../include/Messages.h"
+
+#include <tuxfw.h>
+#include "../include/Exception.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../include/classCstValorPossivel.h";
+
+// Usuário de alteração
+void CCstValorPossivel::setUsuarioAlteracao(char* value) {
+	if (value != NULL) {
+		strncpy(sIdUsuarioAlteracao,value, 255);
+		sIdUsuarioAlteracao[255]='\0';
+	}
+}
+
+CCstValorPossivel::CCstValorPossivel()
+{
+    memset(&tTabela, 0x00, sizeof(tTabela));
+
+	memset(sIdUsuarioAlteracao,0,256);
+}
+
+
+void CCstValorPossivel::setIdValorPossivel(char*pDado)
+{
+    STRCPY_TO_ORA(tTabela.sIdValorPossivel, pDado);
+}
+
+void CCstValorPossivel::setIdAtributo(char*pDado)
+{
+    STRCPY_TO_ORA(tTabela.sIdAtributo, pDado);
+}
+
+void CCstValorPossivel::setDsValorPossivel(char*pDado)
+{
+    STRCPY_TO_ORA(tTabela.sDsValorPossivel, pDado);
+}
+
+void CCstValorPossivel::setSqApresentacao(char*pDado)
+{
+    STRCPY_TO_ORA(tTabela.sSqApresentacao, pDado);
+}
+
+void CCstValorPossivel::setInDisponibilidade(char*pDado)
+{
+    STRCPY_TO_ORA(tTabela.sInDisponibilidade, pDado);
+}
+
+void CCstValorPossivel::setInSelecionado(int value)
+{
+    iInSelecionado = value;
+}
+
+//Get
+char *CCstValorPossivel::getIdValorPossivel()
+{
+    return((char*)tTabela.sIdValorPossivel.arr);
+}
+
+char *CCstValorPossivel::getIdAtributo()
+{
+    return((char*)tTabela.sIdAtributo.arr);
+}
+
+char *CCstValorPossivel::getDsValorPossivel()
+{
+    return((char*)tTabela.sDsValorPossivel.arr);
+}
+
+char *CCstValorPossivel::getSqApresentacao()
+{
+    return((char*)tTabela.sSqApresentacao.arr);
+}
+
+char *CCstValorPossivel::getInDisponibilidade()
+{
+    return((char*)tTabela.sInDisponibilidade.arr);
+}
+
+int CCstValorPossivel::getInSelecionado()
+{
+    return iInSelecionado;
+}
+
+
+int CCstValorPossivel::Incluir()
+{
+    ULOG_START("CCstValorPossivel::Incluir()");
+    struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        int iTemRegistro;
+	EXEC SQL END DECLARE SECTION;
+
+    //Verificando se o registro existe
+	EXEC SQL SELECT count(1)
+               INTO :iTemRegistro
+               FROM customer.valorpossivel
+              WHERE upper(dsvalorpossivel) = upper(:tTabela.sDsValorPossivel)
+                AND idatributo = :tTabela.sIdAtributo ;
+
+    if (iTemRegistro)
+        return DUPLICATE_KEY;
+
+
+    /* Obtendo a sequence */
+    EXEC SQL SELECT customer.valorpossivelsq.nextval 
+               INTO :tTabela.sIdValorPossivel:tTabela.iIdValorPossivelNull
+               FROM dual;
+
+	EXEC SQL WHENEVER SQLERROR	goto erro;
+
+    EXEC SQL 
+        INSERT INTO customer.valorpossivel
+                    ( idvalorpossivel,
+                      idatributo,
+                      dsvalorpossivel,
+                      sqapresentacao,
+                      indisponibilidade,
+					  idusuarioalteracao,
+					  dtultimaalteracao)
+             VALUES ( :tTabela.sIdValorPossivel:tTabela.iIdValorPossivelNull,
+                      :tTabela.sIdAtributo:tTabela.iIdAtributoNull,
+                      :tTabela.sDsValorPossivel:tTabela.iDsValorPossivelNull,
+                      :tTabela.sSqApresentacao:tTabela.iSqApresentacaoNull,
+                      :tTabela.sInDisponibilidade:tTabela.iInDisponibilidadeNull,
+					  :sIdUsuarioAlteracao,
+					  SYSDATE);  
+
+    ULOG_END("CCstValorPossivel::Incluir()");
+    if (!sqlca.sqlerrd[2])
+        return NOK;
+    else
+        return OK;
+
+	erro:
+    {
+        if (sqlca.sqlcode == DUPLICATE_KEY )
+           return DUPLICATE_KEY;
+
+		ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CCstValorPossivel::Incluir()");
+		throw TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,
+					sqlca.sqlerrm.sqlerrml);
+    }
+}
+
+
+int CCstValorPossivel::Alterar()
+{
+    ULOG_START("CCstValorPossivel::Alterar()");
+    struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        int iTemRegistro;
+	EXEC SQL END DECLARE SECTION;
+
+    //Verificando se o registro existe
+	EXEC SQL SELECT count(1)
+               INTO :iTemRegistro
+               FROM customer.valorpossivel
+              WHERE upper(dsvalorpossivel) = upper(:tTabela.sDsValorPossivel)
+                AND idvalorpossivel != :tTabela.sIdValorPossivel 
+                AND idatributo = :tTabela.sIdAtributo ;
+
+    if (iTemRegistro)
+        return DUPLICATE_KEY;
+
+
+	EXEC SQL WHENEVER SQLERROR	goto erro;
+
+    EXEC SQL UPDATE customer.valorpossivel
+                SET idatributo        = :tTabela.sIdAtributo:tTabela.iIdAtributoNull,
+                    dsvalorpossivel   = :tTabela.sDsValorPossivel:tTabela.iDsValorPossivelNull,
+                    sqapresentacao    = :tTabela.sSqApresentacao:tTabela.iSqApresentacaoNull,
+                    indisponibilidade = :tTabela.sInDisponibilidade:tTabela.iInDisponibilidadeNull,
+					IdUsuarioAlteracao = :sIdUsuarioAlteracao,
+					DtUltimaAlteracao = SYSDATE
+              WHERE idvalorpossivel = :tTabela.sIdValorPossivel;
+  
+    ULOG_END("CCstValorPossivel::Alterar()");
+    if (sqlca.sqlerrd[2] == 0 )
+        return NOK;
+    else
+        return OK;
+
+	erro:
+    {
+        if (sqlca.sqlcode == DUPLICATE_KEY )
+           return DUPLICATE_KEY;
+
+		ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CCstValorPossivel::Alterar()");
+		throw TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,
+					sqlca.sqlerrm.sqlerrml);
+    }
+}
+
+
+int CCstValorPossivel::Excluir()
+{
+    ULOG_START("CCstValorPossivel::Excluir()");
+    struct sqlca sqlca;
+
+	EXEC SQL WHENEVER SQLERROR	goto erro;
+
+    EXEC SQL DELETE FROM customer.valorpossivel
+              WHERE idvalorpossivel = :tTabela.sIdValorPossivel;
+  
+    ULOG_END("CCstValorPossivel::Excluir()");
+    if (!sqlca.sqlerrd[2])
+        return NOK;
+    else
+        return OK;
+
+	erro:
+		ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CCstValorPossivel::Excluir()");
+		throw TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,
+					sqlca.sqlerrm.sqlerrml);
+
+}
+
+
+CCstValorPossivel* CCstValorPossivel::RecuperarTodos(int* iNroObjetos)
+{
+    ULOG_START("CCstValorPossivel::RecuperarTodos()");
+    struct sqlca sqlca;
+
+    CCstValorPossivel* oObj = NULL;
+    int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        TVALORPOSSIVEL tST;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE cCursor CURSOR FOR
+            SELECT idvalorpossivel,
+                   idatributo,
+                   dsvalorpossivel,
+                   sqapresentacao,
+                   indisponibilidade
+              FROM customer.valorpossivel;
+
+	EXEC SQL OPEN cCursor;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;; iNroObjLocal++) 
+    {
+        memset(&tST, 0x00, sizeof(tST));
+		EXEC SQL FETCH cCursor
+                  INTO :tST.sIdValorPossivel:tST.iIdValorPossivelNull,
+                       :tST.sIdAtributo:tST.iIdAtributoNull,
+                       :tST.sDsValorPossivel:tST.iDsValorPossivelNull,
+                       :tST.sSqApresentacao:tST.iSqApresentacaoNull,
+                       :tST.sInDisponibilidade:tST.iInDisponibilidadeNull;
+
+		// Aloca memória para o objeto atual.
+		if ((oObj = (CCstValorPossivel*) realloc((void *)oObj, (sizeof(CCstValorPossivel) * iNroObjLocal))) != NULL)
+        {
+			oObj[iNroObjLocal-1].setIdValorPossivel((char*)tST.sIdValorPossivel.arr);
+			oObj[iNroObjLocal-1].setIdAtributo((char*)tST.sIdAtributo.arr);
+			oObj[iNroObjLocal-1].setDsValorPossivel((char*)tST.sDsValorPossivel.arr);
+			oObj[iNroObjLocal-1].setSqApresentacao((char*)tST.sSqApresentacao.arr);
+			oObj[iNroObjLocal-1].setInDisponibilidade((char*)tST.sInDisponibilidade.arr);
+		} 
+        else 
+        {
+			if (oObj) 
+               free(oObj);
+
+            EXEC SQL CLOSE cCursor;
+			ULOGE("ERRO DE MEMORIA -> NRO_MEMORIA");
+			ULOG_END("CCstValorPossivel::RecuperarTodos()");
+			throw TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+		}
+	}
+
+    EXEC SQL CLOSE cCursor;
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG_END("CCstValorPossivel::RecuperarTodos()");
+	return oObj;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+		ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CCstValorPossivel::RecuperarTodos()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+CCstValorPossivel* CCstValorPossivel::RecuperarPorIdConteudo(int* iNroObjetos, char* pId)
+{
+    ULOG_START("CCstValorPossivel::RecuperarPorIdConteudo()");
+    
+    struct sqlca sqlca;
+
+    CCstValorPossivel* oObj = NULL;
+    int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        TVALORPOSSIVEL tST;
+        VARCHAR sId[LEN_NUMBER + LEN_EOS];
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+    STRCPY_TO_ORA(sId, pId);
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE cCursor2 CURSOR FOR
+            SELECT idvalorpossivel,
+                   idatributo,
+                   dsvalorpossivel,
+                   sqapresentacao,
+                   indisponibilidade
+              FROM customer.valorpossivel
+             WHERE idatributo = :sId;
+
+	EXEC SQL OPEN cCursor2;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;; iNroObjLocal++) 
+    {
+        memset(&tST, 0x00, sizeof(tST));
+		EXEC SQL FETCH cCursor2
+                  INTO :tST.sIdValorPossivel:tST.iIdValorPossivelNull,
+                       :tST.sIdAtributo:tST.iIdAtributoNull,
+                       :tST.sDsValorPossivel:tST.iDsValorPossivelNull,
+                       :tST.sSqApresentacao:tST.iSqApresentacaoNull,
+                       :tST.sInDisponibilidade:tST.iInDisponibilidadeNull;
+
+		// Aloca memória para o objeto atual.
+		if ((oObj = (CCstValorPossivel*) realloc((void *)oObj, (sizeof(CCstValorPossivel) * iNroObjLocal))) != NULL)
+        {
+			oObj[iNroObjLocal-1].setIdValorPossivel((char*)tST.sIdValorPossivel.arr);
+			oObj[iNroObjLocal-1].setIdAtributo((char*)tST.sIdAtributo.arr);
+			oObj[iNroObjLocal-1].setDsValorPossivel((char*)tST.sDsValorPossivel.arr);
+			oObj[iNroObjLocal-1].setSqApresentacao((char*)tST.sSqApresentacao.arr);
+			oObj[iNroObjLocal-1].setInDisponibilidade((char*)tST.sInDisponibilidade.arr);
+		} 
+        else 
+        {
+			if (oObj) 
+                free(oObj);
+
+            ULOGE("ERRO DE MEMORIA -> NRO_MEMORIA");
+            ULOG_END("CCstValorPossivel::RecuperarPorIdConteudo()");
+			throw TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+            EXEC SQL CLOSE cCursor2;
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+    EXEC SQL CLOSE cCursor2;
+
+    ULOG_END("CCstValorPossivel::RecuperarPorIdConteudo()");
+    return oObj;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+		ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CCstValorPossivel::RecuperarPorIdConteudo()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+

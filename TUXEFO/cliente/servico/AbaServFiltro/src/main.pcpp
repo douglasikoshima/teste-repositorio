@@ -1,0 +1,114 @@
+/*
+ * Serviço de preenchimento da aba de serviços na tela inicial - Filtro
+ * Versão inicial, 26/07/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/Conta.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classLinhaTelefonica.h";
+
+#include <tuxfw.h>
+#include "../include/AbaServFiltro.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+
+DECLARE_TUXEDO_SERVICE(AbaServFiltro);
+
+void implAbaServFiltro::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+	char* pcIdPessoa;
+	int iIdPessoa;
+	char* pcNrConta = NULL;
+	char* pcNrLinha = NULL;
+	char* pcCtaSisOrig = NULL;
+	char* pcLinSisOrig = NULL;
+
+    ULOG_START("implAbaServFiltro::Execute()");
+
+	// Traz ID da pessoa, informação obrigatória.
+	pcIdPessoa = walkTree(dnode, XML_IN_ID_PESSOA, 0);
+	if (pcIdPessoa == NULL) {
+		ERROR(NRO_CONTA_ID_NE);
+		TAG_INEXISTENTE(XML_IN_ID_PESSOA);
+		throw new TuxBasicSvcException(sNrMsg, sMsg);
+	}
+	if (!*pcIdPessoa) {
+		ERROR(NRO_CONTA_ID_VV);
+		TAG_VALOR_VAZIO(XML_IN_ID_PESSOA);
+        if (pcIdPessoa)
+            XMLString::release(&pcIdPessoa);
+		throw new TuxBasicSvcException(sNrMsg, sMsg);
+	}
+	if ((iIdPessoa = atoi(pcIdPessoa)) <= 0) {
+		ERROR(NRO_CONTA_ID_VI);
+		TAG_VALOR_INVALIDO(XML_IN_ID_PESSOA);
+        if (pcIdPessoa)
+            XMLString::release(&pcIdPessoa);
+		throw new TuxBasicSvcException(sNrMsg, sMsg);
+	}
+    if (pcIdPessoa)
+        XMLString::release(&pcIdPessoa);
+
+    ULOG("iIdPessoa(%d)", iIdPessoa);
+    ULOG("pcIdPessoa[%s]", pcIdPessoa);
+
+	// Traz Nr Conta e nr linha
+	pcNrConta = walkTree(dnode, XML_IN_NR_CONTA, 0);
+	if (pcNrConta != NULL && !*pcNrConta)
+		pcNrConta = NULL;
+	pcNrLinha = walkTree(dnode, XML_IN_NR_LINHA, 0);
+	if (pcNrLinha != NULL && !*pcNrLinha)
+		pcNrLinha = NULL;
+
+	// Monta o XML de saída
+	xml_g->createTag(XML_OUT_ROOT);
+	xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+
+	// Recupera ID Linha Sistema Origem e ID Conta Sistema Origem
+	if (pcNrConta != NULL) {
+		pcCtaSisOrig = CConta::getContaSisOrigem(pcNrConta, iIdPessoa);
+
+		if (pcCtaSisOrig[0] == 'n') {
+			xml_g->addItem(XML_OUT_MESSAGE, XML_OUT_MSG_CONTA_NAO_CLI);
+		} else if (pcCtaSisOrig[0] == 'c') {
+			xml_g->addItem(XML_OUT_MESSAGE, XML_OUT_MSG_CONTA_NAO_EXISTE);
+		} else {
+			xml_g->addItem(XML_OUT_ID_CONTA_ORIG, pcCtaSisOrig);
+		}
+	}
+
+    ULOG("local a");
+
+	if (pcNrLinha != NULL) {
+		pcLinSisOrig = CLinhaTelefonica::getLinhaSisOrigem(pcNrLinha, iIdPessoa);
+
+		if (pcLinSisOrig[0] == 'n') {
+			xml_g->addItem(XML_OUT_MESSAGE, XML_OUT_MSG_LINHA_NAO_CLI);
+		} else if (pcLinSisOrig[0] == 'l') {
+			xml_g->addItem(XML_OUT_MESSAGE, XML_OUT_MSG_LINHA_NAO_EXISTE);
+		} else {
+			if (pcLinSisOrig[0] != 'p' && pcNrConta == NULL) {
+				ULOG(pcLinSisOrig);
+				xml_g->addItem(XML_OUT_ID_CONTA_ORIG, CLinhaTelefonica::getIdContaSisOrigem(pcLinSisOrig));
+			}
+			xml_g->addItem(XML_OUT_ID_LINHA_ORIG, pcLinSisOrig);
+		}
+	}
+
+    ULOG("local b");
+
+    if (pcIdPessoa)
+        XMLString::release(&pcNrConta);
+    if (pcIdPessoa)
+        XMLString::release(&pcNrLinha);
+
+	// Execução OK.
+	INFORMATION(NRO_OK);
+
+    ULOG_END("implAbaServFiltro::Execute()");
+	setStatusCode(sNrMsg, MSG_OK);
+}

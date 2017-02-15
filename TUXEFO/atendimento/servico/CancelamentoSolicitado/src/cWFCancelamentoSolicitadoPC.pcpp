@@ -1,0 +1,201 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+#include <tuxfw.h>
+#include "../include/cWFCancelamentoSolicitado.h"
+#include "../include/stWFCancelamentoSolicitado.h"
+
+void sql_error_WFCancelamentoSolicitado(sqlca*sqlca);
+
+	// Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+		#include "../include/stWFCancelamentoSolicitado.h"
+    EXEC SQL END DECLARE SECTION;
+
+bool proCIncluirWFCancelamentoSolicitado(st_CancelamentoSolicitado* dados, st_vlCancelamentoSolicitado* status, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_CancelamentoSolicitado   oDados;
+		struct st_vlCancelamentoSolicitado oStatus;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+	   
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCancelamentoSolicitado(&sqlca);
+
+	EXEC SQL 
+		INSERT INTO
+			atendimento.CancelamentoSolicitado
+			(
+				idAtendimento,
+				dtSolicitacaoCancelamento,
+				idPessoaUsuario,
+				idUsuarioAlteracao,
+				dtUltimaAlteracao
+			)
+			VALUES
+			(
+				:oDados.idAtendimento,
+                TO_DATE(DECODE(:oStatus.dtSolicitacaoCancelamento, -1, NULL, :oDados.dtSolicitacaoCancelamento),'DD/MM/YYYY HH24:MI:SS'),
+				:oDados.idPessoaUsuario,
+				:oDados.idUsuarioAlteracao,
+				SYSDATE
+			);
+
+	saida->createTag("Registro");
+		saida->addItem("idAtendimento", oDados.idAtendimento);
+	saida->closeTag();
+
+	return true;
+}
+
+bool proCAlterarWFCancelamentoSolicitado(st_CancelamentoSolicitado* dados, st_vlCancelamentoSolicitado* status, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_CancelamentoSolicitado   oDados;
+		struct st_vlCancelamentoSolicitado oStatus;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCancelamentoSolicitado(&sqlca);
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+	sprintf(query,"%s", "UPDATE atendimento.CancelamentoSolicitado SET ");
+
+	bool separa = false;
+
+	if (status->dtSolicitacaoCancelamento != -1)
+		montaUpdate("dtSolicitacaoCancelamento", oDados.dtSolicitacaoCancelamento, TIPO_DATAHORA);
+
+	if (status->idPessoaUsuario != -1) 
+		montaUpdate("idPessoaUsuario", oDados.idPessoaUsuario, TIPO_INT);
+
+	if (status->idUsuarioAlteracao != -1) 
+		montaUpdate("idUsuarioAlteracao", oDados.idUsuarioAlteracao, TIPO_INT);
+
+	if (status->dtUltimaAlteracao != -1)
+		montaUpdate("dtUltimaAlteracao", oDados.dtUltimaAlteracao, TIPO_DATAHORA);
+
+	sprintf(query, "%s WHERE idAtendimento = %ld", query, dados->idAtendimento);
+
+	EXEC SQL EXECUTE IMMEDIATE :query;
+
+	return true;
+}
+
+bool proCExcluirWFCancelamentoSolicitado(st_CancelamentoSolicitado* dados, st_vlCancelamentoSolicitado* status, XMLGen* saida)
+{
+    ULOG_START( "proCExcluirWFCancelamentoSolicitado()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAtendimento = dados->idAtendimento;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCancelamentoSolicitado(&sqlca);
+
+	EXEC SQL 
+		DELETE
+			atendimento.CancelamentoSolicitado
+		WHERE
+			idAtendimento = :idAtendimento;
+
+    ULOG_END( "proCExcluirWFCancelamentoSolicitado()" );
+
+	return true;
+}
+
+bool proCConsultaWFCancelamentoSolicitado(st_CancelamentoSolicitado* dados, st_vlCancelamentoSolicitado* status, char* order, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAtendimento;
+		VARCHAR dtSolicitacaoCancelamento[256];
+		int idPessoaUsuario;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCancelamentoSolicitado(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	sprintf(query,"SELECT idAtendimento, TO_CHAR(dtSolicitacaoCancelamento,'dd/mm/yyyy hh24:mi'), idPessoaUsuario FROM atendimento.CancelamentoSolicitado ");
+
+	bool separa = false;
+
+	if (status->idAtendimento != -1) 
+		montaWhere("idAtendimento", dados->idAtendimento, TIPO_ULONG);
+
+	if (status->dtSolicitacaoCancelamento != -1) 
+		montaWhere("dtSolicitacaoCancelamento", dados->dtSolicitacaoCancelamento, TIPO_DATAHORA);
+
+	if (status->idPessoaUsuario != -1)
+		montaWhere("idPessoaUsuario", dados->idPessoaUsuario, 1);
+
+	if (status->idUsuarioAlteracao != -1)
+		montaWhere("idUsuarioAlteracao", dados->idUsuarioAlteracao, TIPO_INT);
+
+	if (status->dtUltimaAlteracao != -1)
+		montaWhere("dtUltimaAlteracao", dados->dtUltimaAlteracao, TIPO_DATAHORA);
+
+	if (strlen(order) > 0) 
+		sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCancelamentoSolicitado(&sqlca);
+
+	EXEC SQL PREPARE consultaCancelamentoSolicitado FROM :query;
+	EXEC SQL DECLARE consulta CURSOR FOR consultaCancelamentoSolicitado;
+
+	EXEC SQL OPEN consulta;
+
+	while (true)
+	{
+		EXEC SQL FETCH consulta INTO :idAtendimento, :dtSolicitacaoCancelamento,
+		                             :idPessoaUsuario;
+
+		CONV(dtSolicitacaoCancelamento);
+
+		saida->createTag("WFCancelamentoSolicitadoVO");
+			saida->addItem("idAtendimento", idAtendimento);
+			saida->addItem("dtSolicitacaoCancelamento", (char *)dtSolicitacaoCancelamento.arr);
+			saida->addItem("idPessoaUsuario", idPessoaUsuario);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE consulta;
+
+	return true;
+
+}
+
+void sql_error_WFCancelamentoSolicitado(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

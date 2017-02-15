@@ -1,0 +1,103 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../include/LogFilaSetClientInfo.h"
+#include <tuxfw.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+LogFilaSetClientInfo::LogFilaSetClientInfo(char *pszIdUsuarioAlteracao)
+{
+    ULOG_START("LogFilaSetClientInfo::LogFilaSetClientInfo");
+
+    memset(&tLogFilaSetClientInfo, 0x00, sizeof(TLogFilaSetClientInfo));
+    this->setIdUsuarioAlteracao(pszIdUsuarioAlteracao);
+
+    ULOG_END("LogFilaSetClientInfo::LogFilaSetClientInfo");
+}
+
+LogFilaSetClientInfo::~LogFilaSetClientInfo(void)
+{
+    ULOG_START("LogFilaSetClientInfo::~LogFilaSetClientInfo");
+    ULOG_END("LogFilaSetClientInfo::~LogFilaSetClientInfo");
+}
+
+/*******************************************************************************************************/
+void LogFilaSetClientInfo::clearLogFilaSetClientInfo(void)
+{
+    char szIdUsuarioAlteracao[LEN_NUMBER + LEN_EOS];
+
+    strcpy(szIdUsuarioAlteracao, tLogFilaSetClientInfo.szIdUsuarioAlteracao);
+    memset(&tLogFilaSetClientInfo, 0x00, sizeof(TLogFilaSetClientInfo));
+    this->setIdUsuarioAlteracao(szIdUsuarioAlteracao);
+}
+
+/*******************************************************************************************************/
+void LogFilaSetClientInfo::setXml(char *pszXml)
+{
+    strcpy(tLogFilaSetClientInfo.szXML1, pszXml);
+}
+
+/*******************************************************************************************************/
+void LogFilaSetClientInfo::setIdLinhaTelefonica(char *pszIdLinhaTelefonica)
+{
+    strcpy(tLogFilaSetClientInfo.szIdLinhaTelefonica, pszIdLinhaTelefonica);
+}
+
+/*******************************************************************************************************/
+void LogFilaSetClientInfo::setIdUsuarioAlteracao(char *pszIdUsuarioAlteracao)
+{
+    strcpy(tLogFilaSetClientInfo.szIdUsuarioAlteracao, pszIdUsuarioAlteracao);
+}
+
+/*******************************************************************************************************/
+void LogFilaSetClientInfo::insereLogFilaSetClientInfo(void)
+{
+    ULOG_START("LogFilaSetClientInfo::insereLogFilaSetClientInfo");
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLogFilaSetClientInfo[LEN_IDLOGFILASETCLIENTINFO];
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszXML1[LEN_XML1];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+    EXEC SQL END DECLARE SECTION;
+
+
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, tLogFilaSetClientInfo.szIdLinhaTelefonica); ULOG("oszIdLinhaTelefonica[%.*s]", oszIdLinhaTelefonica.len, oszIdLinhaTelefonica.arr);
+    STRCPY_TO_ORA(oszXML1, tLogFilaSetClientInfo.szXML1); ULOG("oszXML1[%.*s]", oszXML1.len, oszXML1.arr);
+    STRCPY_TO_ORA(oszIdUsuarioAlteracao, tLogFilaSetClientInfo.szIdUsuarioAlteracao); ULOG("oszIdUsuarioAlteracao[%.*s]", oszIdUsuarioAlteracao.len, oszIdUsuarioAlteracao.arr);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+    /* sequence temporaria soh para testes */
+    EXEC SQL SELECT infra.logfilasetclientinfosq.nextval
+               INTO :oszIdLogFilaSetClientInfo
+               FROM DUAL;
+
+    ULOG("oszIdLogFilaSetClientInfo[%.*s]", oszIdLogFilaSetClientInfo.len, oszIdLogFilaSetClientInfo.arr);
+
+    EXEC SQL INSERT INTO infra.logfilasetclientinfo
+                       ( idlogfilasetclientinfo
+                       , idlinhatelefonica
+                       , xml1
+                       , idusuarioalteracao
+                       , dtultimaalteracao)
+                VALUES ( :oszIdLogFilaSetClientInfo
+                       , :oszIdLinhaTelefonica
+                       , :oszXML1
+                       , :oszIdUsuarioAlteracao
+                       , SYSDATE);
+
+    ULOGI("Finalizando LogFilaSetClientInfo::insereLogFilaSetClientInfo <OK>");
+    ULOG_END("LogFilaSetClientInfo::insereLogFilaSetClientInfo");
+    return;
+
+    erro:
+        ULOGE("Finalizando LogFilaSetClientInfo::insereLogFilaSetClientInfo <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

@@ -1,0 +1,164 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Miguel Benaventes
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:34 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/selectData.h"
+#include "../include/CGrupos.h"
+
+void CGrupos::LoadIdGrupos(long idContatoParam,long idTipoSequencia)
+{
+    ULOG_START("CGrupos::LoadIdGrupos()");
+
+    INITIALIZE_SQL;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+      long idContatoAux = idContatoParam;
+      long idTpSeqAux = idTipoSequencia;
+
+      long idGrupoAux;
+      long idContatoGrupoAux;
+      long idSequenciaAux;
+      
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL DECLARE ReadGrupos CURSOR FOR
+      SELECT DISTINCT
+            A.IDGRUPO,A.IDCONTATOGRUPO,B.IDSEQUENCIA
+      FROM
+            CONTATOADM.CONTATOGRUPO A,
+            CONTATOADM.SEQUENCIA    B
+      WHERE
+            A.IDCONTATOGRUPO = b.idContatoGrupo
+      AND
+            B.IDTIPOSEQUENCIA = :idTpSeqAux
+      AND
+            A.IDCONTATO = :idContatoAux;
+
+	EXEC SQL OPEN ReadGrupos;
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for(;;)
+	{
+		EXEC SQL FETCH 
+            ReadGrupos 
+        INTO 
+            :idGrupoAux, 
+            :idContatoGrupoAux, 
+            :idSequenciaAux;
+      
+        Add( idGrupoAux, idContatoGrupoAux, idSequenciaAux );
+	}
+
+	EXEC SQL CLOSE ReadGrupos;
+	
+	ULOG_END("CGrupos::LoadIdGrupos()");
+
+	return;
+
+Error:
+	throw new 
+        TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+bool CGrupos::ExisteContatoTipoRetorno(long idContatoParam,long idTipoRetorno)
+{
+    ULOG_START("CGrupos::ExisteContatoTipoRetorno()"); 
+
+	INITIALIZE_SQL;
+	EXEC SQL BEGIN DECLARE SECTION;
+
+      long ora_idcontato = idContatoParam;
+      long ora_idretorno = idTipoRetorno;
+
+      int inNumRetono = 0;
+      short i_inNumRetono;
+ 
+    EXEC SQL END DECLARE SECTION;
+    
+    EXEC SQL WHENEVER SQLERROR GOTO ErrorExiste;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL 
+		SELECT
+			COUNT(1)
+		INTO
+			inNumRetono:i_inNumRetono
+		FROM 
+			ContatoAdm.ParametrosTipoRetornoV01
+		WHERE 
+			idcontato = :ora_idcontato
+		AND idtiporetornocontato = :ora_idretorno
+		AND ROWNUM < 2;
+    
+   ULOG_END("GruposRequest::ExisteContatoTipoRetorno()");
+
+   return ( inNumRetono > 0 ? true : false );
+
+ErrorExiste:
+    ULOGE("GruposRequest::ExisteContatoTipoRetorno()");
+
+	throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+bool CGrupos::GrupoAssociadoTipoFechamento(long idContatoParam,long idGrupoParam)
+{
+    ULOG_START("CGrupos::GrupoAssociadoTipoFechamento()"); 
+
+    INITIALIZE_SQL;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+      long ora_idContato = idContatoParam;
+      long ora_idGrupo = idGrupoParam;
+
+      int inNumRetono;
+      short i_inNumRetono;
+ 
+    EXEC SQL END DECLARE SECTION;
+    
+    EXEC SQL WHENEVER SQLERROR GOTO ErrorExiste;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL 
+        SELECT
+            COUNT(1)
+        INTO
+            inNumRetono:i_inNumRetono
+        FROM
+            CONTATOADM.FASEGRUPOFECHAMENTO
+        WHERE
+            IDCONTATO = :ora_idContato
+        AND
+            IDGRUPO = :ora_idGrupo
+        AND
+            IDTIPOFECHAMENTOCONTATO IN
+                (
+                    SELECT IDTIPOFECHAMENTOCONTATO 
+                      FROM CONTATOADM.TIPOFECHAMENTOCONTATO 
+                     WHERE NMTIPOFECHAMENTOCONTATO IN('ENCAMINHAMENTO/FECHAMENTO IMEDIATO'
+                                                     ,'ENCAMINHAMENTO')
+                )
+        AND
+            ROWNUM < 2;
+    
+   ULOG_END("GruposRequest::GrupoAssociadoTipoFechamento()");
+
+   return ( inNumRetono ? true : false );
+
+ErrorExiste:
+    ULOGE("GruposRequest::GrupoAssociadoTipoFechamento()");
+
+    throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}

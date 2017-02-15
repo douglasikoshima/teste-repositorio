@@ -1,0 +1,166 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:35 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+#include "../../../commons/SmallString.h"
+
+#include "../include/stWFAtdMonitPesq.h"
+
+#include <iostream>
+using namespace std;
+
+void WFAtdMonitPesqErro(sqlca*sqlca);
+
+void proCObterMonitPesq( st_AtdMonitPesq *dados,st_vlAtdMonitPesq *status,XMLGen *saida )
+{
+    ULOG_START( "proCObterMonitPesq()" );
+
+    struct sqlca sqlca;
+    SmallString sql;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *query;
+        VARCHAR nmgrupo[256];
+        VARCHAR nmloginusuario[256];
+        VARCHAR dsestado[256];
+        int quantidade;
+
+        short i_nmgrupo;
+        short i_nmloginusuario;
+        short i_dsestado;
+        short i_quantidade;
+
+    EXEC SQL END DECLARE SECTION;
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // sql +="SELECT grupo.nmgrupo,usuario.nmloginusuario,estado.dsestado,count(*) qtde "
+    //         "FROM atendimento.atendimento atendimento, "
+    //              "atendimento.atendimentoandamentoatual atendimentoandamentoatual, "
+    //              "andamento.andamento andamento, "
+    //              "workflow.agrupamentoestadotpproc agrupamentoestadotpproc, "
+    //              "workflow.agrupamentoestado agrupamentoestado, "
+    //              "workflow.estado estado, "
+    //              "atendimento.atendimentousuarioatual atendimentousuarioatual, "
+    //              "acesso.usuario usuario, "
+    //              "atendimento.atendimentogrupoatual atendimentogrupoatual, "
+    //              "acesso.grupo grupo "
+    //       "WHERE atendimento.idatendimento = atendimentoandamentoatual.idatendimento "
+    //         "AND atendimentoandamentoatual.idandamento = andamento.idandamento "
+    //         "AND andamento.idagrupamentoestadotpproc = agrupamentoestadotpproc.idagrupamentoestadotpproc "
+    //         "AND agrupamentoestadotpproc.idagrupamentoestado = agrupamentoestado.idagrupamentoestado "
+    //         "AND agrupamentoestado.idestado = estado.idestado "
+    //         "AND atendimento.idatendimento = atendimentousuarioatual.idatendimento "
+    //         "AND atendimentousuarioatual.idpessoausuario = usuario.idpessoausuario "
+    //         "AND atendimento.idatendimento = atendimentogrupoatual.idatendimento "
+    //         "AND atendimentogrupoatual.idgrupo = grupo.idgrupo "
+    //         "AND to_char(atendimento.dtabertura,'YYYY/MM/DD') >= '";
+
+    sql +="SELECT grupo.nmgrupo,usuario.nmloginusuario,estado.dsestado,count(1) qtde "
+            "FROM atendimento.atendimento atendimento, "
+                 "workflow.agrupamentoestadotpproc agrupamentoestadotpproc, "
+                 "workflow.agrupamentoestado agrupamentoestado, "
+                 "workflow.estado estado, "
+                 "acesso.usuario usuario, "
+                 "acesso.grupo grupo "
+          "WHERE atendimento.idagrupamentoestadotpproc = agrupamentoestadotpproc.idagrupamentoestadotpproc "
+            "AND agrupamentoestadotpproc.idagrupamentoestado = agrupamentoestado.idagrupamentoestado "
+            "AND agrupamentoestado.idestado = estado.idestado "
+            "AND atendimento.idpessoausuarioatual = usuario.idpessoausuario "
+            "AND atendimento.idgrupoatual = grupo.idgrupo "
+            "AND to_char(atendimento.dtabertura,'YYYY/MM/DD') >= '";
+
+    sql += dados->dtInicio;
+    sql += "' ";
+    
+    if ( 1 == status->dtFim )
+    {
+        sql += "AND TO_CHAR(atendimento.dtabertura,'YYYY/MM/DD') <= '";
+        sql += dados->dtFim;
+        sql += "' ";
+    }
+
+    if ( 1 == status->idGrupo )
+    {
+        //sql += "AND atendimentogrupoatual.idGrupo = ";
+        sql += "AND atendimento.idgrupoatual = ";
+        sql += dados->idGrupo;
+    }
+    else
+    {
+        //sql += " AND atendimentogrupoatual.idgrupo in(SELECT idgrupo FROM acesso.usuariogrupo WHERE idpessoausuario= ";
+        sql += " AND atendimento.idgrupoatual in (SELECT idgrupo FROM acesso.usuariogrupo WHERE idpessoausuario= ";
+        sql += dados->idUsuario;
+        sql += ")";
+    }
+
+    sql+=" GROUP BY grupo.nmgrupo,usuario.nmloginusuario,estado.dsestado";
+
+    query = (char*)sql;
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdMonitPesqErro(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG( "QUERY [%s]",query );
+    EXEC SQL PREPARE queryMonitPesq FROM :query;
+    EXEC SQL DECLARE cursorMonitPesq CURSOR FOR queryMonitPesq;
+
+    EXEC SQL OPEN cursorMonitPesq;
+
+    saida->createTag("MonitoramentoResultadoVO");
+    saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+
+    while (true)
+    {
+        EXEC SQL FETCH cursorMonitPesq 
+                  INTO nmgrupo:i_nmgrupo,
+                       nmloginusuario:i_nmloginusuario,
+                       dsestado:i_dsestado,
+                       quantidade:i_quantidade;
+
+        CONVIND( nmgrupo,i_nmgrupo );
+        CONVIND( nmloginusuario,i_nmloginusuario );
+        CONVIND( dsestado,i_dsestado );
+
+        saida->createTag("MonitoramentoVO");
+            saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+            saida->addItem( "descricaoGrupo",(char*)nmgrupo.arr );
+            saida->addItem( "descricaoLogin",(char*)nmloginusuario.arr );
+            saida->addItem( "descricaoEstado",(char*)dsestado.arr );
+            saida->addItem( "quantidade",quantidade );
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE cursorMonitPesq;
+
+    saida->closeTag();
+
+    ULOG_END( "proCObterMonitPesq()" );
+
+}
+
+
+void WFAtdMonitPesqErro(sqlca*sqlca)
+{
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOGE( "WFAtdMonitPesqErro:sqlcode=%d,sqlerrmc=%.70s"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc );
+
+    throw new TuxBasicOraException( sqlca->sqlcode
+                                   ,sqlca->sqlerrm.sqlerrmc
+                                   ,sqlca->sqlerrm.sqlerrml );
+}

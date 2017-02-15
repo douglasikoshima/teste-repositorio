@@ -1,0 +1,132 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Fonte: main.pcpp
+//* Servico: AbaDocumento
+//* Servidor: LupaCliente
+//*
+//* Ficheiro: TUXEFO/cliente/LupaCliente/AbaDocumento/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson Martins
+//*
+//* Fecha primeira version:07/06/2004
+//*
+//* Version actual: 01.00
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Servico para gerar o arquivo XML de saida para preenchimento da AbaDocumento da 
+//* Lupa Cliente.
+//*
+//*//-------------------------------------------------------------------------------
+//---------------------------------------------------------------------
+
+//EXEC SQL INCLUDE SQLCA; 
+
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+
+#include "../include/AbaDocumento.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classDocumentoVO.h";
+
+DECLARE_TUXEDO_SERVICE(AbaDocumento);
+
+void implAbaDocumento::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+char *pParam;
+int iNroReg = 0;
+int iAux = 0;
+CDocumentoVO* oObj;
+
+    ULOG_START( "implAbaDocumento::Execute()" );
+
+    try{
+        pParam = walkTree(pDnode, XML_IN_IDPESSOA, 0);
+        if(!pParam)
+        {
+            ERROR(NRO_ID_PESSOA_NE);
+            TAG_INEXISTENTE(XML_IN_IDPESSOA);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !*pParam)
+        {
+            ERROR(NRO_ID_PESSOA_VV);
+            TAG_VALOR_VAZIO(XML_IN_IDPESSOA);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !IsNumeric(pParam) ){
+            ERROR(NRO_ID_PESSOA_VI);
+            TAG_VALOR_INVALIDO(XML_IN_IDPESSOA);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        oObj = CDocumentoVO::RecuperarTodos(&iNroReg, pParam);
+	    pXmlG->createTag("LupaClienteVO");
+	    pXmlG->addProp("xmlns","cliente.fo.vivo.com.br/vo");
+		    pXmlG->createTag("DadosAbaLupaCliente");
+	            for (; iAux < iNroReg; iAux++) 
+                {
+		            pXmlG->createTag("DocumentoVO");
+		                pXmlG->addItem("idDocumento", oObj[iAux].getIdDocumento());
+		                pXmlG->createTag("TipoDocumentoVO");
+		                    pXmlG->addItem("idTipoDocumento", oObj[iAux].getIdTipoDocumento());
+		                    pXmlG->addItem("sgTipoDocumento", oObj[iAux].getSgTipoDocumento());
+		                    pXmlG->addItem("dsTipoDocumento", oObj[iAux].getDsTipoDocumento());
+                        pXmlG->closeTag();
+		                pXmlG->addItem("nrDocumento", oObj[iAux].getNrDocumento());
+		                pXmlG->addItem("dsOrgaoExpedidor", oObj[iAux].getSgOrgaoExpedidor());
+		                pXmlG->addItem("sgUF", oObj[iAux].getSgUf());
+		                pXmlG->addItem("dtEmissao", oObj[iAux].getDtEmissaoOut());
+		                pXmlG->createTag("PaisVO");
+		                    pXmlG->addItem("idPais", oObj[iAux].getIdPais());
+		                    pXmlG->addItem("sgPais", oObj[iAux].getSgPais());
+		                    pXmlG->addItem("nmPais", oObj[iAux].getNmPais());
+		                    pXmlG->addItem("dsNacionalidade", oObj[iAux].getDsNacionalidade());
+                        pXmlG->closeTag();
+		                pXmlG->addItem("cdCpfCnpjBase", oObj[iAux].getCdCpfCnpjBase());
+		                pXmlG->addItem("cdCnpjFilial", oObj[iAux].getCdCnpjFilial());
+		                pXmlG->addItem("cdCpfCnpjControle", oObj[iAux].getCdCpfCnpjControle());
+				        if ( oObj[iAux].getTsSincronismo() && oObj[iAux].getSqSincronismo() )
+					        pXmlG->addItem("inSincronismo","1");
+				        else
+					        pXmlG->addItem("inSincronismo","0");
+		            pXmlG->closeTag();
+	            }
+            pXmlG->closeTag();
+        pXmlG->closeTag();
+
+        //LIberando memoria alocada
+        free(oObj);
+    }
+    catch(...){
+        throw;  //repassando o erro para nucleo
+    }
+
+	// Execução OK.
+	INFORMATION(NRO_OK);
+
+    ULOG_END( "implAbaDocumento::Execute()" );
+
+	setStatusCode(sNrMsg, MSG_OK);
+}
+
+
+

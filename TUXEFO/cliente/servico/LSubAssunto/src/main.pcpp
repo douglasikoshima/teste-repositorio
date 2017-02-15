@@ -1,0 +1,118 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Modulo: main.pcpp
+//* Servico: LSubAssunto
+//* Servidor: admSubAssunto
+//*
+//* Ficheiro: TUXEFO/cliente/admSubAssunto/LSubAssunto/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson da S. Martins
+//*
+//* Fecha primeira version:25/06/2004
+//*
+//* Version actual: 01.00
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Servico para listar todas as linhas da tabela PessoaRecusaMeioContato.
+//*
+//*//-------------------------------------------------------------------------------
+//---------------------------------------------------------------------
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Exception.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+
+#include "../include/LSubAssunto.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+EXEC SQL INCLUDE "Global.h";
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classCstSubAssunto.h";
+
+DECLARE_TUXEDO_SERVICE(LSubAssunto);
+
+void implLSubAssunto::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    CCstSubAssunto *oSubAssunto;
+    char* pParam;
+    char* pParam1;
+    int iNroReg = 0;
+    int iAux = 0;
+
+    ULOG_START( "implLSubAssunto::Execute()" );
+    try{
+         pParam = walkTree(pDnode, XML_IN_IDASSUNTO, 0);
+         if(!pParam)
+         {
+             ERROR(NRO_ID_ASSUNTO_NR_NE);
+             TAG_INEXISTENTE(XML_IN_IDASSUNTO);
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if ( !*pParam)
+         {
+             ERROR(NRO_ID_ASSUNTO_NR_VI);
+             TAG_VALOR_VAZIO(XML_IN_IDASSUNTO);
+             if (pParam) XMLString::release(&pParam);
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+
+         pParam1 = walkTree(pDnode, XLM_IN_FILTRO, 0);
+         if(!pParam1)
+         {
+             ERROR(NRO_FILTRO_QUERY_NE);
+             TAG_INEXISTENTE(XLM_IN_FILTRO);
+             if (pParam) XMLString::release(&pParam);
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if ( !*pParam1)
+             oSubAssunto = CCstSubAssunto::RecuperarTodos(&iNroReg, pParam);
+         else
+             oSubAssunto = CCstSubAssunto::RecuperarIdAssuntoETipoPergunta(&iNroReg, pParam, pParam1);
+
+         XMLString::release(&pParam);
+         XMLString::release(&pParam1);
+
+         pXmlG->createTag(XML_OUT_SUBASSUNTO);
+         pXmlG->addProp("xmlns", XML_PROP);
+             for (; iAux < iNroReg; iAux++) 
+             {
+                 pXmlG->createTag(XML_OUT_SUBASSUNTO_VO);
+                     pXmlG->addItem(XML_OUT_CODIGO, oSubAssunto[iAux].getIdSubAssunto());
+                     pXmlG->addItem(XML_OUT_DESC,   oSubAssunto[iAux].getNmSubAssunto());
+                     pXmlG->addItem(XML_OUT_IDASS,  oSubAssunto[iAux].getIdAssunto());
+                     pXmlG->addItem(XML_OUT_SAPRE,  oSubAssunto[iAux].getSqApresentacao());
+                     pXmlG->addItem(XML_OUT_INDIS,  oSubAssunto[iAux].getInDisponibilidade());
+                 pXmlG->closeTag();
+             }
+         pXmlG->closeTag();
+
+         if (oSubAssunto)
+            free(oSubAssunto); //Liberando a memoria alocada dentro da classe.
+
+    }catch(...){
+        throw;
+    }
+
+    ULOG_END( "implLSubAssunto::Execute()" );
+
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}

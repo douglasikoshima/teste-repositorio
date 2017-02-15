@@ -1,0 +1,808 @@
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/cLstPerfilVar.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+
+void sql_error_LstPerfilVar( sqlca * sqlca );
+
+	// Declara as estruturas compatíveis ao ProC.
+//    EXEC SQL BEGIN DECLARE SECTION;
+//		#include "../include/stWFPerfilCRI.h"
+//    EXEC SQL END DECLARE SECTION;
+
+
+/*--------------------------------------------------*/
+bool proCGetPerfil( const unsigned long idPerfilPrm, XMLGen * Saida )
+{
+    ULOG_START("proCGetPerfil()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idPerfil = idPerfilPrm;
+
+        VARCHAR       nmPerfil[256];
+
+        short         i_nmPerfil;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_LstPerfilVar( &sqlca );
+
+    EXEC SQL 
+        SELECT
+	          nmPerfil
+        INTO
+              :nmPerfil:i_nmPerfil
+        FROM
+	        ContatoAdm.Perfil
+        WHERE
+	        idPerfil = :idPerfil
+		AND
+		    DTEXCLUSAO IS NULL;
+
+
+    ULOG( "idPerfil = [%lu]",idPerfil );
+
+	CONVIND( nmPerfil,i_nmPerfil );
+
+    if ( idPerfil > 0 )
+    {
+        Saida->createTag( "Perfil" );
+           Saida->addItem( "idPerfil",idPerfil );
+           Saida->addItem( "nmPerfil",(char*)nmPerfil.arr );
+        Saida->closeTag();
+    }
+    else
+    {
+        Saida->createTag( "Perfil" );
+           Saida->addItem( "idPerfil",0 );
+           Saida->addItem( "nmPerfil","" );
+        Saida->closeTag();
+    }
+
+
+    ULOG_END("proCGetPerfil()");
+
+	return true;
+
+}
+
+
+
+
+bool proCListaPerfilTipoLinha( const unsigned long idPerfilPrm, XMLGen * Saida )
+{
+    ULOG_START("proCListaPerfilTipoLinha()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idPerfil = idPerfilPrm;
+
+        unsigned long idTpLinha;
+        VARCHAR       nmTpLinha[256];
+
+        short         i_nmTpLinha;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ConsultaTipoLinha CURSOR FOR 
+        SELECT
+	          idTipoLinha,
+	          dsTipoLinha
+        FROM
+	        APOIO.TIPOLINHA
+        WHERE
+	        idTipoLinha > 0
+        AND
+            idTipoLinha
+        NOT IN
+        (
+           SELECT
+              idTipoLinha
+           FROM
+              CONTATOADM.PERFILTIPOLINHA
+           WHERE
+              idPerfil = :idPerfil
+		   AND
+		      DTEXCLUSAO IS NULL
+        )
+        ORDER BY 
+            dsTipoLinha;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_LstPerfilVar( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG( "idPerfil = [%lu]",idPerfil );
+
+    EXEC SQL OPEN ConsultaTipoLinha;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaTipoLinha INTO :idTpLinha,
+                                              :nmTpLinha:i_nmTpLinha;
+
+		CONVIND( nmTpLinha,i_nmTpLinha );
+
+        Saida->createTag( "ns2:TipoLinhaVO" );
+           Saida->addItem( "ns2:id",idTpLinha );
+           Saida->addItem( "ns2:descricao",(char*)nmTpLinha.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ConsultaTipoLinha;
+
+    ULOG_END("proCListaPerfilTipoLinha()");
+
+	return true;
+
+}
+
+
+
+
+
+bool proCListaPerfilSegmentacao( const unsigned long idPerfilPrm, XMLGen * Saida )
+{
+    ULOG_START("proCListaPerfilSegmentacao()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idPerfil = idPerfilPrm;
+
+        unsigned long idSegmentacao;
+        VARCHAR       nmSegmentacao[256];
+
+        short         i_nmSegmentacao;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ConsultaSegmentacao CURSOR FOR 
+        SELECT
+	          idSegmentacao,
+	          dsSegmentacao
+        FROM
+	        Apoio.Segmentacao
+        WHERE
+	        idSegmentacao > 0
+        AND
+            idSegmentacao
+        NOT IN
+        (
+           SELECT
+              idSegmentacao
+           FROM
+              ContatoAdm.PerfilSegmentacao
+           WHERE
+              idPerfil = :idPerfil
+		   AND
+		      DTEXCLUSAO IS NULL
+        )
+        ORDER BY 
+            dsSegmentacao;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_LstPerfilVar( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG( "idPerfil = [%lu]",idPerfil );
+
+    EXEC SQL OPEN ConsultaSegmentacao;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaSegmentacao INTO :idSegmentacao,
+                                                :nmSegmentacao:i_nmSegmentacao;
+
+		CONVIND( nmSegmentacao,i_nmSegmentacao );
+
+        Saida->createTag( "SegmentacaoVO" );
+           Saida->addItem( "idSegmentacao",idSegmentacao );
+           Saida->addItem( "descricao",(char*)nmSegmentacao.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ConsultaSegmentacao;
+
+    ULOG_END("proCListaPerfilSegmentacao()");
+
+	return true;
+
+}
+
+
+
+
+bool proCListaPerfilTipoCarteira( const unsigned long idPerfilPrm, XMLGen * Saida )
+{
+    ULOG_START("proCListaPerfilTipoCarteira()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idPerfil = idPerfilPrm;
+
+        unsigned long idTipoCarteira;
+        VARCHAR       nmTipoCarteira[256];
+
+        short         i_nmTipoCarteira;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ConsultaTipoCarteira CURSOR FOR 
+        SELECT
+	          idTipoCarteira,
+	          dsTipoCarteira
+        FROM
+	        Apoio.TipoCarteira
+        WHERE
+	        idTipoCarteira > 0
+        AND
+            idTipoCarteira
+        NOT IN
+        (
+           SELECT
+              idTipoCarteira
+           FROM
+              ContatoAdm.PerfilCarteira
+           WHERE
+              idPerfil = :idPerfil
+		   AND
+		      DTEXCLUSAO IS NULL
+        )
+        ORDER BY 
+            dsTipoCarteira;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_LstPerfilVar( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG( "idPerfil = [%lu]",idPerfil );
+
+    EXEC SQL OPEN ConsultaTipoCarteira;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaTipoCarteira INTO :idTipoCarteira,
+                                                :nmTipoCarteira:i_nmTipoCarteira;
+
+		CONVIND( nmTipoCarteira,i_nmTipoCarteira );
+
+        Saida->createTag( "CarterizacaoVO" );
+           Saida->addItem( "idTipoCarteira",idTipoCarteira );
+           Saida->addItem( "descricao",(char*)nmTipoCarteira.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ConsultaTipoCarteira;
+
+    ULOG_END("proCListaPerfilTipoCarteira()");
+
+	return true;
+
+}
+
+
+
+
+bool proCListaPerfilTipoCanal( const unsigned long idPerfilPrm, XMLGen * Saida )
+{
+    ULOG_START("proCListaPerfilTipoCanal()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idPerfil = idPerfilPrm;
+
+        unsigned long idTipoCanal;
+        VARCHAR       nmTipoCanal[256];
+
+        short         i_nmTipoCanal;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ConsultaTipoCanal CURSOR FOR 
+        SELECT
+	          idCanal,
+	          nmCanal
+        FROM
+	        Apoio.Canal
+        WHERE
+	        idCanal > 0
+        AND
+            idCanal
+        NOT IN
+        (
+           SELECT
+              idCanal
+           FROM
+              ContatoAdm.PerfilCanal
+           WHERE
+              idPerfil = :idPerfil
+		   AND
+		      DTEXCLUSAO IS NULL
+        )
+        ORDER BY 
+            nmCanal;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_LstPerfilVar( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG( "idPerfil = [%lu]",idPerfil );
+
+    EXEC SQL OPEN ConsultaTipoCanal;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaTipoCanal INTO :idTipoCanal,
+                                              :nmTipoCanal:i_nmTipoCanal;
+
+		CONVIND( nmTipoCanal,i_nmTipoCanal );
+
+        Saida->createTag( "ns3:CanalVO" );
+           Saida->addItem( "ns3:idCanal",idTipoCanal );
+           Saida->addItem( "ns3:descricao",(char*)nmTipoCanal.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ConsultaTipoCanal;
+
+    ULOG_END("proCListaPerfilTipoCanal()");
+
+	return true;
+
+}
+
+
+
+
+bool proCListaPerfilProcedencia( const unsigned long idPerfilPrm, XMLGen * Saida )
+{
+    ULOG_START("proCListaPerfilProcedencia()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idPerfil = idPerfilPrm;
+
+        unsigned long idProcedencia;
+        VARCHAR       nmProcedencia[256];
+
+        short         i_nmProcedencia;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ConsultaProcedencia CURSOR FOR 
+        SELECT
+	          idProcedencia,
+	          dsProcedencia
+        FROM
+	        Apoio.Procedencia
+        WHERE
+	        idProcedencia > 0
+        AND
+            idProcedencia
+        NOT IN
+        (
+           SELECT
+              idProcedencia
+           FROM
+              ContatoAdm.PerfilProcedencia
+           WHERE
+              idPerfil = :idPerfil
+		   AND
+		      DTEXCLUSAO IS NULL
+        )
+        ORDER BY 
+            dsProcedencia;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_LstPerfilVar( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG( "idPerfil = [%lu]",idPerfil );
+
+    EXEC SQL OPEN ConsultaProcedencia;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaProcedencia INTO :idProcedencia,
+                                              :nmProcedencia:i_nmProcedencia;
+
+		CONVIND( nmProcedencia,i_nmProcedencia );
+
+        Saida->createTag( "ProcedenciaVO" );
+           Saida->addItem( "idProcedencia",idProcedencia );
+           Saida->addItem( "descricao",(char*)nmProcedencia.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ConsultaProcedencia;
+
+    ULOG_END("proCListaPerfilProcedencia()");
+
+	return true;
+
+}
+
+
+
+
+bool proCListaPerfilNatureza( const unsigned long idPerfilPrm, XMLGen * Saida )
+{
+    ULOG_START("proCListaPerfilNatureza()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idPerfil = idPerfilPrm;
+
+        unsigned long idNatureza;
+        VARCHAR       nmNatureza[256];
+
+        short         i_nmNatureza;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ConsultaNatureza CURSOR FOR 
+        SELECT
+	          idTipoPessoa,
+	          dsTipoPessoa
+        FROM
+	        Apoio.TipoPessoa
+        WHERE
+            idTipoPessoa > 0
+        AND
+            idTipoPessoa
+        NOT IN
+        (
+           SELECT
+              idTipoPessoa
+           FROM
+              ContatoAdm.PerfilNatureza
+           WHERE
+              idPerfil = :idPerfil
+		   AND
+		      DTEXCLUSAO IS NULL
+        )
+        ORDER BY 
+            dsTipoPessoa;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_LstPerfilVar( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG( "idPerfil = [%lu]",idPerfil );
+
+    EXEC SQL OPEN ConsultaNatureza;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaNatureza INTO :idNatureza,
+                                             :nmNatureza:i_nmNatureza;
+
+		CONVIND( nmNatureza,i_nmNatureza );
+
+        Saida->createTag( "AdmNaturezaVO" );
+           Saida->addItem( "idNatureza",idNatureza );
+           Saida->addItem( "dsNatureza",(char*)nmNatureza.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ConsultaNatureza;
+
+    ULOG_END("proCListaPerfilNatureza()");
+
+	return true;
+
+}
+
+
+
+
+bool proCListaPerfilTipoCliente( const unsigned long idPerfilPrm, XMLGen * Saida )
+{
+    ULOG_START("proCListaPerfilTipoCliente()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idPerfil = idPerfilPrm;
+
+        unsigned long idTipoRelacionamento;
+        VARCHAR       dsTipoRelacionamento[256];
+
+        short         i_dsTipoRelacionamento;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ConsultaTipoCliente CURSOR FOR 
+        SELECT
+	          idTipoRelacionamento,
+	          nmTipoRelacionamento
+        FROM
+	        Customer.TipoRelacionamento
+        WHERE
+            idTipoRelacionamento > 0
+        AND
+	        idTipoRelacionamento
+        NOT IN
+        (
+           SELECT
+              idTipoRelacionamento
+           FROM
+              ContatoAdm.PerfilTipoCliente
+           WHERE
+              idPerfil = :idPerfil
+		   AND
+		      DTEXCLUSAO IS NULL
+        )
+        ORDER BY 
+            nmTipoRelacionamento;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_LstPerfilVar( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG( "idPerfil = [%lu]",idPerfil );
+
+    EXEC SQL OPEN ConsultaTipoCliente;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaTipoCliente INTO :idTipoRelacionamento,
+                                             :dsTipoRelacionamento:i_dsTipoRelacionamento;
+
+		CONVIND( dsTipoRelacionamento,i_dsTipoRelacionamento );
+
+        Saida->createTag( "TipoClienteVO" );
+           Saida->addItem( "codigo",idTipoRelacionamento );
+           Saida->addItem( "descricao",(char*)dsTipoRelacionamento.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ConsultaTipoCliente;
+
+    ULOG_END("proCListaPerfilTipoCliente()");
+
+	return true;
+
+}
+
+
+
+
+bool proCListaPerfilRegional( const unsigned long idPerfilPrm, XMLGen * Saida )
+{
+    ULOG_START("proCListaPerfilRegional()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idPerfil = idPerfilPrm;
+
+        unsigned long idUFOperadora;
+        VARCHAR       dsRegional[256];
+
+        short         i_dsRegional;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    /*  @Marcelo Retirar B01
+    EXEC SQL DECLARE ConsultaRegional CURSOR FOR 
+        SELECT
+            IDUFOPERADORA,
+            SGUF || ' - ' || NMGRUPOOPERADORA DSREGIONAL
+        FROM
+	        CUSTOMER.UFOPERADORAB01
+        WHERE
+            IDUFOPERADORA > 0
+        AND
+            IDUFOPERADORA
+        NOT IN
+        (
+           SELECT
+              IDUFOPERADORA
+           FROM
+              ContatoAdm.PerfilUFOperadora
+           WHERE
+              idPerfil = :idPerfil
+		   AND
+		      DTEXCLUSAO IS NULL
+        )
+        ORDER BY 
+            DSREGIONAL;
+    */
+
+    EXEC SQL DECLARE ConsultaRegional CURSOR FOR 
+    SELECT                                                                         
+       UFOPERADORA.IDUFOPERADORA,                                                  
+       UF.SGUF || ' - ' || GRUPOOPERADORA.NMGRUPOOPERADORA DSREGIONAL              
+    FROM                                                                           
+       CUSTOMER.GRUPOOPERADORA GRUPOOPERADORA,                                     
+       CUSTOMER.OPERADORA OPERADORA,                                               
+       APOIO.UF UF,                                                                
+       CUSTOMER.UFOPERADORA UFOPERADORA,                                           
+       CUSTOMER.PESSOADEPARA PESSOADEPARA,                                         
+       (                                                                           
+            SELECT                                                                 
+               PESSOA.IDPESSOA                                                  
+            FROM                                                                   
+               APOIO.PROBABILIDADE PROBABILIDADE,                               
+               APOIO.PROBABILIDADE PROBABILIDADE2,                               
+               APOIO.SISTEMAORIGEM SISTEMAORIGEM,                               
+               APOIO.TIPOCARTEIRA TIPOCARTEIRA,                                 
+               APOIO.TIPOPESSOA TIPOPESSOA,                                     
+               APOIO.UF UFB0,                                                     
+               CUSTOMER.PESSOA PESSOA                                           
+            WHERE PESSOA.IDCHURNPROBABILIDADE = PROBABILIDADE.IDPROBABILIDADE
+            AND PESSOA.IDPROBINADIMPLENCIA = PROBABILIDADE2.IDPROBABILIDADE   
+            AND PESSOA.IDSISTEMAORIGEM = SISTEMAORIGEM.IDSISTEMAORIGEM       
+            AND PESSOA.IDTIPOCARTEIRA = TIPOCARTEIRA.IDTIPOCARTEIRA          
+            AND PESSOA.IDTIPOPESSOA = TIPOPESSOA.IDTIPOPESSOA                
+            AND PESSOA.IDUF = UFB0.IDUF                                        
+       ) PESSOAB01,                                                                
+       (                                                                           
+            SELECT                                                                 
+               PESSOA.IDPESSOA                                                  
+            FROM                                                                   
+               APOIO.PROBABILIDADE PROBABILIDADE,                               
+               APOIO.PROBABILIDADE PROBABILIDADE2,                               
+               APOIO.SISTEMAORIGEM SISTEMAORIGEM,                               
+               APOIO.TIPOCARTEIRA TIPOCARTEIRA,                                 
+               APOIO.TIPOPESSOA TIPOPESSOA,                                     
+               APOIO.UF UFB0,                                                     
+               CUSTOMER.PESSOA PESSOA                                           
+            WHERE PESSOA.IDCHURNPROBABILIDADE = PROBABILIDADE.IDPROBABILIDADE
+            AND PESSOA.IDPROBINADIMPLENCIA = PROBABILIDADE2.IDPROBABILIDADE   
+            AND PESSOA.IDSISTEMAORIGEM = SISTEMAORIGEM.IDSISTEMAORIGEM       
+            AND PESSOA.IDTIPOCARTEIRA = TIPOCARTEIRA.IDTIPOCARTEIRA          
+            AND PESSOA.IDTIPOPESSOA = TIPOPESSOA.IDTIPOPESSOA                
+            AND PESSOA.IDUF = UFB0.IDUF                                        
+       ) PESSOAB02                                                                 
+    WHERE                                                                          
+       UFOPERADORA.IDUF = UF.IDUF                                                  
+    AND                                                                            
+       UFOPERADORA.IDPESSOADEPARAOPERADORA = OPERADORA.IDPESSOADEPARAOPERADORA     
+    AND                                                                            
+       OPERADORA.IDGRUPOOPERADORA = GRUPOOPERADORA.IDGRUPOOPERADORA                
+    AND                                                                            
+       OPERADORA.IDPESSOADEPARAOPERADORA = PESSOADEPARA.IDPESSOADEPARA             
+    AND                                                                            
+       PESSOADEPARA.IDPESSOA = PESSOAB01.IDPESSOA                                  
+    AND                                                                            
+       PESSOADEPARA.IDPESSOAORIGEM = PESSOAB02.IDPESSOA                            
+    AND                                                                            
+       UFOPERADORA.IDUFOPERADORA > 0
+    AND
+       UFOPERADORA.IDUFOPERADORA
+    NOT IN
+    (
+       SELECT
+          IDUFOPERADORA
+       FROM
+          ContatoAdm.PerfilUFOperadora
+       WHERE
+          idPerfil = :idPerfil
+    AND
+    DTEXCLUSAO IS NULL
+    )
+    ORDER BY 
+        DSREGIONAL;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_LstPerfilVar( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG( "idPerfil = [%lu]",idPerfil );
+
+    EXEC SQL OPEN ConsultaRegional;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaRegional INTO :idUFOperadora,
+                                             :dsRegional:i_dsRegional;
+
+		CONVIND( dsRegional,i_dsRegional );
+
+        Saida->createTag( "AdmUFOperadoraSimplVO" );
+           Saida->addItem( "idUFOperadora",idUFOperadora );
+           Saida->addItem( "dsUFOperadora",(char*)dsRegional.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ConsultaRegional;
+
+    ULOG_END("proCListaPerfilRegional()");
+
+	return true;
+
+}
+
+
+
+
+bool proCListaPerfilGrupoAbertura( const unsigned long idPerfilPrm, XMLGen * Saida )
+{
+    ULOG_START("proCListaPerfilGrupoAbertura()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idPerfil = idPerfilPrm;
+
+        unsigned long idGrupo;
+        VARCHAR       nmGrupo[256];
+
+        short         i_nmGrupo;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ConsultaGrupoAbertura CURSOR FOR 
+        SELECT
+	          ag.idGrupo,
+	          ag.nmGrupo
+        FROM
+	        Acesso.Grupo ag,
+			apoio.tipogrupo tg
+        WHERE
+			tg.CDTIPOGRUPO = 'NORMAL'
+		AND
+		    ag.idtipogrupo = tg.idtipogrupo
+        AND
+	        ag.idGrupo
+        NOT IN
+        (
+           SELECT
+              idGrupo
+           FROM
+              ContatoAdm.PerfilGrupoAbertura
+           WHERE
+              idPerfil = :idPerfil
+		   AND
+		      DTEXCLUSAO IS NULL
+        )
+        ORDER BY 
+            nmGrupo;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_LstPerfilVar( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    ULOG( "idPerfil = [%lu]",idPerfil );
+
+    EXEC SQL OPEN ConsultaGrupoAbertura;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaGrupoAbertura INTO :idGrupo,
+                                             :nmGrupo:i_nmGrupo;
+
+		CONVIND( nmGrupo,i_nmGrupo );
+
+        Saida->createTag( "AdmGrupoAberturaVO" );
+           Saida->addItem( "idGrupo",idGrupo );
+           Saida->addItem( "nmGrupo",(char*)nmGrupo.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ConsultaGrupoAbertura;
+
+    ULOG_END("proCListaPerfilGrupoAbertura()");
+
+	return true;
+
+}
+
+void sql_error_LstPerfilVar( sqlca * sqlca )
+{
+    ULOGE("SqlError -> sqlcode=%d,sqlerrmc=%.70s",sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc);
+	throw new 
+        TuxBasicOraException(
+            sqlca->sqlcode,
+            sqlca->sqlerrm.sqlerrmc,
+            sqlca->sqlerrm.sqlerrml
+            );
+}

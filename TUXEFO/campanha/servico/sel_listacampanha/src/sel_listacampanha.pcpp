@@ -1,0 +1,374 @@
+/**
+ * @modulo  Campanha
+ * @usecase SELLISTACAMP
+ * @author  Robinson Vieira
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:34:23 $
+ **/
+
+/**
+ * Arquivo de definicao da classe.
+ */
+
+#undef SQLCA
+#define SQLCA_NONE
+
+EXEC SQL INCLUDE SQLCA;
+
+#include "sel_listacampanha.h"
+//------------------------------------------------------------------------
+CSEL_LISTACAMPANHA::CSEL_LISTACAMPANHA()
+{
+//	iIdPessoaUsuarioAlteracao=0;
+	pszOperacao=NULL;
+	//pszNmLista=NULL;
+	pszInStatusCarga=NULL;
+	pstListaCampanha=NULL;
+	iQtdRegistros=0;
+}
+//------------------------------------------------------------------------
+CSEL_LISTACAMPANHA::~CSEL_LISTACAMPANHA()
+{
+	if(pstListaCampanha!=NULL) 
+		free(pstListaCampanha);
+	if(pszOperacao!=NULL)
+		free(pszOperacao);
+	/*if(pszNmLista!=NULL)
+		free(pszNmLista);*/
+	if(pszInStatusCarga!=NULL)
+		free(pszInStatusCarga);
+}
+//------------------------------------------------------------------------
+/*
+ * Faz a carga das variaveis
+ */
+int CSEL_LISTACAMPANHA::setMap(char *pUsuario,DOMNode *dnode,
+	XMLGen *xml)
+{
+	int iVolta=1;
+	char *pszNmListaM=NULL;
+	char *pszInStatusCargaM=NULL;
+
+	pDnode=dnode;
+	pXml=xml;
+
+	ULOGI("SELLISTACAMP : Entrou no setMap");
+
+//	iIdPessoaUsuarioAlteracao=get_idUsuario(pUsuario);
+	pszOperacao=walkTree(pDnode,"operacao",0);
+	ULOGI("	pszOperacao=walkTree(pDnode,operacao,0);");
+	pszNmListaM=walkTree(pDnode,"nmLista",0);
+	ULOGI("pszNmListaM=walkTree(pDnode,nmLista,0);");
+
+	pszInStatusCargaM=walkTree(pDnode,"inStatusCarga",0);
+	ULOGI("pszInStatusCargaM=walkTree(pDnode,inStatusCarga,0);");
+
+	//O tipo de operacao eh obrigatorio
+	if(pszOperacao==NULL)
+		iVolta=0;
+
+	ULOGI("if(pszOperacao==NULL)");
+
+	if(pszNmListaM[0]==0)
+	{
+		ULOGI("strlen(pszNmListaM)+1) =>%d",strlen(pszNmListaM)+1);
+		//pszNmLista=new char(strlen(pszNmListaM)+1);
+		ULOGI("szNmLista=new char(strlen(pszNmListaM)+1);");
+		strcpy(pszNmLista,"-1");
+		ULOGI("strcpy(pszNmLista,-1);");
+	}
+	
+	else
+	{
+		ULOGI("else strlen(pszNmListaM)+1) =>%d",strlen(pszNmListaM)+1);
+		//pszNmLista=new char(strlen(pszNmListaM)+1);
+		strcpy(pszNmLista,pszNmListaM);
+		ULOGI("pszNmLista=new char(strlen(pszNmListaM)+1);");
+	}
+	ULOGI("pszInStatusCargaM[0]==0");
+
+	if(pszInStatusCargaM[0]==0)
+	{
+		pszInStatusCarga=new char(strlen(pszInStatusCargaM)+1);
+		strcpy(pszInStatusCarga,"-1");
+		ULOGI("pszInStatusCarga=new char(strlen(pszInStatusCargaM)+1);");
+
+	}
+	else
+	{
+		pszInStatusCarga=new char(strlen(pszInStatusCargaM)+1);
+		strcpy(pszInStatusCarga,pszInStatusCargaM);
+		ULOGI("pszInStatusCarga=new char(strlen(pszInStatusCargaM)+1);");
+	}
+
+	 XMLString::release(&pszNmListaM);	
+	  XMLString::release(&pszInStatusCargaM);	
+/*	if(pszNmListaM!=NULL) 
+		free(pszNmListaM);
+	if(pszInStatusCargaM!=NULL)
+		free(pszInStatusCargaM);
+*/
+     
+	ULOGI("SELLISTACAMP : setMap [%s][%s][%s]",
+		pszOperacao,pszNmLista,pszInStatusCarga);
+
+	return(iVolta);
+}
+//------------------------------------------------------------------------
+/*
+ * Cria a lista para devolver ao Java
+ */
+void CSEL_LISTACAMPANHA::lista()
+{
+	//Verifica como sera a pesquisa
+	ULOGI("SELLISTACAMP : Entrou no lista [%s]",
+		pszOperacao);
+	switch(atoi(pszOperacao))
+	{
+		case 1: listaGeral();
+			break;
+		case 2: listaStatus();
+			break;
+	}
+	montaXML();
+}
+//------------------------------------------------------------------------
+void CSEL_LISTACAMPANHA::listaGeral()
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		varchar oszpnmLista[254+1];
+		varchar oszpinStatusCarga[255+1];
+		varchar oszidLista[254];
+		varchar osznmLista[254];
+		varchar oszdtCriacao[255+1];
+		varchar oszinStatusCarga[255+1];
+		varchar oszdsErroCarga[255+1];
+		varchar oszdtTentativas[255+1];
+		short inmLista;
+		short iidLista;
+		short idtCriacao;
+		short iinStatusCarga;
+		short idsErroCarga;
+		short idtTentativas;
+		int   iStatus=0;
+	EXEC SQL END DECLARE SECTION;
+
+	ULOGI("SELLISTACAMP : Entrou no listaGeral");
+
+	//Carrega variaveis para o filtro do select
+	if(strcmp(pszNmLista,"-1"))
+	{
+		memset(&oszpnmLista,0,sizeof(oszpnmLista));
+		strncpy((char*) oszpnmLista.arr,&pszNmLista[0],20);
+		
+		oszpnmLista.len=strlen((char*) oszpnmLista.arr);
+	}
+	else
+	{
+		strcpy((char*) oszpnmLista.arr,pszNmLista);
+		oszpnmLista.len=strlen(pszNmLista);
+	}
+	strcpy((char *) oszpinStatusCarga.arr,pszInStatusCarga);
+	oszpinStatusCarga.len=strlen(pszInStatusCarga);
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	EXEC SQL DECLARE clistaGeral CURSOR FOR
+	SELECT
+		idLista, 
+		nmLista,
+		TO_CHAR(dtCriacao,'dd/mm/yyyy'),
+		nvl(inStatusCarga,0),
+		dsErroCarga,
+		nvl(QTTETNTATIVAS,0)
+	FROM  
+		campanha.lista 
+	WHERE 
+		idLista>0
+	AND
+		(UPPER(TRIM(nmLista)) = UPPER(TRIM(:oszpnmLista)) or :oszpnmLista='-1')
+	AND   
+		(inStatusCarga = TO_NUMBER(:oszpinStatusCarga) or :oszpinStatusCarga='-1')
+	ORDER BY 1;
+
+	EXEC SQL OPEN clistaGeral;
+
+	for(;;)
+	{
+		EXEC SQL FETCH clistaGeral INTO 
+			:oszidLista:iidLista,
+			:osznmLista:inmLista,
+			:oszdtCriacao:idtCriacao,
+			:oszinStatusCarga:iinStatusCarga,
+			:oszdsErroCarga:idsErroCarga,
+			:oszdtTentativas:idtTentativas;
+
+		//Coloca tamanho nas variaveis
+
+		osznmLista.arr[osznmLista.len]=0;
+		oszidLista.arr[oszidLista.len]=0;
+		oszdtCriacao.arr[oszdtCriacao.len]=0;
+		oszinStatusCarga.arr[oszinStatusCarga.len]=0;
+		oszdsErroCarga.arr[oszdsErroCarga.len]=0;
+		oszdtTentativas.arr[oszdtTentativas.len]=0;
+
+		//Aloca memoria para os dados
+
+		iQtdRegistros++;
+
+		pstListaCampanha = (LISTACAMPANHA*)realloc((void *)pstListaCampanha,
+			(sizeof(LISTACAMPANHA)*iQtdRegistros));
+
+		memset(&pstListaCampanha[iQtdRegistros-1],0,sizeof(LISTACAMPANHA));
+	
+		//Atualiza a lista
+		if(iidLista>=0)
+			strcpy(pstListaCampanha[iQtdRegistros-1].szidLista,	 (const char *)oszidLista.arr);
+
+		if(inmLista>=0)
+			strcpy(pstListaCampanha[iQtdRegistros-1].sznmLista,	 (const char *)osznmLista.arr);
+
+		if(idtCriacao>=0)
+			strcpy(pstListaCampanha[iQtdRegistros-1].szdtCriacao,	 (const char *)oszdtCriacao.arr);
+
+		if(iinStatusCarga>=0)
+			strcpy(pstListaCampanha[iQtdRegistros-1].szinStatusCarga,(const char *)oszinStatusCarga.arr);
+
+		if(idsErroCarga>=0)
+			strcpy(pstListaCampanha[iQtdRegistros-1].szdsErroCarga,  (const char *)oszdsErroCarga.arr);
+
+		if(idtTentativas>=0)
+			strcpy(pstListaCampanha[iQtdRegistros-1].szdtTentativas, (const char *)oszdtTentativas.arr);
+	
+	
+	}
+
+	EXEC SQL CLOSE clistaGeral;
+
+
+}
+//------------------------------------------------------------------------
+void CSEL_LISTACAMPANHA::listaStatus()
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		varchar oszinStatusCarga[255+1];
+		short iinStatusCarga;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL DECLARE clistaStatus CURSOR FOR
+		select 
+			instatuscarga 
+		from 
+			campanha.lista 
+		where
+			idlista > 0
+		group by 
+			instatuscarga 
+		order by 1;
+	
+	ULOGI("SELLISTACAMP : Entrou no listaStatus");
+
+	EXEC SQL OPEN clistaStatus;
+	for(;;)
+	{
+		EXEC SQL FETCH clistaStatus INTO :oszinStatusCarga:iinStatusCarga;
+
+		if(iinStatusCarga>=0)
+		{
+			oszinStatusCarga.arr[oszinStatusCarga.len]=0;
+			iQtdRegistros++;
+			pstListaCampanha = (LISTACAMPANHA*) 
+				realloc((void *)pstListaCampanha,
+				(sizeof(LISTACAMPANHA)*iQtdRegistros));
+			memset(&pstListaCampanha[iQtdRegistros-1],0,
+				sizeof(LISTACAMPANHA));
+			strcpy(pstListaCampanha[iQtdRegistros-1].szinStatusCarga,
+				(const char *)oszinStatusCarga.arr);
+		}
+	}
+	EXEC SQL CLOSE clistaStatus;
+}
+//------------------------------------------------------------------------
+/*
+ * Monta o XML de saida
+ */
+void CSEL_LISTACAMPANHA::montaXML()
+{
+	int iConta;
+	char szStatus[255];
+
+	ULOGI("SELLISTACAMP : Entrou no montaXML");
+
+	if(atoi(pszOperacao)==1)
+	{
+		pXml->createTag("ListasCampanhaVO");
+		pXml->addProp("xmlns","campanha.fo.vivo.com.br/vo");
+		pXml->addProp("xmlns:xsi","http://www.w3.org/2001/XMLSchema-instance");
+		pXml->addProp("xsi:schemaLocation","campanha.fo.vivo.com.br/vo");
+
+		for(iConta=0;iConta<iQtdRegistros;iConta++)
+		{
+			pXml->createTag("ListaCampanhaVO");
+			pXml->addItem("idLista",		pstListaCampanha[iConta].szidLista);
+			pXml->addItem("nmLista",		pstListaCampanha[iConta].sznmLista);
+			pXml->addItem("dtCriacao",		pstListaCampanha[iConta].szdtCriacao);
+			pXml->addItem("inStatusCarga",		pstListaCampanha[iConta].szinStatusCarga);
+			pXml->addItem("dsErroCarga",		pstListaCampanha[iConta].szdsErroCarga);
+			pXml->addItem("qtTentativas",		pstListaCampanha[iConta].szdtTentativas);
+
+			switch(atoi(pstListaCampanha[iConta].szinStatusCarga))
+			{
+				case SCDISPONIVEL:	strcpy(szStatus,SCDSDISPONIVEL);
+							break;
+
+				case SCSUCESSO:		strcpy(szStatus,SCDSSUCESSO);
+							break;
+
+				case SCERRO:		strcpy(szStatus,SCDSERRO);
+							break;
+
+				case SCEMCARGA:		strcpy(szStatus,SCDSEMCARGA);
+							break;
+
+				default:		strcpy(szStatus,"INDEFINIDO");
+							break;
+			}
+			pXml->addItem("dsStatusCarga",szStatus);
+			pXml->closeTag();
+		}
+	}
+	else
+	{
+		pXml->createTag("ListaStatusCampanhaVO");
+		pXml->addProp("xmlns","campanha.fo.vivo.com.br/vo");
+		pXml->addProp("xmlns:xsi","http://www.w3.org/2001/XMLSchema-instance");
+		pXml->addProp("xsi:schemaLocation","campanha.fo.vivo.com.br/vo");
+
+		for(iConta=0;iConta<iQtdRegistros;iConta++)
+		{
+			pXml->createTag("StatusVO");
+			pXml->addItem("inStatusCarga",
+				pstListaCampanha[iConta].szinStatusCarga);
+			switch(atoi(pstListaCampanha[iConta].szinStatusCarga))
+			{
+				case SCDISPONIVEL:	strcpy(szStatus,SCDSDISPONIVEL);
+							break;
+				case SCSUCESSO:		strcpy(szStatus,SCDSSUCESSO);
+							break;
+				case SCERRO:		strcpy(szStatus,SCDSERRO);
+							break;
+				case SCEMCARGA:		strcpy(szStatus,SCDSEMCARGA);
+							break;
+				default:		strcpy(szStatus,"INDEFINIDO");
+							break;
+			}
+			pXml->addItem("dsStatusCarga",szStatus);
+			pXml->closeTag();
+		}
+	}
+	pXml->closeTag();
+}
+

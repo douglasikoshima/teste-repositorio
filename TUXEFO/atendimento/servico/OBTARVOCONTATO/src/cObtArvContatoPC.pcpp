@@ -1,0 +1,616 @@
+/**
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Renato de Souza
+ * @version $Revision: 1.1.118.2 $
+ * @CVS     $Author: a5114878 $ - $Date: 2012/02/03 17:10:44 $
+ **/
+
+#include "../include/cObtArvoContatoPC.h"
+
+bool cObtArvoContatoPC::obtemWFContatoLista( st_Parametros * _dadosEntradaPC
+                                           , Collection *_ResultadoPC )
+{
+    ULOG_START("cObtArvoContatoPC::obtemWFContatoLista()");
+    struct sqlca sqlca;
+    st_ContatoFolha * pResult;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char *idContatoPai = _dadosEntradaPC->idContatoPai;
+        char *idTipoSequencia = _dadosEntradaPC->idTipoSequencia;
+
+        VARCHAR idContato[21];
+        VARCHAR idContatoHierarquia[21];
+        VARCHAR idNomeContato[21];
+        VARCHAR nmContato[ 256 ];
+        VARCHAR dsPath[2001];
+        VARCHAR inFolha[21];
+
+        short i_idContato;
+        short i_idContatoHierarquia;
+        short i_idNomeContato;
+        short i_inFolha;
+        short i_nmContato;
+        short i_dsPath;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFLookUp(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE consultaContatoLista CURSOR FOR
+        SELECT
+            A.IDCONTATO,
+            A.IDCONTATOPAI,
+            A.IDNOMECONTATO,
+            A.NMCONTATO,
+            A.TPREGISTRO,
+            CONTATO.NMPATH
+        FROM
+            (
+                SELECT 
+                    HIERARQUIA.IDCONTATO,
+                    HIERARQUIA.IDCONTATOPAI,
+                    HIERARQUIA.IDNOMECONTATO,
+                    HIERARQUIA.NMCONTATO,
+                    DECODE(IDCONTATOFOLHA, NULL, 0, 1 ) AS TPREGISTRO
+                FROM 
+                    CONTATOADM.CONTATOHIERARQUIAV01 HIERARQUIA
+                WHERE
+                    HIERARQUIA.IDCONTATOPAI = :idContatoPai
+                START WITH
+                    HIERARQUIA.IDCONTATOPAI = :idContatoPai
+                CONNECT BY
+                    HIERARQUIA.IDCONTATOPAI = PRIOR HIERARQUIA.IDCONTATO
+                ORDER BY
+                    DECODE(HIERARQUIA.IDCONTATOFOLHA, NULL, 0, 1 )
+            ) A,
+            CONTATOADM.CONTATO CONTATO
+        WHERE
+            A.IDCONTATO = CONTATO.IDCONTATO
+        AND CONTATO.INDISPONIBILIDADE = 1
+        AND CONTATO.IDTIPOARVORE = (SELECT IDTIPOARVORE
+                                      FROM APOIO.TIPOARVORE
+                                     WHERE DSTIPOARVORE = 'ÁRVORE DE CONTATOS')
+        ORDER BY
+            A.TPREGISTRO DESC,
+            A.NMCONTATO;
+
+    EXEC SQL OPEN consultaContatoLista;
+
+    for ( ;; )
+    {
+        i_idContato = i_idContatoHierarquia = i_idNomeContato = 
+        i_inFolha = i_nmContato = i_dsPath = -1;
+
+        EXEC SQL FETCH consultaContatoLista INTO 
+                                    :idContato:i_idContato, 
+                                    :idContatoHierarquia:i_idContatoHierarquia,
+                                    :idNomeContato:i_idNomeContato,
+                                    :nmContato:i_nmContato,
+                                    :inFolha:i_inFolha,
+                                    :dsPath:i_dsPath;
+
+        if ( pResult = new st_ContatoFolha,pResult )
+        {
+            CONVIND( idContato,i_idContato );
+            CONVIND( idContatoHierarquia,i_idContatoHierarquia );
+            CONVIND( idNomeContato,i_idNomeContato );
+            CONVIND( nmContato,i_nmContato );
+            CONVIND( inFolha,i_inFolha );
+            CONVIND( dsPath,i_dsPath );
+
+            strcpy(pResult->idContato, (char*)idContato.arr);
+            strcpy(pResult->idContatoHierarquia, (char*)idContatoHierarquia.arr);
+            strcpy(pResult->idNomeContato, (char*)idNomeContato.arr);
+            strcpy(pResult->nmContato, (char*)nmContato.arr);
+            strcpy(pResult->inFolha, (char *)inFolha.arr);
+            strcpy(pResult->dsPath, (char*)dsPath.arr);
+
+            _ResultadoPC->AddItem( (void*) pResult );
+        }
+        else
+        {
+            ULOGE(erroFalhaAlocacaoMemoria());
+        }
+    }
+
+    EXEC SQL CLOSE consultaContatoLista;
+
+    ULOG_END("cObtArvoContatoPC::obtemWFContatoLista()");
+
+    return true;
+
+}
+
+bool cObtArvoContatoPC::obtemWFContatoFolhaVar( st_Parametros * _dadosEntradaPC
+                                              , Collection *_ResultadoPC
+                                              , bool variaveisFornecidas )
+{
+    ULOG_START("cObtArvoContatoPC::obtemWFContatoFolhaVar()");
+
+    struct sqlca sqlca;
+    st_ContatoFolha * pResult;
+    string query;
+
+    string outerJoinYN = variaveisFornecidas?" ":"(+) ";
+    string critIdTipoLinha = (const char *)_dadosEntradaPC->idTipoLinha;
+    string critIdTipoCarteira = (const char *)_dadosEntradaPC->idTipoCarteira;
+    string critIdSegmentacao = (const char *)_dadosEntradaPC->idSegmentacao;
+    string critIdTipoSequencia = (const char *)_dadosEntradaPC->idTipoSequencia;
+
+    if ( !variaveisFornecidas )
+    {
+        critIdTipoLinha += " OR "+(string)((const char *)_dadosEntradaPC->idTipoLinha)+ "= -1 ";
+        critIdTipoCarteira += " OR "+(string)((const char *)_dadosEntradaPC->idTipoCarteira)+ "= -1 ";
+        critIdSegmentacao += " OR "+(string)((const char *)_dadosEntradaPC->idSegmentacao)+ "= -1 ";
+        critIdTipoSequencia += " OR "+(string)((const char *)_dadosEntradaPC->idTipoSequencia)+ "= -1 ";
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        const char *idContatoPai = _dadosEntradaPC->idContatoPai;
+        const char *idGrupo = _dadosEntradaPC->idGrupo;
+        const char *idUFOperadora = _dadosEntradaPC->idUFOperadora;
+        const char *idTipoLinha = _dadosEntradaPC->idTipoLinha;
+        const char *idTipoCarteira = _dadosEntradaPC->idTipoCarteira;
+        const char *idSegmentacao = _dadosEntradaPC->idSegmentacao;
+        const char *idTipoRelacionamento = _dadosEntradaPC->idTipoRel;
+        const char *idTipoSequencia = _dadosEntradaPC->idTipoSequencia;
+        const char *pQuery;
+        const unsigned char *pidContato;
+
+        VARCHAR idContato[21];
+        VARCHAR idContatoHierarquia[21];
+        VARCHAR idNomeContato[21];
+        VARCHAR nmContato[256];
+        VARCHAR dsMensagemAviso[256];
+        VARCHAR nmUrlContato[256];
+        VARCHAR nmUrlContatoAcao[256];
+
+        int inFolha;
+        int inPermitido;
+
+        short i_idContato;
+        short i_idContatoHierarquia;
+        short i_idNomeContato;
+        short i_inFolha;
+        short i_nmContato;
+        short i_dsMensagemAviso;
+        short i_nmUrlContato;
+        short i_nmUrlContatoAcao;
+
+    EXEC SQL END DECLARE SECTION;
+
+    pidContato = idContato.arr;
+	/*Tiago Costa 16/04/2009
+	MPOG-> Transformando query dinamica em estatica*/
+
+	 EXEC SQL DECLARE curConsCtFolha CURSOR FOR
+		   SELECT 
+                    IDCONTATO 
+                   ,IDCONTATOPAI 
+                   ,IDNOMECONTATO 
+                   ,NMCONTATO 
+                   ,TPCONTATO 
+               FROM 
+                   CONTATOADM.CONTATOHIERARQUIAV02 CONTATOHIERARQUIAV02 
+               WHERE 
+               ( 
+                  CONTATOHIERARQUIAV02.IDCONTATO = 
+                  ( 
+                       SELECT /*+ INDEX ( CONTATO CONTATOPK ) */ 
+                              CONTATO.IDCONTATO   
+                         FROM CONTATOADM.CONTATO CONTATO,
+                              CONTATOADM.CONTATOFOLHA CONTATOFOLHA,
+                              CONTATOADM.CONTATOTIPOLINHA CONTATOTIPOLINHA,
+                              CONTATOADM.CONTATOUFOPERADORA CONTATOUFOPERADORA,
+                              CONTATOADM.CONTATOTIPOCARTEIRA CONTATOTIPOCARTEIRA,
+                              CONTATOADM.CONTATOSEGMENTACAO CONTATOSEGMENTACAO 
+                       WHERE CONTATO.INDISPONIBILIDADE = 1 
+                         AND CONTATO.IDCONTATO=CONTATOFOLHA.IDCONTATO 
+                         AND CONTATOFOLHA.IDCONTATO=CONTATOUFOPERADORA.IDCONTATO 
+                         AND TRUNC(NVL(CONTATOUFOPERADORA.DTINICIOVIGENCIA,SYSDATE)) <= TRUNC(SYSDATE) 
+                         AND TRUNC(NVL(CONTATOUFOPERADORA.DTFIMVIGENCIA,SYSDATE)) >= TRUNC(SYSDATE)
+               AND CONTATOFOLHA.IDCONTATO=CONTATOTIPOLINHA.IDCONTATO
+               AND CONTATOFOLHA.IDCONTATO=CONTATOTIPOCARTEIRA.IDCONTATO
+               AND CONTATOFOLHA.IDCONTATO=CONTATOSEGMENTACAO.IDCONTATO
+               AND CONTATOUFOPERADORA.IDUFOPERADORA = :idUFOperadora
+               AND (CONTATOTIPOLINHA.IDTIPOLINHA = :idTipoLinha)
+               AND (CONTATOTIPOCARTEIRA.IDTIPOCARTEIRA = :idTipoCarteira)
+               AND (CONTATOSEGMENTACAO.IDSEGMENTACAO = :idSegmentacao)
+               AND CONTATO.IDCONTATO = ( SELECT CONGRU.IDCONTATO 
+                                                    FROM CONTATOADM.SEQUENCIA SEQ,
+                                                    CONTATOADM.CONTATOGRUPO CONGRU, 
+                                                    ACESSO.GRUPO GRUPO 
+                                                    WHERE CONGRU.IDCONTATOGRUPO = SEQ.IDCONTATOGRUPO 
+                                                    AND CONGRU.IDCONTATO = CONTATO.IDCONTATO 
+                                                    AND CONGRU.IDGRUPO = GRUPO.IDGRUPO 
+                                                    AND GRUPO.DTEXCLUSAO IS NULL 
+                                                    AND SEQ.DTEXCLUSAO IS NULL 
+                                         AND CONGRU.IDGRUPO = :idGrupo
+                                         AND (SEQ.IDTIPOSEQUENCIA = :idTipoSequencia)
+                                         AND ROWNUM < 2 
+                                                 ) 
+                         AND CONTATOHIERARQUIAV02.IDCONTATO = CONTATO.IDCONTATO 
+                         AND ROWNUM < 2 
+                   ) 
+                   OR CONTATOHIERARQUIAV02.TPCONTATO = 0 
+                ) 
+                AND
+          CONTATOHIERARQUIAV02.IDCONTATOPAI = :idContatoPai
+       ORDER BY 
+          CONTATOHIERARQUIAV02.TPCONTATO DESC 
+         ,UPPER(CONTATOHIERARQUIAV02.NMCONTATO);
+
+    /*query =    "SELECT "
+                    "IDCONTATO "
+                   ",IDCONTATOPAI "
+                   ",IDNOMECONTATO "
+                   ",NMCONTATO "
+                   ",TPCONTATO "
+               "FROM "
+                   "CONTATOADM.CONTATOHIERARQUIAV02 CONTATOHIERARQUIAV02 "
+               "WHERE "
+               "( "
+                  "CONTATOHIERARQUIAV02.IDCONTATO = "
+                  "( "
+                       "SELECT /*+ INDEX ( CONTATO CONTATOPK )  "
+                              "CONTATO.IDCONTATO   "
+                         "FROM CONTATOADM.CONTATO CONTATO,"
+                              "CONTATOADM.CONTATOFOLHA CONTATOFOLHA,"
+                              "CONTATOADM.CONTATOTIPOLINHA CONTATOTIPOLINHA,"
+                              "CONTATOADM.CONTATOUFOPERADORA CONTATOUFOPERADORA,"
+                              "CONTATOADM.CONTATOTIPOCARTEIRA CONTATOTIPOCARTEIRA,"
+                              "CONTATOADM.CONTATOSEGMENTACAO CONTATOSEGMENTACAO "
+                       "WHERE CONTATO.INDISPONIBILIDADE = 1 "
+                         "AND CONTATO.IDCONTATO=CONTATOFOLHA.IDCONTATO "
+                         "AND CONTATOFOLHA.IDCONTATO=CONTATOUFOPERADORA.IDCONTATO "
+                         "AND TRUNC(NVL(CONTATOUFOPERADORA.DTINICIOVIGENCIA,SYSDATE)) <= TRUNC(SYSDATE) "
+                         "AND TRUNC(NVL(CONTATOUFOPERADORA.DTFIMVIGENCIA,SYSDATE)) >= TRUNC(SYSDATE) ";
+    query +=             "AND CONTATOFOLHA.IDCONTATO=CONTATOTIPOLINHA.IDCONTATO"+outerJoinYN;
+    query +=             "AND CONTATOFOLHA.IDCONTATO=CONTATOTIPOCARTEIRA.IDCONTATO"+outerJoinYN;
+    query +=             "AND CONTATOFOLHA.IDCONTATO=CONTATOSEGMENTACAO.IDCONTATO"+outerJoinYN;
+    query +=             "AND CONTATOUFOPERADORA.IDUFOPERADORA = "+(string)idUFOperadora+" ";
+    query +=             "AND (CONTATOTIPOLINHA.IDTIPOLINHA = "+critIdTipoLinha+")";
+    query +=             "AND (CONTATOTIPOCARTEIRA.IDTIPOCARTEIRA = "+critIdTipoCarteira+")";
+    query +=             "AND (CONTATOSEGMENTACAO.IDSEGMENTACAO = "+critIdSegmentacao+")";
+    query +=             "AND CONTATO.IDCONTATO = ( SELECT CONGRU.IDCONTATO "
+                                                    "FROM CONTATOADM.SEQUENCIA SEQ,"
+                                                    "CONTATOADM.CONTATOGRUPO CONGRU, "
+                                                    "ACESSO.GRUPO GRUPO "
+                                                    "WHERE CONGRU.IDCONTATOGRUPO = SEQ.IDCONTATOGRUPO "
+                                                    "AND CONGRU.IDCONTATO = CONTATO.IDCONTATO "
+                                                    "AND CONGRU.IDGRUPO = GRUPO.IDGRUPO "
+                                                    "AND GRUPO.DTEXCLUSAO IS NULL "
+                                                    "AND SEQ.DTEXCLUSAO IS NULL "
+                                                    "AND CONGRU.IDGRUPO = "+(string)idGrupo+" ";
+    query +=                                        "AND (SEQ.IDTIPOSEQUENCIA = "+critIdTipoSequencia+")";
+    query +=                                        "AND ROWNUM < 2 "
+                                                 ") "
+                         "AND CONTATOHIERARQUIAV02.IDCONTATO = CONTATO.IDCONTATO "
+                         "AND ROWNUM < 2 "
+                   ") "
+                   "OR CONTATOHIERARQUIAV02.TPCONTATO = 0 "
+                ") "
+                "AND ";
+    query +=
+          "CONTATOHIERARQUIAV02.IDCONTATOPAI = "+(string)idContatoPai+" ";
+    query +=
+       "ORDER BY "
+          "CONTATOHIERARQUIAV02.TPCONTATO DESC "
+         ",UPPER(CONTATOHIERARQUIAV02.NMCONTATO)";*/
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Outubro, 2006 - Cassio
+    // A incidência 3883, fez com que houvesse uma alteração no negócio 
+    // deste serviço e por isto, as variáveis inFolha e inPermitido
+    // tiveram mudança na lógica de atribuição de seus valores.
+    // A partir desta versão se inPermitido = 0 os dados não são transportados
+    // para o XML de saída, indicando que as variáveis dos dados básicos da folha
+    // não batem com os parâmetros fornecidos.
+
+    pQuery = query.c_str();
+
+    ULOG("        idContatoPai=%s",idContatoPai);
+    ULOG("           idContato=%s",pidContato);
+    ULOG("       idUFOperadora=%s",idUFOperadora);
+    ULOG("         idTipoLinha=%s",idTipoLinha);
+    ULOG("      idTipoCarteira=%s",idTipoCarteira);
+    ULOG("       idSegmentacao=%s",idSegmentacao);
+    ULOG("idTipoRelacionamento=%s",idTipoRelacionamento);
+    ULOG("             idGrupo=%s",idGrupo);
+    ULOG("     idTipoSequencia=%s",idTipoSequencia);
+    ULOG(" variaveisFornecidas=%d",variaveisFornecidas);
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFLookUp(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+   // EXEC SQL PREPARE queryConsCtFolha FROM :pQuery;
+   // EXEC SQL DECLARE curConsCtFolha CURSOR FOR queryConsCtFolha;
+    EXEC SQL OPEN curConsCtFolha;
+
+    while (true)
+    {
+        i_idContato = i_nmContato = i_idContatoHierarquia = 
+        i_idNomeContato = i_inFolha = -1;
+
+        EXEC SQL FETCH curConsCtFolha INTO
+                                    :idContato:i_idContato,
+                                    :idContatoHierarquia:i_idContatoHierarquia,
+                                    :idNomeContato:i_idNomeContato,
+                                    :nmContato:i_nmContato,
+                                    :inFolha:i_inFolha;
+
+        CONVIND(idContato,i_idContato);
+        CONVIND(nmContato,i_nmContato);
+
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+        if ( inFolha )
+        {
+            EXEC SQL
+                SELECT 
+                    COUNT(1)
+                INTO
+                    :inPermitido
+                FROM   
+                    CONTATOADM.CONTATOFOLHA CONTATOFOLHA,
+                    CONTATOADM.CONTATOTIPOLINHA CONTATOTIPOLINHA,
+                    CONTATOADM.CONTATOUFOPERADORA CONTATOUFOPERADORA,
+                    CONTATOADM.CONTATOTIPOCARTEIRA CONTATOTIPOCARTEIRA,
+                    CONTATOADM.CONTATOSEGMENTACAO CONTATOSEGMENTACAO,
+                    CONTATOADM.CONTATOTIPORELACIONAMENTO CONTATOTIPORELACIONAMENTO
+                WHERE
+                    CONTATOFOLHA.IDCONTATO = :pidContato
+                AND CONTATOUFOPERADORA.IDUFOPERADORA = :idUFOperadora
+                AND CONTATOTIPOLINHA.IDTIPOLINHA = :idTipoLinha
+                AND CONTATOTIPOCARTEIRA.IDTIPOCARTEIRA = :idTipoCarteira
+                AND CONTATOSEGMENTACAO.IDSEGMENTACAO = :idSegmentacao
+                AND CONTATOTIPORELACIONAMENTO.IDTIPORELACIONAMENTO = :idTipoRelacionamento
+                AND CONTATOFOLHA.IDCONTATO = CONTATOTIPORELACIONAMENTO.IDCONTATO
+                AND CONTATOFOLHA.IDCONTATO = CONTATOUFOPERADORA.IDCONTATO 
+                AND CONTATOFOLHA.IDCONTATO = CONTATOTIPOLINHA.IDCONTATO
+                AND CONTATOFOLHA.IDCONTATO = CONTATOTIPOCARTEIRA.IDCONTATO
+                AND CONTATOFOLHA.IDCONTATO = CONTATOSEGMENTACAO.IDCONTATO
+                AND ROWNUM < 2;
+        }
+        else if (variaveisFornecidas)
+        {
+            // Se o contato que passou não contiver folha, então não pode exibir...
+            EXEC SQL
+                SELECT COUNT(1)
+                INTO
+                    :inPermitido
+                FROM
+                    CONTATOADM.CONTATO CONTATO,
+                    CONTATOADM.CONTATOFOLHA CONTATOFOLHA,
+                    CONTATOADM.CONTATOTIPOLINHA CONTATOTIPOLINHA,
+                    CONTATOADM.CONTATOUFOPERADORA CONTATOUFOPERADORA,
+                    CONTATOADM.CONTATOTIPOCARTEIRA CONTATOTIPOCARTEIRA,
+                    CONTATOADM.CONTATOSEGMENTACAO CONTATOSEGMENTACAO,
+                    CONTATOADM.CONTATOTIPORELACIONAMENTO CONTATOTIPORELACIONAMENTO,
+                    (
+                        SELECT /*+ INDEX(CH,CONTATOHIERARQUIAIE1) */    /* Oracle 11G */
+								CH.IDCONTATO 
+                        FROM CONTATOADM.CONTATOHIERARQUIA CH
+                        START WITH CH.IDCONTATOPAI = :pidContato
+                        CONNECT BY PRIOR CH.IDCONTATO=CH.IDCONTATOPAI
+                    ) TMP
+                WHERE
+                    CONTATOFOLHA.IDCONTATO = TMP.IDCONTATO
+                AND CONTATOUFOPERADORA.IDUFOPERADORA = :idUFOperadora
+                AND CONTATOTIPOLINHA.IDTIPOLINHA = :idTipoLinha
+                AND CONTATOTIPOCARTEIRA.IDTIPOCARTEIRA = :idTipoCarteira
+                AND CONTATOSEGMENTACAO.IDSEGMENTACAO = :idSegmentacao
+                AND CONTATOTIPORELACIONAMENTO.IDTIPORELACIONAMENTO = :idTipoRelacionamento
+                AND CONTATOFOLHA.IDCONTATO = CONTATOTIPORELACIONAMENTO.IDCONTATO
+                AND CONTATOFOLHA.IDCONTATO = CONTATOUFOPERADORA.IDCONTATO 
+                AND CONTATOFOLHA.IDCONTATO = CONTATOTIPOLINHA.IDCONTATO
+                AND CONTATOFOLHA.IDCONTATO = CONTATOTIPOCARTEIRA.IDCONTATO
+                AND CONTATOFOLHA.IDCONTATO = CONTATOSEGMENTACAO.IDCONTATO
+                AND CONTATOFOLHA.IDCONTATO = CONTATO.IDCONTATO
+                AND CONTATO.INDISPONIBILIDADE = 1
+                AND TRUNC(NVL(CONTATOUFOPERADORA.DTINICIOVIGENCIA,SYSDATE)) <= TRUNC(SYSDATE)
+                AND TRUNC(NVL(CONTATOUFOPERADORA.DTFIMVIGENCIA,SYSDATE)) >= TRUNC(SYSDATE)
+                AND CONTATOFOLHA.IDCONTATO = (SELECT CONGRU.IDCONTATO
+                                              FROM CONTATOADM.SEQUENCIA SEQ,
+                                                   CONTATOADM.CONTATOGRUPO CONGRU,
+                                                   ACESSO.GRUPO GRUPO
+                                             WHERE CONGRU.IDCONTATOGRUPO = SEQ.IDCONTATOGRUPO
+                                               AND CONGRU.IDCONTATO = CONTATOFOLHA.IDCONTATO
+                                               AND CONGRU.IDGRUPO = GRUPO.IDGRUPO
+                                               AND GRUPO.DTEXCLUSAO IS NULL
+                                               AND SEQ.DTEXCLUSAO IS NULL
+                                               AND CONGRU.IDGRUPO = :idGrupo
+                                               AND (SEQ.IDTIPOSEQUENCIA = :idTipoSequencia)
+                                               AND ROWNUM < 2)
+                AND ROWNUM < 2;
+        }
+        else
+        {
+            // 3883 Hom.Vivo - Se não é folha então pode exibir (Out/2006)
+            inPermitido = true;
+        }
+
+        // Incidência 3883 Hom.Vivo - Out/2006, Cassio
+        // Se as variáveis dos dados básicos do contato não batem com as variáveis
+        // de parâmetro, ignora a folha do contato
+        if ( !inPermitido )
+        {
+            continue;
+        }
+
+        i_dsMensagemAviso = -1;
+        if ( inFolha )
+        {
+            // Busca Mensagem de Aviso
+            EXEC SQL
+                SELECT
+                    MENSAGEMAVISO.DSMENSAGEMAVISO
+                INTO
+                    :dsMensagemAviso:i_dsMensagemAviso
+                FROM
+                    CONTATOADM.CONTATOFOLHAMENSAGEMAVISO CONTATOFOLHAMENSAGEMAVISO,
+                    CONTATOADM.MENSAGEMAVISO MENSAGEMAVISO
+                WHERE
+                    CONTATOFOLHAMENSAGEMAVISO.IDMENSAGEMAVISO = MENSAGEMAVISO.IDMENSAGEMAVISO
+                AND  
+                    CONTATOFOLHAMENSAGEMAVISO.IDCONTATO = :pidContato;
+        }
+
+        // Busca Contato Informação
+        i_nmUrlContato = -1;
+        EXEC SQL
+            SELECT
+                NMURLCONTATOINFORMACAO
+            INTO
+                :nmUrlContato:i_nmUrlContato
+            FROM
+                CONTATOADM.CONTATOINFORMACAO
+            WHERE
+                IDCONTATO = :pidContato
+            AND IDUFOPERADORA = :idUFOperadora
+            AND IDTIPORELACIONAMENTO = :idTipoRelacionamento
+            AND IDTIPOLINHA = :idTipoLinha;
+
+        i_nmUrlContatoAcao = -1;
+
+        if ( inFolha )
+        { // Se for folha então busca Contato Ação
+            EXEC SQL
+                SELECT
+                    NMURLCONTATOACAO
+                INTO
+                    :nmUrlContatoAcao:i_nmUrlContatoAcao
+                FROM
+                    CONTATOADM.CONTATOACAO
+                WHERE
+                    IDCONTATO = :pidContato
+                AND IDUFOPERADORA = :idUFOperadora
+                AND IDTIPOLINHA = :idTipoLinha;
+        }
+
+        if ( pResult = new st_ContatoFolha,!pResult )
+        {
+            ULOGE(erroFalhaAlocacaoMemoria());
+            break;
+        }
+
+        CONVIND(idContatoHierarquia,i_idContatoHierarquia);
+        CONVIND(idNomeContato,i_idNomeContato);
+        CONVIND(nmContato,i_nmContato);
+
+        SAFE_STRNCPY(pResult->idContato, (char*)idContato.arr);
+        SAFE_STRNCPY(pResult->idContatoHierarquia, (char*)idContatoHierarquia.arr);
+        SAFE_STRNCPY(pResult->idNomeContato, (char*)idNomeContato.arr);
+        SAFE_STRNCPY(pResult->nmContato, (char*)nmContato.arr);
+        sprintf(pResult->inPermitido, "%d", inPermitido);
+        sprintf(pResult->inFolha, "%d", inFolha);
+
+        if ( i_dsMensagemAviso >= 0 )
+        {
+            CONVIND( dsMensagemAviso,i_dsMensagemAviso );
+            strcpy(pResult->dsMensagemAviso, (char*)dsMensagemAviso.arr);
+        }
+
+        if ( i_nmUrlContato >= 0 )
+        {
+            CONVIND( nmUrlContato,i_nmUrlContato );
+            SAFE_STRNCPY(pResult->nmUrlContato, (char*)nmUrlContato.arr);
+        }
+
+        if ( i_nmUrlContatoAcao >= 0 )
+        {
+            CONVIND(nmUrlContatoAcao,i_nmUrlContatoAcao);
+            SAFE_STRNCPY(pResult->nmUrlContatoAcao, (char*)nmUrlContatoAcao.arr);
+        }
+
+        _ResultadoPC->AddItem( (void*) pResult );
+    }
+
+    EXEC SQL CLOSE curConsCtFolha;
+
+    ULOG_END("cObtArvoContatoPC::obtemWFContatoFolhaVar()");
+
+    return true;
+}
+
+bool cObtArvoContatoPC::obtemWFContatoRaiz( Collection *_ResultadoPC )
+{
+    ULOG_START("cObtArvoContatoPC::obtemWFContatoRaiz()");
+
+    struct sqlca sqlca;
+    st_ContatoRaiz * pResult;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR idContato[21];
+        VARCHAR idNomeContato[21];
+        VARCHAR nmContato[256];
+        int inDisponibilidade;
+
+        short i_idContato = -1;
+        short i_idNomeContato = -1;
+        short i_nmContato = -1;
+        short i_inDisponibilidade = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFLookUp(&sqlca);
+
+    EXEC SQL
+        SELECT 
+            CONTATO.IDCONTATO, 
+            CONTATO.IDNOMECONTATO, 
+            NMCONTATO.NMCONTATO, 
+            CONTATO.INDISPONIBILIDADE
+        INTO
+            :idContato:i_idContato, 
+            :idNomeContato:i_idNomeContato,
+            :nmContato:i_nmContato,
+            :inDisponibilidade:i_inDisponibilidade
+        FROM 
+            CONTATOADM.CONTATO CONTATO,
+            CONTATOADM.NOMECONTATO NMCONTATO
+        WHERE
+            CONTATO.IDNOMECONTATO = NMCONTATO.IDNOMECONTATO
+        AND IDCONTATO NOT IN (SELECT HIERARQUIA.IDCONTATO
+                              FROM CONTATOADM.CONTATOHIERARQUIA HIERARQUIA)
+                              --//WHERE HIERARQUIA.IDCONTATO > 0)
+        AND ROWNUM < 2;
+
+    if ( sqlca.sqlcode == 0 )
+    {
+        if ( pResult = new st_ContatoRaiz,pResult )
+        {
+            CONVIND(idContato, i_idContato);
+            CONVIND(idNomeContato, i_idNomeContato);
+            CONVIND(nmContato, i_nmContato);
+
+            strcpy(pResult->idContato, (char*)idContato.arr);
+            strcpy(pResult->idContatoPai, (char*)idContato.arr);
+            strcpy(pResult->idNomeContato, (char*)idNomeContato.arr);
+            strcpy(pResult->nmContato, (char*)nmContato.arr);
+            sprintf(pResult->inDisponibilidade, "%d", inDisponibilidade);
+
+            _ResultadoPC->AddItem( (void*) pResult );
+        }
+        else
+        {
+            ULOGE(erroFalhaAlocacaoMemoria());
+        }
+    }
+
+    ULOG_END("cObtArvoContatoPC::obtemWFContatoRaiz()");
+
+    return true;
+}
+
+void cObtArvoContatoPC::sql_error_WFLookUp( sqlca * sqlca )
+{
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

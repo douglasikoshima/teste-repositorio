@@ -1,0 +1,840 @@
+
+#include <CRetencao.h>
+
+
+
+int CRetencao::Inserir(DOMNode *pdnode,char *pidUser,char *pidRetencao)
+{
+	char parm[255];
+	int iidRetencao=0;
+	int iiIntDest=0;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+	 
+        VARCHAR     idRetencao[21+1];
+		VARCHAR		idPessoaDePara[21+1];
+        VARCHAR     idRespostaIntencao[21+1];
+        VARCHAR     idRespostaDestino[21+1];
+        int         idTipoEncerramento;
+        VARCHAR     dsObservacao[4000];
+		VARCHAR		idUser[21+1];
+ 
+	 EXEC SQL END DECLARE SECTION;
+     EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+
+  	    memset(parm,0,sizeof(parm));
+        if(get_tag(parm,pdnode,"idRetencao",0,-1)==-1)
+        {
+           ULOG("1  parm = [%s] ",parm);
+           EXEC SQL SELECT retencao.retencaoSQ.nextval INTO :idRetencao FROM DUAL;
+	       endOraStr(idRetencao);
+           ULOG("retencao.retencaoSQ.nextval",(char*)idRetencao.arr);
+        }   
+        else
+        {
+           ULOG("2 parm = [%s] ",parm); 
+           strToOra(idRetencao,parm);
+           ULOG("retencao.retencaoSQ.nextval",(char*)idRetencao.arr);
+        }
+
+
+
+   get_tag(parm,pdnode,"idPessoaDePara",0,0); 
+   strToOra(idPessoaDePara,parm);
+
+  iiIntDest=get_tag(parm,pdnode,"idRespostaIntencao",0,-1); 
+  if(iiIntDest==-1)
+	{
+	  strToOra(idRespostaIntencao,"0");	
+	}
+  else
+	{
+	  if (strcmp(parm,"null")==0)
+	  {
+		strToOra(idRespostaIntencao,"0");	
+	  }
+	  else
+	  {
+		strToOra(idRespostaIntencao,parm);	
+	  }
+	}
+
+
+   iiIntDest= get_tag(parm,pdnode,"idRespostaDestino",0,-1); 
+   if(iiIntDest==-1)
+	{
+	  strToOra(idRespostaDestino,"0");	
+	}
+  else
+	{
+	  if (strcmp(parm,"null")==0)
+	  {
+		strToOra(idRespostaDestino,"0");	
+	  }
+	  else
+	  {
+		strToOra(idRespostaDestino,parm);	
+	  }
+	 
+	}
+
+   get_tag(parm,pdnode,"idTipoEncerramento",0,0); 
+   idTipoEncerramento=atoi(parm);
+   
+   strToOra(idUser,pidUser);
+
+    
+	 EXEC SQL
+        INSERT INTO RETENCAO.RETENCAO 
+        ( 
+            IDRETENCAO,
+            IDPESSOADEPARA,
+            IDRESPOSTAINTENCAO,
+            IDRESPOSTADESTINO,
+            IDTIPOENCERRAMENTO,
+            IDPESSOAUSUARIOINCLUSAO,
+            DTINCLUSAO,
+            IDPESSOAUSUARIOALTERACAO,
+            DTALTERACAO,
+            IDUSUARIOALTERACAO,
+            DTULTIMAALTERACAO
+		 )
+        VALUES 
+        ( 
+            :idRetencao,
+            :idPessoaDePara, 
+            nvl(:idRespostaIntencao,0),
+            nvl(:idRespostaDestino,0), 
+            :idTipoEncerramento, 
+            :idUser,
+             SYSDATE,
+            :idUser,
+             SYSDATE,
+            :idUser,
+             SYSDATE
+		);
+
+	strcpy(pidRetencao,(char*)idRetencao.arr);
+	return 1;
+
+}
+
+
+
+void CRetencao::ObtemIdAtendimento( char *nrProtocoloPrm, char *idAtendimentoPrm )
+{
+    ULOG_START( "ObtemIdAtendimento()" );
+
+   	EXEC SQL BEGIN DECLARE SECTION;
+   	
+	    VARCHAR nrProtocolo[256];
+	    VARCHAR idAtendimento[32];
+	    short i_idAtendimento = -1;
+	    
+	EXEC SQL END DECLARE SECTION;
+    strToOra( nrProtocolo,nrProtocoloPrm );
+    
+    ULOG( "Recebeu Nr. Protocolo [%s]",(char*)nrProtocolo.arr );
+    
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+    /* Alterado para a query abaixo. Incidencia 5010
+    EXEC SQL
+    SELECT atendimento.idatendimento
+      INTO :idAtendimento:i_idAtendimento
+      FROM atendimento.atendimento atendimento
+     WHERE atendimento.nrprotocolo = :nrProtocolo;  
+   */
+     	
+    EXEC SQL
+    SELECT atendimento.idatendimento
+      INTO :idAtendimento:i_idAtendimento
+      FROM atendimento.atendimentopriorizacao atendimento
+     WHERE atendimento.nrprotocoloPortabilidade = :nrProtocolo
+	 and   atendimento.sgtipoportabilidade='PORTOUT'
+	 and rownum<=1;  
+     	
+    endOraStr( idAtendimento );
+    
+    if ( (char *)idAtendimento.arr[0] == 0x0 )
+	{
+	    EXEC SQL
+	    SELECT atendimento.idatendimento
+	      INTO :idAtendimento:i_idAtendimento
+	      FROM atendimento.atendimento atendimento
+	     WHERE atendimento.idatendimentoprotocolo = :nrProtocolo
+		 and rownum<=1;  
+
+	    endOraStr( idAtendimento );
+	}
+
+    strcpy( idAtendimentoPrm, (char *)idAtendimento.arr );
+    
+    ULOG_END( "ObtemIdAtendimento()" );
+}
+
+
+
+int CRetencao::ObtemParametrosToURA( DOMNode * pdnode, char *idUser )
+{
+    ULOG_START( "CRetencao::ObtemParametrosToURA()" );
+
+    char parm[256];
+    int iCtrError;
+    char cdRetorno[4];
+    char msgRetorno[256];
+    
+    memset( cdRetorno, 0x0, sizeof(cdRetorno) );
+    memset( msgRetorno, 0x0, sizeof(msgRetorno) );
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char cdArea[3];
+        char nrTelefone[10];
+        
+        VARCHAR idUsuario[40];
+        VARCHAR nmUsuario[256];
+        VARCHAR idPessoadePara[40];
+        VARCHAR idUFOperadora[40];
+        VARCHAR sgTipoPessoa[3];
+        VARCHAR idLinhaTelefonica[40];
+        VARCHAR idTipoLinha[40];
+        VARCHAR idSegmentacao[40];
+        VARCHAR idOfertaAceita[40];
+		VARCHAR cdServico[256];
+        VARCHAR idMatrizBonus[40];
+        VARCHAR dsBonus[256];
+        VARCHAR sgClassificacao[256];
+        VARCHAR nrValidade[16];
+        
+        VARCHAR dtInicial[16];
+        VARCHAR dtFinal[16];
+        
+        VARCHAR idResposta[40];
+        VARCHAR idPergunta[40];
+
+        short i_idUsuario = -1;
+        short i_nmUsuario = -1;
+        short i_idPessoadePara = -1;
+        short i_idUFOperadora = -1;
+        short i_sgTipoPessoa = -1;
+        short i_idLinhaTelefonica = -1;
+        short i_idTipoLinha = -1;
+        short i_idSegmentacao = -1;
+        short i_idOfertaAceita = -1;
+        short i_idResposta = -1;
+        short i_idPergunta = -1;
+        
+        short i_idMatrizBonus = -1;
+        short i_dsBonus = -1;
+        short i_sgClassificacao = -1;
+        short i_nrValidade = -1;
+        short i_dtInicial = -1;
+        short i_dtFinal = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &idUsuario,0x0,sizeof(idUsuario) );
+    memset( &nmUsuario,0x0,sizeof(nmUsuario) );
+    memset( &idResposta,0x0,sizeof(idResposta) );
+    memset( &idPergunta,0x0,sizeof(idPergunta) );
+    memset( &idPessoadePara,0x0,sizeof(idPessoadePara) );
+    memset( &idUFOperadora,0x0,sizeof(idUFOperadora));
+    memset( &sgTipoPessoa,0x0,sizeof(sgTipoPessoa));
+    memset( &idLinhaTelefonica,0x0,sizeof(idLinhaTelefonica));
+    memset( &idTipoLinha,0x0,sizeof(idTipoLinha));
+    memset( &idSegmentacao,0x0,sizeof(idSegmentacao));
+    memset( &idOfertaAceita,0x0,sizeof(idOfertaAceita));
+    memset( &idMatrizBonus,0x0,sizeof(idMatrizBonus));
+    memset( &dsBonus,0x0,sizeof(dsBonus));
+    memset( &sgClassificacao,0x0,sizeof(sgClassificacao));
+    memset( &nrValidade,0x0,sizeof(nrValidade));
+    memset( &cdServico,0x0,sizeof(cdServico));
+
+    strToOra( idUsuario,idUser );
+    
+    EXEC SQL
+    SELECT nmloginusuario
+      INTO :nmUsuario:i_nmUsuario
+      FROM acesso.usuario
+     WHERE idpessoausuario = :idUsuario;
+    endOraStr( nmUsuario );
+    
+
+    memset( parm,0x0,sizeof(parm));
+    get_tag(parm,pdnode,"nrOperacao",0,-1);
+    if ( parm[0] != 0x0 )
+    {
+        if ( atoi(parm) == 1 )   // Consulta
+        {
+            memset( parm,0x0,sizeof(parm));
+            get_tag(parm,pdnode,"nrTipo",0,-1);
+            if ( parm[0] == 0x0 )
+            {
+                strcpy(cdRetorno,"01");
+                strcpy(msgRetorno,"campos obrigatórios não preenchidos.");
+            }
+    memset( parm,0x0,sizeof(parm));
+            get_tag(parm,pdnode,"nrTelefone",0,-1);
+            if ( parm[0] == 0x0 )
+            {
+                strcpy(cdRetorno,"01");
+                strcpy(msgRetorno,"campos obrigatórios não preenchidos.");
+            }
+            else
+    {
+        strcpy( prmURA.nrTelefone,parm );
+        sprintf( cdArea,"%.2s",parm );
+        sprintf( nrTelefone,"%.8s",(char*)&parm[2] );
+            }
+        }
+
+        if ( atoi(parm) == 2 || atoi(parm) == 3 )  // Aceite e Recusa
+        {
+            ULOG( "Aceite ou Recusa..." );
+            
+            memset( parm,0x0,sizeof(parm));
+            get_tag(parm,pdnode,"nrTipo",0,-1);
+            if ( parm[0] == 0x0 )
+        {
+                strcpy(cdRetorno,"01");
+                strcpy(msgRetorno,"campos obrigatórios não preenchidos.");
+            }
+            memset( parm,0x0,sizeof(parm));
+            get_tag(parm,pdnode,"nrTelefone",0,-1);
+            ULOG( "parm [%s]",parm);
+            if ( parm[0] == 0x0 )
+            {
+                strcpy(cdRetorno,"01");
+                ULOG( "cdRetorno [%s]",cdRetorno);
+                strcpy(msgRetorno,"campos obrigatórios não preenchidos.");
+            }
+            else
+            {
+                strcpy( prmURA.nrTelefone,parm );
+                sprintf( cdArea,"%.2s",parm );
+                sprintf( nrTelefone,"%.8s",(char*)&parm[2] );
+            }
+            get_tag(parm,pdnode,"cdOferta",0,-1);
+            if ( strlen(parm) > 0 )
+            {
+               strToOra( cdServico,parm );
+			}
+			else
+			{
+				strcpy(cdRetorno,"01");
+				strcpy(msgRetorno,"campos obrigatórios não preenchidos.");
+			}
+        }
+			
+    }
+    else   // Operacao Invalida
+            {
+				strcpy(cdRetorno,"01");
+				strcpy(msgRetorno,"campos obrigatórios não preenchidos.");
+            }
+
+    if ( !strcmp(cdRetorno,"01") )
+    {
+        strcpy( prmURA.sCodErro,cdRetorno );
+        strcpy( prmURA.sMsgErro,msgRetorno );
+        strcpy( prmURA.nmUsuario,(char*)nmUsuario.arr );
+        ULOG_END( "ERRO:***CRetencao::ObtemParametrosToURA()" );
+        return -1;
+    }
+
+    memset( parm,0x0,sizeof(parm));
+    get_tag(parm,pdnode,"nrTelefone",0,-1);
+    iCtrError = get_errors( (char*)cdServico.arr, parm, cdRetorno, msgRetorno );
+    if( !iCtrError )
+            {
+        memset( parm,0x0,sizeof(parm));
+        get_tag(parm,pdnode,"nrTipo",0,-1);
+			if ( atoi(parm) == 1 )      //  IVR
+			{
+            ULOG( "IVR");
+	            memset( parm,0x0,sizeof(parm));
+	            get_tag(parm,pdnode,"nrOperacao",0,0);
+	            if ( parm[0] != NULL )
+	            {
+	                if ( atoi(parm) == 2 )
+	                {
+	                    strcpy( prmURA.idTipoEncerramento,"18" );  // Aceitou Oferta
+	                }
+	                if ( atoi(parm) == 3 )
+	                {
+	                    strcpy( prmURA.idTipoEncerramento,"19" );  // Recusou Oferta
+	                }
+	            }
+        	}
+
+			if ( atoi(parm) == 2 )   //  URA
+			{
+            ULOG( "URA");
+	            memset( parm,0x0,sizeof(parm));
+            get_tag(parm,pdnode,"nrOperacao",0,0);
+            if ( parm[0] != NULL )
+            {
+                if ( atoi(parm) == 2 )
+                {
+	                    strcpy( prmURA.idTipoEncerramento,"16" );  // Aceitou Oferta
+                }
+	                if ( atoi(parm) == 3 )
+                {
+	                    strcpy( prmURA.idTipoEncerramento,"17" );  // Recusou Oferta
+	                }
+                }
+            }
+            
+            EXEC SQL WHENEVER NOT FOUND CONTINUE;
+            
+        ULOG( "Buscando Parametros FINALRETENCAO");
+        ULOG( "cdArea [%s]",cdArea);
+        ULOG( "nrTelefone [%s]",nrTelefone);
+            EXEC SQL
+                select distinct
+                pessoadepara.IDPESSOADEPARA ,
+                arearegistro.IDUFOPERADORA ,
+                tipopessoa.SGTIPOPESSOA,
+                linhatelefonica.IDLINHATELEFONICA,
+                nvl(linhasegmentacao.idsegmentacao,11),
+                linhatelefonica.IDTIPOLINHA
+            into
+                :idPessoadePara:i_idPessoadePara,
+                :idUFOperadora:i_idUFOperadora,
+                :sgTipoPessoa:i_sgTipoPessoa,
+                :idLinhaTelefonica:i_idLinhaTelefonica,
+                :idSegmentacao:i_idSegmentacao,
+                :idTipoLinha:i_idTipoLinha
+            from
+                apoio.arearegistro arearegistro,
+                linha.linhabase linhabase,
+                linha.linhatelefonica linhatelefonica,
+                linha.linhasegmentacao linhasegmentacao,
+                customer.pessoalinha pessoalinha,
+                customer.pessoa pessoa,
+                apoio.tipopessoa tipopessoa,
+                customer.pessoadepara pessoadepara
+            where
+                    arearegistro.cdarearegistro = :cdArea
+                and linhabase.nrlinha = :nrTelefone
+                and linhabase.idarearegistro = arearegistro.idarearegistro
+                and linhatelefonica.idlinhabase = linhabase.idlinhabase
+                and pessoalinha.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+                and pessoadepara.idpessoadepara = pessoalinha.idpessoadepara
+                and pessoa.idpessoa = pessoadepara.idpessoa
+                and tipopessoa.idtipopessoa = pessoa.idtipopessoa
+                and linhatelefonica.idlinhatelefonica = linhasegmentacao.idlinhatelefonica(+)
+                and rownum < 2;
+            
+            endOraStr( idPessoadePara );
+            endOraStr( idUFOperadora );
+            endOraStr( sgTipoPessoa );
+            endOraStr( idLinhaTelefonica );
+            endOraStr( idSegmentacao );
+            endOraStr( idTipoLinha );
+            
+            strcpy( prmURA.idPessoadePara,(char*)idPessoadePara.arr );
+            strcpy( prmURA.idUFOperadora,(char*)idUFOperadora.arr );
+            strcpy( prmURA.sgTipoPessoa,(char*)sgTipoPessoa.arr );
+            strcpy( prmURA.idLinhaTelefonica,(char*)idLinhaTelefonica.arr );
+            strcpy( prmURA.idSegmentacao,(char*)idSegmentacao.arr );
+            strcpy( prmURA.idTipoLinha,(char*)idTipoLinha.arr );
+            
+            // Pergunta e Resposta Default para URA
+            EXEC SQL
+            SELECT
+               IDRESPOSTA
+            INTO
+               :idPergunta:i_idPergunta
+            FROM
+               QUESTIONARIO.RESPOSTA
+            WHERE
+               DSRESPOSTA = 'PORTABILIDADE'
+            AND
+               IDPERGUNTA = 1
+            AND
+               ROWNUM < 2;
+
+            endOraStr( idPergunta );
+
+            EXEC SQL
+            SELECT
+               IDRESPOSTA
+            INTO
+               :idResposta:i_idResposta
+            FROM
+               QUESTIONARIO.RESPOSTA
+            WHERE
+               DSRESPOSTA = 'CONCORRENCIA'
+            AND
+               IDPERGUNTA = 2
+            AND
+               ROWNUM < 2;
+            
+            endOraStr( idResposta );
+
+            strcpy( prmURA.idRespostaIntencao,(char*)idPergunta.arr );
+            strcpy( prmURA.idRespostaDestino,(char*)idResposta.arr );
+            
+            if ( !strcmp(prmURA.sgTipoPessoa,"PF") )
+            {
+                strcpy( prmURA.idGrupo,"123" );
+            }
+            else
+            {
+                strcpy( prmURA.idGrupo,"124" );
+            }
+            
+        ULOG( "Obtendo valor parametro...");
+            EXEC SQL
+            select
+               DSVALORPARAMETRO
+            into
+               :idOfertaAceita:i_idOfertaAceita
+            from
+               APOIO.PARAMETRO
+            where
+               CDPARAMETRO = 'PARAMETRO_UNIDADE_OFERTA'
+            AND
+               ROWNUM < 2;
+
+            endOraStr( idOfertaAceita );
+            
+        ULOG( "Obtendo valores bonus...");
+            EXEC SQL
+            select
+               mb.idmatrizbonusura,
+               b.dsbonus,
+               oferta.sgclassificacao,
+               b.nrvalidade
+            into
+               :idMatrizBonus:i_idMatrizBonus,
+               :dsBonus:i_dsBonus,
+               :sgClassificacao:i_sgClassificacao,
+               :nrValidade:i_nrValidade
+            from  
+               RETENCAO.BONUS B,
+               RETENCAO.MATRIZBONUSURA MB,
+               retencao.oferta oferta
+            where
+               b.idbonus = mb.idbonus
+            and
+               oferta.idunidadeoferta = b.idunidadeoferta
+            and
+               b.cdservico = :cdServico
+            AND
+               ROWNUM < 2;
+
+            endOraStr( idMatrizBonus );
+            endOraStr( dsBonus );
+            endOraStr( sgClassificacao );
+            endOraStr( nrValidade );
+            
+            EXEC SQL
+            select
+               to_char(trunc(sysdate), 'dd/mm/yyyy') ,            
+               to_char(trunc(sysdate) + :nrValidade, 'dd/mm/yyyy')
+            into
+               :dtInicial:i_dtInicial,
+               :dtFinal:i_dtFinal
+            from dual;
+            endOraStr( dtInicial );
+            endOraStr( dtFinal );
+
+            strcpy( prmURA.idOfertaAceita,(char*)idOfertaAceita.arr );
+            strcpy( prmURA.sgOfertaAceita,(char*)sgClassificacao.arr );
+            strcpy( prmURA.nmBonus,(char*)dsBonus.arr );
+            strcpy( prmURA.idMatrizBonus,(char*)idMatrizBonus.arr );
+            strcpy( prmURA.dtInicioVigencia,(char*)dtInicial.arr );
+            strcpy( prmURA.dtFinalVigencia,(char*)dtFinal.arr );
+            strcpy( prmURA.sCodErro,cdRetorno );
+            strcpy( prmURA.sMsgErro,msgRetorno );
+            strcpy( prmURA.nmUsuario,(char*)nmUsuario.arr );
+        ULOG_END( "CRetencao::ObtemParametrosToURA()" );
+        return 0;
+        }
+    else
+    {
+        strcpy( prmURA.sCodErro,cdRetorno );
+        strcpy( prmURA.sMsgErro,msgRetorno );
+        strcpy( prmURA.nmUsuario,(char*)nmUsuario.arr );
+        ULOG_END( "ERROR:CRetencao::ObtemParametrosToURA()" );
+        return -1;
+    }
+
+
+}
+
+
+
+int CRetencao::get_errors( char * cdServicoPrm, char *pnrlinha, char *pcdRet, char *pmsgRet )
+{
+    ULOG_START( "CRetencao::get_errors()" );
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        varchar nrLinha[21]; 
+        varchar cdServico[256]; 
+        varchar szCdErro[21];
+        varchar szMsgErro[256];
+        int		iContador=0;
+        
+        short i_iContador = -1;
+        short i_szCdErro = -1;
+        short i_szMsgErro = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &nrLinha,0x0,sizeof(nrLinha) );
+    memset( &szCdErro,0x0,sizeof(szCdErro) );
+    memset( &szMsgErro,0x0,sizeof(szMsgErro) );
+    memset( &cdServico,0x0,sizeof(cdServico) );
+    
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    strToOra(nrLinha,pnrlinha);
+    ULOG( "nrLinha [%s]",(char*)nrLinha.arr);
+    strToOra(cdServico,cdServicoPrm);
+    ULOG( "cdServico [%s]",(char*)cdServico.arr);
+
+    ULOG( "Validando codigo de retorno 2...");
+    iContador = 0;
+    ULOG( "iContador [%d]",iContador );
+
+    //codigo 02
+    EXEC SQL
+    SELECT COUNT(1),
+           DECODE(COUNT(1),0,'02','00')cdErro,
+           DECODE(COUNT(1),0,'numero de linha invalida ou não cadastrada','0')msgErro
+    INTO   :iContador:i_iContador,
+           :szCdErro:i_szCdErro,
+           :szMsgErro:i_szMsgErro
+    FROM   linha.linhabase		 lb,
+           apoio.arearegistro	  ar
+    WHERE  lb.IDAREAREGISTRO=ar.IDAREAREGISTRO
+    AND    ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+    AND	   lb.nrlinha=SUBSTR(:nrLinha,3);
+		
+    ULOG( "Apos execucao iContador [%d]",iContador );
+    if( iContador == 0 )
+    {
+        ULOG( "Encontrou codigo de retorno 2...");
+        //formatando
+        endOraStr(szCdErro);
+        endOraStr(szMsgErro);
+        
+        //copiando
+        sprintf(pcdRet,"%s",(char*)szCdErro.arr);
+        sprintf(pmsgRet,"%s",(char*)szMsgErro.arr);
+        ULOG_END( "ERROR:CRetencao::get_errors()" );
+        return 1;
+    }
+		
+    ULOG( "Validando codigo de retorno 3...");
+    iContador = 0;
+    ULOG( "iContador [%d]",iContador );
+
+    //codigo 03
+    EXEC SQL
+    SELECT COUNT(1),
+           DECODE(COUNT(1),0,'03','00')cdErro,
+           DECODE(COUNT(1),0,'linha não esta em PORTOUT','0')msgErro
+    INTO   :iContador:i_iContador,
+           :szCdErro:i_szCdErro,
+           :szMsgErro:i_szMsgErro
+    FROM   atendimento.atendimento att,
+           linha.linhatelefonica lt,
+           linha.linhabase		 lb,
+           apoio.arearegistro	  ar
+    WHERE  lb.IDAREAREGISTRO=ar.IDAREAREGISTRO
+    AND	   lt.IDLINHABASE=lb.IDLINHABASE
+    AND	   att.IDLINHATELEFONICA=lt.IDLINHATELEFONICA
+    AND	   att.SGTIPOPORTABILIDADE='PORTOUT'
+    AND    ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+    AND	   lb.nrlinha=SUBSTR(:nrLinha,3);
+		
+    ULOG( "Apos execucao iContador [%d]",iContador );
+    if( iContador == 0 )
+    {
+        ULOG( "Encontrou codigo de retorno 3...");
+        //formatando
+        endOraStr(szCdErro);
+        endOraStr(szMsgErro);
+        
+        //copiando
+        sprintf(pcdRet,"%s",(char*)szCdErro.arr);
+        sprintf(pmsgRet,"%s",(char*)szMsgErro.arr);
+        ULOG_END( "ERROR:CRetencao::get_errors()" );
+        return 1;
+    }
+		
+    ULOG( "Validando codigo de retorno 4...");
+    iContador = 0;
+    ULOG( "iContador [%d]",iContador );
+    
+	//codigo 04
+    EXEC SQL
+    SELECT  COUNT(1),
+            DECODE(COUNT(1),0,'04','00')cdErro,
+            DECODE(COUNT(1),0,'Oferta Informada não existe cadastrada para o perfil da linha','0')msgErro
+    INTO   :iContador:i_iContador,
+           :szCdErro:i_szCdErro,
+           :szMsgErro:i_szMsgErro
+    FROM   RETENCAO.BONUS B,
+           RETENCAO.MATRIZBONUSURA MB,
+           RETENCAO.TIPOGRUPOPACOTE tgp,
+           linha.linhabase lb,
+           linha.linhatelefonica lt,
+           linha.linhasegmentacao ls,
+           apoio.arearegistro ar
+    WHERE tgp.IDTIPOGRUPOPACOTE=b.IDTIPOGRUPOPACOTE 
+    AND	  B.IDBONUS=MB.IDBONUS
+    and   lb.IDLINHABASE=lt.idlinhabase
+    and   lt.idlinhatelefonica=ls.idlinhatelefonica(+)
+    and   lb.idarearegistro=ar.idarearegistro
+    AND	  B.IDTIPOLINHA=lt.idTipoLinha
+    AND	  MB.IDSEGMENTACAO=nvl(ls.idSegmentacao,11)
+    AND	  MB.INATIVO=1
+    AND	  mb.IDUFOPERADORA=ar.IDUFOPERADORA
+    and   b.cdservico=:cdServico
+    AND   ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+    AND	  lb.nrlinha=SUBSTR(:nrLinha,3);  
+
+    ULOG( "Apos execucao iContador [%d]",iContador );
+    if( iContador == 0 )
+    {
+        ULOG( "Encontrou codigo de retorno 4...");
+        //formatando
+        endOraStr(szCdErro);
+        endOraStr(szMsgErro);
+        
+        //copiando
+        sprintf(pcdRet,"%s",(char*)szCdErro.arr);
+        sprintf(pmsgRet,"%s",(char*)szMsgErro.arr);
+        ULOG_END( "ERROR:CRetencao::get_errors()" );
+        return 1;
+    }
+
+    //  CODIGO 05 NAUM EH TRATADO NESTE PROCESSO...
+
+    ULOG( "Validando codigo de retorno 6...");
+    iContador = 0;
+    ULOG( "iContador [%d]",iContador );
+    
+	//codigo 06
+    EXEC SQL
+    SELECT COUNT(1),
+           DECODE(COUNT(1),0,'06','00')cdErro,
+           DECODE(COUNT(1),0,'linha não possui processo de retenção','0')msgErro
+    INTO   :iContador:i_iContador,
+           :szCdErro:i_szCdErro,
+           :szMsgErro:i_szMsgErro
+    FROM   atendimento.atendimento att,
+           linha.linhatelefonica lt,
+           linha.linhabase         lb,
+           apoio.arearegistro      ar,
+           CONTATOADM.CONTATOFUNCIONALIDADE CF
+    WHERE  lb.IDAREAREGISTRO=ar.IDAREAREGISTRO
+    AND	   lt.IDLINHABASE=lb.IDLINHABASE
+    AND	   att.IDLINHATELEFONICA=lt.IDLINHATELEFONICA
+    and    cf.idcontato = att.idcontato
+    and    cf.CDFUNCIONALIDADE = 'PORTOUT_RETENÇÃO'
+    AND	   att.SGTIPOPORTABILIDADE='PORTOUT'
+    AND    ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+    AND	   lb.nrlinha=SUBSTR(:nrLinha,3);    	
+    	
+    ULOG( "Apos execucao iContador [%d]",iContador );
+    	
+    if( iContador == 0 )
+    {
+        ULOG( "Encontrou codigo de retorno 6...");
+        //formatando
+        endOraStr(szCdErro);
+        endOraStr(szMsgErro);
+        
+        //copiando
+        sprintf(pcdRet,"%s",(char*)szCdErro.arr);
+        sprintf(pmsgRet,"%s",(char*)szMsgErro.arr);
+        ULOG_END( "ERROR:CRetencao::get_errors()" );
+        return 1;
+    }
+    	
+    	
+    ULOG( "Validando codigo de retorno 7...");
+    iContador = 0;
+    ULOG( "iContador [%d]",iContador );
+    
+    //codigo 07
+    EXEC SQL
+    SELECT COUNT(1),
+           DECODE(COUNT(1),0,'07','00')cdErro,
+           DECODE(COUNT(1),0,'Processo de retenção não permite tratamento','0')msgErro
+    INTO   :iContador:i_iContador,
+           :szCdErro:i_szCdErro,
+           :szMsgErro:i_szMsgErro
+    FROM   atendimento.atendimentopriorizacao att,
+           linha.linhatelefonica lt,
+           linha.linhabase		 lb,
+           apoio.arearegistro	  ar
+    WHERE  lb.IDAREAREGISTRO=ar.IDAREAREGISTRO
+    AND	   lt.IDLINHABASE=lb.IDLINHABASE
+    AND	   att.IDLINHATELEFONICA=lt.IDLINHATELEFONICA
+    AND	   att.SGTIPOPORTABILIDADE='PORTOUT'
+    AND    ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+    AND	   lb.nrlinha=SUBSTR(:nrLinha,3);
+
+    ULOG( "Apos execucao iContador [%d]",iContador );
+    if( iContador == 0 )
+    {
+        ULOG( "Encontrou codigo de retorno 7...");
+        //formatando
+        endOraStr(szCdErro);
+        endOraStr(szMsgErro);
+        
+        //copiando
+        sprintf(pcdRet,"%s",(char*)szCdErro.arr);
+        sprintf(pmsgRet,"%s",(char*)szMsgErro.arr);
+        ULOG_END( "ERROR:CRetencao::get_errors()" );
+        return 1;
+    }
+    
+    //codigo 08
+       EXEC SQL
+        SELECT COUNT(1),
+           DECODE(COUNT(1),0,'08','00')cdErro,
+           DECODE(COUNT(1),0,'Processo esta sendo tratado por outro usuário','0')msgErro
+       INTO   :iContador:i_iContador,
+              :szCdErro:i_szCdErro,
+              :szMsgErro:i_szMsgErro   
+        FROM   atendimento.atendimentopriorizacao att,
+           linha.linhatelefonica lt,
+           linha.linhabase		 lb,
+           apoio.arearegistro	  ar
+        WHERE  lb.IDAREAREGISTRO=ar.IDAREAREGISTRO
+        AND	   lt.IDLINHABASE=lb.IDLINHABASE
+        AND	   att.IDLINHATELEFONICA=lt.IDLINHATELEFONICA
+        AND	   att.SGTIPOPORTABILIDADE='PORTOUT'
+        and    att.IDPESSOAUSUARIOATUAL is null
+        AND    ar.cdarearegistro=SUBSTR(:nrLinha,1,2)
+        AND	   lb.nrlinha=SUBSTR(:nrLinha,3);  
+ 
+    
+    ULOG( "Apos execucao iContador [%d]",iContador );
+    if( iContador == 0 )
+    {
+        ULOG( "Encontrou codigo de retorno 8...");
+        //formatando
+        endOraStr(szCdErro);
+        endOraStr(szMsgErro);
+        
+        //copiando
+        sprintf(pcdRet,"%s",(char*)szCdErro.arr);
+        sprintf(pmsgRet,"%s",(char*)szMsgErro.arr);
+        ULOG_END( "ERROR:CRetencao::get_errors()" );
+        return 1;
+    }
+
+    ULOG_END( "CRetencao::get_errors()" );
+	return 0;
+
+}

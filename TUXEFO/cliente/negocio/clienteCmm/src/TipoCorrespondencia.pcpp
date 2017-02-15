@@ -1,0 +1,391 @@
+// TipoCorrespondencia.pcpp: implementation for the 
+// CTipoCorrespondencia class.
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw.h>
+#include "../include/Global.h"
+
+EXEC SQL INCLUDE "../include/TipoCorrespondencia.h";
+
+//
+// Construtor e Destrutor
+CTipoCorrespondencia::CTipoCorrespondencia() {
+	icSgTipoCorrespondencia = -1;
+	icDsTipoCorrespondencia = -1;
+
+	memset(sIdUsuarioAlteracao,0,256);
+}
+
+CTipoCorrespondencia::CTipoCorrespondencia(int iIdTipoCorr) {
+
+    ULOG_START("CTipoCorrespondencia::CTipoCorrespondencia()"); 
+    
+	struct sqlca sqlca;
+
+	iIdTipoCorrespondencia = iIdTipoCorr;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL SELECT
+	 SgTipoCorrespondencia,
+	 DsTipoCorrespondencia,
+	 InDisponibilidade
+	INTO
+	 :cSgTipoCorrespondencia:icSgTipoCorrespondencia,
+	 :cDsTipoCorrespondencia:icDsTipoCorrespondencia,
+	 :iInDisponibilidade
+	FROM
+	 apoio.TipoCorrespondencia
+	WHERE
+	 IdTipoCorrespondencia = :iIdTipoCorrespondencia;
+
+	// ID não existe. Seta o ID para -1.
+	if (sqlca.sqlcode == NO_DATA_FOUND)
+		iIdTipoCorrespondencia = -1;
+
+	ULOG_END("CTipoCorrespondencia::CTipoCorrespondencia()"); 
+	return;
+
+	sqlErrorConstrutor:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);	
+	    ULOG_END("CTipoCorrespondencia::CTipoCorrespondencia()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+CTipoCorrespondencia::~CTipoCorrespondencia() {
+}
+
+// Usuário de alteração
+void CTipoCorrespondencia::setUsuarioAlteracao(char* value) {
+	if (value != NULL) {
+		strncpy(sIdUsuarioAlteracao,value, 255);
+		sIdUsuarioAlteracao[255]='\0';
+	}
+}
+
+//
+// Metodos getter
+int CTipoCorrespondencia::getIdTipoCorrespondencia(){
+	return iIdTipoCorrespondencia;
+}
+
+char* CTipoCorrespondencia::getSgTipoCorrespondencia(){
+	if (icSgTipoCorrespondencia < 0)
+		return NULL;
+	else
+		return cSgTipoCorrespondencia;
+}
+
+char* CTipoCorrespondencia::getDsTipoCorrespondencia(){
+	if (icDsTipoCorrespondencia < 0)
+		return NULL;
+	else
+		return cDsTipoCorrespondencia;
+}
+
+int CTipoCorrespondencia::getInDisponibilidade(){
+	return iInDisponibilidade;
+}
+
+//
+// Metodos setter
+void CTipoCorrespondencia::setIdTipoCorrespondencia(int value){
+	iIdTipoCorrespondencia = value;
+}
+
+void CTipoCorrespondencia::setSgTipoCorrespondencia(char* value){
+	if (value == NULL)
+		icSgTipoCorrespondencia = -1;
+	else {
+		strncpy(cSgTipoCorrespondencia, value, 255);
+		cSgTipoCorrespondencia[255]='\0';
+		icSgTipoCorrespondencia = strlen(value);
+	}
+}
+
+void CTipoCorrespondencia::setDsTipoCorrespondencia(char* value){
+	if (value == NULL)
+		icDsTipoCorrespondencia = -1;
+	else {
+		strncpy(cDsTipoCorrespondencia, value, 255);
+		cDsTipoCorrespondencia[255]='\0';
+		icDsTipoCorrespondencia = strlen(value);
+	}
+}
+
+void CTipoCorrespondencia::setInDisponibilidade(int value){
+	iInDisponibilidade = value;
+}
+
+//
+// Métodos de acesso a banco de dados
+int CTipoCorrespondencia::inclui(){
+    ULOG_START("CTipoCorrespondencia::inclui()"); 
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iNovoId;
+        int iTemRegistro;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorInc;
+
+    //Verificando se o registro existe
+	EXEC SQL SELECT count(1)
+               INTO :iTemRegistro
+               FROM apoio.TipoCorrespondencia
+              WHERE upper(dstipocorrespondencia) = upper(:cDsTipoCorrespondencia)
+                 OR upper(sgtipocorrespondencia) = upper(:cSgTipoCorrespondencia);
+
+    if (iTemRegistro)
+        return DUPLICATE_KEY;
+    
+	// Busca o novo ID da sequence.
+	EXEC SQL
+		SELECT apoio.TipoCorrespondenciaSQ.NEXTVAL
+		INTO :iNovoId
+		FROM DUAL;
+	if (sqlca.sqlcode)
+	{
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);	
+	    ULOG_END("CTipoCorrespondencia::inclui()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+	}
+
+	// Insere no banco de dados
+	EXEC SQL
+	INSERT INTO apoio.TipoCorrespondencia
+	(IdTipoCorrespondencia,
+	 SgTipoCorrespondencia,
+	 DsTipoCorrespondencia,
+     Indisponibilidade,
+	 IdUsuarioAlteracao,
+	 DtUltimaAlteracao)
+	VALUES
+	(:iNovoId,
+	 :cSgTipoCorrespondencia:icSgTipoCorrespondencia,
+	 :cDsTipoCorrespondencia:icDsTipoCorrespondencia,
+     1,
+	 :sIdUsuarioAlteracao,
+	 SYSDATE);
+
+	// Inserção OK, coloca o ID no objeto
+	iIdTipoCorrespondencia = iNovoId;
+	
+	ULOG_END("CTipoCorrespondencia::inclui()"); 
+
+	return OK;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorInc:
+    {
+        // Tratamento de qq tipo de chave duplicada (PK ou AK)
+        if (sqlca.sqlcode == DUPLICATE_KEY )
+           return DUPLICATE_KEY;
+
+	    ULOGI( "Finalizando proCAtualizaConta <OK>");
+        ULOG_END("CTipoCorrespondencia::inclui()"); 
+		throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+    }
+}
+
+void CTipoCorrespondencia::exclui(){
+
+
+	ULOG_START("CTipoCorrespondencia::exclui()"); 
+	
+	struct sqlca sqlca;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorExc;
+
+	// Remove do banco de dados
+	EXEC SQL
+	DELETE apoio.TipoCorrespondencia
+	WHERE IdTipoCorrespondencia = :iIdTipoCorrespondencia;
+
+	// Remoção OK, seta ID do objeto para -1
+	iIdTipoCorrespondencia = -1;
+
+	ULOG_END("CTipoCorrespondencia::exclui()"); 
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorExc:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);	
+	    ULOG_END("CTipoCorrespondencia::exclui()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CTipoCorrespondencia::altera(){
+
+	ULOG_START("CTipoCorrespondencia::altera()"); 
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        int iTemRegistro;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorAlt;
+
+    //Verificando se o registro existe
+	EXEC SQL SELECT count(1)
+               INTO :iTemRegistro
+               FROM apoio.TipoCorrespondencia
+              WHERE ( upper(dstipocorrespondencia) = upper(:cDsTipoCorrespondencia)
+                      OR upper(sgtipocorrespondencia) = upper(:cSgTipoCorrespondencia) )
+                AND idtipocorrespondencia != :iIdTipoCorrespondencia;;
+
+    if (iTemRegistro)
+    {
+        ULOGE("ERRO ORACLE -> DUPLICATE_KEY");
+        ULOG_END("CTipoCorrespondencia::altera()"); 
+        return DUPLICATE_KEY;
+    }
+
+
+	// Altera no banco de dados para os dados atuais
+	EXEC SQL
+	UPDATE apoio.TipoCorrespondencia
+	SET
+	 SgTipoCorrespondencia = :cSgTipoCorrespondencia:icSgTipoCorrespondencia,
+	 DsTipoCorrespondencia = :cDsTipoCorrespondencia:icDsTipoCorrespondencia,
+     Indisponibilidade     = :iInDisponibilidade,
+	 IdUsuarioAlteracao    = :sIdUsuarioAlteracao,
+	 DtUltimaAlteracao     = SYSDATE
+	WHERE
+	 IdTipoCorrespondencia = :iIdTipoCorrespondencia;
+
+	ULOG_END("CTipoCorrespondencia::altera()"); 
+	return OK;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorAlt:
+    {
+        // Tratamento de qq tipo de chave duplicada (PK ou AK)
+        if (sqlca.sqlcode == DUPLICATE_KEY )
+        {
+            ULOGE("ERRO ORACLE -> DUPLICATE_KEY");
+            ULOG_END("CTipoCorrespondencia::altera()"); 
+            return DUPLICATE_KEY;
+         }
+           
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);	
+        ULOG_END("CTipoCorrespondencia::altera()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+    }
+}
+
+CTipoCorrespondencia* CTipoCorrespondencia::lista(int* iNroObjetos){
+    
+
+   ULOG_START("CTipoCorrespondencia::lista()"); 
+
+
+	struct sqlca sqlca;
+	CTipoCorrespondencia* listaTpoCorr = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdTpoCorr;
+	char cSgTpoCorr[256];
+	char cDsTpoCorr[256];
+	int iDisp;
+	short icSgTpoCorr;
+	short icDsTpoCorr;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE motivos CURSOR FOR
+	SELECT
+	 IdTipoCorrespondencia,
+	 SgTipoCorrespondencia,
+	 DsTipoCorrespondencia,
+	 InDisponibilidade
+	FROM
+	 apoio.TipoCorrespondencia
+    ORDER BY UPPER(DsTipoCorrespondencia);
+	EXEC SQL OPEN motivos;
+
+	// Corre os dados e monta a lista de objetos
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) {
+		
+		EXEC SQL FETCH motivos INTO
+		 :iIdTpoCorr,
+		 :cSgTpoCorr:icSgTpoCorr,
+		 :cDsTpoCorr:icDsTpoCorr,
+		 :iDisp;
+
+		// Aloca memória para o objeto atual.
+		if ((listaTpoCorr = (CTipoCorrespondencia*) realloc((void *)listaTpoCorr, (sizeof(CTipoCorrespondencia) * iNroObjLocal))) != NULL) {
+			
+			// Coloca os dados do objeto atual.
+			listaTpoCorr[iNroObjLocal-1].setIdTipoCorrespondencia(iIdTpoCorr);
+			listaTpoCorr[iNroObjLocal-1].setSgTipoCorrespondencia(icSgTpoCorr < 0 ? NULL : cSgTpoCorr);
+			listaTpoCorr[iNroObjLocal-1].setDsTipoCorrespondencia(icDsTpoCorr < 0 ? NULL : cDsTpoCorr);
+			listaTpoCorr[iNroObjLocal-1].setInDisponibilidade(iDisp);
+
+		} else {
+			if (listaTpoCorr)
+				free(listaTpoCorr);
+				
+            ULOG_END("CTipoCorrespondencia::lista()"); 				
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG_END("CTipoCorrespondencia::lista()"); 
+	return listaTpoCorr;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);	
+	    ULOG_END("CTipoCorrespondencia::lista()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CTipoCorrespondencia::checaExclusaoPossivel() {
+
+	ULOG_START("CTipoCorrespondencia::checaExclusaoPossivel()"); 
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iQtReg;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorChecaExc;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	// Conta os elementos
+	EXEC SQL
+		SELECT 
+		 count(1)
+		INTO
+		 :iQtReg
+		FROM
+		 Correspondencia.CorrespondenciaDevolvida
+		WHERE
+		 idTipoCorrespondencia = :iIdTipoCorrespondencia;
+		 
+    ULOG_END("CTipoCorrespondencia::checaExclusaoPossivel()"); 
+	return iQtReg;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorChecaExc:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);	
+	    ULOG_END("CTipoCorrespondencia::checaExclusaoPossivel()"); 
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

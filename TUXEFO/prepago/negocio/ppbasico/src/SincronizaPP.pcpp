@@ -1,0 +1,737 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+
+#include <tuxfw.h>
+
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+//==============================================================================
+// Protótipos
+bool AtualizaRegistro( char * idLinhaTelefonica , char * idCliente, char * status);
+bool AtualizaRegistroPorLinha( char * nrLinha , char * idCliente, char * status);
+char *ObtemValorTag(char *pXml, char *pTag);
+
+int SincronizaPP( char * idCliente, char * idLinhaTelefonica)
+{
+    ULOG_START( "SincronizaPP()" );
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR I_SGUF[255+1];
+		VARCHAR I_NRLINHA[255+1];
+		VARCHAR I_IDTIPOLINHA[255+1];
+		VARCHAR I_STLINHA[255+1];
+		VARCHAR I_NRDOCUMENTO[255+1];
+		VARCHAR I_IDCUSTOMER[255+1];
+		VARCHAR I_DTHABILITACAO[255+1];
+		VARCHAR I_DTDESATIVACAO[255+1];
+		VARCHAR I_IDSUBSCRICAO[255+1];
+		VARCHAR I_SGPLANO[255+1];
+		VARCHAR I_NMPESSOA[255+1];
+		VARCHAR I_DTNASCIMENTO[255+1];
+		VARCHAR I_NMEMAIL[255+1];
+		VARCHAR I_SGSEGMENTO[255+1];
+		VARCHAR I_DTINICIORELACIONAMENTO[255+1];
+		VARCHAR I_IDTIPOSERVICO[255+1];
+		VARCHAR I_IDBILLING[255+1];
+		
+		short IND_SGUF = -1;
+		short IND_NRLINHA = -1;
+		short IND_IDTIPOLINHA = -1;
+		short IND_STLINHA = -1;
+		short IND_NRDOCUMENTO = -1;
+		short IND_IDCUSTOMER = -1;
+		short IND_DTHABILITACAO = -1;
+		short IND_DTDESATIVACAO = -1;
+		short IND_IDSUBSCRICAO = -1;
+		short IND_SGPLANO = -1;
+		short IND_NMPESSOA = -1;
+		short IND_DTNASCIMENTO = -1;
+		short IND_NMEMAIL = -1;
+		short IND_SGSEGMENTO = -1;
+		short IND_DTINICIORELACIONAMENTO = -1;
+		short IND_IDTIPOSERVICO = -1;
+		short IND_IDBILLING = -1;	
+
+		char I_IDCLIENTE[255+1];
+		char I_IDLINHATELEFONICA[255+1];		
+	EXEC SQL END DECLARE SECTION;
+   
+    char szRetMsg[4000 + 1];
+	char szO_CDERRO[1000 + 1];
+	char szO_DSERRO[1000 + 1];	
+    char szStatusCode[255 + 1];
+    char szStatusText[255 + 1];
+    char szXml[8000 + 1];
+    char szXmlTmp[8000 + 1];
+    long iErrorNumber=0;
+	char szAux[8000 + 1];
+	
+	memset(szXml,0,sizeof(szXml));
+	memset(szXmlTmp,0,sizeof(szXmlTmp));
+	memset(szAux,0,sizeof(szAux));
+	memset(&I_IDCLIENTE, 0, sizeof(I_IDCLIENTE));
+	memset(&I_IDLINHATELEFONICA, 0, sizeof(I_IDLINHATELEFONICA));
+	memset(&I_SGUF, 0, sizeof(I_SGUF));
+	memset(&I_NRLINHA, 0, sizeof(I_NRLINHA));
+	memset(&I_IDTIPOLINHA, 0, sizeof(I_IDTIPOLINHA));
+	memset(&I_STLINHA, 0, sizeof(I_STLINHA));
+	memset(&I_NRDOCUMENTO, 0, sizeof(I_NRDOCUMENTO));
+	memset(&I_IDCUSTOMER, 0, sizeof(I_IDCUSTOMER));
+	memset(&I_DTHABILITACAO, 0, sizeof(I_DTHABILITACAO));
+	memset(&I_DTDESATIVACAO, 0, sizeof(I_DTDESATIVACAO));
+	memset(&I_IDSUBSCRICAO, 0, sizeof(I_IDSUBSCRICAO));
+	memset(&I_SGPLANO, 0, sizeof(I_SGPLANO));
+	memset(&I_NMPESSOA, 0, sizeof(I_NMPESSOA));
+	memset(&I_DTNASCIMENTO, 0, sizeof(I_DTNASCIMENTO));
+	memset(&I_NMEMAIL, 0, sizeof(I_NMEMAIL));
+	memset(&I_SGSEGMENTO, 0, sizeof(I_SGSEGMENTO));
+	memset(&I_DTINICIORELACIONAMENTO, 0, sizeof(I_DTINICIORELACIONAMENTO));
+	memset(&I_IDTIPOSERVICO, 0, sizeof(I_IDTIPOSERVICO));
+	memset(&I_IDBILLING, 0, sizeof(I_IDBILLING));		
+	
+	CONVIND(I_SGUF, IND_SGUF);
+	CONVIND(I_NRLINHA, IND_NRLINHA);
+	CONVIND(I_IDTIPOLINHA, IND_IDTIPOLINHA);
+	CONVIND(I_STLINHA, IND_STLINHA);
+	CONVIND(I_NRDOCUMENTO, IND_NRDOCUMENTO);
+	CONVIND(I_IDCUSTOMER, IND_IDCUSTOMER);
+	CONVIND(I_DTHABILITACAO, IND_DTHABILITACAO);
+	CONVIND(I_DTDESATIVACAO, IND_DTDESATIVACAO);
+	CONVIND(I_IDSUBSCRICAO, IND_IDSUBSCRICAO);
+	CONVIND(I_SGPLANO, IND_SGPLANO);
+	CONVIND(I_NMPESSOA, IND_NMPESSOA);
+	CONVIND(I_DTNASCIMENTO, IND_DTNASCIMENTO);
+	CONVIND(I_NMEMAIL, IND_NMEMAIL);
+	CONVIND(I_SGSEGMENTO, IND_SGSEGMENTO);
+	CONVIND(I_DTINICIORELACIONAMENTO, IND_DTINICIORELACIONAMENTO);
+	CONVIND(I_IDTIPOSERVICO, IND_IDTIPOSERVICO);
+	CONVIND(I_IDBILLING, IND_IDBILLING);		
+	
+	sprintf(I_IDCLIENTE,"%s", idCliente);
+	sprintf(I_IDLINHATELEFONICA,"%s",idLinhaTelefonica);
+	char *pc_statusCode = 0x0;
+    char *pc_statusText = 0x0;
+	char *pc_Msg = 0x0;
+    TuxRemoteService* remoteService;
+    TuxMessage* inputMessage;
+    XMLGen oEntrada;
+	struct sqlca sqlca;
+	
+	EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+	EXEC SQL 
+		SELECT VV.SGUF,
+		   VV.NRLINHA,
+		   DECODE(VV.IDTIPOLINHA, 1,1 , 5 ,1, 2, 2, 6, 2, 4, 3, 7, 3, 0) AS TIPOLINHA,
+		   VV.STLINHA,
+		   VV.NRDOCUMENTO,
+		   VV.IDCUSTOMER,
+		   TO_CHAR(VV.DTHABILITACAO,'DD/MM/YYYY'),
+		   TO_CHAR(VV.DTDESATIVACAO,'DD/MM/YYYY'),
+		   VV.IDSUBSCRICAO,
+		   VV.SGPLANO,
+		   VV.NMPESSOA,
+		   TO_CHAR(VV.DTNASCIMENTO,'DD/MM/YYYY'),
+		   VV.NMEMAIL,
+		   VV.SGSEGMENTO,
+		   TO_CHAR(VV.DTINICIORELACIONAMENTO,'DD/MM/YYYY'),
+		   VV.IDTIPOSERVICO,
+		   DECODE(VV.IDTIPOLINHA,1,1,2,2,4,1,5,1,6,2,7,1,0) AS IDBILLING
+		  INTO 
+			:I_SGUF:IND_SGUF,
+			:I_NRLINHA:IND_NRLINHA,
+			:I_IDTIPOLINHA:IND_IDTIPOLINHA,
+			:I_STLINHA:IND_STLINHA,
+			:I_NRDOCUMENTO:IND_NRDOCUMENTO,
+			:I_IDCUSTOMER:IND_IDCUSTOMER,
+			:I_DTHABILITACAO:IND_DTHABILITACAO,
+			:I_DTDESATIVACAO:IND_DTDESATIVACAO,
+			:I_IDSUBSCRICAO:IND_IDSUBSCRICAO,
+			:I_SGPLANO:IND_SGPLANO,
+			:I_NMPESSOA:IND_NMPESSOA,
+			:I_DTNASCIMENTO:IND_DTNASCIMENTO,
+			:I_NMEMAIL:IND_NMEMAIL,
+			:I_SGSEGMENTO:IND_SGSEGMENTO,
+			:I_DTINICIORELACIONAMENTO:IND_DTINICIORELACIONAMENTO,
+			:I_IDTIPOSERVICO:IND_IDTIPOSERVICO,
+			:I_IDBILLING:IND_IDBILLING	  	  
+	  FROM CUSTOMER.VIVOVALORIZA VV
+	  WHERE VV.IDCLIENTEVV = :I_IDCLIENTE
+	   AND VV.IDLINHATELEFONICA = :I_IDLINHATELEFONICA;
+
+    ULOG(">>>SincronizaPP\n");    
+	
+	
+	sprintf( szXmlTmp,"<SGUF>%s</SGUF>", (char*)I_SGUF.arr); strcpy(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<NRLINHA>%s</NRLINHA>", (char*)I_NRLINHA.arr); strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<IDTIPOLINHA>%s</IDTIPOLINHA>", (char*)I_IDTIPOLINHA.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<STLINHA>%s</STLINHA>", (char*)I_STLINHA.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<NRDOCUMENTO>%s</NRDOCUMENTO>", (char*)I_NRDOCUMENTO.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<IDCUSTOMER>%s</IDCUSTOMER>", (char*)I_IDCUSTOMER.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<DTHABILITACAO>%s</DTHABILITACAO>", (char*)I_DTHABILITACAO.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<DTDESATIVACAO>%s</DTDESATIVACAO>", (char*)I_DTDESATIVACAO.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<IDSUBSCRICAO>%s</IDSUBSCRICAO>", (char*)I_IDSUBSCRICAO.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<SGPLANO>%s</SGPLANO>", (char*)I_SGPLANO.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<NMPESSOA>%s</NMPESSOA>", (char*)I_NMPESSOA.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<DTNASCIMENTO>%s</DTNASCIMENTO>", (char*)I_DTNASCIMENTO.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<NMEMAIL>%s</NMEMAIL>", (char*)I_NMEMAIL.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<SGSEGMENTO>%s</SGSEGMENTO>", (char*)I_SGSEGMENTO.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<DTINICIORELACIONAMENTO>%s</DTINICIORELACIONAMENTO>", (char*)I_DTINICIORELACIONAMENTO.arr);  strcat(szAux,szXmlTmp);
+	sprintf( szXmlTmp,"<IDTIPOSERVICO>%s</IDTIPOSERVICO>", (char*)I_IDTIPOSERVICO.arr);  strcat(szAux,szXmlTmp);	 
+	sprintf( szXmlTmp,"<IDBILLING>%s</IDBILLING>", (char*)I_IDBILLING.arr);  strcat(szAux,szXmlTmp);	
+	sprintf(szXml, "<msg>%s</msg>",szAux);	
+	ULOG( "ENVIANDO Registro de Cadastro para o Programa de Pontos:" );
+	
+    ULOG( "szXml [%s]", szXml );
+	
+    oEntrada.aggregateXML(szXml);
+
+    // Faz a solicitação ao serviço
+    remoteService = new TuxRemoteService();
+    inputMessage = new TuxMessage();
+    inputMessage->setUser("FO");
+    inputMessage->setService("SINCPP");
+    inputMessage->setMessageBody(&oEntrada);
+    // Repassa configuracoes ao manipulador do serviço remoto e invoca o servico.
+    remoteService->setServiceName("SINCPP");
+    remoteService->setInputMessage(inputMessage);
+
+    if(remoteService->remoteCall() != TUXFWRET_OK)
+    {
+		ULOG( "ERRO. remoteService->remoteCall() != TUXFWRET_OK \n");
+        delete remoteService;
+        delete inputMessage;
+		return -2;
+    }
+
+    memset( szStatusCode, 0x0, sizeof(szStatusCode) );
+    memset( szStatusText, 0x0, sizeof(szStatusText) );
+
+    pc_statusCode = remoteService->getOutputMessage()->getStatusCode();
+    pc_statusText = remoteService->getOutputMessage()->getStatusText();
+	pc_Msg = remoteService->getOutputMessage()->getMessageBody();
+
+    if(pc_statusCode)
+	{
+        strcpy(szStatusCode, pc_statusCode);
+		ULOG( "#szStatusCode[%s] \n", szStatusCode);
+
+	}
+
+    if(pc_statusText)
+    {
+        if(strlen(pc_statusText) >= sizeof(szStatusText))
+            strncpy(szStatusText, pc_statusText, sizeof(szStatusText) - 1);
+        else
+            strcpy(szStatusText, pc_statusText);
+		
+		ULOG( "#szStatusText[%s] \n", szStatusText);
+    }
+	
+	if ( szStatusCode[2] == 'I' )
+	{
+		if(pc_Msg)
+		{
+			if(strlen(pc_statusText) >= sizeof(szStatusText))
+				strncpy(szStatusText, pc_statusText, sizeof(szStatusText) - 1);
+			else
+				strcpy(szStatusText, pc_statusText);
+				
+			memset( szO_CDERRO, 0x0, sizeof(szO_CDERRO) );			
+			memset( szO_DSERRO, 0x0, sizeof(szO_DSERRO) );			
+			
+			try
+			{
+				SAFE_STRNCPY(szO_CDERRO,ObtemValorTag(pc_Msg, "O_CDERRO"));  	
+				SAFE_STRNCPY(szO_DSERRO,ObtemValorTag(pc_Msg, "O_DSERRO")); 
+				ULOG( "#szO_CDERRO[%s] \n", szO_CDERRO);
+				ULOG( "#szO_DSERRO[%s] \n", szO_DSERRO);
+			}
+			catch(...)
+			{
+				ULOG( "#Erro tentanto ober O_CDERRO e O_DSERRO \n");
+			}	
+		}
+		else
+		{	
+			ULOG( "ERRO. Serviço CADPP nao retornou xml com a TAG de MessageBody:IDLINHATELEFONICA:[%s], IDCLIENTE:[%s]\n", idLinhaTelefonica, idCliente);
+		}	
+	}
+	
+	ULOG("DESALOCANDO OBJETOS INICIO");
+    free(pc_statusCode);
+    free(pc_statusText);
+	free(pc_Msg);
+	delete remoteService;
+    delete inputMessage;
+	ULOG("DESALOCANDO OBJETOS FIM");
+    ULOG( "statusCode=[%s]\n",szStatusCode );
+    ULOG( "statusText=[%s]\n",szStatusText );
+
+    if ( szStatusCode[2] != 'I' )
+    {
+        iErrorNumber = TPESYSTEM;
+    }
+    
+    if ( iErrorNumber )
+    {
+        //if ( 0 == szStatusCode[0] ) 
+        //{
+            switch (iErrorNumber) 
+            {
+                case TPEABORT     : strcpy(szStatusCode,"TPEABORT");strcpy(szStatusText,"TPEABORT"); break;
+                case TPEBADDESC   : strcpy(szStatusCode,"TPEBADDESC");strcpy(szStatusText,"TPEBADDESC"); break;
+                case TPEBLOCK     : strcpy(szStatusCode,"TPEBLOCK");strcpy(szStatusText,"TPEBLOCK"); break;
+                case TPEINVAL     : strcpy(szStatusCode,"TPEINVAL");strcpy(szStatusText,"TPEINVAL"); break;
+                case TPELIMIT     : strcpy(szStatusCode,"TPELIMIT");strcpy(szStatusText,"TPELIMIT"); break;
+                case TPENOENT     : strcpy(szStatusCode,"TPENOENT");strcpy(szStatusText,"TPENOENT"); break;
+                case TPEOS        : strcpy(szStatusCode,"TPEOS");strcpy(szStatusText,"TPEOS"); break;
+                case TPEPERM      : strcpy(szStatusCode,"TPEPERM");strcpy(szStatusText,"TPEPERM"); break;
+                case TPEPROTO     : strcpy(szStatusCode,"TPEPROTO");strcpy(szStatusText,"TPEPROTO"); break;
+                case TPESVCERR    : strcpy(szStatusCode,"TPESVCERR");strcpy(szStatusText,"TPESVCERR"); break;
+                case TPESVCFAIL   : strcpy(szStatusCode,"TPESVCFAIL");strcpy(szStatusText,"TPESVCFAIL"); break;
+                case TPESYSTEM    : strcpy(szStatusCode,"TPESYSTEM");strcpy(szStatusText,"TPESYSTEM"); break;
+                case TPETIME      : strcpy(szStatusCode,"TPETIME");strcpy(szStatusText,"TPETIME"); break;
+                case TPETRAN      : strcpy(szStatusCode,"TPETRAN");strcpy(szStatusText,"TPETRAN"); break;
+                case TPGOTSIG     : strcpy(szStatusCode,"TPGOTSIG");strcpy(szStatusText,"TPGOTSIG"); break;
+                case TPERMERR     : strcpy(szStatusCode,"TPERMERR");strcpy(szStatusText,"TPERMERR"); break;
+                case TPEITYPE     : strcpy(szStatusCode,"TPEITYPE");strcpy(szStatusText,"TPEITYPE"); break;
+                case TPEOTYPE     : strcpy(szStatusCode,"TPEOTYPE");strcpy(szStatusText,"TPEOTYPE"); break;
+                case TPERELEASE   : strcpy(szStatusCode,"TPERELEASE");strcpy(szStatusText,"TPERELEASE"); break;
+                case TPEHAZARD    : strcpy(szStatusCode,"TPEHAZARD");strcpy(szStatusText,"TPEHAZARD"); break;
+                case TPEHEURISTIC : strcpy(szStatusCode,"TPEHEURISTIC");strcpy(szStatusText,"TPEHEURISTIC"); break;
+                case TPEEVENT     : strcpy(szStatusCode,"TPEEVENT");strcpy(szStatusText,"TPEEVENT"); break;
+                case TPEMATCH     : strcpy(szStatusCode,"TPEMATCH");strcpy(szStatusText,"TPEMATCH"); break;
+                case TPEDIAGNOSTIC: strcpy(szStatusCode,"TPEDIAGNOSTIC");strcpy(szStatusText,"TPEDIAGNOSTIC"); break;
+                case TPEMIB       : strcpy(szStatusCode,"TPEMIB");strcpy(szStatusText,"TPEMIB"); break;
+                default           : strcpy(szStatusCode,"ERRDESCONHECIDO");strcpy(szStatusText,"ERRDESCONHECIDO"); break;
+            } // switch (iErrorNumber)
+        //} // if ( 0 == szStatusCode[0] )
+    }
+
+    /* Se sucesso grava o XML em disco e atualiza o registro */
+    if(szStatusCode[2] == 'I' && 0 == iErrorNumber) 
+	{
+        ULOG( "szXml [%s] processado por SINCPP!", szXml );
+		int iO_CDERRO;
+		char status[2];
+		memset(status,0,sizeof(status));
+		try
+		{
+			iO_CDERRO = atoi(szO_CDERRO);
+		}
+		catch(...)
+		{
+		}
+		
+		if (iO_CDERRO == 0) {
+			strcpy(status,"S");
+		} else {
+			strcpy(status,"E");
+		}
+
+        bool bAtualizado = AtualizaRegistro( idLinhaTelefonica, idCliente, status);
+        if( bAtualizado == true)
+        {
+            ULOG( "SUCESSO na atualização do IDLINHATELEFONICA :[%s], IDCLIENTE :[%s]\n", idLinhaTelefonica, idCliente );
+        }
+        else
+        {
+            ULOG( "ERRO na atualização do IDLINHATELEFONICA :[%s], IDCLIENTE :[%s]\n", idLinhaTelefonica, idCliente );
+            ULOG( "Finalizando processo...\n" );
+            ULOG_END( "SincronizaPP()" );
+            return -2;
+        }
+	}
+    else /* Grava Codigo de erro e mensagem */
+    {
+		ULOG( "ERRO no statusCode dos serviço SINCPP. IDLINHATELEFONICA :[%s], IDCLIENTE :[%s]\n", idLinhaTelefonica, idCliente );
+		bool bAtualizado = AtualizaRegistro( idLinhaTelefonica, idCliente, "E");
+        if( bAtualizado == true)
+        {
+            ULOG( "SUCESSO na atualização do IDLINHATELEFONICA :[%s], IDCLIENTE :[%s]\n", idLinhaTelefonica, idCliente );
+        }
+		ULOG( "Finalizando processo...\n" );
+        ULOG_END( "SincronizaPP()" );
+		return 0;
+    }
+	
+    ULOG("Processamento encerrado com sucesso...\n");
+    ULOG_END( "SincronizaPP()" );
+ 
+    return 0;
+	
+	sqlError:
+        ULOG( "*** ERRO: Finalizando com erro sqlca.sqlcode [%d]\n", sqlca.sqlcode );
+        ULOG( "Finalizando processo...\n" );
+		return -2;
+}
+
+
+int SincronizaPPPorLinha( char * idCliente, char * nrTelefone)
+{
+    ULOG_START( "SincronizaPPPorLinha()" );
+	   
+    char szRetMsg[4000 + 1];
+	char szO_CDERRO[1000 + 1];
+	char szO_DSERRO[1000 + 1];	
+    char szStatusCode[255 + 1];
+    char szStatusText[255 + 1];
+    char szXml[8000 + 1];
+    char szXmlTmp[8000 + 1];
+    long iErrorNumber=0;
+	char szAux[8000 + 1];
+	
+	memset(szXml,0,sizeof(szXml));
+	memset(szXmlTmp,0,sizeof(szXmlTmp));
+	memset(szAux,0,sizeof(szAux));	
+	
+	char *pc_statusCode = 0x0;
+    char *pc_statusText = 0x0;
+	char *pc_Msg = 0x0;
+    TuxRemoteService* remoteService;
+    TuxMessage* inputMessage;
+    XMLGen oEntrada;
+	    	
+	sprintf( szXmlTmp,"<NRTELEFONE>%s</NRTELEFONE>", nrTelefone); strcpy(szAux,szXmlTmp);
+	sprintf(szXml, "<msg>%s</msg>",szAux);	
+	ULOG( "ENVIANDO Registro de Cadastro para o Programa de Pontos:" );
+	
+    ULOG( "szXml [%s]", szXml );
+	
+    oEntrada.aggregateXML(szXml);
+
+    // Faz a solicitação ao serviço
+    remoteService = new TuxRemoteService();
+    inputMessage = new TuxMessage();
+    inputMessage->setUser("FO");
+    inputMessage->setService("SINCPP");
+    inputMessage->setMessageBody(&oEntrada);
+    // Repassa configuracoes ao manipulador do serviço remoto e invoca o servico.
+    remoteService->setServiceName("SINCPP");
+    remoteService->setInputMessage(inputMessage);
+
+    if(remoteService->remoteCall() != TUXFWRET_OK)
+    {
+		ULOG( "ERRO. remoteService->remoteCall() != TUXFWRET_OK \n");
+        delete remoteService;
+        delete inputMessage;
+		return -2;
+    }
+
+    memset( szStatusCode, 0x0, sizeof(szStatusCode) );
+    memset( szStatusText, 0x0, sizeof(szStatusText) );
+
+    pc_statusCode = remoteService->getOutputMessage()->getStatusCode();
+    pc_statusText = remoteService->getOutputMessage()->getStatusText();
+	pc_Msg = remoteService->getOutputMessage()->getMessageBody();
+
+    if(pc_statusCode)
+	{
+        strcpy(szStatusCode, pc_statusCode);
+		ULOG( "#szStatusCode[%s] \n", szStatusCode);
+
+	}
+
+    if(pc_statusText)
+    {
+        if(strlen(pc_statusText) >= sizeof(szStatusText))
+            strncpy(szStatusText, pc_statusText, sizeof(szStatusText) - 1);
+        else
+            strcpy(szStatusText, pc_statusText);
+		
+		ULOG( "#szStatusText[%s] \n", szStatusText);
+    }
+	
+	if ( szStatusCode[2] == 'I' )
+	{
+		if(pc_Msg)
+		{
+			if(strlen(pc_statusText) >= sizeof(szStatusText))
+				strncpy(szStatusText, pc_statusText, sizeof(szStatusText) - 1);
+			else
+				strcpy(szStatusText, pc_statusText);
+				
+			memset( szO_CDERRO, 0x0, sizeof(szO_CDERRO) );			
+			memset( szO_DSERRO, 0x0, sizeof(szO_DSERRO) );			
+			
+			try
+			{
+				SAFE_STRNCPY(szO_CDERRO,ObtemValorTag(pc_Msg, "O_CDERRO"));  	
+				SAFE_STRNCPY(szO_DSERRO,ObtemValorTag(pc_Msg, "O_DSERRO")); 
+				ULOG( "#szO_CDERRO[%s] \n", szO_CDERRO);
+				ULOG( "#szO_DSERRO[%s] \n", szO_DSERRO);
+			}
+			catch(...)
+			{
+				ULOG( "#Erro tentanto ober O_CDERRO e O_DSERRO \n");
+			}	
+		}
+		else
+		{	
+			ULOG( "ERRO. Serviço CADPP nao retornou xml com a TAG de MessageBody:NRTELEFONE:[%s]\n", nrTelefone);
+		}	
+	}
+	
+	ULOG("DESALOCANDO OBJETOS INICIO");
+    free(pc_statusCode);
+    free(pc_statusText);
+	free(pc_Msg);
+	delete remoteService;
+    delete inputMessage;
+	ULOG("DESALOCANDO OBJETOS FIM");
+    ULOG( "statusCode=[%s]\n",szStatusCode );
+    ULOG( "statusText=[%s]\n",szStatusText );
+
+    if ( szStatusCode[2] != 'I' )
+    {
+        iErrorNumber = TPESYSTEM;
+    }
+    
+    if ( iErrorNumber )
+    {
+        //if ( 0 == szStatusCode[0] ) 
+        //{
+            switch (iErrorNumber) 
+            {
+                case TPEABORT     : strcpy(szStatusCode,"TPEABORT");strcpy(szStatusText,"TPEABORT"); break;
+                case TPEBADDESC   : strcpy(szStatusCode,"TPEBADDESC");strcpy(szStatusText,"TPEBADDESC"); break;
+                case TPEBLOCK     : strcpy(szStatusCode,"TPEBLOCK");strcpy(szStatusText,"TPEBLOCK"); break;
+                case TPEINVAL     : strcpy(szStatusCode,"TPEINVAL");strcpy(szStatusText,"TPEINVAL"); break;
+                case TPELIMIT     : strcpy(szStatusCode,"TPELIMIT");strcpy(szStatusText,"TPELIMIT"); break;
+                case TPENOENT     : strcpy(szStatusCode,"TPENOENT");strcpy(szStatusText,"TPENOENT"); break;
+                case TPEOS        : strcpy(szStatusCode,"TPEOS");strcpy(szStatusText,"TPEOS"); break;
+                case TPEPERM      : strcpy(szStatusCode,"TPEPERM");strcpy(szStatusText,"TPEPERM"); break;
+                case TPEPROTO     : strcpy(szStatusCode,"TPEPROTO");strcpy(szStatusText,"TPEPROTO"); break;
+                case TPESVCERR    : strcpy(szStatusCode,"TPESVCERR");strcpy(szStatusText,"TPESVCERR"); break;
+                case TPESVCFAIL   : strcpy(szStatusCode,"TPESVCFAIL");strcpy(szStatusText,"TPESVCFAIL"); break;
+                case TPESYSTEM    : strcpy(szStatusCode,"TPESYSTEM");strcpy(szStatusText,"TPESYSTEM"); break;
+                case TPETIME      : strcpy(szStatusCode,"TPETIME");strcpy(szStatusText,"TPETIME"); break;
+                case TPETRAN      : strcpy(szStatusCode,"TPETRAN");strcpy(szStatusText,"TPETRAN"); break;
+                case TPGOTSIG     : strcpy(szStatusCode,"TPGOTSIG");strcpy(szStatusText,"TPGOTSIG"); break;
+                case TPERMERR     : strcpy(szStatusCode,"TPERMERR");strcpy(szStatusText,"TPERMERR"); break;
+                case TPEITYPE     : strcpy(szStatusCode,"TPEITYPE");strcpy(szStatusText,"TPEITYPE"); break;
+                case TPEOTYPE     : strcpy(szStatusCode,"TPEOTYPE");strcpy(szStatusText,"TPEOTYPE"); break;
+                case TPERELEASE   : strcpy(szStatusCode,"TPERELEASE");strcpy(szStatusText,"TPERELEASE"); break;
+                case TPEHAZARD    : strcpy(szStatusCode,"TPEHAZARD");strcpy(szStatusText,"TPEHAZARD"); break;
+                case TPEHEURISTIC : strcpy(szStatusCode,"TPEHEURISTIC");strcpy(szStatusText,"TPEHEURISTIC"); break;
+                case TPEEVENT     : strcpy(szStatusCode,"TPEEVENT");strcpy(szStatusText,"TPEEVENT"); break;
+                case TPEMATCH     : strcpy(szStatusCode,"TPEMATCH");strcpy(szStatusText,"TPEMATCH"); break;
+                case TPEDIAGNOSTIC: strcpy(szStatusCode,"TPEDIAGNOSTIC");strcpy(szStatusText,"TPEDIAGNOSTIC"); break;
+                case TPEMIB       : strcpy(szStatusCode,"TPEMIB");strcpy(szStatusText,"TPEMIB"); break;
+                default           : strcpy(szStatusCode,"ERRDESCONHECIDO");strcpy(szStatusText,"ERRDESCONHECIDO"); break;
+            } // switch (iErrorNumber)
+        //} // if ( 0 == szStatusCode[0] )
+    }
+
+    /* Se sucesso grava o XML em disco e atualiza o registro */
+    if(szStatusCode[2] == 'I' && 0 == iErrorNumber) 
+	{
+        ULOG( "szXml [%s] processado por SINCPP!", szXml );
+		int iO_CDERRO;
+		char status[2];
+		memset(status,0,sizeof(status));
+		try
+		{
+			iO_CDERRO = atoi(szO_CDERRO);
+		}
+		catch(...)
+		{
+		}
+		
+		if (iO_CDERRO == 0) {
+			strcpy(status,"S");
+		} else {
+			strcpy(status,"E");
+		}
+
+        bool bAtualizado = AtualizaRegistroPorLinha( nrTelefone, idCliente, status);
+        if( bAtualizado == true)
+        {
+            ULOG( "SUCESSO na atualização do NRTELEFONE :[%s], IDCLIENTE :[%s]\n", nrTelefone, idCliente );
+        }
+        else
+        {
+            ULOG( "ERRO na atualização do NRTELEFONE :[%s], IDCLIENTE :[%s]\n", nrTelefone, idCliente );
+            ULOG( "Finalizando processo...\n" );
+            ULOG_END( "SincronizaPP()" );
+            return -2;
+        }
+	}
+    else /* Grava Codigo de erro e mensagem */
+    {
+		ULOG( "ERRO no statusCode dos serviço SINCPP. NRTELEFONE :[%s], IDCLIENTE :[%s]\n", nrTelefone, idCliente );
+		bool bAtualizado = AtualizaRegistroPorLinha( nrTelefone, idCliente, "E");
+        if( bAtualizado == true)
+        {
+            ULOG( "SUCESSO na atualização do NRTELEFONE :[%s], IDCLIENTE :[%s]\n", nrTelefone, idCliente );
+        }
+		ULOG( "Finalizando processo...\n" );
+        ULOG_END( "SincronizaPP()" );
+		return 0;
+    }
+	
+    ULOG("Processamento encerrado com sucesso...\n");
+    ULOG_END( "SincronizaPP()" );
+ 
+    return 0;	
+}
+
+/************************************************************************************************************/
+char *ObtemValorTag(char *pXml, char *pTag)
+{
+    static char szValue[4096 + 1];
+
+    szValue[0] = 0;
+    if ( pXml )
+    {
+        if ( *pXml )
+        {
+            char *p0 = strstr(pXml,pTag) + strlen(pTag) + 1;
+            if ( p0 )
+            {
+                char *p1 = strstr(p0,pTag) - 2;
+                if ( p1 )
+                {
+                    if ( p1 > p0 )
+                    {
+                        int tam = p1-p0;
+                        if (tam > 4096) tam = 4096;
+                        strncpy(szValue,p0,tam);
+                        szValue[tam]=0;
+                    }
+                }
+            }
+        }
+    }
+
+    return szValue;
+}
+
+
+/************************************************************************************************************/
+bool AtualizaRegistro( char * idLinhaTelefonica , char * idCliente, char *status)
+{
+    ULOG_START( "AtualizaRegistro()" );
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+        char i_idLinhaTelefonica[255];
+		char i_idCliente[255];	
+		char i_status[255];
+    EXEC SQL END DECLARE SECTION;
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+	
+	memset(i_idLinhaTelefonica,0,sizeof(i_idLinhaTelefonica));
+	memset(i_idCliente,0,sizeof(i_idCliente));
+	memset(i_status,0,sizeof(i_status));
+	
+	strcpy(i_idLinhaTelefonica, idLinhaTelefonica);
+	strcpy(i_idCliente, idCliente);
+	strcpy(i_status, status);
+    
+    ULOG( "ATUALIZANDO IDLINHATELEFONICA [%s], IDCLIENTE [%s], STATUS [%s]", idLinhaTelefonica, idCliente, status);
+
+    /* atualiza base com código de erro da transacao de envio para legado */
+    EXEC SQL
+        UPDATE
+            VIVOVALORIZA.LINHAVV
+        SET
+            INSINCRONIZA = :i_status
+        WHERE
+            IDLINHATELEFONICA = :i_idLinhaTelefonica
+		AND IDCLIENTEVV = :i_idCliente;
+
+    ULOG_END( "AtualizaRegistro()" );
+    return true;
+
+    erro:
+        ULOG( "*** ERRO: Finalizando com erro sqlca.sqlcode [%d]\n", sqlca.sqlcode );
+        ULOG_END( "AtualizaRegistro()" );
+        return false;
+
+    naoexiste:
+        ULOG( "*** ERRO: idLinhaTelefonica [%s] nao encontrado\n", idLinhaTelefonica );
+        ULOG_END( "AtualizaRegistro()" );
+        return false;
+}
+
+bool AtualizaRegistroPorLinha( char * nrLinha , char * idCliente, char *status)
+{
+    ULOG_START( "AtualizaRegistroPorLinha()" );
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+        char i_nrLinha[255];
+		char i_idCliente[255];	
+		char i_status[255];
+    EXEC SQL END DECLARE SECTION;
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+	
+	memset(i_nrLinha,0,sizeof(i_nrLinha));
+	memset(i_idCliente,0,sizeof(i_idCliente));
+	memset(i_status,0,sizeof(i_status));
+	
+	strcpy(i_nrLinha, nrLinha);
+	strcpy(i_idCliente, idCliente);
+	strcpy(i_status, status);
+    
+    ULOG( "ATUALIZANDO NRLINHA [%s], IDCLIENTE [%s], STATUS [%s]", nrLinha, idCliente, status);
+
+    /* atualiza base com código de erro da transacao de envio para legado */
+    EXEC SQL
+        UPDATE
+            VIVOVALORIZA.LINHAVV
+        SET
+            INSINCRONIZA = :i_status
+        WHERE
+            NRTELEFONE = :i_nrLinha
+		AND IDCLIENTEVV = :i_idCliente;
+
+    ULOG_END( "AtualizaRegistroPorLinha()" );
+    return true;
+
+    erro:
+        ULOG( "*** ERRO: Finalizando com erro sqlca.sqlcode [%d]\n", sqlca.sqlcode );
+        ULOG_END( "AtualizaRegistroPorLinha()" );
+        return false;
+
+    naoexiste:
+        ULOG( "*** ERRO: nrLinha [%s] nao encontrado\n", nrLinha );
+        ULOG_END( "AtualizaRegistroPorLinha()" );
+        return false;
+}
+

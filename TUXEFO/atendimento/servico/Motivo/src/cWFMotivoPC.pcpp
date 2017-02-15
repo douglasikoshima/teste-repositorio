@@ -1,0 +1,343 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1.114.2 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/06 12:36:43 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+#include "../../../commons/SmallString.h"
+
+#include "../include/cWFMotivo.h"
+
+//==============================================================================
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+    #include "../include/stWFMotivo.h"
+EXEC SQL END DECLARE SECTION;
+
+//==============================================================================
+// Prototipos
+void sql_error_WFMotivo(sqlca*sqlca);
+
+//==============================================================================
+// Implementações
+int proCIncluirWFMotivo(st_Motivo* dados, st_vlMotivo* status, XMLGen* saida)
+{
+    ULOG_START("proCIncluirWFMotivo()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_Motivo   oDados;
+        struct st_vlMotivo oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFMotivo(&sqlca);
+
+    EXEC SQL SELECT atendimento.MotivoSQ.NEXTVAL INTO :oDados.idMotivo FROM DUAL;
+
+    EXEC SQL 
+        INSERT INTO
+            ATENDIMENTO.MOTIVO
+            (
+                IDMOTIVO,
+                // IDTABELAMOTIVO,
+                DSMOTIVO,
+                IDUSUARIOALTERACAO,
+                DTULTIMAALTERACAO,
+                INVISIVEL,
+                DTEXCLUSAO
+            )
+            VALUES
+            (
+                :oDados.idMotivo,
+                //:oDados.idTabelaMotivo,
+                DECODE(:oStatus.dsMotivo, -1,NULL,:oDados.dsMotivo),
+                DECODE(:oStatus.idUsuarioAlteracao,-1,NULL,:oDados.idUsuarioAlteracao),
+                TO_DATE(DECODE(:oStatus.dtUltimaAlteracao,-1,NULL,:oDados.dtUltimaAlteracao),'DD/MM/YYYY HH24:MI:SS'),
+                1,
+                NULL
+            );
+
+    ULOG_END("proCIncluirWFMotivo()");
+
+    return oDados.idMotivo;
+}
+
+int proCAlterarWFMotivo(st_Motivo* dados, st_vlMotivo* status, XMLGen* saida)
+{
+    ULOG_START("proCAlterarWFMotivo()");
+
+    struct sqlca sqlca;
+    SmallString query = "UPDATE atendimento.Motivo SET ";
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_Motivo   oDados;
+        struct st_vlMotivo oStatus;
+        char *pQuery;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFMotivo(&sqlca);
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    bool separa = false;
+
+    //if (status->idTabelaMotivo != -1)
+    //{
+    //  montarUpdate(query,"idTabelaMotivo", oDados.idTabelaMotivo, TIPO_INT);
+    //}
+
+    if (status->idUsuarioAlteracao != -1) 
+    {
+        montarUpdate(query,"idUsuarioAlteracao", oDados.idUsuarioAlteracao, TIPO_INT);
+    }
+
+    if (status->dsMotivo != -1) 
+    {
+        montarUpdate(query,"dsMotivo", oDados.dsMotivo, TIPO_CHAR);
+    }
+
+    if (status->dtUltimaAlteracao != -1) 
+    {
+        montarUpdate(query,"dtUltimaAlteracao", oDados.dtUltimaAlteracao, TIPO_DATAHORA);
+    }
+
+    query += "WHERE idMotivo = ";
+    query += dados->idMotivo;
+
+    pQuery = query.c_str();
+
+    ULOG("query=%s",pQuery);
+
+    EXEC SQL EXECUTE IMMEDIATE :pQuery;
+
+    ULOG_END("proCAlterarWFMotivo");
+
+    return 1;
+}
+
+int proCExcluirWFMotivo(st_Motivo* dados, st_vlMotivo* status, XMLGen* saida)
+{
+    ULOG_START("proCExcluirWFMotivo");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idMotivo = dados->idMotivo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFMotivo(&sqlca);
+
+    EXEC SQL 
+        UPDATE
+            ATENDIMENTO.MOTIVO
+        SET
+            DTEXCLUSAO = SYSDATE
+        WHERE
+            IDMOTIVO = :idMotivo;
+
+    //EXEC SQL 
+    //  DELETE
+    //      atendimento.Motivo
+    //  WHERE
+    //      IDMOTIVO = :idMotivo;
+
+    ULOG("idMotivo excluido=%d",idMotivo);
+
+    ULOG_END("proCExcluirWFMotivo");
+
+    return 1;
+}
+
+bool proCObterIdMotivo(char *_dsMotivo,int &_idMotivo)
+{
+    ULOG_START("proCObterIdMotivo");
+
+    struct sqlca sqlca;
+    bool retorno;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *dsMotivo = _dsMotivo;
+        int idMotivo;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFMotivo(&sqlca);
+
+    ULOG("Vai buscar idMotivo para dsMotivo='%s'",dsMotivo);
+
+    EXEC SQL
+        SELECT
+            IDMOTIVO
+        INTO
+            :idMotivo
+        FROM
+            ATENDIMENTO.MOTIVO
+        WHERE
+            DSMOTIVO = :dsMotivo;
+
+    if ( 0==sqlca.sqlcode )
+    {
+        _idMotivo = idMotivo;
+        ULOG("idMotivo=%d",_idMotivo);
+        retorno = true;
+    }
+    else
+    {
+        ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+        retorno = false;
+    }
+
+    ULOG_END("proCObterIdMotivo");
+
+    return retorno;
+}
+
+int proCConsultaWFMotivo(st_Motivo* dados,st_vlMotivo* status,char* order
+                        ,XMLGen* saida,Collection *collection)
+{
+    ULOG_START("proCConsultaWFMotivo");
+
+    struct sqlca sqlca;
+    st_Motivo *pRegMotivo;
+
+    SmallString query = "SELECT IDMOTIVO"
+                              // ",IDTABELAMOTIVO"
+                              ",DSMOTIVO"
+                              ",IDUSUARIOALTERACAO"
+                              ",DTULTIMAALTERACAO "
+                          "FROM ATENDIMENTO.MOTIVO ";
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idMotivo;
+        //int idTabelaMotivo;
+        int idUsuarioAlteracao;
+        VARCHAR dsMotivo[256];
+        VARCHAR dtUltimaAlteracao[32];
+
+        short iidMotivo;
+        //short iidTabelaMotivo;
+        short iidUsuarioAlteracao;
+        short idsMotivo;
+        short idtUltimaAlteracao;
+
+        char *pQuery;
+
+    EXEC SQL END DECLARE SECTION;
+
+    bool separa = false;
+
+    if (status->idMotivo != -1) 
+    {
+        montarWhere(query,"idMotivo", dados->idMotivo, TIPO_INT);
+    }
+
+    //if (status->idTabelaMotivo != -1) 
+    //{
+    //  montarWhere(query,"idTabelaMotivo", dados->idTabelaMotivo, TIPO_INT);
+    //}
+
+    if (status->dsMotivo != -1) 
+    {
+        montarWhere(query,"dsMotivo", dados->dsMotivo, WHERE_CHAR_LIKE_UPPER);
+    }
+
+    montarWhere(query,"inVisivel", 1, TIPO_INT);
+
+    if (strlen(order) > 0) 
+    {
+        query += " ORDER BY ";
+        query += order;
+    }
+
+    pQuery = query.c_str();
+
+    ULOG("query=%s",pQuery);
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFMotivo(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL PREPARE queryConsMotivo FROM :pQuery;
+    EXEC SQL DECLARE cursorConsMotivo CURSOR FOR queryConsMotivo;
+
+    EXEC SQL OPEN cursorConsMotivo;
+
+    while (true)
+    {
+        EXEC SQL FETCH cursorConsMotivo INTO 
+                                    :idMotivo:iidMotivo,
+                                    //:idTabelaMotivo:iidTabelaMotivo,
+                                    :dsMotivo:idsMotivo,
+                                    :idUsuarioAlteracao:iidUsuarioAlteracao,
+                                    :dtUltimaAlteracao:idtUltimaAlteracao;
+
+        CONVIND(dsMotivo,idsMotivo);
+        CONVIND(dtUltimaAlteracao,idtUltimaAlteracao);
+
+        if ( saida )
+        {
+            saida->createTag("WFMotivoVO");
+                saida->addItem("idMotivo", CONVINT(idMotivo,iidMotivo));
+                //saida->addItem("idTabelaMotivo", CONVINT(idTabelaMotivo,iidTabelaMotivo));
+                saida->addItem("dsMotivo", (char*)dsMotivo.arr);
+                saida->addItem("idUsuarioAlteracao", CONVINT(idUsuarioAlteracao,iidUsuarioAlteracao));
+                saida->addItem("dtUltimaAlteracao", (char*)dtUltimaAlteracao.arr);
+            saida->closeTag();
+        }
+
+        if ( collection )
+        {
+            if ( pRegMotivo = new st_Motivo,pRegMotivo )
+            {
+                pRegMotivo->idMotivo = atoi(CONVINT(idMotivo,iidMotivo));
+                //pRegMotivo->idTabelaMotivo = atoi(CONVINT(idTabelaMotivo,iidTabelaMotivo));
+                pRegMotivo->idUsuarioAlteracao = atoi(CONVINT(idUsuarioAlteracao,iidUsuarioAlteracao));
+
+                strcpy(pRegMotivo->dsMotivo,(char*)dsMotivo.arr);
+                strcpy(pRegMotivo->dtUltimaAlteracao,(char*)dtUltimaAlteracao.arr);
+
+                collection->AddItem((void*) pRegMotivo);
+            }
+            else
+            {
+                ULOG(erroFalhaAlocacaoMemoria());
+            }
+        }
+    }
+
+    EXEC SQL CLOSE cursorConsMotivo;
+
+    ULOG_END("proCConsultaWFMotivo");
+
+    return 1;
+}
+
+void sql_error_WFMotivo(sqlca*sqlca)
+{
+    ULOGE("sql_error_WFAtdInBoxAdq:sqlcode=%d,sqlerrmc=%.70s"
+                            ,sqlca->sqlcode
+                            ,sqlca->sqlerrm.sqlerrmc);
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

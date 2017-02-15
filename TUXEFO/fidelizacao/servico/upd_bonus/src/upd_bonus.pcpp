@@ -1,0 +1,96 @@
+//
+// $Id: upd_bonus.pcpp,v 1.1 2009/07/31 15:33:49 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+int upd_bonus(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char parm[255];
+  char szMsg[255];
+  int iRet=0;
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  int	    idMatrizBonus;
+  int	    iMatrizBonus;
+  int	    idUFOperadora;
+  int		idUnidadeOferta;
+  int	    qtDiasValidade;
+  int	    vlBonus;
+  int		idCount=0;
+  VARCHAR nmBonus[255];
+  int     idPessoaUsuarioAlteracao;
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+  try{
+    //  Obtendo dados do xml
+    get_tag(parm, dnode, "idBonus", 0, 0);
+    idMatrizBonus = atoi(parm);
+
+    get_tag(parm, dnode, "idRegional", 0, 0);
+    idUFOperadora = atoi(parm);
+
+    get_tag(parm, dnode, "validade", 0, 0);
+    qtDiasValidade = atoi(parm);
+
+    get_tag(parm, dnode, "vlBonus", 0, 0);
+    vlBonus = atoi(parm);
+
+	get_tag(parm, dnode, "idUnidadeOferta", 0, 0);
+    idUnidadeOferta = atoi(parm);
+
+
+    get_tag(parm, dnode, "descricao", 0, 0);
+    strToOra(nmBonus,parm);
+
+    // Pegando id do usuario
+    idPessoaUsuarioAlteracao = usuario;
+
+     
+  EXEC SQL 
+      select count(idMatrizBonus)
+      into   :iMatrizBonus
+      from retencao.matrizBonus
+      where inAtivo != 0
+      and   idUfOperadora = :idUFOperadora
+	  and   idUnidadeOferta=:idUnidadeOferta
+      and   UPPER(TRIM(nmBonus)) = UPPER(TRIM(:nmBonus))
+	  and   idMatrizBonus!=:idMatrizBonus;
+
+	if(!iMatrizBonus)
+	{
+		/* Update linha */
+		EXEC SQL UPDATE retencao.matrizbonus
+			SET idufoperadora = :idUFOperadora, 
+			qtdiasvalidade = :qtDiasValidade,
+			vlbonus = :vlBonus,
+			nmbonus = :nmBonus,
+			idUsuarioAlteracao = :idPessoaUsuarioAlteracao,
+			dtUltimaAlteracao = sysdate,
+			IDUNIDADEOFERTA=:idUnidadeOferta
+			WHERE idmatrizbonus = :idMatrizBonus;
+	
+			strcpy(szMsg,"MODIFICADO");
+			iRet=sqlca.sqlerrd[2];
+	}	
+	else
+	{
+			strcpy(szMsg,"Já existe bonus com esta descrição");
+			iRet=-1;
+	}
+  
+  
+
+
+    /* update OK */
+    xml->addItem("descricao",szMsg);
+    xml->addItem("valor",iRet);
+  }
+  catch(...)
+  {
+	throw;
+   }
+  
+  return 1;
+}

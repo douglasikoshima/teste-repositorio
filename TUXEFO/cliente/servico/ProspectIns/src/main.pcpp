@@ -1,0 +1,347 @@
+/*
+ * Serviço para cadastrar dados prospect
+ * Versão inicial, 1/06/2004
+ */
+
+/*
+ * Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/Prospect.h";
+
+#include "../include/ProspectIns.h"
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+DECLARE_TUXEDO_SERVICE(ProspectIns);
+
+void implProspectIns::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+    CProspect oProsp;
+    long iAux;
+    
+    char* pcNmProspect;
+    char* pcPriNmProspect;
+    char* pcMeioNmProspect;
+    char* pcSobNmProspect=0;
+    char* pcIdUfDoc;
+    char* pcIdTpPessoa;
+    long iIdTpPessoa;
+    char* pcIdTpDocto;
+    long iIdTpDocto;
+    char* pcDocto;
+    char* pcIdPais;
+    long iIdPais;
+    char* pcOrgaoExp;
+    char* pcDtExp;
+    char* pcIdCont;
+    long iIdCont;
+    char* pcDsCont;
+    long iIdUFDoc;
+    char *pNrLinhaProspect;
+
+    ULOG_START( "implProspectIns::Execute()" );
+
+    //Recupera os campos obrigatórios
+    pcIdPais = walkTree(dnode, XML_IN_IDPAISDOCUMENTO, 0);
+    if (pcIdPais == NULL) {
+        ERROR(NRO_ID_PAIS_NE);
+        TAG_INEXISTENTE(XML_IN_IDPAISDOCUMENTO);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcIdPais) {
+        ERROR(NRO_ID_PAIS_VV);
+        TAG_VALOR_VAZIO(XML_IN_IDPAISDOCUMENTO);
+        if ( pcIdPais ) XMLString::release(&pcIdPais);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if ((iIdPais = atoi(pcIdPais)) <= 0) {
+        ERROR(NRO_ID_PAIS_VI);
+        TAG_VALOR_INVALIDO(XML_IN_IDPAISDOCUMENTO);
+        if ( pcIdPais ) XMLString::release(&pcIdPais);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    oProsp.setIdPais(iIdPais);
+    XMLString::release(&pcIdPais);
+
+    // Recupera os campos obrigatórios
+    pNrLinhaProspect = walkTree(dnode, XML_IN_NR_LINHA_PROSPECT, 0);
+    if (pNrLinhaProspect) {
+        if ( *pNrLinhaProspect ) {
+            if ( strlen(pNrLinhaProspect) < 8 ) {
+                ERROR(NRO_ID_NR_LINHA_PROSPECT_NE);
+                XMLString::release(&pNrLinhaProspect);
+                throw new TuxBasicSvcException(sNrMsg,"Telefone de prospect informado com tamanho inválido");
+            }
+        }
+        oProsp.setCdAreaRegistro(pNrLinhaProspect);
+        oProsp.setNrLinha(pNrLinhaProspect+2);
+        XMLString::release(&pNrLinhaProspect);
+    }
+
+    pcIdTpPessoa = walkTree(dnode, XML_IN_ID_TP_PESSOA, 0);
+    ULOG("pcIdTpPessoa[%s]", pcIdTpPessoa ? pcIdTpPessoa : "...NULL...");
+
+    if (pcIdTpPessoa == NULL) {
+        ERROR(NRO_ID_TP_PESSOA_NE);
+        TAG_INEXISTENTE(XML_IN_ID_TP_PESSOA);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcIdTpPessoa) {
+        ERROR(NRO_ID_TP_PESSOA_VV);
+        TAG_VALOR_VAZIO(XML_IN_ID_TP_PESSOA);
+        XMLString::release(&pcIdTpPessoa);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if ((iIdTpPessoa = atoi(pcIdTpPessoa)) <= 0) {
+        ERROR(NRO_ID_TP_PESSOA_VI);
+        TAG_VALOR_INVALIDO(XML_IN_ID_TP_PESSOA);
+        XMLString::release(&pcIdTpPessoa);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    oProsp.setIdTpPessoa(iIdTpPessoa);
+    XMLString::release(&pcIdTpPessoa);
+
+    pcIdTpDocto = walkTree(dnode, XML_IN_ID_TP_DOCTO, 0);
+    if (pcIdTpDocto == NULL) {
+        ERROR(NRO_ID_TP_DOCTO_NE);
+        TAG_INEXISTENTE(XML_IN_ID_TP_DOCTO);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcIdTpDocto) {
+        ERROR(NRO_ID_TP_DOCTO_VV);
+        TAG_VALOR_VAZIO(XML_IN_ID_TP_DOCTO);
+        XMLString::release(&pcIdTpDocto);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if ((iIdTpDocto = atoi(pcIdTpDocto)) <= 0) {
+        ERROR(NRO_ID_TP_DOCTO_VI);
+        TAG_VALOR_INVALIDO(XML_IN_ID_TP_DOCTO);
+        XMLString::release(&pcIdTpDocto);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    oProsp.setIdTpDocto(iIdTpDocto);
+    XMLString::release(&pcIdTpDocto);
+
+    pcNmProspect = walkTree(dnode, XML_IN_NM_PROSPECT, 0);
+    if (pcNmProspect == NULL) {
+        ERROR(NRO_NM_PROSPECT_NE);
+        TAG_INEXISTENTE(XML_IN_NM_PROSPECT);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcNmProspect) {
+        ERROR(NRO_NM_PROSPECT_VV);
+        TAG_VALOR_VAZIO(XML_IN_NM_PROSPECT);
+        XMLString::release(&pcNmProspect);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    oProsp.setNmProspect(pcNmProspect);
+    XMLString::release(&pcNmProspect);
+
+    pcPriNmProspect = walkTree(dnode, XML_IN_PRIMEIRO_NM_PROSPECT, 0);
+    if (pcPriNmProspect == NULL) {
+        ERROR(NRO_PRI_NM_PROSPECT_NE);
+        TAG_INEXISTENTE(XML_IN_PRIMEIRO_NM_PROSPECT);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcPriNmProspect) {
+        ERROR(NRO_PRI_NM_PROSPECT_VV);
+        TAG_VALOR_VAZIO(XML_IN_PRIMEIRO_NM_PROSPECT);
+        XMLString::release(&pcPriNmProspect);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    oProsp.setPriNmProspect(pcPriNmProspect);
+    XMLString::release(&pcPriNmProspect);
+
+    pcMeioNmProspect = walkTree(dnode, XML_IN_SEGUNDO_NM_PROSPECT, 0);
+    oProsp.setMeioNmProspect(pcMeioNmProspect);
+    XMLString::release(&pcMeioNmProspect);
+
+    ULOG("iIdTpPessoa(%d)", iIdTpPessoa);
+    // Verifica se o tipo de pessoa eh diferente de pessoa juridica
+    if(iIdTpPessoa != 2) {
+        pcSobNmProspect = walkTree(dnode, XML_IN_TERCEIRO_NM_PROSPECT, 0);
+        if (pcSobNmProspect == NULL) {
+            ERROR(NRO_SOB_NM_PROSPECT_NE);
+            TAG_INEXISTENTE(XML_IN_TERCEIRO_NM_PROSPECT);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if (!*pcSobNmProspect) {
+            ERROR(NRO_SOB_NM_PROSPECT_VV);
+            TAG_VALOR_VAZIO(XML_IN_TERCEIRO_NM_PROSPECT);
+            XMLString::release(&pcSobNmProspect);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        oProsp.setSobNmProspect(pcSobNmProspect);
+        XMLString::release(&pcSobNmProspect);
+    }
+
+    pcIdUfDoc = walkTree(dnode, XML_IN_ID_UF_DOCUMENTO, 0);
+    if (pcIdUfDoc == NULL) {
+        ERROR(NRO_ID_UF_DOC_NE);
+        TAG_INEXISTENTE(XML_IN_ID_UF_DOCUMENTO);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcIdUfDoc) {
+        ERROR(NRO_ID_UF_DOC_VI);
+        TAG_VALOR_VAZIO(XML_IN_ID_UF_DOCUMENTO);
+        XMLString::release(&pcIdUfDoc);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!IsNumeric(pcIdUfDoc)) {
+        ERROR(NRO_ID_TP_PESSOA_VI);
+        TAG_VALOR_INVALIDO(XML_IN_ID_UF_DOCUMENTO);
+        XMLString::release(&pcIdUfDoc);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+
+    iIdUFDoc = atoi(pcIdUfDoc);
+    oProsp.setIdUFDoc(iIdUFDoc);
+    XMLString::release(&pcIdUfDoc);
+
+    pcDocto = walkTree(dnode, XML_IN_DOCTO, 0);
+    if (pcDocto == NULL) {
+        ERROR(NRO_DOCTO_NE);
+        TAG_INEXISTENTE(XML_IN_DOCTO);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+
+    if (!*pcDocto) {
+        ERROR(NRO_DOCTO_VV);
+        TAG_VALOR_VAZIO(XML_IN_DOCTO);
+        XMLString::release(&pcDocto);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    oProsp.setDocto(pcDocto);
+    XMLString::release(&pcDocto);
+
+    // Recupera as informações opcionais
+    pcOrgaoExp = walkTree(dnode, XML_IN_ORGAO_EXP, 0);
+    oProsp.setOrgaoExp(pcOrgaoExp);
+    if ( pcOrgaoExp ) XMLString::release(&pcOrgaoExp);
+
+    pcDtExp = walkTree(dnode, XML_IN_DT_EXP, 0);
+    oProsp.setDtExp(pcDtExp);
+    if ( pcDtExp ) XMLString::release(&pcDtExp);
+
+    iAux = 0;
+    char *p;
+    while (p=walkTree(dnode, XML_IN_ID_TP_CONTATO, iAux),p)
+    {
+        ULOG("iAux(%d)", iAux);
+
+        pcIdCont = walkTree(dnode, XML_IN_ID_TP_CONTATO, iAux);
+        ULOG("pcIdCont[%s]", pcIdCont ? pcIdCont : "...NULL...");
+
+        if(pcIdCont != NULL && *pcIdCont)
+        {
+            if ((iIdCont = atoi(pcIdCont)) <= 0)
+            {
+                ERROR(NRO_ID_TP_COMUNICACAO_VI);
+                TAG_VALOR_INVALIDO(XML_IN_ID_TP_CONTATO);
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+        }
+
+        pcDsCont = walkTree(dnode, XML_IN_DS_CONTATO, iAux);
+        ULOG("pcDsCont[%s]", pcDsCont ? pcDsCont : "...NULL...");
+
+        oProsp.adicionaContato(iIdCont, pcDsCont);
+        iAux++;
+
+        XMLString::release(&pcIdCont);
+        XMLString::release(&pcDsCont);
+        XMLString::release(&p);
+    }
+
+    // Dados de endereço
+    if ( p = walkTree(dnode,XML_IN_IDTIPOENDERECO,0),p ) {
+        oProsp.setIdTipoEndereco(p);
+        XMLString::release(&p);
+    }
+
+    if ( p = walkTree(dnode,XML_IN_NMTIPOLOGRADOURO,0),p ) {
+        oProsp.setNmTipoLogradouro(p);
+        XMLString::release(&p);
+    }
+
+    if ( p = walkTree(dnode,XML_IN_NMTITULOLOGRADOURO,0),p ) {
+        oProsp.setNmTituloLogradouro(p);
+        XMLString::release(&p);
+    }
+
+    if ( p = walkTree(dnode,XML_IN_NMLOGRADOURO,0),p ) {
+        oProsp.setNmLogradouro(p);
+        XMLString::release(&p);
+    }
+
+    if ( p = walkTree(dnode,XML_IN_NMBAIRRO,0),p ) {
+        oProsp.setNmBairro(p);
+        XMLString::release(&p);
+    }
+
+    if ( p = walkTree(dnode,XML_IN_NMMUNICIPIO,0),p ) {
+        oProsp.setNmMunicipio(p);
+        XMLString::release(&p);
+    }
+
+    if ( p = walkTree(dnode,XML_IN_NRENDERECO,0),p ) {
+        oProsp.setNrEndereco(p);
+        XMLString::release(&p);
+    }
+
+    if ( p = walkTree(dnode,XML_IN_DSENDERECOCOMPLEMENTO,0),p ) {
+        oProsp.setDsEnderecoComplemento(p);
+        XMLString::release(&p);
+    }
+
+    if ( p = walkTree(dnode,XML_IN_NRCEP,0),p ) {
+        oProsp.setNrCEP(p);
+        XMLString::release(&p);
+    }
+
+    DOMNode *domNode = walkDOM( dnode, "UFVO");
+
+    if ( p = walkTree(domNode,XML_IN_IDUF,0),p ) {
+        oProsp.setIdUF(p);
+        XMLString::release(&p);
+    }
+
+    domNode = walkDOM( dnode, "PaisVO");
+    if ( p = walkTree(domNode,XML_IN_IDPAIS,0),p ) {
+        oProsp.setIdPais(p);
+        XMLString::release(&p);
+        ULOG("IDPAIS=%s,",p);
+    }
+    else
+    {
+        ULOG("IDPAIS=***nao veio***,");
+    }
+
+    try
+    {
+        oProsp.setUsuarioAlteracao(getUser());
+
+        oProsp.inclui();
+
+        xml_g->createTag("ProspectVO");
+            xml_g->addItem("idPessoaDePara", oProsp.getIdProspectDePara());
+            xml_g->addItem("idPessoa", oProsp.getIdProspect());
+        xml_g->closeTag(); // ProspectVO
+    }
+    catch (...)
+    {
+        throw;
+    }
+
+    ULOG_END( "implProspectIns::Execute()" );
+
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}
+

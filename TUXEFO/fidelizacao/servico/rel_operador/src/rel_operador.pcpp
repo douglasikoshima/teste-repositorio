@@ -1,0 +1,127 @@
+//
+// $Id: rel_operador.pcpp,v 1.1 2009/07/31 15:34:39 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+
+int rel_operador(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char  parm[255];
+  int   idUsuarioAtual;
+  int   existReg;
+  int   num_registros;
+  int   retidos;
+  int   cancelados;
+  int   of_adplano;
+  int   of_aparelho;
+  int   of_bonus;
+  int   of_migracao;
+  int   of_pontos;
+  int   of_susptemp;
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  VARCHAR dtInicio[255];
+  VARCHAR dtFim[255];
+  int     idUsuarioAlteracao;
+  VARCHAR nmLoginUsuario[255];
+  int     idTipoEncerramento;
+  int     idUnidadeOferta;
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  EXEC SQL WHENEVER NOT FOUND DO cl_flag(&existReg);
+
+  try{
+    //  Obtendo dados do xml
+    get_tag(parm,dnode,"dtInicial",0,0);
+    strToOra(dtInicio,parm);
+
+    get_tag(parm,dnode,"dtFinal",0,0);
+    strToOra(dtFim,parm);
+
+
+    // Definicao dos cursores
+    EXEC SQL DECLARE crsRelOp CURSOR FOR
+      select idUsuarioAlteracao, nmLoginUsuario, idTipoEncerramento, idUnidadeOferta
+      from   retencao.ofertaRealizadaV03
+      where  idTipoEncerramento = 2
+      or     idTipoEncerramento = 3
+      and    to_char(dtAlteracao,'yyyymmdd') >= :dtInicio 
+      and    to_char(dtAlteracao,'yyyymmdd') <= :dtFim 
+      order by idUsuarioAlteracao;
+
+    EXEC SQL OPEN crsRelOp;
+
+    // Pegar head da lista
+    existReg = 1;
+    EXEC SQL FETCH crsRelOp 
+      INTO :idUsuarioAlteracao, nmLoginUsuario, idTipoEncerramento, idUnidadeOferta;
+
+    if ( existReg ){
+      endOraStr(nmLoginUsuario);
+      ULOG_INT(idUsuarioAlteracao);
+      ULOG_VAR(nmLoginUsuario);
+      ULOG_INT(idTipoEncerramento);
+      ULOG_INT(idUnidadeOferta);
+    }
+
+    while( existReg ){
+      num_registros = 0;
+      retidos = 0;
+      cancelados = 0;
+      of_adplano = 0;
+      of_aparelho = 0;
+      of_bonus = 0;
+      of_migracao = 0;
+      of_pontos = 0;
+      of_susptemp = 0;
+      idUsuarioAtual = idUsuarioAlteracao;
+      while( idUsuarioAtual == idUsuarioAlteracao ){
+	// Contadores
+	num_registros++;
+	if (idTipoEncerramento == ENC_RETIDO) retidos++ ;
+	if (idTipoEncerramento == ENC_CANCELADO) cancelados++;
+	if (idUnidadeOferta == OF_ADEQUACAO) of_adplano++;
+	else if (idUnidadeOferta == OF_APARELHO ) of_aparelho++;
+	else if (idUnidadeOferta == OF_BONUS    ) of_bonus++;
+	else if (idUnidadeOferta == OF_MIGRACAO ) of_migracao++;
+	else if (idUnidadeOferta == OF_PONTOS   ) of_pontos++;
+	else if (idUnidadeOferta == OF_SUSPTEMP ) of_susptemp++;
+
+	EXEC SQL FETCH crsRelOp 
+	  INTO :idUsuarioAlteracao, nmLoginUsuario, idTipoEncerramento, idUnidadeOferta;
+      
+	endOraStr(nmLoginUsuario);
+	ULOG_INT(idUsuarioAlteracao);
+	ULOG_VAR(nmLoginUsuario);
+	ULOG_INT(idTipoEncerramento);
+	ULOG_INT(idUnidadeOferta);
+      
+	// finalizando loop externo
+	if ( !existReg ) break;
+
+      }
+
+      // Registrando 
+      xml->createTag("tns:usuarioVO");
+      xml->addItem("id",idUsuarioAlteracao);
+      xml->addItem("descricao",(char *)nmLoginUsuario.arr);
+      xml->addItem("num_registros",num_registros);
+      xml->addItem("retidos",retidos);
+      xml->addItem("cancelados",cancelados);
+      xml->addItem("of_adplano",of_adplano);
+      xml->addItem("of_aparelho",of_aparelho);
+      xml->addItem("of_bonus",of_bonus);
+      xml->addItem("of_migracao",of_migracao);
+      xml->addItem("of_pontos",of_pontos);
+      xml->addItem("of_susptemp",of_susptemp);
+      xml->closeTag();
+    
+    }
+  
+    EXEC SQL CLOSE crsRelOp;
+  }catch(...){throw;}
+
+  return 1;
+}
+

@@ -1,0 +1,141 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <CListaCanalCampanha.h>
+
+CListaCanalCampanha::CListaCanalCampanha()
+{
+}
+
+CListaCanalCampanha::~CListaCanalCampanha()
+{
+}
+
+int CListaCanalCampanha::Insert( char* cidLista,
+	                             char* cidCanalCampanha,
+	                             char* cinAtivo,
+	                             char* cidUser )
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stidListaCanalCampanha[21+1];
+		char* cAuxidLista  = cidLista;
+		char* cAuxidCanalCampanha  = cidCanalCampanha;
+		char* cAuxinAtivo  = cinAtivo;
+		char* cAuxidUser  = cidUser;
+	EXEC SQL END DECLARE SECTION;
+	
+	memset( &stidListaCanalCampanha, 0, sizeof(stidListaCanalCampanha) );
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+	sqlca.sqlcode=0;
+	
+	//Pega um id unico e sequencia para a insercao
+	EXEC SQL
+		SELECT 
+			CAMPANHA.LISTACANALCAMPANHASQ.NEXTVAL
+		INTO 
+			:stidListaCanalCampanha
+		FROM DUAL;
+
+	EXEC SQL 
+		INSERT INTO CAMPANHA.LISTACANALCAMPANHA
+		(   
+			IDLISTACANALCAMPANHA,
+			IDLISTA,
+			IDCANALCAMPANHA,
+			INATIVO,
+			IDUSUARIOALTERACAO,
+			DTULTIMAALTERACAO
+		)
+		VALUES
+		(
+			:stidListaCanalCampanha, 
+		   	:cAuxidLista, 
+		   	:cAuxidCanalCampanha, 
+		   	:cAuxinAtivo, 
+		   	:cAuxidUser,
+		   	SYSDATE
+		);
+		
+	//Apos a insercao salva os dados na estrutura interna
+	Add( (char*)stidListaCanalCampanha.arr,
+	     cAuxidLista,
+	     cAuxidCanalCampanha,
+	     cAuxinAtivo 
+	);		
+	
+	return 1;
+
+GotoInsert:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CListaCanalCampanha::ListId( char* cidCanalCampanha )
+{
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidCanalCampanha = cidCanalCampanha;
+		struct
+		{
+			VARCHAR stidListaCanalCampanha[21+1];
+			VARCHAR stidLista[21+1];
+			VARCHAR stidCanalCampanha[21+1];
+			VARCHAR stinAtivo[21+1];
+		} stRegistro;
+		struct
+		{
+			short iidListaCanalCampanha;
+			short iidLista;
+			short iidCanalCampanha;
+			short iinAtivo;
+		} stIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraListaCanalCampanha();
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+	sqlca.sqlcode=0;
+
+   	EXEC SQL 
+   		DECLARE 
+   			CursorListId CURSOR FOR
+		SELECT 
+			IDLISTACANALCAMPANHA,
+			IDLISTA,
+			IDCANALCAMPANHA,
+			INATIVO
+		FROM 
+			CAMPANHA.LISTACANALCAMPANHA LISTACANALCAMPANHA
+		WHERE 
+			IDCANALCAMPANHA = :cAuxidCanalCampanha;
+
+	EXEC SQL OPEN CursorListId;
+
+	for(;;)
+	{
+		memset( &stRegistro, 0, sizeof(stRegistro) );
+		EXEC SQL FETCH CursorListId INTO :stRegistro:stIndicator;
+
+		Add( (char*)stRegistro.stidListaCanalCampanha.arr,
+		     (char*)stRegistro.stidLista.arr,
+		     (char*)stRegistro.stidCanalCampanha.arr,
+		     (char*)stRegistro.stinAtivo.arr 
+		);		
+
+		iCont++;
+	}
+	EXEC SQL CLOSE CursorListId;
+
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}

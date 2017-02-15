@@ -1,0 +1,1263 @@
+//------------------------------------------------------------------------------------------------------------------------------
+// Basic CSenhaBase
+// Roberto Borges dos Santos - 14-01-04
+// Pro-C++ Implementation 
+//------------------------------------------------------------------------------------------------------------------------------
+
+#include "../include/CSenhaBasePC.h"
+struct sqlca sqlca;
+//------------------------------------------------------------------------------------------------------------------------------
+
+bool CSenhaBase::getSysDate()
+{
+
+   ULOG_START("CSenhaBase::getSysDate()");
+   
+	ULOG("Buscando data do Sistema");
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	  char     dsSysdate[256];
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+
+	EXEC SQL 
+		SELECT TO_CHAR(SYSDATE, 'DD/MM/YY') into :dsSysdate FROM DUAL;
+	
+	sSysDate = TString(dsSysdate).Trim();
+
+	ULOG_END("CSenhaBase::getSysDate()");
+
+	return true;
+
+}
+
+bool CSenhaBase::getSysDate(char* cMascara)
+{
+
+   ULOG_START("CSenhaBase::getSysDate(char* cMascara)");
+   
+	ULOG("Buscando data do Sistema");
+
+	EXEC SQL BEGIN DECLARE SECTION;
+  	  char cMascaraSQL[50]="";
+	  char     dsSysdate[256];
+	EXEC SQL END DECLARE SECTION;
+
+	strcpy (cMascaraSQL, cMascara);
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error();
+
+	EXEC SQL 
+		SELECT TO_CHAR(SYSDATE, :cMascaraSQL) into :dsSysdate FROM DUAL;
+	
+	sSysDate = TString(dsSysdate).Trim();
+
+	ULOG_END("CSenhaBase::getSysDate(char* cMascara)");
+
+	return true;
+
+}
+
+
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+void CSenhaBase::sql_error()
+{
+	throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+TString CSenhaBase::getStatusLinha()
+{
+   
+   ULOG_START("CSenhaBase::getStatusLinha()");
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	  char      EstadoLinha			[ 10]={NULL};
+	  char      oszIdPessoa			[128]={NULL};
+	  char		oszTipoPessoa		[ 50]={NULL};
+	  char		oszidpessoalinha	[ 50]={NULL};
+	  VARCHAR   oszidTipoRel        [50];
+	  VARCHAR   osznrLinha			[50]; 
+	  VARCHAR   oszcdArea			[50]; 
+	EXEC SQL END DECLARE SECTION;
+
+	STRCPY_TO_ORA( osznrLinha,		nrLinha.c_str()				); 
+	STRCPY_TO_ORA( oszcdArea,		cdAreaRegistro.c_str()		); 
+	STRCPY_TO_ORA( oszidTipoRel,	idTipoRelacionamento.c_str()); 
+
+	EXEC SQL WHENEVER SQLERROR  DO sql_error();
+	EXEC SQL WHENEVER NOT FOUND DO sql_error();
+
+	EXEC SQL 
+	SELECT DISTINCT NVL(EST.SGCLASSIFICACAO, 0 ), PD.IDPESSOA, TPES.SGTIPOPESSOA, PESLI.IDPESSOALINHA
+		  INTO 
+		  :EstadoLinha, :oszIdPessoa, :oszTipoPessoa, :oszidpessoalinha
+		  FROM 
+  			   LINHA.LINHABASE 	  	   LIN, 
+			   APOIO.ESTADOLINHA	 	   EST, 
+			   APOIO.AREAREGISTRO 		   AREA,
+			   LINHA.LINHATELEFONICA	    TEL,
+			   CUSTOMER.PESSOALINHA		    PESLI, 
+			   CUSTOMER.PESSOADEPARA	   PD,
+			   CUSTOMER.PESSOA			   PE, 
+			   APOIO.TIPOPESSOA			   TPES
+		 WHERE     
+ 				EST.IDESTADOLINHA		   =  LIN.IDESTADOLINHA
+				AND AREA.IDAREAREGISTRO		   =  LIN.IDAREAREGISTRO
+				AND AREA.CDAREAREGISTRO		   = :oszcdArea
+				AND LIN.NRLINHA			       = :osznrLinha
+				AND TEL.IDLINHABASE			   =  LIN.IDLINHABASE
+				AND PESLI.IDLINHATELEFONICA    =  TEL.IDLINHATELEFONICA
+				AND PESLI.IDTIPORELACIONAMENTO = :oszidTipoRel
+				AND PESLI.IDPESSOADEPARA 	   = PD.IDPESSOADEPARA 
+				AND PE.IDPESSOA				   = PD.IDPESSOA 
+				AND TPES.IDTIPOPESSOA          = PE.IDTIPOPESSOA;
+				
+	
+	TString status = TString(EstadoLinha).Trim();
+
+	IdPessoa = TString(oszIdPessoa).Trim();
+
+	TipoPessoa = TString(oszTipoPessoa).Trim();
+
+	IdPessoaLinha = TString(oszidpessoalinha).Trim();
+
+	if ( TipoPessoa != "PF" ) 
+	{
+		setStatus(SWPESSJR);
+		setStaMsg(MSPESSJR);
+		SenhaBaseException(); 
+	}
+
+	ULOG_END("CSenhaBase::getStatusLinha()");
+
+	return TString(EstadoLinha).Trim(); 
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+bool CSenhaBase::getDataNasc(TString param)
+{
+
+	ULOG_START("CSenhaBase::getDataNasc()");
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	  char      oszDtaNasc  [256];
+	  VARCHAR   oszIdPessoa [256];
+	  short     iDtaNasc  = -1; 
+	EXEC SQL END DECLARE SECTION;
+
+	STRCPY_TO_ORA( oszIdPessoa,    IdPessoa.c_str()); 
+
+    EXEC SQL WHENEVER NOT FOUND goto Erro;
+    EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+
+	EXEC SQL 
+	  SELECT TO_CHAR( PESSOA.DTNASCIMENTO, 'DD/MM/YYYY' ) 
+		INTO :oszDtaNasc:iDtaNasc
+	   FROM 
+		 CUSTOMER.PESSOAFISICA  PESSOA
+	   WHERE 		  
+	    PESSOA.IDPESSOA = :oszIdPessoa;
+
+	if ( iDtaNasc >= 0 ) 
+		DataNascimento = TString(oszDtaNasc).Trim();
+	else
+	{
+		ULOG("Data de Nascimento é Nulo ou nao encontrada."); 
+		ULOG_END("CSenhaBase::getDataNasc()");
+		return false; 
+	}
+
+	
+	ULOG_END("CSenhaBase::getDataNasc()");
+
+	if ( !param.IsEmpty() ) 
+		return ( param == DataNascimento ? true : false ); 
+	else if (DataNascimento == "")
+		return false;
+
+
+	return true; 
+
+Erro:
+    return false;
+
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+bool CSenhaBase::getCEP(TString param)
+{
+	ULOG_START("CSenhaBase::getCEP()");
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	  VARCHAR   oszIdPessoa [50];
+	  char      oszCEP		[50] = {NULL};
+	  char      oszNum		[50] = {NULL};
+
+	  short		oiCEP = -1; 
+	  short		oiNum = -1; 
+	EXEC SQL END DECLARE SECTION;
+
+	NrResidencia = ""; 
+	NumeroCEP	 = ""; 
+
+	STRCPY_TO_ORA( oszIdPessoa,    IdPessoa.c_str()); 
+
+    EXEC SQL WHENEVER NOT FOUND goto Erro;
+    EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+	EXEC SQL DECLARE ListaCEP CURSOR for
+		SELECT	A.NRCEP
+		FROM	CUSTOMER.PESSOAENDERECO A 
+		WHERE
+				A.IDPESSOA	  = :oszIdPessoa
+		AND		A.DTEXPIRACAO IS NULL;	 
+
+	EXEC SQL OPEN ListaCEP;
+	EXEC SQL WHENEVER NOT FOUND do break;
+
+	for(;;)
+	{
+		EXEC SQL FETCH ListaCEP INTO :oszCEP:oiCEP;
+
+		if ( oiCEP >= 0 ) 
+			NumeroCEP.Add(TString(oszCEP).getNumber());
+	}
+
+
+	EXEC SQL CLOSE ListaCEP;
+
+	ULOG_END("CSenhaBase::getCEP()");
+
+	if ( !param.IsEmpty() ) 
+		return NumeroCEP.Find( param.getNumber() ); 
+	else if (NumeroCEP.IsEmpty())
+		return false;
+	
+	return true; 
+
+Erro:
+    return false;
+
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+bool CSenhaBase::getNumEndereco(TString param)
+{
+	ULOG_START("CSenhaBase::getNumEndereco()");
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+	  VARCHAR   oszIdPessoa [50];
+	  char      oszNum		[50] = {NULL};
+	  short		oiNum = -1; 
+	EXEC SQL END DECLARE SECTION;
+
+	NrResidencia = ""; 
+	NumeroCEP	 = ""; 
+
+	STRCPY_TO_ORA( oszIdPessoa,    IdPessoa.c_str()); 
+
+    EXEC SQL WHENEVER NOT FOUND goto Erro;
+    EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+	EXEC SQL DECLARE ListaNum CURSOR for
+		SELECT	A.NRENDERECO 	
+		FROM	CUSTOMER.PESSOAENDERECO A 
+		WHERE
+				A.IDPESSOA	  = :oszIdPessoa
+		AND		A.DTEXPIRACAO IS NULL;	 
+
+	EXEC SQL OPEN ListaNum;
+	EXEC SQL WHENEVER NOT FOUND do break;
+
+	for(;;)
+	{
+		EXEC SQL FETCH ListaNum INTO :oszNum:oiNum;
+
+		if ( oiNum >= 0 ) 
+			NrResidencia.Add(TString(oszNum));
+	}
+
+
+	EXEC SQL CLOSE ListaNum;
+
+	ULOG_END("CSenhaBase::getNumEndereco()");
+	
+	//Se o param nao for nulo, considera que e validacao, do contrario lista.
+	if ( !param.IsEmpty() )
+		return NrResidencia.Find( param ); 	
+	else if (NrResidencia.IsEmpty()) 
+		return false;
+	
+	return true; 
+
+Erro:
+return false;
+
+
+}
+   
+//------------------------------------------------------------------------------------------------------------------------------
+
+bool CSenhaBase::getDataVenc(TString param)
+{
+	return false; 
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+bool CSenhaBase::getContaDebito(TString param)
+{
+	return false; 
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+bool CSenhaBase::getTelefone(TString param)
+{
+	ULOG_START("CSenhaBase::getTelefone()");
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	  char      oszTelefone [50];
+	  VARCHAR   oszIdPessoa [50];
+
+	  short		oiTelefone = -1; 
+	EXEC SQL END DECLARE SECTION;
+
+	TelefoneContato = ""; 
+
+	STRCPY_TO_ORA( oszIdPessoa,    IdPessoa.c_str()); 
+
+    EXEC SQL WHENEVER NOT FOUND goto Erro;
+    EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+	EXEC SQL DECLARE ListaTel CURSOR for
+		SELECT A.DSCONTATO
+		FROM 
+			 CUSTOMER.PESSOACOMUNICACAO  A, 
+			 APOIO.TIPOCOMUNICACAO		B
+		WHERE 		  
+			     A.IDPESSOA 		 = :oszIdPessoa    
+		 AND	A.IDTIPOCOMUNICACAO = B.IDTIPOCOMUNICACAO
+		 AND	B.SGTIPOCOMUNICACAO IN ( 'Tel Res', 'Tel Com', 'Tel Rec', 'HM' )
+		 AND	A.DTEXPIRACAO		IS NULL;
+			 
+	EXEC SQL OPEN ListaTel;
+	EXEC SQL WHENEVER NOT FOUND do break;
+
+	for(;;)
+	{
+		EXEC SQL FETCH ListaTel INTO :oszTelefone:oiTelefone;
+
+		if ( oiTelefone >= 0 ) 
+			TelefoneContato.Add(TString(oszTelefone).getNumber());
+	}
+
+
+	EXEC SQL CLOSE ListaTel;
+
+	ULOG_END("CSenhaBase::getTelefone()");
+	
+	if ( !param.IsEmpty() ) 
+		return TelefoneContato.Find( param.getNumber() ); 	
+	else if(TelefoneContato.IsEmpty())
+		return false;
+	
+	return true; 
+Erro:
+return false;
+
+}
+//------------------------------------------------------------------------------------------------------------------------------
+bool CSenhaBase::getCPF(TString param)
+{
+	ULOG_START("CSenhaBase::getCPF()");
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	  char      oszCPF		[256];
+	  VARCHAR   oszIdPessoa [256];
+	EXEC SQL END DECLARE SECTION;
+
+	STRCPY_TO_ORA( oszIdPessoa,    IdPessoa.c_str()); 
+
+    EXEC SQL WHENEVER NOT FOUND goto Erro;
+    EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+	EXEC SQL 
+	  SELECT NRDOCUMENTO
+		INTO :oszCPF
+		FROM 
+   			CUSTOMER.DOCUMENTO		A, 
+   			APOIO.TIPODOCUMENTO 	    B, 
+			CUSTOMER.PESSOADOCUMENTO	C 
+		WHERE  
+	        A.IDTIPODOCUMENTO = B.IDTIPODOCUMENTO
+	   AND  B.SGCLASSIFICACAO = 'CPF'	
+	   AND  C.IDDOCUMENTO 	  = A.IDDOCUMENTO		
+	   AND  C.IDPESSOA 		  = :oszIdPessoa
+	   AND	C.DTEXPIRACAO	  IS NULL;
+
+	CPF = TString(oszCPF).Trim();
+
+	ULOG_END("CSenhaBase::getCPF()");
+
+	if ( !param.IsEmpty() ) 
+		return ( param.getNumber() == CPF.getNumber() ? true : false ); 
+	else if (CPF == "")
+		return false;
+
+	return true; 
+
+Erro:
+return false;
+
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+bool CSenhaBase::getRG(TString param)
+{
+	ULOG_START("CSenhaBase::getRG()");
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	  char      oszRG		[256];
+	  VARCHAR   oszIdPessoa [256];
+	EXEC SQL END DECLARE SECTION;
+
+	STRCPY_TO_ORA( oszIdPessoa,    IdPessoa.c_str()); 
+
+    EXEC SQL WHENEVER NOT FOUND goto Erro;
+    EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+	EXEC SQL 
+	  SELECT NRDOCUMENTO
+		INTO :oszRG
+		FROM 
+   			CUSTOMER.DOCUMENTO 		A, 
+   			APOIO.TIPODOCUMENTO 	    B, 
+			CUSTOMER.PESSOADOCUMENTO	C 
+		WHERE  
+	        A.IDTIPODOCUMENTO = B.IDTIPODOCUMENTO
+	   AND  B.SGCLASSIFICACAO	  = 'RG'	
+	   AND  C.IDDOCUMENTO 	  = A.IDDOCUMENTO		
+	   AND  C.IDPESSOA 		  = :oszIdPessoa	   
+	   AND	C.DTEXPIRACAO	  IS NULL;
+
+	RG = TString(oszRG).Trim();
+
+	ULOG_END("CSenhaBase::getRG()");
+
+	if ( !param.IsEmpty() ) 
+		return ( param == RG ? true : false ); 
+	else if (RG == "")
+		return false;
+	
+	return true; 
+
+Erro:
+return false;
+
+}
+
+
+//------------------------------------------------------------------------------------------------------------------------------
+bool CSenhaBase::getPAS(TString param)
+{
+	ULOG_START("CSenhaBase::getPAS()");
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	  char      oszPAS		[256];
+	  VARCHAR   oszIdPessoa [256];
+	EXEC SQL END DECLARE SECTION;
+
+	STRCPY_TO_ORA( oszIdPessoa,    IdPessoa.c_str()); 
+
+    EXEC SQL WHENEVER NOT FOUND goto Erro;
+    EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+	EXEC SQL 
+	  SELECT NRDOCUMENTO
+		INTO :oszPAS
+		FROM 
+   			CUSTOMER.DOCUMENTO		A, 
+   			APOIO.TIPODOCUMENTO 	    B, 
+			CUSTOMER.PESSOADOCUMENTO	C 
+		WHERE  
+	        A.IDTIPODOCUMENTO = B.IDTIPODOCUMENTO
+	   AND  B.SGCLASSIFICACAO = 'PAS'	
+	   AND  C.IDDOCUMENTO 	  = A.IDDOCUMENTO		
+	   AND  C.IDPESSOA 		  = :oszIdPessoa
+	   AND	C.DTEXPIRACAO	  IS NULL;
+
+	PAS = TString(oszPAS).Trim();
+
+
+	ULOG_END("CSenhaBase::getPAS()");
+
+	if ( !param.IsEmpty() ) 
+	{
+		if (strcmp (PAS.c_str(), param.c_str()) == 0)
+			return true;
+		else
+			return false;
+
+	}else if (PAS == "")
+		return false;
+
+	return true; 
+
+Erro:
+return false;
+
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+bool CSenhaBase::getIdSenha()
+{
+        ULOG_START("CSenhaBase::getIdSenha()");;
+
+        EXEC SQL BEGIN DECLARE SECTION;
+          VARCHAR   oszIdPessoa		   [256];
+          VARCHAR   oszIdPessoaLinha   [256];
+		  char      oszdtprimeiroacesso[256];
+		  char      oszqttentativaErro [256];
+		  char      oszdtbloqueio[256];
+          char      oszIdSenha		   [256];
+		  short     iqttentativaErro    = -1;
+          short     iIdSenha_ora		= -1; 
+		  short     idtprimeiroacesso	= -1; 
+	  short idtbloqueio = -1;
+        EXEC SQL END DECLARE SECTION;
+
+		DtPrimeiroAcesso	= "";
+		QtTentativaErro		= "";
+		DtBloqueio		= ""; 
+
+   ULOG( "IdPessoa.c_str() [%s]",IdPessoa.c_str() );
+   ULOG( "IdPessoaLinha.c_str() [%s]",IdPessoaLinha.c_str() );
+
+        STRCPY_TO_ORA( oszIdPessoa,      IdPessoa.c_str());
+        STRCPY_TO_ORA( oszIdPessoaLinha, IdPessoaLinha.c_str());
+
+
+		EXEC SQL WHENEVER NOT FOUND goto Erro;
+		EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+		if ( idTipoRelacionamento == "2") //busca por cliente
+		{
+		   ULOG( "idTipoRelacionamento == 2" );
+		   ULOG( "oszIdPessoa [%s]",(char *)oszIdPessoa.arr );
+		   
+				EXEC SQL
+				  SELECT   idsenha, TO_CHAR(dtprimeiroacesso, 'DD/MM/YY'), NVL(TO_CHAR(dtbloqueio, 'DD/MM/YY'), ' '), NVL(qttentativaErro,0)
+					INTO   :oszIdSenha:iIdSenha_ora,
+						   :oszdtprimeiroacesso:idtprimeiroacesso,
+						   :oszdtbloqueio:idtbloqueio,
+						   :oszqttentativaErro:iqttentativaErro
+				   FROM    
+							customer.senha A
+				  WHERE   
+							A.idpessoa = :oszIdPessoa;
+		}
+		else    
+		{
+		   ULOG( "idTipoRelacionamento != 2" );
+		   ULOG( "oszIdPessoaLinha [%s]",(char*)oszIdPessoaLinha.arr );
+		   
+				EXEC SQL
+				  SELECT    idsenha, TO_CHAR(dtprimeiroacesso, 'DD/MM/YY') , NVL(TO_CHAR(dtbloqueio, 'DD/MM/YY'), ' '), NVL(qttentativaErro,0)
+					INTO    :oszIdSenha:iIdSenha_ora,
+							:oszdtprimeiroacesso:idtprimeiroacesso,
+							:oszdtbloqueio:idtbloqueio,
+							:oszqttentativaErro:iqttentativaErro
+				   FROM   
+							customer.senha A
+				   WHERE  
+							A.idpessoalinha = :oszIdPessoaLinha;
+		}
+
+		IdSenha = TString(oszIdSenha).Trim();
+
+		if (idtprimeiroacesso >= 0)
+			DtPrimeiroAcesso = TString(oszdtprimeiroacesso).Trim();
+
+		ULOG( "oszqttentativaErro [%s]",oszqttentativaErro);
+
+		QtTentativaErro = TString(oszqttentativaErro).Trim();
+		
+		QtTentativaErro		= "";   // 1275 Agora nao limita mais a qtde de tentativas
+		
+		ULOG( "QtTentativaErro [%d]", QtTentativaErro.ToInt() );
+		
+		if (idtbloqueio>= 0)
+			DtBloqueio = TString(oszdtbloqueio).Trim();
+		
+      ULOG_END("CSenhaBase::getIdSenha()");;
+      
+		return true;
+
+Erro:
+        return false;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+
+bool CSenhaBase::verificarSenha()
+{
+   ULOG_START("CSenhaBase::verificarSenha()");;
+	//Verifica se a senha já está cadastrada.
+	//true  - senha já cadastrada
+	//false - senha não cadastrada, o registro não existe ou o campo cdSenha está nulo.
+
+        EXEC SQL BEGIN DECLARE SECTION;
+          VARCHAR   oszIdPessoa		   [256];
+          VARCHAR   oszIdPessoaLinha   [256];
+		  char		cCdSenha		   [256]="";
+        EXEC SQL END DECLARE SECTION;
+
+        STRCPY_TO_ORA( oszIdPessoa,      IdPessoa.c_str());
+        STRCPY_TO_ORA( oszIdPessoaLinha, IdPessoaLinha.c_str());
+
+		TString sCdSenha;
+
+
+		EXEC SQL WHENEVER NOT FOUND goto Erro;
+		EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+		if ( idTipoRelacionamento == "2") //busca por cliente
+		{
+				EXEC SQL
+					SELECT   
+						NVL(cdSenha, ' ')
+					INTO   
+						:cCdSenha
+					FROM    
+						customer.senha A
+					WHERE   
+						A.idpessoa = :oszIdPessoa;
+		}
+		else    
+		{
+				EXEC SQL
+					SELECT  
+						NVL(cdSenha, ' ')
+					INTO    
+						:cCdSenha
+					FROM   
+						customer.senha A
+					WHERE  
+						A.idpessoalinha = :oszIdPessoaLinha;
+		}
+
+		sCdSenha = TString(cCdSenha).Trim();
+		
+		ULOG_END("CSenhaBase::verificarSenha()");;
+		
+		if (sCdSenha.IsEmpty())
+			return false;
+		else
+			return true;
+
+Erro:
+        return false;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+bool CSenhaBase::AlterarSenha()
+{
+        ULOG_START("CSenhaBase::AlterarSenha()");;
+
+        EXEC SQL BEGIN DECLARE SECTION;
+          VARCHAR   oszIdSenha[256];
+          VARCHAR   oszCdSenha[256];
+          VARCHAR   oszIdCanal[256];
+          VARCHAR   oszUsuario[256];
+		  VARCHAR   oszqttentativaerro[256];
+		  VARCHAR   oszDsLembreteSenha[256];
+		  int		iInTrocaSenha;
+		  VARCHAR	oszIdPessoaLinha[256];
+		  int		iTrocaSenha;
+		  int       iIdTerminalSQL = 0;
+		  int	    iIdTipoSenhaSQL = 1;
+        EXEC SQL END DECLARE SECTION;
+
+        EXEC SQL WHENEVER NOT FOUND DO sql_error();
+        EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+        STRCPY_TO_ORA(oszIdSenha, IdSenha.c_str());
+        STRCPY_TO_ORA(oszCdSenha, cdSenha.c_str());
+        STRCPY_TO_ORA(oszIdCanal, idCanal.c_str());
+        STRCPY_TO_ORA(oszUsuario, User.c_str());
+		STRCPY_TO_ORA(oszqttentativaerro, QtTentativaErro.c_str()); 
+		STRCPY_TO_ORA(oszDsLembreteSenha, dsLembreteSenha.c_str());
+		STRCPY_TO_ORA(oszIdPessoaLinha, IdPessoaLinha.c_str());
+		iIdTerminalSQL = iIdTerminal.ToInt();
+		iIdTipoSenhaSQL = iIdTipoSenha.ToInt();
+
+		
+		if(strlen(cdSenha.c_str())!= 0)
+			iTrocaSenha = 0;
+		else
+			iTrocaSenha = 1;
+		if (iInValidaIdPos == 1) /*nao troca senha qdo responde questionário*/
+			iTrocaSenha = 0;
+
+	
+		if ( !strcmp(idCanal.c_str(), "1") || !strcmp(idCanal.c_str(), "9"))  // FO ou URA		
+			STRCPY_TO_ORA(oszqttentativaerro, ""); 
+	
+		EXEC SQL
+			SELECT
+					NVL(INTROCASENHA,0)
+			INTO
+					:iInTrocaSenha
+			FROM
+					customer.Senha
+		        WHERE
+					idsenha = :oszIdSenha;
+
+
+        EXEC SQL
+                UPDATE
+                          customer.senha
+                   SET
+                          cdsenha             = :oszCdSenha,
+                          dtprimeiroacesso    = SYSDATE,
+                          dtultimoacesso      = SYSDATE,
+                          dtultimaatualizacao = SYSDATE,
+                          dtbloqueio          = NULL,
+                          qttentativaerro     = :oszqttentativaerro,
+                          idtipostatussenha   = 1,
+			  IdTipoSenha	      = :iIdTipoSenhaSQL,
+			  idstatussenhafrasesecreta = 1,
+						  inTrocaSenha		  = :iTrocaSenha,
+						  dsLembreteSenha = DECODE(:oszDsLembreteSenha, '', dsLembreteSenha, :oszDsLembreteSenha)
+                 WHERE
+                          idsenha = :oszIdSenha;
+
+
+		//Quando for o serviço VALIDAIDPOS não registrar histórico de reinicialização de senha.
+
+		if (iInValidaIdPos != 1)
+		{
+
+			/*Inserindo o registro de historico*/
+			EXEC SQL
+					INSERT INTO customer.historicosenha
+					(
+							idhistoricosenha,
+							cdsenha,
+							dtexpiracao,
+							idtiposenha,
+							idtipostatussenha,
+							idtipohistoricosenha,
+							dtregistrohistorico,
+							obsregistro,
+							nmrepresentante,
+							idcanal,
+							idpessoausuario,
+							idtiposistema,
+							idsenha,
+							idusuarioalteracao,
+							dtultimaalteracao,
+							idPessoaLinha,
+							idTerminal
+					)
+					VALUES
+					(
+							customer.historicosenhasq.NEXTVAL,
+							:oszCdSenha,
+							NULL,
+							:iIdTipoSenhaSQL,
+							1,
+							DECODE(:iInTrocaSenha, 1, 3, 5),
+							SYSDATE,
+							NULL,
+							NULL,
+							:oszIdCanal,
+							:oszUsuario,
+							2, /*FrontOffice*/
+							:oszIdSenha,
+							NULL,
+							SYSDATE,
+							:oszIdPessoaLinha,
+							DECODE(:iIdTerminalSQL, 0, NULL, :iIdTerminalSQL)	
+					);
+		}
+
+        ULOG_END("CSenhaBase::AlterarSenha()");;
+
+        return true;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+
+bool CSenhaBase::IncluirSenha( TString tpSenha )
+{
+        ULOG_START("CSenhaBase::IncluirSenha()");
+
+        EXEC SQL BEGIN DECLARE SECTION;
+          VARCHAR   oszIdSenha[256];
+          VARCHAR   oszCdSenha[256];
+          VARCHAR   oszIdPessoa[256];
+          VARCHAR   oszIdPessoaLinha[256];
+          VARCHAR   oszIdCanal[256];
+          VARCHAR   oszUsuario[256];
+		  VARCHAR   oszTpSenha[256];
+		  VARCHAR   oszqttentativaerro[256];
+		  VARCHAR   oszDsLembreteSenha[256];
+		  int		iIdTerminalSQL;
+		  int	        iIdTipoSenhaSQL;
+		  int		iCdAreaRegistro = 0;
+		  int		iNrLinha = 0;
+        EXEC SQL END DECLARE SECTION;
+
+        EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+        STRCPY_TO_ORA(oszCdSenha, cdSenha.c_str());
+        STRCPY_TO_ORA(oszIdCanal, idCanal.c_str());
+        STRCPY_TO_ORA(oszUsuario,    User.c_str());
+		STRCPY_TO_ORA(oszTpSenha, tpSenha.c_str());
+		STRCPY_TO_ORA(oszqttentativaerro, QtTentativaErro.c_str()); 
+		STRCPY_TO_ORA(oszDsLembreteSenha, dsLembreteSenha.c_str());
+		iIdTerminalSQL = iIdTerminal.ToInt();
+		iIdTipoSenhaSQL = iIdTipoSenha.ToInt();
+		iCdAreaRegistro = cdAreaRegistro.ToInt();
+		iNrLinha = nrLinha.ToInt();
+
+
+        if ( idTipoRelacionamento == "2") //busca por cliente
+        {
+                STRCPY_TO_ORA( oszIdPessoa,      IdPessoa.c_str());
+                memset( &oszIdPessoaLinha, 0x00, sizeof(oszIdPessoaLinha));
+        }
+        else
+        {
+                STRCPY_TO_ORA( oszIdPessoaLinha, IdPessoaLinha.c_str());
+                memset( &oszIdPessoa, 0x00, sizeof(oszIdPessoa));
+        }
+
+        /*Inserindo o registro de senha*/
+        EXEC SQL
+                INSERT INTO customer.senha
+                (
+                        idsenha,
+                        cdsenha,
+                        dtprimeiroacesso,
+                        dtultimoacesso,
+                        dtultimaatualizacao,
+                        qttentativaerro,
+                        idtipostatussenha,
+                        idtiposenha,
+                        idpessoalinha,
+                        dtexpiracao,
+                        nmrepresentante,
+                        idpessoa,
+                        introcasenha,
+                        dtbloqueio,
+                        idusuarioalteracao,
+                        dtultimaalteracao,
+                        dsfrasesecreta,
+                        dslembretefrasesecreta,
+                        dslembretesenha,
+                        qttentativafrasesecreta,
+                        dtbloqueiofrasesecreta,
+                        idstatussenhafrasesecreta
+                )
+                VALUES
+                (
+                        customer.senhasq.NEXTVAL,
+                        :oszCdSenha,
+                        SYSDATE,
+                        SYSDATE,
+                        SYSDATE,
+                        :oszqttentativaerro,
+                        :oszTpSenha,      /*ativa*/
+                        :iIdTipoSenhaSQL,				 /*front-office*/
+                        NVL(:oszIdPessoaLinha, NULL),
+                        NULL,
+                        NULL,
+                        NVL(:oszIdPessoa, NULL),
+                        0,
+                        NULL,
+                        NULL,
+                        SYSDATE,
+                        NULL,
+                        NULL,
+                        :oszDsLembreteSenha,
+                        NULL,
+                        NULL,
+                        1
+                )
+                RETURNING
+                        idsenha
+                INTO
+				:oszIdSenha;
+
+
+        if ( idTipoRelacionamento == "2") //Caso seja cliente, o insert acima não pode possuir idPessoaLinha, porem o insert em customer.HistoricoSenha necessita.
+             STRCPY_TO_ORA( oszIdPessoaLinha, IdPessoaLinha.c_str());
+
+        /*Inserindo o registro de historico*/
+        EXEC SQL
+                INSERT INTO customer.historicosenha
+                (
+                        idhistoricosenha,
+                        cdsenha,
+                        dtexpiracao,
+                        idtiposenha,
+                        idtipostatussenha,
+                        idtipohistoricosenha,
+                        dtregistrohistorico,
+                        obsregistro,
+                        nmrepresentante,
+                        idcanal,
+                        idpessoausuario,
+                        idtiposistema,
+                        idsenha,
+                        idusuarioalteracao,
+                        dtultimaalteracao,
+						idTerminal
+                )
+                VALUES
+                (
+                        customer.historicosenhasq.NEXTVAL,
+                        :oszCdSenha,
+                        NULL,
+                        :iIdTipoSenhaSQL,
+                        :oszTpSenha,
+                        3,
+                        SYSDATE,
+                        NULL,
+						NULL,
+                        :oszIdCanal,
+                        :oszUsuario,
+                        2, /*FrontOffice*/
+                        :oszIdSenha,
+                        NULL,
+                        SYSDATE,
+			DECODE(:iIdTerminalSQL, 0, NULL, :iIdTerminalSQL)	
+                );
+
+
+	EXEC SQL
+	UPDATE
+		LINHA.LINHATELEFONICA
+	SET
+		CDSENHAPREATIVA = NULL
+	WHERE
+		IDLINHABASE  =  (SELECT 
+					IDLINHABASE 
+				FROM 
+					LINHA.LINHABASE LINHABASE, 
+					APOIO.AREAREGISTRO AREAREGISTRO
+				WHERE 
+					LINHABASE.NRLINHA = :iNrLinha AND
+					LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+					AREAREGISTRO.CDAREAREGISTRO = :iCdAreaRegistro);
+
+	
+
+        ULOG_START("CSenhaBase::IncluirSenha()");
+
+        return true;
+}
+
+bool CSenhaBase::verificarClienteUsuarioIguais()
+{
+   ULOG_START("CSenhaBase::verificarClienteUsuarioIguais()");
+	//Verifica se o idPessoa do cliente e do usuário são iguais
+	//true  - idPessoa cliente e usuário são iguais
+	//false - idPessoa distinto.
+
+        EXEC SQL BEGIN DECLARE SECTION;
+		  int	iCdAreaRegistro=0;
+		  int	iNrLinha=0;
+
+		  int   iIdPessoaCliente=0;
+		  int   iIdPessoaUsuario=0;
+        EXEC SQL END DECLARE SECTION;
+
+		iCdAreaRegistro = cdAreaRegistro.ToInt();
+		iNrLinha = nrLinha.ToInt();
+
+		EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+		//Busca idPessoa de Cliente.
+		EXEC SQL
+			SELECT
+				pdp.idPessoa
+			INTO
+				:iIdPessoaCliente
+			FROM
+				apoio.AreaRegistro 	     ar,
+				linha.LinhaBase	   	  	 lb,
+				linha.LinhaTelefonica 	 lt,
+				customer.PessoaLinha		 pl,
+				customer.PessoaDePara	 pdp
+			WHERE
+				ar.idAreaRegistro			 = lb.idAreaRegistro
+			AND	lb.idLinhaBase				 = lt.idLinhaBase
+			AND lt.idLinhaTelefonica		 = pl.idLinhaTelefonica
+			AND	pl.idPessoaDePara			 = pdp.idPessoaDePara
+			AND	ar.cdAreaRegistro			 = :iCdAreaRegistro
+			AND	lb.nrLinha					 = :iNrLinha
+			AND pl.idTipoRelacionamento		 = 2;
+				
+		//Busca idPessoa de Usuario.
+		EXEC SQL
+			SELECT
+				pdp.idPessoa
+			INTO
+				:iIdPessoaUsuario
+			FROM
+				apoio.AreaRegistro 	     ar,
+				linha.LinhaBase	   	  	 lb,
+				linha.LinhaTelefonica 	 lt,
+				customer.PessoaLinha		 pl,
+				customer.PessoaDePara	 pdp
+			WHERE
+				ar.idAreaRegistro			 = lb.idAreaRegistro
+			AND	lb.idLinhaBase				 = lt.idLinhaBase
+			AND lt.idLinhaTelefonica		 = pl.idLinhaTelefonica
+			AND	pl.idPessoaDePara			 = pdp.idPessoaDePara
+			AND	ar.cdAreaRegistro			 = :iCdAreaRegistro
+			AND	lb.nrLinha					 = :iNrLinha
+			AND pl.idTipoRelacionamento		 = 1;
+
+      ULOG_END("CSenhaBase::verificarClienteUsuarioIguais()");
+
+		if (iIdPessoaCliente == iIdPessoaUsuario)
+			return true;
+		else
+			return false;
+
+Erro:
+        return false;
+}
+
+bool CSenhaBase::verificarSenhaInvalida()
+{
+   ULOG_START("CSenhaBase::verificarSenhaInvalida()");
+	//Verifica se o cliente e usuário são pessoas distintas e possuem senhas iguais.
+	//true  - cliente e usuário iguais e senhas iguais. Senha inválida.
+	//false - cliente e usuário distintos ou senhas distintas.
+
+        EXEC SQL BEGIN DECLARE SECTION;
+		  int	iCdAreaRegistro=0;
+		  int	iNrLinha=0;
+		  int	iIdTipoRelacionamento=0;
+
+		  int	iIdPessoaCliente=0;
+		  int	iIdPessoaUsuario=0;
+		  char	cCdSenhaCliente[256]="";
+		  char	cCdSenhaUsuario[256]="";
+        EXEC SQL END DECLARE SECTION;
+
+		iCdAreaRegistro = cdAreaRegistro.ToInt();
+		iNrLinha = nrLinha.ToInt();
+		iIdTipoRelacionamento = idTipoRelacionamento.ToInt();
+
+		TString sCdSenhaCliente;
+		TString sCdSenhaUsuario;
+
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR DO sql_error();
+
+		//Busca a senha para o tipo de relacionamento necessário.
+		EXEC SQL
+			SELECT
+				NVL(pdp.idPessoa, 0),
+				NVL(s.cdSenha, ' ')
+			INTO
+				:iIdPessoaCliente,
+				:cCdSenhaCliente
+			FROM
+				apoio.AreaRegistro 	     ar,
+				linha.LinhaBase	   	  	 lb,
+				linha.LinhaTelefonica 	 lt,
+				customer.PessoaLinha		 pl,
+				customer.PessoaDePara	 pdp,
+				customer.Senha				 s
+			WHERE
+				ar.idAreaRegistro			 = lb.idAreaRegistro
+			AND	lb.idLinhaBase				 = lt.idLinhaBase
+			AND lt.idLinhaTelefonica		 = pl.idLinhaTelefonica
+			AND	pl.idPessoaDePara			 = pdp.idPessoaDePara
+			AND	pdp.idPessoa				 = s.idPessoa
+			AND	ar.cdAreaRegistro			 = :iCdAreaRegistro
+			AND	lb.nrLinha					 = :iNrLinha
+			AND pl.idTipoRelacionamento		 = 2;
+
+		EXEC SQL
+			SELECT
+				NVL(pdp.idPessoa, 0),
+				NVL(s.cdSenha, ' ')
+			INTO
+				:iIdPessoaUsuario,
+				:cCdSenhaUsuario
+			FROM
+				apoio.AreaRegistro 	     ar,
+				linha.LinhaBase	   	  	 lb,
+				linha.LinhaTelefonica 	 lt,
+				customer.PessoaLinha		 pl,
+				customer.PessoaDePara	 pdp,
+				customer.Senha				 s
+			WHERE
+				ar.idAreaRegistro			 = lb.idAreaRegistro
+			AND	lb.idLinhaBase				 = lt.idLinhaBase
+			AND lt.idLinhaTelefonica		 = pl.idLinhaTelefonica
+			AND	pl.idPessoaDePara			 = pdp.idPessoaDePara
+			AND pl.idPessoaLinha			 = s.idPessoaLinha
+			AND	ar.cdAreaRegistro			 = :iCdAreaRegistro
+			AND	lb.nrLinha					 = :iNrLinha
+			AND pl.idTipoRelacionamento		 = 1;
+
+		//Atualiza a senha corrente que foi digitada, para fazer a comparação.
+		if ( iIdTipoRelacionamento == 2 )
+			strcpy(cCdSenhaCliente, cdSenha.c_str());
+		else
+			strcpy(cCdSenhaUsuario, cdSenha.c_str());
+
+		sCdSenhaCliente = TString(cCdSenhaCliente).Trim();
+		sCdSenhaUsuario = TString(cCdSenhaUsuario).Trim();
+		
+		ULOG_END("CSenhaBase::verificarSenhaInvalida()");
+
+		//Caso Cliente e Usuário sejam distintos e senha iguais, retornar TRUE - senha inválida
+		if ( iIdPessoaCliente != iIdPessoaUsuario)
+			if ( sCdSenhaCliente == sCdSenhaUsuario)
+				return true;
+			else
+				return false;
+		else
+			return false;
+
+Erro:
+        return false;
+}
+
+//------------------------------------------------------------------------------------------------------------------------------
+void CSenhaBase::consultarIdPessoa(int iCdAreaRegistro, int iNrLinha)
+{
+    ULOG_START("CSenhaBase::ExisteUsuarioLinha()");
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+  
+	int prefixo = 0;
+	int numero  = 0;
+	long iIdLinhaBase = 0;	
+	int iIdPessoa = 0;
+	
+    EXEC SQL END DECLARE SECTION;
+   
+   numero  = iNrLinha;
+   prefixo = iCdAreaRegistro;
+   this->IdPessoa = 0;
+
+   EXEC SQL WHENEVER SQLERROR  GOTO TuxOraException;
+   EXEC SQL WHENEVER NOT FOUND CONTINUE;
+   
+   EXEC SQL
+	SELECT
+		PESSOADEPARA.IDPESSOA
+	INTO
+		:iIdPessoa	
+	FROM
+		LINHA.LINHABASE LINHABASE,
+		APOIO.AREAREGISTRO AREAREGISTRO,
+		LINHA.LINHATELEFONICA LINHATELEFONICA,
+		CUSTOMER.PESSOALINHA PESSOALINHA,
+		CUSTOMER.PESSOADEPARA PESSOADEPARA
+	WHERE
+		LINHABASE.NRLINHA =  :numero  AND
+		LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+		AREAREGISTRO.CDAREAREGISTRO =  :prefixo AND
+		LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE AND
+		LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA AND
+		PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA AND
+		PESSOALINHA.IDTIPORELACIONAMENTO = 1;
+	
+	if (iIdPessoa)
+		this->IdPessoa = iIdPessoa;
+
+	ULOG_END("CSenhaBase::consultarIdPessoa()");
+
+	return;
+	
+ TuxOraException:
+	throw TuxBasicOraException( sqlca.sqlcode );
+     
+}
+
+int CSenhaBase::getNumeroPerguntasZAP ()
+{
+
+	ULOG_START("CSenhaBase::getNumeroPerguntasZAP()\r\n");
+	//Verifica se a senha já está cadastrada.
+	//true  - senha já cadastrada
+	//false - senha não cadastrada, o registro não existe ou o campo cdSenha está nulo.
+
+        EXEC SQL BEGIN DECLARE SECTION;
+		int      iQtePerguntas = 0;
+        EXEC SQL END DECLARE SECTION;
+
+      	EXEC SQL WHENEVER NOT FOUND goto TuxOraException;
+	EXEC SQL WHENEVER SQLERROR  DO sql_error();
+	EXEC SQL
+	  SELECT	
+		TO_NUMBER(DSVALORPARAMETRO)
+	  INTO
+		:iQtePerguntas
+	  FROM
+		APOIO.PARAMETRO
+	  WHERE 
+		CDPARAMETRO = 'QTE_PERGUNTAS_ZAP';
+
+	return iQtePerguntas;
+	
+ TuxOraException:
+	throw TuxBasicOraException( sqlca.sqlcode );
+
+}
+
+int CSenhaBase::QuestionarioZAP( int i )
+{
+	ULOG_START("CSenhaBase::QuestionarioZAP");
+
+        EXEC SQL BEGIN DECLARE SECTION;
+	int      iSQL = i;
+	int	 iIdPergunta = -1;
+        EXEC SQL END DECLARE SECTION;
+
+      	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR  DO sql_error();
+
+	EXEC SQL
+	SELECT 
+		DECODE( SGPERGUNTA, 'CPF', 0, 'RG', 1,'NRRESIDENCIA', 2, 'CEP', 3, 'TELCONTATO', 4, 'DATANASC', 5) AS IDPERGUNTA
+	INTO
+		:iIdPergunta
+	FROM 
+		VOL.IDENTIFICACAOPOSITIVA
+	WHERE 
+		INATIVO = 1 AND
+		NRSEQUENCIA = :iSQL;
+	
+	return iIdPergunta;
+	
+ TuxOraException:
+	throw TuxBasicOraException( sqlca.sqlcode );
+}

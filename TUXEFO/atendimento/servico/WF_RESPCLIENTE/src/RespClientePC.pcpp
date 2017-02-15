@@ -1,0 +1,166 @@
+/**
+ * @modulo  Atendimento
+ * @usecase Atendimento
+ * @remark  Acessos a tabela de resposta ao cliente
+ * @author  Charles Machado dos Santos
+ * @version $Revision: 1.1.2.1 $
+ * @CVS     $Author: a5116174 $ - $Date: 2011/08/12 17:11:36 $
+ **/ 
+
+#include "../../../commons/msgPadrao.h"
+
+#include "../include/RespClientePC.h"
+
+bool cRespCliente::AtualizarRespCliente(long _idAtendimento
+                                       ,unsigned long _idUsuarioAlteracao
+                                       ,unsigned long _idUsuarioAtual
+                                       ,unsigned long _idGrupoAtual
+                                       ,const char *_dsMotivo
+                                       ,Resposta &resposta)
+{
+    ULOG_START("cRespCliente::AtualizarRespCliente()");
+
+    bool retorno = false;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long idAtendimento = _idAtendimento;
+
+        int idGrupoOrigem = 0;
+        int nrTentativas = 0;
+        int idPessoaUsuarioOrigem = 0;
+        int inAberturaContato = 0;
+        int inContatoPrevioRealizado = 1;
+
+        unsigned long idUsuarioAlteracao = _idUsuarioAlteracao;
+        unsigned long idUsuarioAtual = _idUsuarioAtual;
+        unsigned long idGrupoAtual = _idGrupoAtual;
+
+        short i_idGrupoOrigem = -1;
+        short i_nrTentativas = -1;
+        short i_idPessoaUsuarioOrigem = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &sqlca, 0, sizeof( sqlca ) );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFRespCliente(&sqlca);
+
+    EXEC SQL
+        SELECT
+            NRTENTATIVAS
+           ,IDGRUPOORIGEM
+           ,IDPESSOAUSUARIOORIGEM
+        INTO
+            :nrTentativas:i_nrTentativas
+           ,:idGrupoOrigem:i_idGrupoOrigem
+           ,:idPessoaUsuarioOrigem:i_idPessoaUsuarioOrigem
+        FROM
+            ATENDIMENTO.ATENDIMENTOCPFILA
+        WHERE
+            IDATENDIMENTO =:idAtendimento;
+
+    // Os motivos abaixo não removem o atendimento da fila de resposta ao cliente
+    if ( stricmp(_dsMotivo,"Celular desativado. Não consta telefone fixo de contato") == 0 
+      || stricmp(_dsMotivo,"Celular e telefone fixo desativados") == 0 )
+    {
+        inContatoPrevioRealizado = 0;
+    }
+
+    if ( sqlca.sqlcode == 0 )
+    {
+        if ( nrTentativas < NR_TENTATIVAS_MAX )
+        {
+            nrTentativas++;
+
+            // Incrementa o contador de tentativas e o grupo e usuario origem
+            if ( nrTentativas == 1 )
+            {
+                EXEC SQL
+                    UPDATE  
+                            ATENDIMENTO.ATENDIMENTOCPFILA
+                       SET  
+                            NRTENTATIVAS             = :nrTentativas
+                           ,IDUSUARIOALTERACAO       = :idUsuarioAlteracao
+                           ,DTULTIMAALTERACAO        = SYSDATE
+                           ,INCONTATOPREVIOREALIZADO = :inContatoPrevioRealizado
+                           ,IDGRUPOORIGEM            = DECODE(:idGrupoAtual,0,NULL,:idGrupoAtual)
+                           ,IDPESSOAUSUARIOORIGEM    = DECODE(:idUsuarioAtual,0,NULL,:idUsuarioAtual)
+                     WHERE
+                           IDATENDIMENTO =:idAtendimento;
+            }
+            else
+            {
+                EXEC SQL
+                    UPDATE  
+                            ATENDIMENTO.ATENDIMENTOCPFILA
+                       SET  
+                            NRTENTATIVAS             =  :nrTentativas    
+                           ,IDUSUARIOALTERACAO       =  :idUsuarioAlteracao
+                           ,INCONTATOPREVIOREALIZADO =  :inContatoPrevioRealizado
+                           ,DTULTIMAALTERACAO        =  SYSDATE            
+                     WHERE
+                           IDATENDIMENTO =:idAtendimento;
+            }
+        }
+
+        // Salva valores de retorno
+        resposta.nrTentativas = nrTentativas;
+        resposta.idGrupoOrigem = idGrupoOrigem;
+        resposta.idPessoaUsuarioOrigem = idPessoaUsuarioOrigem > 0 ? idPessoaUsuarioOrigem : 0;
+        resposta.inContatoPrevioRealizado = inContatoPrevioRealizado;
+
+        retorno = true;
+    }
+
+    ULOG_END("cRespCliente::AtualizarRespCliente()");
+
+    return retorno;
+}
+
+
+bool cRespCliente::ehRetorno(unsigned long _idAgrupamentoEstadoTpProc)
+{
+    ULOG_START("cRespCliente::ehRetorno()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        unsigned long idAgrupamentoEstadoTpProc = _idAgrupamentoEstadoTpProc;
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &sqlca, 0, sizeof( sqlca ) );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFRespCliente(&sqlca);
+
+    EXEC SQL
+        SELECT
+            E.IDESTADO
+        FROM
+            WORKFLOW.AGRUPAMENTOESTADOTPPROC AETPP
+           ,WORKFLOW.AGRUPAMENTOESTADO AE
+           ,WORKFLOW.ESTADO E
+        WHERE
+            AETPP.IDAGRUPAMENTOESTADOTPPROC =:idAgrupamentoEstadoTpProc
+          AND
+            AETPP.IDAGRUPAMENTOESTADO = AE.IDAGRUPAMENTOESTADO
+          AND
+            AE.IDESTADO = E.IDESTADO
+          AND
+            E.SGESTADO = 'ER';
+
+    ULOG_END("cRespCliente::ehRetorno()");
+
+    return sqlca.sqlcode == 0 ? true:false;
+}
+
+
+
+void cRespCliente::sql_error_WFRespCliente(sqlca*sqlca)
+{
+    ULOGE("cRespCliente::sql_error_WFRespCliente -> sqlcode=%d,sqlerrmc=%.70s"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

@@ -1,0 +1,244 @@
+///////////////////////////////////////////////////////////////////////////////
+/**
+ * @modulo  Sincronismo
+ * @usecase LinhaBase
+ * @author  Renato Striitzel Russo
+ * @author  Carlos Eduardo Barbosa Braga
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:17 $
+ **/
+///////////////////////////////////////////////////////////////////////////////
+
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../include/LinhaBasepc.h"
+#include <memory.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+/****************************************************************************************/
+void CLinhaBasepc::proCInsereLinhaBase(TLinhaBase* ptLinhaBase)
+{
+    ULOG_START("CLinhaBasepc::proCInsereLinhaBase()");
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+	   TLinhaBase* optLinhaBase =  ptLinhaBase;
+    EXEC SQL END DECLARE SECTION;
+
+	struct sqlca sqlca;
+
+	ULOGI( "Iniciando proCInsereLinhaBase");
+
+	EXEC SQL WHENEVER SQLERROR goto erro;
+
+	EXEC SQL SELECT to_char(Linha.LinhaBaseSq.Nextval)
+                        INTO :optLinhaBase->szIdLinhaBase FROM DUAL;
+
+    strcpy(ptLinhaBase->szIdUsuarioAlteracao, ID_USUARIO_ALTERACAO);
+
+	EXEC SQL INSERT INTO Linha.LinhaBase
+    (
+        idlinhabase,
+        idarearegistro,
+        nrlinha,
+        dtstatuslinha,
+        nrmin,
+        nrdigitolinha,
+        idusuarioalteracao,
+        dtultimaalteracao
+    )
+    VALUES 
+	(
+	  :optLinhaBase->szIdLinhaBase,
+      :optLinhaBase->szIdAreaRegistro,
+      :optLinhaBase->szNrLinha,
+      :optLinhaBase->szDtStatusLinha,
+      :optLinhaBase->szNrMin,
+	  :optLinhaBase->szNrDigitoLinha,
+	  :optLinhaBase->szIdUsuarioAlteracao,
+      SYSDATE
+	);
+
+	ULOG_END("CLinhaBasepc::proCInsereLinhaBase()");
+	return;
+
+    erro:
+    	ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    	ULOG_END("CLinhaBasepc::proCInsereLinhaBase()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/****************************************************************************************/
+void CLinhaBasepc::proCAtualizaLinhaBase(TLinhaBase* ptLinhaBase)
+{
+    ULOG_START("CLinhaBasepc::proCAtualizaLinhaBase()");
+    EXEC SQL BEGIN DECLARE SECTION;
+	   TLinhaBase* optLinhaBase =  ptLinhaBase;
+    EXEC SQL END DECLARE SECTION;
+
+	struct sqlca sqlca;
+
+	EXEC SQL WHENEVER SQLERROR goto erro;
+
+    strcpy(ptLinhaBase->szIdUsuarioAlteracao, ID_USUARIO_ALTERACAO);
+
+	EXEC SQL UPDATE Linha.LinhaBase
+    SET
+	  idlinhabase = :optLinhaBase->szIdLinhaBase,
+      idarearegistro = :optLinhaBase->szIdAreaRegistro,
+      nrlinha = :optLinhaBase->szNrLinha,
+      dtstatuslinha = :optLinhaBase->szDtStatusLinha,
+      nrmin =  :optLinhaBase->szNrMin,
+	  nrdigitolinha = :optLinhaBase->szNrDigitoLinha,
+      idusuarioalteracao = :optLinhaBase->szIdUsuarioAlteracao,
+      dtultimaalteracao = SYSDATE
+   WHERE nrlinha = :optLinhaBase->szNrLinha;
+
+	ULOG_END("CLinhaBasepc::proCAtualizaLinhaBase()");
+    return;
+   
+    erro:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    	ULOG_END("CLinhaBasepc::proCAtualizaLinhaBase()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/****************************************************************************************/
+bool CLinhaBasepc::proCBuscaLinhaBase(TLinhaBase *ptLinhaBase)
+{
+    ULOG_START("CLinhaBasepc::proCBuscaLinhaBase()");
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLinhaBase[LEN_IDLINHABASE];
+        VARCHAR oszIdAreaRegistro[LEN_IDAREAREGISTRO];
+        VARCHAR oszNrLinha[LEN_NRLINHA];
+        VARCHAR oszDtStatusLinha[LEN_DTSTATUSLINHA];
+        VARCHAR oszNrMin[LEN_NRMIN];
+        VARCHAR oszNrDigitoLinha[LEN_NRDIGITOLINHA];
+        VARCHAR oszIdUsuarioAlteracao[LEN_NUMBER_ORA];
+
+        short iIdLinhaBase = 0;
+        short iIdAreaRegistro = 0;
+        short iNrLinha = 0;
+        short iDtStatusLinha = 0;
+        short iNrMin = 0;
+        short iNrDigitoLinha = 0;
+        short iIdUsuarioAlteracao = 0;
+    EXEC SQL END DECLARE SECTION;
+
+	struct sqlca sqlca;
+
+	
+
+    STRCPY_TO_ORA(oszNrLinha, ptLinhaBase->szNrLinha);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOTFOUND goto naoexiste;
+
+	EXEC SQL SELECT
+        idlinhabase,
+        idarearegistro,
+        nrlinha,
+        TO_CHAR(dtEstaDOlinha, 'YYYYMMDDHH24MISS'),
+        nrmin,
+        nrdigitolinha,
+        idusuarioalteracao
+    INTO
+        :oszIdLinhaBase:iIdLinhaBase,
+        :oszIdAreaRegistro:iIdAreaRegistro,
+        :oszNrLinha:iNrLinha,
+        :oszDtStatusLinha:iDtStatusLinha,
+        :oszNrMin:iNrMin,
+        :oszNrDigitoLinha:iNrDigitoLinha,
+        :oszIdUsuarioAlteracao:iIdUsuarioAlteracao
+    FROM Linha.LinhaBase
+    WHERE nrlinha = :oszNrLinha;
+
+
+    if(iIdLinhaBase != -1 ) {
+        STRCPY_FROM_ORA(ptLinhaBase->szIdLinhaBase , oszIdLinhaBase);
+    }
+    if(iIdAreaRegistro != -1 ) {
+        STRCPY_FROM_ORA(ptLinhaBase->szIdAreaRegistro , oszIdAreaRegistro);
+    }
+    if(iNrLinha != -1 ) {
+        STRCPY_FROM_ORA(ptLinhaBase->szNrLinha , oszNrLinha);
+    }
+    if(iDtStatusLinha != -1 ) {
+        STRCPY_FROM_ORA(ptLinhaBase->szDtStatusLinha , oszDtStatusLinha);
+    }
+    if(iNrMin != -1 ) {
+        STRCPY_FROM_ORA(ptLinhaBase->szNrMin , oszNrMin);
+    }
+    if(iNrDigitoLinha != -1 ) {
+        STRCPY_FROM_ORA(ptLinhaBase->szNrDigitoLinha , oszNrDigitoLinha);
+    }
+    if(iIdUsuarioAlteracao != -1 ) {
+        STRCPY_FROM_ORA(ptLinhaBase->szIdUsuarioAlteracao , oszIdUsuarioAlteracao);
+    }
+
+	ULOG_END("CLinhaBasepc::proCBuscaLinhaBase()");
+    return true;
+
+    naoexiste:
+        ULOGI( "Finalizando proCBuscaLinhaBase <NOT FOUND>");
+        ULOG_END("CLinhaBasepc::proCBuscaLinhaBase()");
+        return false;
+
+    erro:
+    	ULOGI( "Finalizando proCBuscaLinhaBase <ERROR>");
+    	ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    	ULOG_END("CLinhaBasepc::proCBuscaLinhaBase()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+bool CLinhaBasepc::proCBuscaAreaServico(TLinhaBase *ptLinhaBase, char *DDD)
+{
+    ULOG_START("CLinhaBasepc::proCBuscaAreaServico()");
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdAreaRegistro[LEN_IDAREAREGISTRO];
+		VARCHAR oszDDD[LEN_IDAREAREGISTRO];
+        short iIdAreaRegistro = 0;
+
+    EXEC SQL END DECLARE SECTION;
+
+	struct sqlca sqlca;
+
+	ULOGI( "  -> Iniciando proCBuscaAreaServico");
+
+    STRCPY_TO_ORA(oszDDD, DDD);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOTFOUND goto naoexiste;
+
+	EXEC SQL SELECT
+        idarearegistro
+    INTO
+        :oszIdAreaRegistro:iIdAreaRegistro
+    FROM Apoio.AreaRegistro
+    WHERE idarearegistro = :oszDDD;
+
+
+    if(iIdAreaRegistro != -1 ) 
+        STRCPY_FROM_ORA(ptLinhaBase->szIdAreaRegistro , oszIdAreaRegistro);
+ 
+
+	ULOGI( "Finalizando proCBuscaAreaServico <FOUND>");
+	ULOG_END("CLinhaBasepc::proCBuscaAreaServico()");
+    return true;
+
+    naoexiste:
+        ULOGI( "  -> Finalizando proCBuscaAreaServico <NOT FOUND>");
+        ULOG_END("CLinhaBasepc::proCBuscaAreaServico()");
+        return false;
+
+    erro:
+    	ULOGI( "  -> Finalizando proCBuscaAreaServico <ERROR>");
+    	ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    	ULOG_END("CLinhaBasepc::proCBuscaAreaServico()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

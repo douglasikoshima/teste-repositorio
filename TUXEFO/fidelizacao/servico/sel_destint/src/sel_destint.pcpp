@@ -1,0 +1,322 @@
+//
+// $Id: sel_destint.pcpp,v 1.1.118.1 2011/12/26 17:02:34 a5116174 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+
+int sel_destint2( int usuario, DOMNode * dnode, XMLGen * xml )
+{
+  char parm[2000];
+  char bf[4096];
+  
+  EXEC SQL BEGIN DECLARE SECTION;
+  int     idResposta;
+  int     idPergunta;
+  int	  idUfOperadora;
+  int     idUF;
+  int	  idSegmentacao;
+  int	  idUsuario=usuario;
+  int	  idGrupo;
+  int	  idTipoLinha=0;
+  VARCHAR dsResposta[2000];
+  int	  idTipoPessoa;
+  VARCHAR sgTipoPessoa[10];
+
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  
+
+  try
+  {
+    
+	ULOG("Destino ==>sel_destint2"); 
+
+    get_tag(parm,dnode,"idperg",0,0);
+    idPergunta = atoi(parm);
+
+	get_tag(parm,dnode,"idTipoLinha",0,-1);
+	idTipoLinha = atoi(parm);
+
+	get_tag(parm,dnode,"idUfOperadora",0,0);
+	idUfOperadora = atoi(parm);
+
+	get_tag(parm,dnode,"idSegmentacao",0,0);
+	idSegmentacao = atoi(parm);
+
+    get_tag(parm,dnode,"sgTipoPessoa",0,0);
+    if ( parm[0] == '1' )
+       strcpy(parm,"PF");
+    if ( parm[0] == '2' )
+       strcpy(parm,"PJ");
+    if ( parm[0] == '0' )
+       strcpy(parm,"NC");
+    
+    ULOG( "sgTipoPessoa parm [%s]",parm );
+    
+	strToOra(sgTipoPessoa,parm);
+
+	get_tag(parm,dnode,"idGrupo",0,-1);
+	idGrupo = atoi(parm);
+	//Capturando idTipoPesoa
+	EXEC SQL
+		SELECT IDTIPOPESSOA,DSTIPOPESSOA
+		INTO :idTipoPessoa			 
+		FROM APOIO.TIPOPESSOA
+		WHERE SGTIPOPESSOA=:sgTipoPessoa;
+
+    sprintf( bf,
+    "SELECT DISTINCT "
+ 	"	r.idresposta idresposta, "
+ 	"	r.dsresposta dsresposta "
+    "  FROM questionario.resposta r, "
+    "       retencao.oferta o, "
+    "       retencao.ofertarespostaunidade oru, "
+    "       retencao.respostaunidade ru, "
+    "       retencao.gruporespostaunidade gru, "
+	"	    retencao.SEGMENTACAORESPOSTAUNIDADE sru "
+    " WHERE o.idunidadeoferta = oru.idoferta "
+    "   AND oru.idrespostaunidade = ru.idrespostaunidade "
+    "   AND ru.idrespostaunidade = sru.idrespostaunidade "
+    "   AND ru.idrespostaunidade = gru.idrespostaunidade "
+    "   AND r.idresposta = ru.idresposta1 "
+    "   AND gru.idrespostaunidade = ru.idrespostaunidade "
+    "   AND o.inativo = 1 "
+    "   AND ru.inativo = 1 "
+    "   AND oru.inativo = 1 "
+    "   AND ru.idtipolinha = %d "
+    "   AND ru.idufoperadora = %d "
+    "   AND ru.idtipopessoa = %d "
+    "   AND sru.idsegmentacao = %d "
+    "   AND gru.idgrupo = %d "
+    "   AND o.sgclassificacao NOT IN (SELECT sgclassificacao "
+    "                                   FROM retencao.bloqueioaparelhocontrolev01 "
+    "                                  WHERE idtipolinha = %d) "
+    "   AND r.indisponibilidade = 1 "
+    "   AND r.idpergunta = 1 "
+    "   ORDER BY dsresposta ", idTipoLinha, idUfOperadora, idTipoPessoa, idSegmentacao, idGrupo, idTipoLinha );
+
+    ULOG( "1. Query:" );
+    ULOG( bf );
+
+    EXEC SQL WHENEVER NOT FOUND DO break;
+  	/* alterado para que as informações de controle tambem sejam encontradas. 25094 - Controle PJ (Movel)
+	EXEC SQL DECLARE crsDfdstAll2 CURSOR FOR
+    SELECT DISTINCT 
+         r.idresposta idresposta, 
+         r.dsresposta dsresposta
+      FROM questionario.resposta r,
+           retencao.oferta o,
+           retencao.script script,       
+           retencao.scriptoferta scroferta,
+           retencao.scripttipolinha scrtipolinha,
+           retencao.scriptufoperadora scrufoperadora,
+           retencao.scripttipopessoa scrtipopessoa,
+           retencao.scriptsegmentacao scrsegmentacao,
+           retencao.scriptgrupo scrgrupo ,
+           retencao.scriptrespostaintencao scrintencao
+     WHERE  o.idunidadeoferta = scroferta.idoferta
+       AND scrtipolinha.idscript = scrgrupo.idscript
+       AND scrtipopessoa.idscript = scrgrupo.idscript
+       AND scrgrupo.idscript = scrintencao.idscript
+       AND script.inativo = 1
+       AND script.idscript = scrgrupo.idscript
+       AND r.idresposta = scrintencao.idrespostaintencao  
+       AND o.inativo = 1
+       AND scrtipolinha.idtipolinha = :idTipoLinha
+       AND scrufoperadora.idufoperadora = :idUfOperadora
+       AND scrtipopessoa.idtipopessoa = :idTipoPessoa
+       AND scrsegmentacao.idsegmentacao = :idSegmentacao
+       AND scrgrupo.idgrupo = :idGrupo
+       AND o.sgclassificacao NOT IN (SELECT sgclassificacao
+                                       FROM retencao.bloqueioaparelhocontrolev01
+                                      WHERE idtipolinha = :idTipoLinha)
+       AND r.indisponibilidade = 1
+       AND r.idpergunta = 1
+       ORDER BY dsresposta;
+	   */
+           	
+	EXEC SQL DECLARE crsDfdstAll2 CURSOR FOR
+    SELECT DISTINCT 
+         r.idresposta idresposta, 
+         r.dsresposta dsresposta
+      FROM questionario.resposta r,
+           retencao.oferta o,
+           retencao.script script,       
+           retencao.scriptoferta scroferta,
+           retencao.scripttipolinha scrtipolinha,
+           retencao.scriptufoperadora scrufoperadora,
+           retencao.scripttipopessoa scrtipopessoa,
+           retencao.scriptsegmentacao scrsegmentacao,
+           retencao.scriptgrupo scrgrupo ,
+           retencao.scriptrespostaintencao scrintencao
+     WHERE  o.idunidadeoferta = scroferta.idoferta
+       AND scrtipolinha.idscript = scrgrupo.idscript
+       AND scrtipopessoa.idscript = scrgrupo.idscript
+       AND scrgrupo.idscript = scrintencao.idscript
+       AND script.inativo = 1
+       AND script.idscript = scrgrupo.idscript
+       AND r.idresposta = scrintencao.idrespostaintencao  
+       AND o.inativo = 1
+       AND scrtipolinha.idtipolinha = :idTipoLinha
+       AND scrufoperadora.idufoperadora = :idUfOperadora
+       AND scrtipopessoa.idtipopessoa = :idTipoPessoa
+       AND scrsegmentacao.idsegmentacao = :idSegmentacao
+       AND scrgrupo.idgrupo = :idGrupo
+       AND r.indisponibilidade = 1
+       AND r.idpergunta = 1
+       ORDER BY dsresposta;
+
+    EXEC SQL OPEN crsDfdstAll2;
+  
+    for(;;) 
+	{
+	  EXEC SQL FETCH crsDfdstAll2 INTO :idResposta,
+									   :dsResposta;
+     
+      endOraStr(dsResposta);
+      xml->createTag("tns:itemListaVO");
+      xml->addItem("id",idResposta);
+      xml->addItem("descricao",(char *)dsResposta.arr);
+      xml->closeTag();
+    }
+  
+      EXEC SQL CLOSE crsDfdstAll2;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+  }
+  catch(...)
+  {
+		throw;
+  }
+ 
+  return 1;
+}
+
+
+
+int sel_destint(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char parm[2000];
+  int  whFlag;
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  int     idResposta;
+  int     idPergunta;
+  VARCHAR dsResposta[2000];
+  VARCHAR whClause[2005];
+  
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  EXEC SQL WHENEVER NOT FOUND DO break;
+
+  try
+  {
+    // Pegando dados do xml
+    get_tag(parm,dnode,"idperg",0,0);
+    idPergunta = atoi(parm);
+
+    get_tag(parm,dnode,"texto",0,0);
+    sprintf((char *)whClause.arr,"%%%s%%",parm);
+    whClause.len = strlen(parm) + 2;
+    whFlag = parm[0] == '*';
+
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+
+    EXEC SQL DECLARE crsDfdstTxt CURSOR FOR
+      SELECT IDRESPOSTA, DSRESPOSTA
+      FROM questionario.resposta
+      WHERE inDisponibilidade != 0
+      and   idPergunta = :idPergunta
+      AND   UPPER(dsResposta) like UPPER(:whClause)
+	  order by DSRESPOSTA;
+
+	EXEC SQL DECLARE crsDfdstAll CURSOR FOR
+	SELECT IDRESPOSTA, DSRESPOSTA
+	  FROM questionario.resposta
+	WHERE inDisponibilidade != 0
+	  and   idPergunta = :idPergunta
+	order by DSRESPOSTA ;
+  
+
+    if (whFlag)
+	{
+      EXEC SQL OPEN crsDfdstAll;
+    }
+	else
+	{
+      EXEC SQL OPEN crsDfdstTxt;
+    }
+  
+    for(;;) 
+	{
+      if (whFlag)
+	  {
+		EXEC SQL FETCH crsDfdstAll INTO :idResposta,:dsResposta;
+      }
+	  else
+	  {
+		EXEC SQL FETCH crsDfdstTxt INTO :idResposta,:dsResposta;
+      }
+      
+	  endOraStr(dsResposta);
+      xml->createTag("tns:itemListaVO");
+		  xml->addItem("id",idResposta);
+		  xml->addItem("descricao",(char *)dsResposta.arr);
+      xml->closeTag();
+    }
+  
+    if (whFlag)
+	{
+      EXEC SQL CLOSE crsDfdstAll;
+    }
+	else
+	{
+      EXEC SQL CLOSE crsDfdstTxt;
+    }
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+ }catch(...){throw;}
+ 
+  return 1;
+}
+
+
+
+/*
+void BuscaUFOperadora(int idRegionalPrm, int * idUFOperadoraPrm )
+{
+	ULOG_START( "BuscaUFOperadora()" );
+		
+	EXEC SQL BEGIN DECLARE SECTION;
+	    int idRegional = idRegionalPrm;
+	    int idUFOperadora;
+	EXEC SQL END DECLARE SECTION;
+
+	
+	try
+	{
+		EXEC SQL
+		SELECT 
+		   UFOPERADORA.IDUFOPERADORA 
+		INTO 
+		   :idUFOperadora
+		FROM 
+		   CUSTOMER.UFOPERADORA UFOPERADORA 
+		WHERE 
+		   UFOPERADORA.IDUF = :idRegional;
+	
+	    *idUFOperadoraPrm = idUFOperadora;
+		
+		ULOG_END( "BuscaUFOperadora()" );
+	}
+	catch(...)
+	{
+		ULOGE( "*** SAIDA ANORMAL: BuscaUFOperadora()" );
+		throw;
+	}
+
+}
+*/

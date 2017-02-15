@@ -1,0 +1,127 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+
+
+#include "../include/cWFAtendimentoSemRetorno.h"
+#include "../include/stWFAtendimentoSemRetorno.h"
+
+void sql_error_WFAtendimentoSemRetorno(sqlca*sqlca);
+
+	// Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+		#include "../include/stWFAtendimentoSemRetorno.h"
+    EXEC SQL END DECLARE SECTION;
+
+bool proCIncluirWFAtendimentoSemRetorno(st_AtendimentoSemRetorno* dados, st_vlAtendimentoSemRetorno* status, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AtendimentoSemRetorno   oDados;
+		struct st_vlAtendimentoSemRetorno oStatus;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoSemRetorno(&sqlca);
+
+	EXEC SQL 
+		INSERT INTO
+			atendimento.AtendimentoSemRetorno
+			(
+				idAtendimento
+			)
+			VALUES
+			(
+				:oDados.idAtendimento
+			);
+
+	saida->createTag("Registro");
+		saida->addItem("idAtendimento", oDados.idAtendimento);
+	saida->closeTag();
+
+	return true;
+}
+
+bool proCExcluirWFAtendimentoSemRetorno(st_AtendimentoSemRetorno* dados, st_vlAtendimentoSemRetorno* status, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAtendimento = dados->idAtendimento;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoSemRetorno(&sqlca);
+
+	EXEC SQL 
+		DELETE
+			atendimento.AtendimentoSemRetorno
+		WHERE
+			idAtendimento = :idAtendimento;
+
+	return true;
+}
+
+bool proCConsultaWFAtendimentoSemRetorno(st_AtendimentoSemRetorno* dados, st_vlAtendimentoSemRetorno* status, char* order, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAtendimento;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	sprintf(query,"SELECT idAtendimento FROM atendimento.AtendimentoSemRetorno ");
+
+	bool separa = false;
+
+	if (status->idAtendimento != -1) 
+		montaWhere("idAtendimento", dados->idAtendimento, 1);
+
+	if (strlen(order) > 0) 
+		sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoSemRetorno(&sqlca);
+
+	EXEC SQL PREPARE consultaAtendimentoSemRetorno FROM :query;
+	EXEC SQL DECLARE consulta CURSOR FOR consultaAtendimentoSemRetorno;
+
+	EXEC SQL OPEN consulta;
+
+	while (true)
+	{
+		EXEC SQL FETCH consulta INTO :idAtendimento;
+
+		saida->createTag("WFAtendimentoSemRetornoVO");
+			saida->addItem("idAtendimento", idAtendimento);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE consulta;
+
+	return true;
+
+}
+
+void sql_error_WFAtendimentoSemRetorno(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

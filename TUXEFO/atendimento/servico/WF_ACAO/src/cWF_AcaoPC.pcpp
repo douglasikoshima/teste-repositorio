@@ -1,0 +1,1598 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Roberto Borges
+ * @version $Revision: 1.1.2.13.6.5 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/06 12:36:44 $
+ **/
+       
+#include"../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+#include "../include/cWF_AcaoPC.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+   #define TAM_MAX_BLC_ORA     25
+EXEC SQL END DECLARE SECTION;
+
+bool cWF_Acao::getSysDate()
+{
+	ULOG_START("cWF_Acao::getSysDate()");
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	  char     dsSysdate[256];
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+	EXEC SQL 
+		SELECT TO_CHAR(SYSDATE, 'DD/MM/YYYY HH24:MI:SS') into :dsSysdate FROM DUAL;
+	
+	sSysDate = TString(dsSysdate).Trim();
+
+	ULOG_END("cWF_Acao::getSysDate()");
+
+	return true;
+}
+
+
+/**
+	Obtencao de Mensagem a enviar ao Cliente/Usuario
+*/
+void cWF_Acao::getFormaRetorno(stBaixaHistorico* datos)
+{
+
+    ULOG_START("cWF_Acao::getFormaRetorno()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    long idAtendimento = datos->idAtendimento;
+    int idBxa = datos->idBxa;
+    int inEnvEmail;
+    int inEnvSms;
+    int inEnvTel;
+    VARCHAR dsMsg[256];
+    VARCHAR dsCom[256];
+
+    short i_dsMsg = -1;
+    short i_dsCom = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("idAtendimento=%ld",idAtendimento);
+    ULOG("idBxa=%d",idBxa);
+
+    EXEC SQL
+        SELECT
+            DSMENSAGEMBAIXA,DSCOMUNICACAO,INENVIOEMAIL,INENVIOSMS,INENVIOTELEFONE
+        INTO
+            :dsMsg:i_dsMsg,
+            :dsCom:i_dsCom,
+            :inEnvEmail,
+            :inEnvSms,
+            :inEnvTel
+        FROM
+            (
+                SELECT
+                    DSMENSAGEMBAIXA,DSCOMUNICACAO,INENVIOEMAIL,INENVIOSMS,INENVIOTELEFONE
+                FROM
+                    ATENDIMENTO.ATDFORMARETORNOV01
+                WHERE
+                    IDATENDIMENTO = :idAtendimento
+                AND 
+                    IDBAIXA = :idBxa
+                ORDER BY
+                    NRORDEMUTILIZACAO
+            )
+        WHERE
+            ROWNUM < 2;
+
+    if ( 0 == sqlca.sqlcode )
+    {
+        CONVIND(dsMsg, i_dsMsg);
+        CONVIND(dsCom, i_dsCom);
+
+        strcpy(datos->dsMsg, (char*) dsMsg.arr);
+        strcpy(datos->dsCom, (char*) dsCom.arr);
+        datos->inEnvEmail = inEnvEmail;
+        datos->inEnvSms = inEnvSms;
+        datos->inEnvTel = inEnvTel;
+    }
+    else
+    {
+        ULOGW("Dados não encontrados");
+    }
+
+    ULOG("dsMsg='%s' dsCom='%s' inEnvEmail=%i inEnvSms=%i inEnvTel=%i"
+            ,(char*)dsMsg.arr,(char*)dsCom.arr,inEnvEmail,inEnvSms,inEnvTel);
+
+    ULOG_END("cWF_Acao::getFormaRetorno()");
+}
+
+void cWF_Acao::inserirAtendimentoLinhas(long idAtendimento,Collection *atendimentoLinhas)
+{
+    ULOG_START("cWF_Acao::inserirAtendimentoLinhas()");
+
+    if ( 0 == atendimentoLinhas )
+    {
+        ULOGW("Ponteiro inválido");
+        ULOG_END("cWF_Acao::inserirAtendimentoLinhas()");
+    }
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long listaIdAtendimento[TAM_MAX_BLC_ORA];
+        char listaCdConta[TAM_MAX_BLC_ORA][101];
+        char listaNrTelefone[TAM_MAX_BLC_ORA][13];
+
+        int rows_to_insert;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+
+    int iCount = atendimentoLinhas->GetCount();
+    int i=0, j=0;
+
+    ULOG("Foram enviadas %d linhas para associacao",iCount);
+
+    while ( i < iCount )
+    {
+        memset(&listaIdAtendimento,0,sizeof(listaIdAtendimento));
+        memset(&listaCdConta,0,sizeof(listaCdConta));
+        memset(&listaNrTelefone,0,sizeof(listaNrTelefone));
+
+        for ( j = 0; j < TAM_MAX_BLC_ORA; j++ )
+        {
+            if ( i >= iCount ) { break; }
+
+            listaIdAtendimento[j] = idAtendimento;
+            SAFE_STRNCPY(listaCdConta[j],((stAtendimentoLinhas*)atendimentoLinhas->GetItem(i))->cdConta);
+            SAFE_STRNCPY(listaNrTelefone[j],((stAtendimentoLinhas*)atendimentoLinhas->GetItem(i))->nrTelefone);
+
+            i++;
+        }
+
+        if ( j ) 
+        {
+            ULOG("Vai inserir bloco com %d linhas em ATENDIMENTOLINHAS",j);
+
+            rows_to_insert = j;
+
+            EXEC SQL FOR :rows_to_insert
+                INSERT INTO
+                    ATENDIMENTO.ATENDIMENTOLINHAS
+                    (
+                        IDATENDIMENTOLINHAS,
+                        IDATENDIMENTO,
+                        CDCONTA,
+                        NRTELEFONE
+                    )
+                VALUES
+                    (
+                        ATENDIMENTO.ATENDIMENTOLINHASSQ.NEXTVAL,
+                        :listaIdAtendimento,
+                        :listaCdConta,
+                        :listaNrTelefone
+                    );
+        }
+    }
+
+    ULOG_END("cWF_Acao::inserirAtendimentoLinhas()");
+}
+
+void cWF_Acao::proCAtualizarPessoaUsuarioAbertura(long idAtendimento,long idPessoaUsuarioAbertura)
+{
+    ULOG_START("cWF_Acao::proCAtualizarPessoaUsuarioAbertura()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long varOraIdAtendimento = idAtendimento;
+        long varOraIdPessoaUsuarioAbertura = idPessoaUsuarioAbertura;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTO
+        SET
+            IDPESSOAUSUARIOABERTURA = :varOraIdPessoaUsuarioAbertura,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE
+        IDATENDIMENTO = :varOraIdAtendimento;
+
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+        SET
+            IDPESSOAUSUARIOABERTURA = :varOraIdPessoaUsuarioAbertura,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE
+            IDATENDIMENTO = :varOraIdAtendimento;
+
+    ULOG_END("cWF_Acao::proCAtualizarPessoaUsuarioAbertura()");
+}
+
+void cWF_Acao::proCTrocarResponsavelMC2(long idAtendimento,int idPessoaUsuarioMC,int idGrupoMC)
+{
+    ULOG_START("cWF_Acao::proCTrocarResponsavelMC2()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long varOraIdAtendimento = idAtendimento;
+        int varOraIdPessoaUsuarioMC = idPessoaUsuarioMC;
+        int varOraIdGrupoMC = idGrupoMC;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+        SET
+            IDPESSOAUSUARIOMC = :varOraIdPessoaUsuarioMC,
+            IDGRUPOMC = :varOraIdGrupoMC,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE
+            IDATENDIMENTO = :varOraIdAtendimento;
+
+    ULOG_END("cWF_Acao::proCTrocarResponsavelMC2()");
+}
+
+bool cWF_Acao::obterGrupoTratamentoRetencaoPout(int *idGrupo)
+{
+    ULOG_START("cWF_Acao::obterGrupoTratamentoRetencaoPout()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int varOraIdGrupoTratamento;
+        short statOraIdGrupoTratamento=-1;
+        const char *pOraIdAtendimento = idAtendimento.c_str();
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("vai buscar grupo de tratamento de retenção em ATENDIMENTO.ATENDIMENTO");
+
+    EXEC SQL
+        SELECT
+            IDGRUPOABERTURA
+        INTO
+            :varOraIdGrupoTratamento:statOraIdGrupoTratamento
+        FROM
+            ATENDIMENTO.ATENDIMENTO
+        WHERE
+            IDATENDIMENTO = :pOraIdAtendimento;
+
+        //SELECT
+        //    IDGRUPOTRATAMENTO
+        //INTO
+        //    :varOraIdGrupoTratamento:statOraIdGrupoTratamento
+        //FROM
+        //    CONTATOADM.CONTATOFUNCIONALIDADE
+        //WHERE
+        //    SGSUBSISTEMA = 'FO'
+        //AND CDFUNCIONALIDADE = 'PORTOUT_RETENÇÃO';
+
+    bool retorno;
+    if ( 0==sqlca.sqlcode )
+    {
+        *idGrupo = varOraIdGrupoTratamento;
+        retorno = true;
+    }
+    else
+    {
+        *idGrupo = -1;
+        retorno = false;
+    }
+
+    ULOG("retorno = %d",retorno);
+
+    ULOG_END("cWF_Acao::obterGrupoTratamentoRetencaoPout()");
+
+    return retorno;
+}
+
+bool cWF_Acao::proCObterDadosAberturaProcesso(long idAtendimento,const char *idAtendimentoProtocolo,DadosRetCons *dadosRetCons)
+{
+    ULOG_START("cWF_Acao::proCObterDadosAberturaProcesso()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR varOraIdContato[39];
+        short statOraIdContato = -1;
+        const char *varOraNrProtocolo = idAtendimentoProtocolo;
+        struct
+        {
+            VARCHAR idLinhaTelefonica[39];
+            VARCHAR idTipoRelacionamento[39];
+            VARCHAR nmPessoa[256];
+            //VARCHAR nmFalandoCom[256];
+            VARCHAR nrLinha[32];
+            VARCHAR idSegmentacao[39];
+            VARCHAR idProcedencia[39];
+            VARCHAR idCanal[39];
+            VARCHAR idPessoaDePara[39];
+            VARCHAR dsObservacao[1001];
+        } dadosOraRetCons;
+
+        struct
+        {
+            short idLinhaTelefonica;
+            short idTipoRelacionamento;
+            short nmPessoa;
+            // short nmFalandoCom;
+            short nrLinha;
+            short idSegmentacao;
+            short idProcedencia;
+            short idCanal;
+            short idPessoaDePara;
+            short dsObservacao;
+        } statusOraRetCons;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("vai buscar nrprotocolo=%s em RETENCAO.ABERTURAPROCESSOV01",idAtendimentoProtocolo);
+
+    memset(&dadosOraRetCons,0,sizeof(dadosOraRetCons));
+    memset(&statusOraRetCons,-1,sizeof(statusOraRetCons));
+
+    EXEC SQL
+        SELECT
+            ABERTURAPROCESSOV01.IDLINHATELEFONICA,
+            ABERTURAPROCESSOV01.IDTIPORELACIONAMENTO,
+            ABERTURAPROCESSOV01.NMPESSOA,
+            ABERTURAPROCESSOV01.NRLINHA,
+            ABERTURAPROCESSOV01.IDSEGMENTACAO,
+            ABERTURAPROCESSOV01.IDPROCEDENCIA,
+            ABERTURAPROCESSOV01.IDCANAL,
+            ABERTURAPROCESSOV01.IDPESSOADEPARA,
+            SUBSTR(ABERTURAPROCESSOV01.DSOBSERVACAO,1,1000) AS DSOBSERVACAO
+        INTO
+            :dadosOraRetCons:statusOraRetCons
+        FROM
+            RETENCAO.ABERTURAPROCESSOV01 ABERTURAPROCESSOV01
+        WHERE
+            ABERTURAPROCESSOV01.NRPROTOCOLO = :varOraNrProtocolo
+        AND ROWNUM < 2;
+
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("Dados de retenção não encontrados");
+        ULOG_END("cWF_Acao::proCObterDadosAberturaProcesso()");
+        return false;
+    }
+    else
+    {
+        CONVIND(dadosOraRetCons.idLinhaTelefonica,statusOraRetCons.idLinhaTelefonica);
+        CONVIND(dadosOraRetCons.idTipoRelacionamento,statusOraRetCons.idTipoRelacionamento);
+        CONVIND(dadosOraRetCons.nmPessoa,statusOraRetCons.nmPessoa);
+        CONVIND(dadosOraRetCons.nrLinha,statusOraRetCons.nrLinha);
+        CONVIND(dadosOraRetCons.idSegmentacao,statusOraRetCons.idSegmentacao);
+        CONVIND(dadosOraRetCons.idProcedencia,statusOraRetCons.idProcedencia);
+        CONVIND(dadosOraRetCons.idCanal,statusOraRetCons.idCanal);
+        CONVIND(dadosOraRetCons.idPessoaDePara,statusOraRetCons.idPessoaDePara);
+        CONVIND(dadosOraRetCons.dsObservacao,statusOraRetCons.dsObservacao);
+
+        dadosRetCons->idLinhaTelefonica = (char*)dadosOraRetCons.idLinhaTelefonica.arr;
+        dadosRetCons->idTipoRelacionamento = (char*)dadosOraRetCons.idTipoRelacionamento.arr;
+        dadosRetCons->nmPessoa = (char*)dadosOraRetCons.nmPessoa.arr;
+        dadosRetCons->nrLinha = (char*)dadosOraRetCons.nrLinha.arr;
+        dadosRetCons->idSegmentacao = (char*)dadosOraRetCons.idSegmentacao.arr;
+        dadosRetCons->idProcedencia = (char*)dadosOraRetCons.idProcedencia.arr;
+        dadosRetCons->idCanal = (char*)dadosOraRetCons.idCanal.arr;
+        dadosRetCons->idPessoaDePara = (char*)dadosOraRetCons.idPessoaDePara.arr;
+        dadosRetCons->dsObservacao = (char*)dadosOraRetCons.dsObservacao.arr;
+    }
+
+    EXEC SQL
+        SELECT
+            IDCONTATO
+        INTO
+            :varOraIdContato:statOraIdContato
+        FROM
+            CONTATOADM.CONTATO
+        WHERE
+            NMPATH = 'VIVO/SERVIÇOS/PORTABILIDADE NUMÉRICA/STATUS DE PORT OUT/Ativação Manual';
+
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("path não encontrada");
+        ULOG_END("cWF_Acao::proCObterDadosAberturaProcesso()");
+        return false;
+    }
+    else
+    {
+        CONVIND(varOraIdContato,statOraIdContato);
+        dadosRetCons->idContato = (char*)varOraIdContato.arr;
+    }
+
+    ULOG_END("cWF_Acao::proCObterDadosAberturaProcesso()");
+
+    return true;
+}
+
+void cWF_Acao::proCEnfileirarEfetivacaoRetencaoNoLegado(TString &idAtendimento,TString &User)
+{
+    ULOG_START("cWF_Acao::proCEnfileirarEfetivacaoRetencaoNoLegado()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long varOraIdAtendimento = idAtendimento.ToLong();
+        const char *varOraIdUsuarioAlteracao = User.c_str();
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("vai marcar 'pedidoConfirmar' em RETENCAO.FILAATIVACAOPONTO");
+
+    EXEC SQL
+        UPDATE RETENCAO.FILAATIVACAOPONTO RFAP
+        SET RFAP.DTEFETIVACAO = SYSDATE+1,
+            RFAP.DSOPERACAO = 'pedidoConfirmar',
+            RFAP.DTULTIMAALTERACAO = SYSDATE,
+            RFAP.IDUSUARIOALTERACAO = :varOraIdUsuarioAlteracao
+        WHERE RFAP.IDFILARETENCAOLEGADO IN
+            ( 
+                SELECT IDFILARETENCAOLEGADO
+                FROM RETENCAO.FILARETENCAOLEGADO RFAL
+                WHERE RFAL.IDATENDIMENTO = :varOraIdAtendimento
+                AND RFAL.INPROCESSADO = -1
+            );
+
+    ULOG("vai confirmar a retenção em RETENCAO.FILAORDEMVENDASAP");
+
+    EXEC SQL
+        UPDATE RETENCAO.FILAORDEMVENDASAP RFOVS
+        SET RFOVS.DTATIVACAO = SYSDATE+1,
+            RFOVS.DTULTIMAALTERACAO = SYSDATE,
+            RFOVS.IDUSUARIOALTERACAO = :varOraIdUsuarioAlteracao
+        WHERE RFOVS.IDFILARETENCAOLEGADO IN
+            ( 
+                SELECT IDFILARETENCAOLEGADO
+                FROM RETENCAO.FILARETENCAOLEGADO RFAL
+                WHERE RFAL.IDATENDIMENTO = :varOraIdAtendimento
+                AND RFAL.INPROCESSADO = -1
+            );
+
+    ULOG("vai enfileirar retenção do processo %ld em RETENCAO.FILARETENCAOLEGADO",varOraIdAtendimento);
+
+    EXEC SQL
+        UPDATE RETENCAO.FILARETENCAOLEGADO
+        SET INPROCESSADO = 0,
+            DTULTIMAALTERACAO = SYSDATE,
+            IDUSUARIOALTERACAO = :varOraIdUsuarioAlteracao
+        WHERE INPROCESSADO = -1
+        AND IDATENDIMENTO = :varOraIdAtendimento;
+
+    ULOG_END("cWF_Acao::proCEnfileirarEfetivacaoRetencaoNoLegado()");
+}
+
+void cWF_Acao::proCCancelarEfetivacaoRetencaoPontos(TString &idAtendimento,TString &User)
+{
+    ULOG_START("cWF_Acao::proCCancelarEfetivacaoRetencaoPontos()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long varOraIdAtendimento = idAtendimento.ToLong();
+        const char *varOraIdUsuarioAlteracao = User.c_str();
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("vai marcar 'pedidoCancelar' em RETENCAO.FILAATIVACAOPONTO");
+
+    EXEC SQL
+        UPDATE RETENCAO.FILAATIVACAOPONTO RFAP
+        SET RFAP.DTEFETIVACAO = SYSDATE+1,
+            RFAP.DSOPERACAO = 'pedidoCancelar',
+            RFAP.DTULTIMAALTERACAO = SYSDATE,
+            RFAP.IDUSUARIOALTERACAO = :varOraIdUsuarioAlteracao
+        WHERE RFAP.IDFILARETENCAOLEGADO IN
+            ( 
+                SELECT IDFILARETENCAOLEGADO
+                FROM RETENCAO.FILARETENCAOLEGADO RFAL
+                WHERE RFAL.IDATENDIMENTO = :varOraIdAtendimento
+                AND RFAL.INPROCESSADO = -1
+            );
+
+    ULOG("vai enfileirar retenção do processo %ld em RETENCAO.FILARETENCAOLEGADO",varOraIdAtendimento);
+
+    EXEC SQL
+        UPDATE RETENCAO.FILARETENCAOLEGADO
+        SET INPROCESSADO = 0,
+            DTULTIMAALTERACAO = SYSDATE,
+            IDUSUARIOALTERACAO = :varOraIdUsuarioAlteracao
+        WHERE INPROCESSADO = -1
+        AND IDATENDIMENTO = :varOraIdAtendimento;
+
+    ULOG_END("cWF_Acao::proCCancelarEfetivacaoRetencaoPontos()");
+}
+
+void cWF_Acao::obterAtdAgrupadosEmTratFila(long idAtendimento,Collection *listaAtendimentosAgrupados)
+{
+    ULOG_START("cWF_Acao::obterAtdAgrupadosEmTratFila()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long pOraIdAtendimento = idAtendimento;
+        long OraIdPessoaUsuarioAtual = User.ToLong();
+        int OraNrAtendimentoAgrupado;
+        VARCHAR varOraIdAtendimento[55];
+        VARCHAR OraIdLinhaTelefonica[21];
+        short statOraIdAtendimento;
+        short statOraIdLinhaTelefonica = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("Vai buscar o idLinhaTelefonica do processo=%ld",pOraIdAtendimento);
+
+    memset(&OraIdLinhaTelefonica,0,sizeof(OraIdLinhaTelefonica));
+
+    EXEC SQL
+        SELECT
+            IDLINHATELEFONICA
+        INTO
+            :OraIdLinhaTelefonica:statOraIdLinhaTelefonica
+        FROM
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+        WHERE
+            IDATENDIMENTO =:pOraIdAtendimento;
+
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("processo '%ld' não encontrado!",pOraIdAtendimento);
+        ULOG_END("cWF_Acao::obterAtdAgrupadosEmTratFila()");
+    }
+
+    CONVIND(OraIdLinhaTelefonica,statOraIdLinhaTelefonica);
+
+    ULOG("Vai verificar se existem outros processos para o idLinhaTelefonica='%s' em ATENDIMENTO.ATENDIMENTOAGRUPADO",OraIdLinhaTelefonica.arr);
+
+    EXEC SQL
+        SELECT
+            ATENDIMENTOAGRUPADO.NRATENDIMENTOAGRUPADO
+        INTO
+            :OraNrAtendimentoAgrupado
+        FROM
+            ATENDIMENTO.ATENDIMENTOAGRUPADO ATENDIMENTOAGRUPADO,
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO ATENDIMENTOPRIORIZACAO
+        WHERE
+            ATENDIMENTOPRIORIZACAO.IDATENDIMENTO = ATENDIMENTOAGRUPADO.IDATENDIMENTO
+        AND ATENDIMENTOPRIORIZACAO.IDLINHATELEFONICA = :OraIdLinhaTelefonica
+        AND ROWNUM < 2;
+
+    if ( 0==sqlca.sqlcode )
+    {
+        ULOG("nrAtendimentoAgrupado=%d",OraNrAtendimentoAgrupado);
+
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+        EXEC SQL DECLARE cruConsAtdAgrpFila CURSOR FOR 
+            SELECT
+                ATENDIMENTOAGRUPADO.IDATENDIMENTO
+            FROM
+                ATENDIMENTO.ATENDIMENTOAGRUPADO ATENDIMENTOAGRUPADO,
+                ATENDIMENTO.ATENDIMENTOPRIORIZACAO ATENDIMENTOPRIORIZACAO,
+                WORKFLOW.AGRUPAMENTOESTADO AGRUPAMENTOESTADO,
+                WORKFLOW.ESTADO ESTADO,
+                WORKFLOW.SUBESTADO SUBESTADO,
+                WORKFLOW.AGRUPAMENTOESTADOTPPROC AGRUPAMENTOESTADOTPPROC
+            WHERE
+                ATENDIMENTOAGRUPADO.IDATENDIMENTO = ATENDIMENTOPRIORIZACAO.IDATENDIMENTO
+            AND ATENDIMENTOPRIORIZACAO.IDAGRUPAMENTOESTADOTPPROC = AGRUPAMENTOESTADOTPPROC.IDAGRUPAMENTOESTADOTPPROC
+            AND ATENDIMENTOAGRUPADO.NRATENDIMENTOAGRUPADO = :OraNrAtendimentoAgrupado
+            AND ATENDIMENTOAGRUPADO.IDATENDIMENTO <> :pOraIdAtendimento
+            AND AGRUPAMENTOESTADO.IDESTADO = ESTADO.IDESTADO
+            AND AGRUPAMENTOESTADO.IDSUBESTADO = SUBESTADO.IDSUBESTADO
+            AND AGRUPAMENTOESTADO.IDAGRUPAMENTOESTADO = AGRUPAMENTOESTADOTPPROC.IDAGRUPAMENTOESTADO
+            AND ESTADO.DSESTADO = 'EM TRATAMENTO PORTOUT'
+            AND SUBESTADO.DSSUBESTADO = 'EM TRATAMENTO FILA'
+            AND ATENDIMENTOPRIORIZACAO.IDPESSOAUSUARIOATUAL IS NULL;
+
+        EXEC SQL OPEN cruConsAtdAgrpFila;
+
+        while (true)
+        {
+            statOraIdAtendimento = -1;
+            EXEC SQL FETCH cruConsAtdAgrpFila INTO :varOraIdAtendimento:statOraIdAtendimento;
+
+            CONVIND(varOraIdAtendimento, statOraIdAtendimento)
+
+            char *pIdAtendimento = new char[varOraIdAtendimento.len + 1];
+
+            if ( pIdAtendimento )
+            {
+                strcpy(pIdAtendimento,(char*)varOraIdAtendimento.arr);
+                listaAtendimentosAgrupados->AddItem((void*)pIdAtendimento);
+            }
+        }
+
+        EXEC SQL CLOSE cruConsAtdAgrpFila;
+    }
+
+    ULOG_END("cWF_Acao::obterAtdAgrupadosEmTratFila()");
+}
+
+void cWF_Acao::obterAtdAgrupadosEmTratPout(long idAtendimento,Collection *listaAtendimentosAgrupados)
+{
+    ULOG_START("cWF_Acao::obterAtdAgrupadosEmTratPout()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long pOraIdAtendimento = idAtendimento;
+        long OraIdPessoaUsuarioAtual = User.ToLong();
+        int OraNrAtendimentoAgrupado;
+        VARCHAR varOraIdAtendimento[55];
+        VARCHAR OraIdLinhaTelefonica[21];
+        short statOraIdAtendimento;
+        short statOraIdLinhaTelefonica = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("Vai buscar o idLinhaTelefonica do processo=%ld",pOraIdAtendimento);
+
+    memset(&OraIdLinhaTelefonica,0,sizeof(OraIdLinhaTelefonica));
+
+    EXEC SQL
+        SELECT
+            IDLINHATELEFONICA
+        INTO
+            :OraIdLinhaTelefonica:statOraIdLinhaTelefonica
+        FROM
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+        WHERE
+            IDATENDIMENTO =:pOraIdAtendimento;
+
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("processo '%ld' não encontrado!",pOraIdAtendimento);
+        ULOG_END("cWF_Acao::obterAtdAgrupadosEmTratPout()");
+    }
+
+    CONVIND(OraIdLinhaTelefonica,statOraIdLinhaTelefonica);
+
+    ULOG("Vai verificar se existem outros processos para o idLinhaTelefonica='%s' em ATENDIMENTO.ATENDIMENTOAGRUPADO",OraIdLinhaTelefonica.arr);
+
+    if ( 0==sqlca.sqlcode )
+    {
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+        EXEC SQL DECLARE cruConsAtdAgrpTPout CURSOR FOR 
+            SELECT
+                ATENDIMENTOAGRUPADO.IDATENDIMENTO
+            FROM
+                ATENDIMENTO.ATENDIMENTOAGRUPADO ATENDIMENTOAGRUPADO,
+                ATENDIMENTO.ATENDIMENTOPRIORIZACAO ATENDIMENTOPRIORIZACAO,
+                WORKFLOW.AGRUPAMENTOESTADO AGRUPAMENTOESTADO,
+                WORKFLOW.ESTADO ESTADO,
+                WORKFLOW.SUBESTADO SUBESTADO,
+                WORKFLOW.AGRUPAMENTOESTADOTPPROC AGRUPAMENTOESTADOTPPROC
+            WHERE
+                ATENDIMENTOAGRUPADO.IDATENDIMENTO = ATENDIMENTOPRIORIZACAO.IDATENDIMENTO
+            AND ATENDIMENTOPRIORIZACAO.IDAGRUPAMENTOESTADOTPPROC = AGRUPAMENTOESTADOTPPROC.IDAGRUPAMENTOESTADOTPPROC
+            AND ATENDIMENTOAGRUPADO.NRATENDIMENTOAGRUPADO = :OraNrAtendimentoAgrupado
+            AND ATENDIMENTOAGRUPADO.IDATENDIMENTO <> :pOraIdAtendimento
+            AND AGRUPAMENTOESTADO.IDESTADO = ESTADO.IDESTADO
+            AND AGRUPAMENTOESTADO.IDSUBESTADO = SUBESTADO.IDSUBESTADO
+            AND AGRUPAMENTOESTADO.IDAGRUPAMENTOESTADO = AGRUPAMENTOESTADOTPPROC.IDAGRUPAMENTOESTADO
+            AND ESTADO.DSESTADO = 'EM TRATAMENTO PORTOUT'
+            AND SUBESTADO.DSSUBESTADO = 'EM TRATAMENTO PORTOUT'
+            AND ATENDIMENTOPRIORIZACAO.IDPESSOAUSUARIOATUAL = :OraIdPessoaUsuarioAtual;
+
+        EXEC SQL OPEN cruConsAtdAgrpTPout;
+
+        while (true)
+        {
+            statOraIdAtendimento = -1;
+            EXEC SQL FETCH cruConsAtdAgrpTPout INTO :varOraIdAtendimento:statOraIdAtendimento;
+
+            CONVIND(varOraIdAtendimento, statOraIdAtendimento)
+
+            char *pIdAtendimento = new char[varOraIdAtendimento.len + 1];
+
+            if ( pIdAtendimento )
+            {
+                strcpy(pIdAtendimento,(char*)varOraIdAtendimento.arr);
+                listaAtendimentosAgrupados->AddItem((void*)pIdAtendimento);
+            }
+        }
+
+        EXEC SQL CLOSE cruConsAtdAgrpTPout;
+    }
+
+    ULOG_END("cWF_Acao::obterAtdAgrupadosEmTratPout()");
+}
+
+//------------------------------------------------------------------------------------------------------------------
+// Grava o historico de portabilidade
+//------------------------------------------------------------------------------------------------------------------
+void cWF_Acao::gravarPessoaPortabilidadeHist(const char *nomeServico)
+{
+    ULOG_START("cWF_Acao::gravarPessoaPortabilidadeHist()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long varOraIdAtendimento = idAtendimento.ToLong();
+        int varOraIdAtividade = idAtividade.ToInt();
+        int varOraIdPessoa;
+        int varOraIdPessoaDePara;
+        int varOraIdTipoDocumento;
+        int varOraIdTipoEndereco;
+        int varOraIdTipoPessoa;
+		int varOraIPUP=0;
+		int varOraQtdiasPUP=0;
+		int varOraGravaPUP=0;
+
+        VARCHAR varOraCdAreaRegistro[38];
+        VARCHAR varOraNrTelefoneContato[38];
+        VARCHAR varOraNrLinha[38];
+        VARCHAR varOraNmBairro[256];
+        VARCHAR varOraNmLogradouro[256];
+        VARCHAR varOraNmMunicipio[256];
+        VARCHAR varOraNmPessoa[256];
+        VARCHAR varOraNmTipoLogradouro[256];
+        VARCHAR varOraNrCep[256];
+        VARCHAR varOraNrDocumento[256];
+        VARCHAR varOraNrEndereco[256];
+        // VARCHAR varOraDsAcaoPortabilidade[41];
+        VARCHAR varOraDsAtividade[256];
+
+        const char *varOraIdUsuarioAlteracao = User.c_str();
+        const char *varOraDsAcaoPortabilidade = dsAcaoPortabilidade.c_str();
+        const char *varOraDsObservacao = dsObservacao.c_str();
+        const char *varOraSgOperadoraSolicitante = szSgOperadoraSolicitante;
+        const char *varOraNrProtocoloPortabilidade = szNrProtocoloPortabilidade;
+        const char *varOraDtJanelaPortout = szDtJanelaPortout;
+        const char *varOraIdTipoLinha = szIdTipoLinha;
+
+        short varStatOraCdAreaRegistro = 1;
+        short varStatOraNrTelefoneContato = -1;
+        short varStatOraIdPessoa = -1;
+        short varStatOraIdPessoaDePara = -1;
+        short varStatOraIdTipoDocumento = -1;
+        short varStatOraIdTipoEndereco = -1;
+        short varStatOraIdTipoLinha = *varOraIdTipoLinha ? 0 : -1;
+        short varStatOraIdTipoPessoa = -1;
+        short varStatOraIdUsuarioAlteracao = 1;
+        short varStatOraNmBairro = -1;
+        short varStatOraNmLogradouro = -1;
+        short varStatOraNmMunicipio = -1;
+        short varStatOraNmPessoa = -1;
+        short varStatOraNmTipoLogradouro = -1;
+        short varStatOraNrCep = -1;
+        short varStatOraNrDocumento = -1;
+        short varStatOraNrEndereco = -1;
+        short varStatOraDsAcaoPortabilidade = 0;
+        short varStatOraDsAtividade = -1;
+        short varStatOraNrLinha = 1;
+        short varStatOraDsObservacao = *varOraDsObservacao ? 0 : -1;
+        short varStatOraSgOperadoraSolicitante = *szSgOperadoraSolicitante ? 0 : -1;
+        short varStatOraNrProtocoloPortabilidade = *szNrProtocoloPortabilidade ? 0 : -1;
+        short varStatOraDtJanelaPortout = *szDtJanelaPortout ? 0 : -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("dsAcaoPortabilidade=%s",varOraDsAcaoPortabilidade);
+
+    if ( *varOraDsAcaoPortabilidade == 0 )
+    {
+        //
+        //================================================================
+        // Nome da ação
+        ULOG("vai buscar nome da ação ocorrendo para o atendimento=%lu",varOraIdAtendimento);
+    
+        varOraDsAtividade.arr[0] = 0;
+
+        EXEC SQL
+            SELECT
+                SUBSTR(DSATIVIDADE,1,40) AS DSATIVIDADE
+            INTO
+                :varOraDsAtividade:varStatOraDsAtividade
+            FROM
+                WORKFLOW.ATIVIDADE
+            WHERE
+                IDATIVIDADE = :varOraIdAtividade;
+    
+        if ( 0 == sqlca.sqlcode )
+        {
+            CONVIND(varOraDsAtividade,varStatOraDsAtividade);
+        }
+    
+        if ( 0 == varOraDsAtividade.arr[0] )
+        {
+            char dsAcaoTemp[256];
+            sprintf(dsAcaoTemp,"%s:Ativ %d não encontrada",nomeServico,varOraIdAtividade);
+            SAFE_STRNCPY(((char*)varOraDsAtividade.arr),dsAcaoTemp);
+            //varOraDsAtividade.len = strlen((char*)varOraDsAtividade.arr);
+        }
+
+        varOraDsAcaoPortabilidade = (const char*)varOraDsAtividade.arr;
+        ULOG("dsAcaoPortabilidade(2)=%s",varOraDsAcaoPortabilidade);
+    }
+
+    //
+    //================================================================
+    // Busca o pessoaDePara do atendimento
+
+    ULOG("vai buscar idPessoaDePara para o atendimento=%ld",varOraIdAtendimento);
+
+    EXEC SQL
+        SELECT
+            IDPESSOADEPARA
+        INTO 
+            :varOraIdPessoaDePara
+        FROM
+        (
+            SELECT
+                IDPESSOADEPARA,IDTIPORELACIONAMENTO
+            FROM
+                ATENDIMENTO.ATENDIMENTOPESSOA
+            WHERE
+                IDATENDIMENTO = :varOraIdAtendimento
+            ORDER BY -- Dá preferencia para cliente 
+                IDTIPORELACIONAMENTO DESC
+        )
+        WHERE
+            ROWNUM < 2;
+    
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("idPessoaDePara não encontrado para o processo");
+        ULOG_END("cWF_Acao::gravarPessoaPortabilidadeHist()");
+        return;
+    }
+
+    //
+    //================================================================
+    // Busca o numero da linha de portout
+
+    if ( cdAreaRegistro.ToInt() == 0 || nrLinha.ToInt() == 0 )
+    {
+        ULOG("vai buscar o numero da linha para o atendimento=%ld",varOraIdAtendimento);
+
+        varStatOraNrTelefoneContato = -1;
+
+        EXEC SQL
+            SELECT
+                NRTELEFONECONTATO
+            INTO
+                :varOraNrTelefoneContato:varStatOraNrTelefoneContato
+            FROM
+                ATENDIMENTO.ATENDIMENTOCONTATO
+            WHERE
+                IDATENDIMENTO = :varOraIdAtendimento;
+
+        if ( sqlca.sqlcode )
+        {
+            ULOGW("Número da linha não encontrado para o processo");
+
+            memset(&varOraCdAreaRegistro,0,sizeof(varOraCdAreaRegistro));
+            memset(&varOraNrLinha,0,sizeof(varOraNrLinha));
+        }
+        else
+        {
+            CONVIND(varOraNrTelefoneContato,varStatOraNrTelefoneContato);
+
+            memcpy(varOraCdAreaRegistro.arr,varOraNrTelefoneContato.arr,2);
+            varOraCdAreaRegistro.arr[2] = 0;
+            varOraCdAreaRegistro.len = 2;
+
+            if ( varOraNrTelefoneContato.len > 2)
+            {
+                memset(&varOraNrLinha,0,sizeof(varOraNrLinha));
+                memcpy(varOraNrLinha.arr,&varOraNrTelefoneContato.arr[2],varOraNrTelefoneContato.len-2);
+            }
+            else
+            {
+                strcpy((char*)varOraNrLinha.arr,"0");
+            }
+
+            varOraNrLinha.len = strlen((char*)varOraNrLinha.arr);
+        }
+    }
+    else
+    {
+        strcpy((char*)varOraCdAreaRegistro.arr,cdAreaRegistro.c_str());
+        strcpy((char*)varOraNrLinha.arr,nrLinha.c_str());
+    }
+
+    //
+    //================================================================
+    // Dados da pessoa
+
+    ULOG("vai buscar dados para idPessoaDePara=%d, cdAreaRegistro=%s e nrLinha=%s"
+                   ,varOraIdPessoaDePara,varOraCdAreaRegistro.arr,varOraNrLinha.arr);
+
+    EXEC SQL
+        SELECT
+            PESSOA.IDPESSOA,
+            PESSOA.NMPESSOA,
+            PESSOA.IDTIPOPESSOA
+        INTO
+            :varOraIdPessoa:varStatOraIdPessoa,
+            :varOraNmPessoa:varStatOraNmPessoa,
+            :varOraIdTipoPessoa:varStatOraIdTipoPessoa
+        FROM
+            CUSTOMER.PESSOA PESSOA,
+            CUSTOMER.PESSOADEPARA PESSOADEPARA
+        WHERE
+            PESSOADEPARA.IDPESSOADEPARA = :varOraIdPessoaDePara
+        AND PESSOADEPARA.IDPESSOA = PESSOA.IDPESSOA;
+
+        // SELECT
+        //     IDPESSOA,
+        //     NMPESSOA,
+        //     IDTIPOPESSOA,
+        //     IDTIPOLINHA
+        //  INTO
+        //     :varOraIdPessoa:varStatOraIdPessoa,
+        //     :varOraNmPessoa:varStatOraNmPessoa,
+        //     :varOraIdTipoPessoa:varStatOraIdTipoPessoa,
+        //     :varOraIdTipoLinha:varStatOraIdTipoLinha
+        //  FROM
+        //     (        
+        //         SELECT
+        //             PESSOALINHA.IDTIPORELACIONAMENTO,
+        //             PESSOA.IDPESSOA,
+        //             PESSOA.NMPESSOA,
+        //             PESSOA.IDTIPOPESSOA,
+        //             LINHATELEFONICA.IDTIPOLINHA
+        //         FROM
+        //             CUSTOMER.PESSOA PESSOA,
+        //             CUSTOMER.PESSOADEPARA PESSOADEPARA,
+        //             CUSTOMER.PESSOALINHA PESSOALINHA,
+        //             LINHA.LINHATELEFONICA LINHATELEFONICA,
+        //             LINHA.LINHABASE LINHABASE,
+        //             APOIO.AREAREGISTRO
+        //         WHERE
+        //             PESSOADEPARA.IDPESSOADEPARA = :varOraIdPessoaDePara
+        //         AND PESSOADEPARA.IDPESSOA = PESSOA.IDPESSOA
+        //         AND PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA
+        //         AND PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA
+        //         AND LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE (+)
+        //         AND LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO (+)
+        //         --//AND AREAREGISTRO.CDAREAREGISTRO = :varOraCdAreaRegistro
+        //         --//AND LINHABASE.NRLINHA = :varOraNrLinha
+        //         ORDER BY  --// dá preferencia a dados de cliente
+        //             PESSOALINHA.IDTIPORELACIONAMENTO DESC
+        //     )
+        //  WHERE
+        //     ROWNUM < 2;
+
+     if ( sqlca.sqlcode )
+    {
+        ULOGW("idPessoa não encontrado para o processo");
+        ULOG_END("cWF_Acao::gravarPessoaPortabilidadeHist()");
+        return;
+    }
+
+    CONVIND(varOraNmPessoa,varStatOraNmPessoa);
+
+    //
+    //================================================================
+    // Documento da pessoa
+
+    ULOG("vai buscar documento para idPessoa=%d",varOraIdPessoa);
+
+    EXEC SQL
+        SELECT
+            IDTIPODOCUMENTO,
+            NRDOCUMENTO
+        INTO
+            :varOraIdTipoDocumento:varStatOraIdTipoDocumento,
+            :varOraNrDocumento:varStatOraNrDocumento
+        FROM
+            (
+                SELECT
+                    DOCUMENTO.IDTIPODOCUMENTO,
+                    DOCUMENTO.NRDOCUMENTO
+                FROM
+                    CUSTOMER.PESSOADOCUMENTO PESSOADOCUMENTO,
+                    CUSTOMER.DOCUMENTO DOCUMENTO,
+                    APOIO.TIPODOCUMENTO TIPODOCUMENTO
+                WHERE
+                    PESSOADOCUMENTO.IDPESSOA = :varOraIdPessoa
+                AND PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO
+                AND DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO
+                ORDER BY
+                    TIPODOCUMENTO.NRPRIORIDADE
+            )
+        WHERE
+            ROWNUM < 2;
+    
+    CONVIND(varOraNrDocumento,varStatOraNrDocumento);
+
+    //
+    //================================================================
+    // Endereço da pessoa
+
+    ULOG("vai buscar endereço para idPessoa=%d",varOraIdPessoa);
+
+    EXEC SQL
+        SELECT
+            IDTIPOENDERECO,
+            NMTIPOLOGRADOURO,
+            NMLOGRADOURO,
+            NRENDERECO,
+            NMMUNICIPIO,
+            NMBAIRRO,
+            NRCEP
+        INTO
+            :varOraIdTipoEndereco:varStatOraIdTipoEndereco,
+            :varOraNmTipoLogradouro:varStatOraNmTipoLogradouro,
+            :varOraNmLogradouro:varStatOraNmLogradouro,
+            :varOraNrEndereco:varStatOraNrEndereco,
+            :varOraNmMunicipio:varStatOraNmMunicipio,
+            :varOraNmBairro:varStatOraNmBairro,
+            :varOraNrCep:varStatOraNrCep
+        FROM
+            (
+                SELECT
+                    NRSEQUENCIA,
+                    INENDERECOPREFERENCIAL, 
+                    IDTIPOENDERECO,
+                    NMTIPOLOGRADOURO,
+                    NMLOGRADOURO,
+                    NRENDERECO,
+                    NMMUNICIPIO,
+                    NMBAIRRO,
+                    NRCEP
+                FROM
+                    CUSTOMER.PESSOAENDERECO 
+                WHERE
+                    IDPESSOA = :varOraIdPessoa
+                ORDER BY
+                    NVL(INENDERECOPREFERENCIAL,0) DESC,NRSEQUENCIA
+            )
+        WHERE
+            ROWNUM < 2;
+
+    CONVIND(varOraNmTipoLogradouro,varStatOraNmTipoLogradouro);
+    CONVIND(varOraNmLogradouro,varStatOraNmLogradouro);
+    CONVIND(varOraNrEndereco,varStatOraNrEndereco);
+    CONVIND(varOraNmMunicipio,varStatOraNmMunicipio);
+    CONVIND(varOraNmBairro,varStatOraNmBairro);
+    CONVIND(varOraNrCep,varStatOraNrCep);
+
+    //
+    //================================================================
+    // Insere o historico
+
+    ULOG("vai inserir no historico de portabilidade...");
+
+    ULOG("             idTipoLinha=%+d:%s",varStatOraIdTipoLinha,varOraIdTipoLinha);
+    ULOG("          cdAreaRegistro=%+d:%s",varStatOraCdAreaRegistro,varOraCdAreaRegistro.arr);
+    ULOG("                 nrLinha=%+d:%s",varStatOraNrLinha,varOraNrLinha.arr);
+    ULOG("            idTipoPessoa=%+d:%d",varStatOraIdTipoPessoa,varOraIdTipoPessoa);
+    ULOG("                nmPessoa=%+d:%s",varStatOraNmPessoa,varOraNmPessoa.arr);
+    ULOG("         idTipoDocumento=%+d:%d",varStatOraIdTipoDocumento,varOraIdTipoDocumento);
+    ULOG("             nrDocumento=%+d:%s",varStatOraNrDocumento,varOraNrDocumento.arr);
+    ULOG("          idTipoEndereco=%+d:%d",varStatOraIdTipoEndereco,varOraIdTipoEndereco);
+    ULOG("        nmTipoLogradouro=%+d:%s",varStatOraNmTipoLogradouro,varOraNmTipoLogradouro.arr);
+    ULOG("            nmLogradouro=%+d:%s",varStatOraNmLogradouro,varOraNmLogradouro.arr);
+    ULOG("              nrEndereco=%+d:%s",varStatOraNrEndereco,varOraNrEndereco.arr);
+    ULOG("             nmMunicipio=%+d:%s",varStatOraNmMunicipio,varOraNmMunicipio.arr);
+    ULOG("                nmBairro=%+d:%s",varStatOraNmBairro,varOraNmBairro.arr);
+    ULOG("                   nrCep=%+d:%s",varStatOraNrCep,varOraNrCep.arr);
+    ULOG("      idUsuarioAlteracao=%+d:%d",varStatOraIdUsuarioAlteracao,varOraIdUsuarioAlteracao);
+    ULOG("     dsAcaoPortabilidade=%+d:%s",varStatOraDsAcaoPortabilidade,varOraDsAcaoPortabilidade);
+    ULOG("            dsObservacao=%+d:%s",varStatOraDsObservacao,varOraDsObservacao);
+    ULOG("  sgOperadoraSolicitante=%+d:%s",varStatOraSgOperadoraSolicitante,varOraSgOperadoraSolicitante);
+    ULOG("nrProtocoloPortabilidade=%+d:%s",varStatOraNrProtocoloPortabilidade,varOraNrProtocoloPortabilidade);
+    ULOG("         dtJanelaPortout=%+d:%s",varStatOraDtJanelaPortout,varOraDtJanelaPortout);
+
+    EXEC SQL
+        INSERT INTO CUSTOMER.PESSOAPORTABILIDADEHIST
+            (IDPESSOAPORTABILIDADEHIST
+            ,IDTIPOLINHA
+            ,CDAREAREGISTRO
+            ,NRLINHA
+            ,IDTIPOPESSOA
+            ,NMPESSOA
+            ,IDTIPODOCUMENTO
+            ,NRDOCUMENTO
+            ,IDTIPOENDERECO
+            ,NMTIPOLOGRADOURO
+            ,NMLOGRADOURO
+            ,NRENDERECO
+            ,NMMUNICIPIO
+            ,NMBAIRRO
+            ,NRCEP
+            ,IDUSUARIOALTERACAO
+            ,DSACAOPORTABILIDADE
+            ,SGTIPOPORTABILIDADE
+            ,DSOBSERVACAO
+            ,SGOPERADORASOLICITANTE
+            ,NRPROTOCOLOPORTABILIDADE
+            ,DTJANELAPORTOUT)
+        VALUES
+            (PESSOAPORTABILIDADEHISTSQ.NEXTVAL
+            ,:varOraIdTipoLinha:varStatOraIdTipoLinha
+            ,:varOraCdAreaRegistro:varStatOraCdAreaRegistro
+            ,:varOraNrLinha:varStatOraNrLinha
+            ,:varOraIdTipoPessoa:varStatOraIdTipoPessoa
+            ,:varOraNmPessoa:varStatOraNmPessoa
+            ,:varOraIdTipoDocumento:varStatOraIdTipoDocumento
+            ,:varOraNrDocumento:varStatOraNrDocumento
+            ,:varOraIdTipoEndereco:varStatOraIdTipoEndereco
+            ,:varOraNmTipoLogradouro:varStatOraNmTipoLogradouro
+            ,:varOraNmLogradouro:varStatOraNmLogradouro
+            ,:varOraNrEndereco:varStatOraNrEndereco
+            ,:varOraNmMunicipio:varStatOraNmMunicipio
+            ,:varOraNmBairro:varStatOraNmBairro
+            ,:varOraNrCep:varStatOraNrCep
+            ,:varOraIdUsuarioAlteracao:varStatOraIdUsuarioAlteracao
+            ,:varOraDsAcaoPortabilidade:varStatOraDsAcaoPortabilidade
+            ,'PORTOUT'
+            ,:varOraDsObservacao:varStatOraDsObservacao
+            ,:varOraSgOperadoraSolicitante:varStatOraSgOperadoraSolicitante
+            ,:varOraNrProtocoloPortabilidade:varStatOraNrProtocoloPortabilidade
+            ,TO_DATE(:varOraDtJanelaPortout:varStatOraDtJanelaPortout,'DDMMYYYYHH24MISS')
+            );
+
+
+			 try //apenas para garantir :)
+		   {
+		    //TIAGO COSTA MPOG
+			//a regra de portabilidade esta muito ruim...
+			//alem disto fazendo da maneira + for dummies que existe
+			//estou deixando explicito o que deve ser feito...
+			//int varOraIPUP
+			//int varOraQtdiasPUP=0;
+			//int varOraGravaPUP=0;
+			//NO CASO DESTE FONTE SEMPRE SERA PORTOU
+				
+					//VALIDA AÇÃO AGUARDANDO JANELA....
+				if(!strcmp(varOraDsAcaoPortabilidade,"Aguardando Janela"))
+				{
+					varOraGravaPUP=1;
+					varOraQtdiasPUP=9999;//NUMERO DE DIAS =9999 + DATA DA JANELA
+				}
+				
+				//processa pup realmente
+				if(varOraGravaPUP==1) //explicitamente comparando com 1
+				{
+					EXEC SQL
+							SELECT COUNT(1) 
+							INTO	:varOraIPUP
+							FROM LINHA.LINHAPUP
+							WHERE CDAREAREGISTRO=:varOraCdAreaRegistro
+							and   NRLINHA		=:varOraNrLinha;
+
+						if(varOraIPUP==0) //NAO EXISTE NA PUP AINDA explicito
+						{
+						 EXEC SQL
+							INSERT INTO LINHA.LINHAPUP (CDAREAREGISTRO,
+														NRLINHA,
+														DTCADASTROPUP,
+														IDUSUARIOCADASTROPUP)
+											VALUES(:varOraCdAreaRegistro:varStatOraCdAreaRegistro,
+												   :varOraNrLinha:varStatOraNrLinha,
+												   sysdate,
+												  :varOraIdUsuarioAlteracao:varStatOraIdUsuarioAlteracao);
+
+						 EXEC SQL
+							insert into linha.PERMISSAOLINHAPUP              
+							SELECT :varOraCdAreaRegistro:varStatOraCdAreaRegistro,
+								    :varOraNrLinha:varStatOraNrLinha,
+								   P.SGPERMISSAOPUP,
+								   0,
+								   TO_DATE(:varOraDtJanelaPortout:varStatOraDtJanelaPortout,'DDMMYYYYHH24MISS')+:varOraQtdiasPUP,
+								   :varOraIdUsuarioAlteracao:varStatOraIdUsuarioAlteracao,
+								   SYSDATE
+							FROM LINHA.PERMISSAOPUP P
+							WHERE SGPERMISSAOPUP = 'PERCONT';
+						}
+						else //existe na PUP
+						{
+							//----------------------PERCONT
+							EXEC SQL
+							update linha.permissaolinhapup
+							set    inativo=0,
+							   dtexpiracao=TO_DATE(:varOraDtJanelaPortout,'DDMMYYYYHH24MISS')+:varOraQtdiasPUP,
+							   idusuarioalteracao=:varOraIdUsuarioAlteracao
+							where SGPERMISSAOPUP='PERCONT'
+							AND CDAREAREGISTRO=:varOraCdAreaRegistro
+							AND   NRLINHA=:varOraNrLinha;
+
+							if(sqlca.sqlerrd[2] == 0)
+							{
+								EXEC SQL
+								Insert into LINHA.PERMISSAOLINHAPUP (CDAREAREGISTRO,
+																	NRLINHA,
+																	SGPERMISSAOPUP,
+																	INATIVO,
+																	DTEXPIRACAO,
+																	IDUSUARIOALTERACAO,
+																	DTULTIMAALTERACAO,
+																	INPROCON)
+										 Values
+													(:varOraCdAreaRegistro:varStatOraCdAreaRegistro,
+													:varOraNrLinha:varStatOraNrLinha,
+													'PERCONT',
+													0,
+													TO_DATE(:varOraDtJanelaPortout,'DDMMYYYYHH24MISS')+:varOraQtdiasPUP,
+													:varOraIdUsuarioAlteracao,
+													sysdate,
+													0);
+
+							}
+							//----------------------PERCONT
+
+
+						}//else if existe pup
+					}//fim varOraGravaPUP==1
+
+		  }//try
+		  catch(...)
+		  {
+			  ULOG("nao é pra dar erro, mas as veiz faia...");
+		  }
+    ULOG("inseriu no historico de portabilidade");
+
+    ULOG_END("cWF_Acao::gravarPessoaPortabilidadeHist()");
+}
+
+
+bool cWF_Acao::proCObterDadosStatusSAP(long idAtendimento)
+{
+    ULOG_START("cWF_Acao::proCObterDadosStatusSAP()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long pOraIdAtendimento = idAtendimento;
+
+        VARCHAR varOraOrdemVendaSAP[256];
+        VARCHAR varOraIdStatusSAP[39];
+        VARCHAR varOraVlIdReferencia[39];
+        VARCHAR varOraVlLogXMLIn[2501];
+
+        short statOraOrdemVendaSAP=-1;
+        short statOraIdStatusSAP=-1;
+        short statOraVlIdReferencia=-1;
+        short statOraVlLogXMLIn=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("Vai buscar dados da ordem de venda para o processo=%ld",pOraIdAtendimento);
+
+    memset(&varOraOrdemVendaSAP,0,sizeof(varOraOrdemVendaSAP));
+    memset(&varOraIdStatusSAP,0,sizeof(varOraIdStatusSAP));
+    memset(&varOraVlIdReferencia,0,sizeof(varOraVlIdReferencia));
+    memset(&varOraVlLogXMLIn,0,sizeof(varOraVlLogXMLIn));
+
+    EXEC SQL
+        SELECT
+            STATUSSAP.ORDEMVENDA,
+            STATUSSAP.IDSTATUSSAP,
+            STATUSSAP.VLIDREFERENCIA,
+            STATUSSAP.VLLOGXMLIN
+        INTO
+            :varOraOrdemVendaSAP:statOraOrdemVendaSAP,
+            :varOraIdStatusSAP:statOraIdStatusSAP,
+            :varOraVlIdReferencia:statOraVlIdReferencia,
+            :varOraVlLogXMLIn:statOraVlLogXMLIn
+        FROM
+            RETENCAO.STATUSSAP STATUSSAP,
+            ATENDIMENTO.ATENDIMENTO ATENDIMENTO
+        WHERE
+            ATENDIMENTO.IDATENDIMENTO = :pOraIdAtendimento
+        AND STATUSSAP.ORDEMVENDA = ATENDIMENTO.NRORDEMVENDA;
+
+    if ( sqlca.sqlcode )
+    {
+        ULOGW("dados da OV para o processo '%ld' não encontrados!",pOraIdAtendimento);
+        ULOG_END("cWF_Acao::proCObterDadosStatusSAP()");
+        return false;
+    }
+
+    if ( varOraVlLogXMLIn.arr[0]==0 )
+    {
+        ULOGW("valores xml da OV do processo '%ld' não possui conteúdo",pOraIdAtendimento);
+        ULOG_END("cWF_Acao::proCObterDadosStatusSAP()");
+        return false;
+    }
+
+    CONVIND(varOraOrdemVendaSAP,statOraOrdemVendaSAP);
+    CONVIND(varOraIdStatusSAP,statOraIdStatusSAP);
+    CONVIND(varOraVlIdReferencia,statOraVlIdReferencia);
+    CONVIND(varOraVlLogXMLIn,statOraVlLogXMLIn);
+
+    strcpy(dadosOrdemVenda.strOrdemVenda,(char*)varOraOrdemVendaSAP.arr );
+    strcpy(dadosOrdemVenda.idStatusSap,(char*)varOraIdStatusSAP.arr);
+    strcpy(dadosOrdemVenda.vlIdReferencia,(char*)varOraVlIdReferencia.arr);
+    strcpy(dadosOrdemVenda.vlLogXMLIn,(char*)varOraVlLogXMLIn.arr);
+
+    ULOG_END("cWF_Acao::proCObterDadosStatusSAP()");
+
+    return true;
+}
+
+bool cWF_Acao::proCAtualizarDadosStatusSAP(const char *idStatusSAP,const char *vlLogXMLIn,int idUsuarioAlteracao)
+{
+    ULOG_START("cWF_Acao::proCAtualizarDadosStatusSAP()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int varOraIdUsuarioAlteracao=idUsuarioAlteracao;
+        const char *pVarOraIdStatusSAP=idStatusSAP;
+        const char *pVarOraVlLogXMLIn=vlLogXMLIn;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("Vai atualizar xml da ordem de venda para o id=%s",pVarOraIdStatusSAP);
+
+    EXEC SQL
+        UPDATE
+            RETENCAO.STATUSSAP
+        SET
+            VLLOGXMLIN = :pVarOraVlLogXMLIn,
+            DTULTIMAALTERACAO = SYSDATE,
+            IDUSUARIOALTERACAO = :varOraIdUsuarioAlteracao
+        WHERE
+            IDSTATUSSAP = :pVarOraIdStatusSAP;
+
+    ULOG_END("cWF_Acao::proCAtualizarDadosStatusSAP()");
+
+    return true;
+}
+
+bool cWF_Acao::proCIsEstadoFechamento(int idAgrupEstadoTpProc)
+{
+    ULOG_START("cWF_Acao::proCIsEstadoFechamento()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR varOraDsEstado[256];
+        short statOraDsEstado=-1;
+        int varOraIdAgrupEstadoTpProc=idAgrupEstadoTpProc;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("idAgrupEstadoTpProc=%d",idAgrupEstadoTpProc);
+
+    EXEC SQL
+        SELECT 
+            ESTADO.DSESTADO
+        INTO
+            :varOraDsEstado:statOraDsEstado
+        FROM
+            WORKFLOW.AGRUPAMENTOESTADOTPPROC AGRUPAMENTOESTADOTPPROC,
+            WORKFLOW.AGRUPAMENTOESTADO AGRUPAMENTOESTADO,
+            WORKFLOW.ESTADO ESTADO,
+            WORKFLOW.SUBESTADO SUBESTADO
+        WHERE
+            AGRUPAMENTOESTADOTPPROC.IDAGRUPAMENTOESTADOTPPROC = :varOraIdAgrupEstadoTpProc
+        AND AGRUPAMENTOESTADOTPPROC.IDAGRUPAMENTOESTADO = AGRUPAMENTOESTADO.IDAGRUPAMENTOESTADO
+        AND AGRUPAMENTOESTADO.IDESTADO = ESTADO.IDESTADO
+        AND AGRUPAMENTOESTADO.IDSUBESTADO = SUBESTADO.IDSUBESTADO;
+
+    CONVIND(varOraDsEstado,statOraDsEstado);
+
+    ULOG("dsEstado='%s'",(char*)varOraDsEstado.arr);
+
+    return strcmp((char*)varOraDsEstado.arr,"FECHADO")==0?true:false;
+}
+
+bool cWF_Acao::proCAtualizarOrdemVendaDadosStatusSAP(long idAtendimento,const char *idStatusSAP,const char *nrOrdemVenda,int idUsuarioAlteracao)
+{
+    ULOG_START("cWF_Acao::proCAtualizarOrdemVendaDadosStatusSAP()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long pOraIdAtendimento = idAtendimento;
+        int pOraIdUsuarioAlteracao=idUsuarioAlteracao;
+        const char *pVarOraIdStatusSAP=idStatusSAP;
+        const char *pVarOraNrOrdemVenda=nrOrdemVenda;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("Vai atualizar dados da ordem de venda para o id=%s",pVarOraIdStatusSAP);
+    EXEC SQL
+        UPDATE
+            RETENCAO.STATUSSAP
+        SET
+            ORDEMVENDA = :pVarOraNrOrdemVenda,
+            DTULTIMAALTERACAO = SYSDATE,
+            IDUSUARIOALTERACAO = :pOraIdUsuarioAlteracao
+        WHERE
+            IDSTATUSSAP = :pVarOraIdStatusSAP;
+
+    ULOG("Vai atualizar dados da ordem de venda em ATENDIMENTO idAtendimento=%ld",pOraIdAtendimento);
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTO
+        SET
+            NRORDEMVENDA = :pVarOraNrOrdemVenda,
+            DTULTIMAALTERACAO = SYSDATE,
+            IDUSUARIOALTERACAO = :pOraIdUsuarioAlteracao
+        WHERE
+            IDATENDIMENTO = :pOraIdAtendimento;
+
+    ULOG("Vai atualizar dados da ordem de venda em ATENDIMENTOPRIORIZACAO idAtendimento=%ld",pOraIdAtendimento);
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+        SET
+            NRORDEMVENDA = :pVarOraNrOrdemVenda,
+            DTULTIMAALTERACAO = SYSDATE,
+            IDUSUARIOALTERACAO = :pOraIdUsuarioAlteracao
+        WHERE
+            IDATENDIMENTO = :pOraIdAtendimento;
+
+    ULOG_END("cWF_Acao::proCAtualizarOrdemVendaDadosStatusSAP()");
+
+    return true;
+}
+
+const char *cWF_Acao::procCObterObservacaoAtendimento(long idAtendimento)
+{
+    ULOG_START("cWF_Acao::procCObterObservacaoAtendimento()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long pOraIdAtendimento = idAtendimento;
+        static VARCHAR varOraDsObservacao[1001];
+        short statOraDsObservacao = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("idAtendimento=%ld",pOraIdAtendimento);
+
+    EXEC SQL
+        SELECT
+            DSOBSERVACAO
+        INTO
+            :varOraDsObservacao:statOraDsObservacao
+        FROM
+            ATENDIMENTO.ATENDIMENTOOBSERVACAO
+        WHERE 
+            IDATENDIMENTO = :pOraIdAtendimento;
+
+    ULOG_END("cWF_Acao::procCObterObservacaoAtendimento()");
+
+    return sqlca.sqlcode ? 0 : (const char*)varOraDsObservacao.arr;
+}
+
+void cWF_Acao::procCAtualizarObservacaoAtendimento(long idAtendimento,const char *dsObservacao)
+{
+    ULOG_START("cWF_Acao::procCAtualizarObservacaoAtendimento()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long pOraIdAtendimento = idAtendimento;
+        const char *pVarOraDsObservacao = dsObservacao;
+        short statOraDsObservacao = dsObservacao==0?-1:*dsObservacao==0?-1:1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("idAtendimento=%ld",pOraIdAtendimento);
+
+    if (statOraDsObservacao==-1)
+    {
+        ULOG("observacao não enviada");
+        return;
+    }
+
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTOOBSERVACAO
+        SET
+            DSOBSERVACAO = SUBSTR(TRIM(:pVarOraDsObservacao),1,100)
+        WHERE 
+            IDATENDIMENTO = :pOraIdAtendimento;
+
+    ULOG_END("cWF_Acao::procCAtualizarObservacaoAtendimento()");
+
+}
+
+// bool cWF_Acao::getBaixaMensagem(stMensagemBaixa* datos)
+// {
+//     ULOG_START("cWF_Acao::getBaixaMensagem()");
+// 
+//     struct sqlca sqlca;
+// 
+//     EXEC SQL BEGIN DECLARE SECTION;
+// 	int  idBaixaMensagem;
+// 	int  idBxa;
+// 	int  idMsgBxa;
+//         short i_idBaixaMensagem = -1;
+//     EXEC SQL END DECLARE SECTION;
+//     
+//     idBxa=datos->idBxa;
+//     idMsgBxa=datos->idMsgBxa;
+// 
+//     EXEC SQL WHENEVER SQLERROR  DO sql_error(&sqlca);
+// 
+//     ULOG("Executando Query getBaixaMensagem...");
+// 
+//     EXEC SQL
+//     	SELECT 
+//     	    idBaixaMensagem
+//     	INTO
+//             :idBaixaMensagem:i_idBaixaMensagem
+//         FROM
+//             contatoAdm.BaixaMensagem
+//         WHERE 
+//             idBaixa = :idBxa 
+//         AND 
+//             idBaixaMensagem = :idMsgBxa 
+//         AND 
+//             ROWNUM < 2;
+// 
+//     if ( i_idBaixaMensagem == -1 )
+//     {
+//         ULOG("Baixa mensagem não encontrada.");
+//     }
+//     else
+//     {
+//         datos->idBaixaMensagem = idBaixaMensagem;
+// 
+//     ULOG("Dados obtidos - =[%i]", idBaixaMensagem);
+//     }
+// 
+//     ULOG_END("cWF_Acao::getBaixaMensagem()");
+// 
+//     return i_idBaixaMensagem == -1 ? false:true;
+// }
+
+void cWF_Acao::sql_error(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

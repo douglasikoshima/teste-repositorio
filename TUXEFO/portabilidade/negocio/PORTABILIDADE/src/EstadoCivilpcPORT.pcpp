@@ -1,0 +1,72 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+
+#include "tuxfw.h"
+#include "EstadoCivilpcPORT.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "PPGlobalPORT.h"
+EXEC SQL END DECLARE SECTION;
+
+/****************************************************************************************/
+bool CEstadoCivilpc::proCBuscaEstadoCivil(TEstadoCivil *ptEstadoCivil)
+{
+    ULOG_START("CEstadoCivilpc::proCBuscaEstadoCivil");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdEstadoCivil[LEN_IDESTADOCIVIL];
+        VARCHAR oszSgEstadoCivil[LEN_SGESTADOCIVIL];
+        VARCHAR oszDsEstadoCivil[LEN_DSESTADOCIVIL];
+
+        short iIdEstadoCivil = 0;
+        short iSgEstadoCivil = 0;
+        short iDsEstadoCivil = 0;
+    EXEC SQL END DECLARE SECTION;
+
+	struct sqlca sqlca;
+
+	STRCPY_TO_ORA(oszSgEstadoCivil, ptEstadoCivil->szSgEstadoCivil);
+
+	EXEC SQL WHENEVER SQLERROR	goto erro;
+	EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+	EXEC SQL
+        SELECT
+            aec.idestadocivil,
+            aec.sgestadocivil,
+            aec.dsestadocivil
+        INTO
+            :oszIdEstadoCivil:iIdEstadoCivil,
+            :oszSgEstadoCivil:iSgEstadoCivil,
+            :oszDsEstadoCivil:iDsEstadoCivil
+        FROM
+            apoio.estadocivil aec
+        WHERE
+            aec.sgestadocivil = :oszSgEstadoCivil;
+
+
+
+    if(iIdEstadoCivil != -1) {
+        STRCPY_FROM_ORA(ptEstadoCivil->szIdEstadoCivil, oszIdEstadoCivil);
+    }
+    if(iSgEstadoCivil != -1) {
+        STRCPY_FROM_ORA(ptEstadoCivil->szSgEstadoCivil, oszSgEstadoCivil);
+    }
+    if(iDsEstadoCivil != -1) {
+        STRCPY_FROM_ORA(ptEstadoCivil->szDsEstadoCivil, oszDsEstadoCivil);
+    }
+
+    ULOGI("Finalizando proCBuscaEstadoCivil <OK>");
+    ULOG_END("CEstadoCivilpc::proCBuscaEstadoCivil");
+    return true;
+
+    naoexiste:
+        ULOGI("Finalizando proCBuscaEstadoCivil <NOT FOUND>");
+        ULOG_END("CEstadoCivilpc::proCBuscaEstadoCivil");
+        return false;
+
+    erro:
+        ULOGE("Finalizando proCBuscaEstadoCivil <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

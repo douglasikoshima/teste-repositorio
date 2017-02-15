@@ -1,0 +1,379 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <tuxfw.h>
+
+#include"../../../commons/SmallString.h"
+
+int RemoveContatoTipoRetorno( int idContatoParam )
+{
+   ULOG_START("RemoveContatoTipoRetorno()");
+   struct sqlca sqlca;
+   
+   EXEC SQL BEGIN DECLARE SECTION;
+   
+      int idContato = idContatoParam;
+   
+   EXEC SQL END DECLARE SECTION;
+
+
+   EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+   EXEC SQL 
+      DELETE FROM 
+         ContatoAdm.ContatoTipoRetorno
+      WHERE 
+         idContatoTipoRetorno = :idContato;
+
+   ULOG_END("RemoveContatoTipoRetorno()");
+   
+   if( sqlca.sqlcode )
+   {
+     if( sqlca.sqlcode != -1403 && sqlca.sqlcode != 1403 )
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+   }
+   else
+      return 1;
+
+UndefinedError:
+        if( sqlca.sqlcode != -1403 && sqlca.sqlcode != 1403 )
+           throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+        return 1;
+}
+
+int ObtemContatoRetorno( const char *idContatoParam , const char *idRetorno)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int     ORA_idContatoTipoRetorno;
+		int     ORA_idContato = atoi( idContatoParam );
+		int     ORA_idRetorno = atoi( idRetorno );
+	EXEC SQL END DECLARE SECTION;
+
+	sqlca.sqlcode = -1;
+
+   EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+
+   EXEC SQL SELECT 
+                idContatoTipoRetorno
+            INTO 
+                :ORA_idContatoTipoRetorno 
+            FROM 
+                ContatoAdm.ContatoTipoRetorno 
+            WHERE 
+                idContato = :ORA_idContato
+            AND 
+                idTipoRetornoContato = :ORA_idRetorno;
+      	
+   if( sqlca.sqlcode )
+   {
+		return 0;
+   }
+
+	return ORA_idContatoTipoRetorno;
+
+UndefinedError:
+        throw new TuxBasicOraException( sqlca.sqlcode,
+                                        sqlca.sqlerrm.sqlerrmc,
+                                        sqlca.sqlerrm.sqlerrml );
+}
+
+int RegistrosInconsistentes(const char *idContatoPrm,const char *idTipoRetornoPrm,
+                            long *idTipoLinhaPrm,long *idSegmentacaoPrm,
+                            long *idTipoCarteiraPrm,long *idTipoPessoaPrm,
+                            long *idTipoRelacionamentoPrm,long *idGrupoPrm,
+                            long *idCanalPrm,long *idProcedenciaPrm,long *idUfOperadoraPra) 
+{
+	ULOG_START( "RegistrosInconsistentes()" );
+
+    ULOG("idContatoPrm     =[%s]", idContatoPrm); 
+    ULOG("idTipoRetornoPrm =[%s]", idTipoRetornoPrm);
+
+    struct sqlca sqlca;
+    
+    int numRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char *queryChar;
+
+        int idTipoRetornoContato;
+
+    EXEC SQL END DECLARE SECTION;
+
+    sqlca.sqlcode = -1;
+    char buffer[128];
+    unsigned int i;
+	SmallString query;
+	SmallString queryRemove;
+    bool montaAND = false;
+
+	query  = "SELECT IDTIPORETORNOCONTATO ";
+    query += "FROM ContatoAdm.ParametrosTipoRetornoV01 WHERE ";
+    
+    for ( i=0;;i++ )
+    {
+        if ( idTipoLinhaPrm[i] == -1L )
+           break;
+
+        if ( i == 0 )
+            query += "idTipoLinha IN (";
+        else
+            query += ",";
+        
+        sprintf( buffer,"%lu",idTipoLinhaPrm[i] );
+        query += buffer;
+    }
+    if ( i > 0 )
+    {
+       query += ") ";
+       montaAND = true;
+    }
+
+    for ( i=0;;i++ )
+    {
+        if ( idSegmentacaoPrm[i] == -1L )
+           break;
+
+        if ( montaAND == true )
+        {
+            query += "AND ";
+            montaAND = false;
+        }
+
+        if ( i == 0 )
+            query += "idSegmentacao IN (";
+        else
+            query += ",";
+        
+        sprintf( buffer,"%lu",idSegmentacaoPrm[i] );
+        query += buffer;
+    }
+    if ( i > 0 )
+    {
+        query += ") ";
+        montaAND = true;
+    }
+
+    for ( i=0;;i++ )
+    {
+        if ( idTipoCarteiraPrm[i] == -1L )
+           break;
+        
+        if ( montaAND == true )
+        {
+            query += "AND ";
+            montaAND = false;
+        }
+
+        if ( i == 0 )
+            query += "idTipoCarteira IN (";
+        else
+            query += ",";
+        
+        sprintf( buffer,"%lu",idTipoCarteiraPrm[i] );
+        query += buffer;
+    }
+    if ( i > 0 )
+    {
+        query += ") ";
+        montaAND = true;
+    }
+
+    for ( i=0;;i++ )
+    {
+        if ( idTipoPessoaPrm[i] == -1L )
+           break;
+        
+        if ( montaAND == true )
+        {
+            query += "AND ";
+            montaAND = false;
+        }
+
+        if ( i == 0 )
+            query += "idTipoPessoa IN (";
+        else
+            query += ",";
+        
+        sprintf( buffer,"%lu",idTipoPessoaPrm[i] );
+        query += buffer;
+    }
+    if ( i > 0 )
+    {
+        query += ") ";
+        montaAND = true;
+    }
+
+    for ( i=0;;i++ )
+    {
+        if ( idTipoRelacionamentoPrm[i] == -1L )
+           break;
+        
+        if ( montaAND == true )
+        {
+            query += "AND ";
+            montaAND = false;
+        }
+
+        if ( i == 0 )
+            query += "idTipoRelacionamento IN (";
+        else
+            query += ",";
+        
+        sprintf( buffer,"%lu",idTipoRelacionamentoPrm[i] );
+        query += buffer;
+    }
+    if ( i > 0 )
+    {
+        query += ") ";
+        montaAND = true;
+    }
+    for ( i=0;;i++ )
+    {
+        if ( idGrupoPrm[i] == -1L )
+           break;
+        
+        if ( montaAND == true )
+        {
+            query += "AND ";
+            montaAND = false;
+        }
+
+        if ( i == 0 )
+            query += "idSequencia IN (";
+        else
+            query += ",";
+        
+        sprintf( buffer,"%lu",idGrupoPrm[i] );
+        query += buffer;
+    }
+    if ( i > 0 )
+    {
+        query += ") ";
+        montaAND = true;
+    }
+    for ( i=0;;i++ )
+    {
+        if ( idProcedenciaPrm[i] == -1L )
+           break;
+        
+        if ( montaAND == true )
+        {
+            query += "AND ";
+            montaAND = false;
+        }
+
+        if ( i == 0 )
+            query += "idProcedencia IN (";
+        else
+            query += ",";
+        
+        sprintf( buffer,"%lu",idProcedenciaPrm[i] );
+        query += buffer;
+    }
+    if ( i > 0 )
+    {
+        query += ") ";
+        montaAND = true;
+    }
+    for ( i=0;;i++ )
+    {
+        if ( idCanalPrm[i] == -1L )
+           break;
+        
+        if ( montaAND == true )
+        {
+            query += "AND ";
+            montaAND = false;
+        }
+
+        if ( i == 0 )
+            query += "idCanal IN (";
+        else
+            query += ",";
+        
+        sprintf( buffer,"%lu",idCanalPrm[i] );
+        query += buffer;
+    }
+
+    if ( i > 0 )
+    {
+        query += ") ";
+        montaAND = true;
+    }
+    for ( i=0;;i++ )
+    {
+        if ( idUfOperadoraPra[i] == -1L )
+           break;
+        
+        if ( montaAND == true )
+        {
+            query += "AND ";
+            montaAND = false;
+        }
+
+        if ( i == 0 )
+            query += "idUfOperadora IN (";
+        else
+            query += ",";
+        
+        sprintf( buffer,"%lu",idUfOperadoraPra[i] );
+        query += buffer;
+    }
+
+    if ( i > 0 )
+    {
+        query += ") ";
+        montaAND = true;
+    }
+
+    if ( montaAND == true )
+        query += "AND ";
+
+    query += "idContato = ";
+    sprintf( buffer,"%s",idContatoPrm );
+    query += buffer;
+
+    query += " AND idTipoRetornoContato != ";
+    sprintf( buffer,"%s",idTipoRetornoPrm );
+    query += buffer;
+
+    query += " AND ROWNUM <= 1 ";
+
+    queryChar = query;
+
+    ULOG( "\nQuery = [%s]\n",queryChar );
+
+   EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL PREPARE comandoSql FROM :queryChar;
+	EXEC SQL DECLARE Read CURSOR FOR comandoSql;
+
+    EXEC SQL OPEN Read;
+    
+    for ( ;; )
+    {
+        EXEC SQL FETCH Read INTO :idTipoRetornoContato;
+
+        numRegistros++;
+    }
+
+    EXEC SQL CLOSE Read;
+
+	ULOG_END( "RegistrosInconsistentes()" );
+    return numRegistros;
+
+UndefinedError:
+        throw new TuxBasicOraException( sqlca.sqlcode,
+                                        sqlca.sqlerrm.sqlerrmc,
+                                        sqlca.sqlerrm.sqlerrml );
+
+}
+

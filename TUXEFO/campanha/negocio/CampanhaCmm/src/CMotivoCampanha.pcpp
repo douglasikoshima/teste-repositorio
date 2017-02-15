@@ -1,0 +1,439 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <CMotivoCampanha.h>
+
+CMotivoCampanha::CMotivoCampanha()
+{
+}
+
+CMotivoCampanha::~CMotivoCampanha()
+{
+}
+
+int CMotivoCampanha::Insert( char* cidSubCampanhaHistorico, 
+							 char* cidTipoStatusCampanha, 
+							 char* cidTipoMotivoCampanha, 
+							 char* cidTipoSubMotivoCampanha,
+							 char* cidUsuarioAlteracao )
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidMotivoCampanha[21+1];
+		char* cAuxidSubCampanhaHistorico	= cidSubCampanhaHistorico;
+		char* cAuxidTipoStatusCampanha		= cidTipoStatusCampanha;
+		char* cAuxidTipoMotivoCampanha		= cidTipoMotivoCampanha;
+		char* cAuxidTipoSubMotivoCampanha	= cidTipoSubMotivoCampanha;
+		char* cAuxidUsuarioAlteracao		= cidUsuarioAlteracao;
+        int   idMotivoCampanha = 0;
+		int	inAtivo = 0;
+	EXEC SQL END DECLARE SECTION;
+	
+	ZeraMotivoCampanha();
+	
+	memset( &cAuxidMotivoCampanha, 0, sizeof(cAuxidMotivoCampanha) );
+	inAtivo = 1;
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+	sqlca.sqlcode=0;
+
+	EXEC SQL         
+		SELECT 
+			IDMOTIVOCAMPANHA 
+        INTO 
+        	:idMotivoCampanha
+        FROM 
+        	CAMPANHA.MOTIVOCAMPANHA
+        WHERE 
+        	IDTIPOSTATUSCAMPANHA = :cAuxidTipoStatusCampanha	
+        AND IDSUBCAMPANHAHISTORICO = :cAuxidSubCampanhaHistorico
+        AND IDTIPOMOTIVOCAMPANHA = :cAuxidTipoMotivoCampanha
+        AND IDTIPOSUBMOTIVOCAMPANHA = :cAuxidTipoSubMotivoCampanha;
+
+	if( idMotivoCampanha <= 0 )
+	{
+		//Pega um id unico da sequencia para a insercao
+		EXEC SQL
+		SELECT CAMPANHA.MOTIVOCAMPANHASQ.NEXTVAL
+		INTO :cAuxidMotivoCampanha
+		FROM DUAL;
+
+		EXEC SQL 
+		INSERT INTO CAMPANHA.MOTIVOCAMPANHA
+		  (IDMOTIVOCAMPANHA, 
+		   IDTIPOSTATUSCAMPANHA, 
+		   IDSUBCAMPANHAHISTORICO, 
+		   IDTIPOMOTIVOCAMPANHA, 
+		   IDTIPOSUBMOTIVOCAMPANHA,
+		   IDUSUARIOALTERACAO,
+		   DTULTIMAALTERACAO, 
+		   INATIVO)
+		VALUES
+		  (:cAuxidMotivoCampanha, 
+		   :cAuxidTipoStatusCampanha, 
+		   :cAuxidSubCampanhaHistorico, 
+		   :cAuxidTipoMotivoCampanha, 
+		   :cAuxidTipoSubMotivoCampanha,
+		   :cAuxidUsuarioAlteracao,
+		   SYSDATE,
+		   :inAtivo);  
+
+	}
+	else
+	{
+	 EXEC SQL 	
+		UPDATE CAMPANHA.MOTIVOCAMPANHA
+			SET IDTIPOSTATUSCAMPANHA= :cAuxidTipoStatusCampanha,
+			IDSUBCAMPANHAHISTORICO	= :cAuxidSubCampanhaHistorico,
+			IDTIPOMOTIVOCAMPANHA	= :cAuxidTipoMotivoCampanha,
+			IDTIPOSUBMOTIVOCAMPANHA	= :cAuxidTipoSubMotivoCampanha,
+			IDUSUARIOALTERACAO		= :cAuxidUsuarioAlteracao, 
+			DTULTIMAALTERACAO		=	SYSDATE,
+			INATIVO					= :inAtivo
+	 WHERE IDMOTIVOCAMPANHA = :idMotivoCampanha;   
+
+	}
+
+	if( sqlca.sqlcode == 0 )
+		return 1;
+	else
+		return 0;
+
+GotoInsert:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CMotivoCampanha::Insert( char* cidSubCampanhaHistorico, 
+							 char* cidTipoStatusCampanha, 
+							 char* cidTipoMotivoCampanha, 
+							 char* cidTipoSubMotivoCampanha,
+							 char* cinAtivo,
+							 char* cidUsuarioAlteracao )
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidSubCampanhaHistorico	= cidSubCampanhaHistorico;
+		char* cAuxidTipoStatusCampanha		= cidTipoStatusCampanha;
+		char* cAuxidTipoMotivoCampanha		= cidTipoMotivoCampanha;
+		char* cAuxidTipoSubMotivoCampanha	= cidTipoSubMotivoCampanha;
+		char* cAuxinAtivo		            = cinAtivo;
+		char* cAuxidUsuarioAlteracao		= cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	ZeraMotivoCampanha();
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsert2;
+	sqlca.sqlcode=0;
+
+	EXEC SQL 
+		INSERT INTO CAMPANHA.MOTIVOCAMPANHA
+	  	(
+	  		IDMOTIVOCAMPANHA, 
+		    IDTIPOSTATUSCAMPANHA, 
+		    IDSUBCAMPANHAHISTORICO, 
+		    IDTIPOMOTIVOCAMPANHA, 
+		    IDTIPOSUBMOTIVOCAMPANHA,
+		    IDUSUARIOALTERACAO,
+		    DTULTIMAALTERACAO, 
+		    INATIVO
+		)
+		VALUES
+	  	(
+	  		CAMPANHA.MOTIVOCAMPANHASQ.NEXTVAL,
+	   		:cAuxidTipoStatusCampanha, 
+	   		:cAuxidSubCampanhaHistorico, 
+	   		:cAuxidTipoMotivoCampanha, 
+	   		:cAuxidTipoSubMotivoCampanha,
+	   		:cAuxidUsuarioAlteracao,
+	   		SYSDATE,
+	   		:cAuxinAtivo
+	   	);  
+
+	return 1;
+
+GotoInsert2:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CMotivoCampanha::Update( char* cidMotivoCampanha, 
+                             char* cidSubCampanhaHistorico, 
+							 char* cidTipoStatusCampanha, 
+							 char* cidTipoMotivoCampanha, 
+							 char* cidTipoSubMotivoCampanha,
+							 char* cidUsuarioAlteracao )
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidMotivoCampanha        = cidMotivoCampanha;
+		char* cAuxidSubCampanhaHistorico  = cidSubCampanhaHistorico;
+		char* cAuxidTipoStatusCampanha    = cidTipoStatusCampanha;
+		char* cAuxidTipoMotivoCampanha    = cidTipoMotivoCampanha;
+		char* cAuxidTipoSubMotivoCampanha = cidTipoSubMotivoCampanha;
+		char* cAuxidUsuarioAlteracao	  = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraMotivoCampanha();
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+	sqlca.sqlcode=0;
+	
+	EXEC SQL 
+		UPDATE CAMPANHA.MOTIVOCAMPANHA
+		   SET IDTIPOSTATUSCAMPANHA		= :cAuxidTipoStatusCampanha,
+		       IDSUBCAMPANHAHISTORICO	= :cAuxidSubCampanhaHistorico,
+		       IDTIPOMOTIVOCAMPANHA		= :cAuxidTipoMotivoCampanha,
+		       IDTIPOSUBMOTIVOCAMPANHA	= :cAuxidTipoSubMotivoCampanha,
+			   IDUSUARIOALTERACAO		= :cAuxidUsuarioAlteracao, 
+			   DTULTIMAALTERACAO		= sysdate
+		 WHERE IDMOTIVOCAMPANHA			= :cAuxidMotivoCampanha;   
+	
+	if( sqlca.sqlcode == 0 )
+		return 1;
+	else
+		return 0;
+
+GotoUpdate:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+
+int CMotivoCampanha::ListId( char* cid )
+{
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidOra = cid;
+		struct
+		{
+			VARCHAR stidMotivoCampanha[21+1];
+			VARCHAR stidSubCampanhaHistorico[21+1];
+			VARCHAR stidTipoStatusCampanha[21+1];
+			VARCHAR stidTipoMotivoCampanha[21+1];
+			VARCHAR stidTipoSubMotivoCampanha[21+1];
+		} stMotivoCampanhaRegistro;
+		struct
+		{
+			short iidMotivoCampanha;
+			short iidSubCampanhaHistorico;
+			short iidTipoStatusCampanha;
+			short iidTipoMotivoCampanha;
+			short iidTipoSubMotivoCampanha;
+		} stMotivoCampanhaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraMotivoCampanha();
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+	sqlca.sqlcode=0;
+
+   	EXEC SQL DECLARE CursorMotivoCampanhaId CURSOR FOR
+		SELECT IDMOTIVOCAMPANHA, 
+		       IDSUBCAMPANHAHISTORICO, 
+		       IDTIPOSTATUSCAMPANHA, 
+		       IDTIPOMOTIVOCAMPANHA, 
+		       IDTIPOSUBMOTIVOCAMPANHA 
+		  FROM CAMPANHA.MOTIVOCAMPANHA MOTIVOCAMPANHA
+		 WHERE IDMOTIVOCAMPANHA = :cidOra;
+
+	EXEC SQL OPEN CursorMotivoCampanhaId;
+
+	if(sqlca.sqlcode)
+		return 0;
+	else
+	{
+		for(;;)
+		{
+			memset( &stMotivoCampanhaRegistro, 0, sizeof(stMotivoCampanhaRegistro) );
+			EXEC SQL FETCH CursorMotivoCampanhaId INTO :stMotivoCampanhaRegistro:stMotivoCampanhaIndicator;
+
+			Add( (char*)stMotivoCampanhaRegistro.stidMotivoCampanha.arr, 
+			     (char*)stMotivoCampanhaRegistro.stidSubCampanhaHistorico.arr,
+			     (char*)stMotivoCampanhaRegistro.stidTipoStatusCampanha.arr,
+			     (char*)stMotivoCampanhaRegistro.stidTipoMotivoCampanha.arr,
+			     (char*)stMotivoCampanhaRegistro.stidTipoSubMotivoCampanha.arr );
+
+			iCont++;
+
+		}
+		EXEC SQL CLOSE CursorMotivoCampanhaId;
+	}
+
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CMotivoCampanha::ListAll( void )
+{
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidMotivoCampanha[21+1];
+			VARCHAR stidSubCampanhaHistorico[21+1];
+			VARCHAR stidTipoStatusCampanha[21+1];
+			VARCHAR stidTipoMotivoCampanha[21+1];
+			VARCHAR stidTipoSubMotivoCampanha[21+1];
+		} stMotivoCampanhaRegistro;
+		struct
+		{
+			short iidMotivoCampanha;
+			short iidSubCampanhaHistorico;
+			short iidTipoStatusCampanha;
+			short iidTipoMotivoCampanha;
+			short iidTipoSubMotivoCampanha;
+		} stMotivoCampanhaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraMotivoCampanha();
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+	sqlca.sqlcode=0;
+
+   	EXEC SQL DECLARE CursorMotivoCampanhaAll CURSOR FOR
+		SELECT IDMOTIVOCAMPANHA, 
+		       IDSUBCAMPANHAHISTORICO, 
+		       IDTIPOSTATUSCAMPANHA, 
+		       IDTIPOMOTIVOCAMPANHA, 
+		       IDTIPOSUBMOTIVOCAMPANHA 
+		  FROM CAMPANHA.MOTIVOCAMPANHA MOTIVOCAMPANHA;
+
+	EXEC SQL OPEN CursorMotivoCampanhaAll;
+
+	if(sqlca.sqlcode)
+		return 0;
+	else
+	{
+		for(;;)
+		{
+			memset( &stMotivoCampanhaRegistro, 0, sizeof(stMotivoCampanhaRegistro) );
+			EXEC SQL FETCH CursorMotivoCampanhaAll INTO :stMotivoCampanhaRegistro:stMotivoCampanhaIndicator;
+
+			Add( (char*)stMotivoCampanhaRegistro.stidMotivoCampanha.arr, 
+			     (char*)stMotivoCampanhaRegistro.stidSubCampanhaHistorico.arr,
+			     (char*)stMotivoCampanhaRegistro.stidTipoStatusCampanha.arr,
+			     (char*)stMotivoCampanhaRegistro.stidTipoMotivoCampanha.arr,
+			     (char*)stMotivoCampanhaRegistro.stidTipoSubMotivoCampanha.arr );
+
+			iCont++;
+
+		}
+		EXEC SQL CLOSE CursorMotivoCampanhaAll;
+	}
+
+	return iCont;
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CMotivoCampanha::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	if( Quantidade() > 0 )
+	{
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			xml->createTag(cNomeTag);
+			xml->addProp(	"xmlns", "camapanha.fo.vivo.com.br/vo" );
+			if( Registro( x ) != NULL )
+			{
+				xml->addItem("idMotivoCampanha"        , Registro(x)->cidMotivoCampanha      );
+				xml->addItem("idSubCampanhaHistorico"  , Registro(x)->cidSubCampanhaHistorico  );
+				xml->addItem("idTipoStatusCampanha"    , Registro(x)->cidTipoStatusCampanha    );
+				xml->addItem("idTipoMotivoCampanha"    , Registro(x)->cidTipoMotivoCampanha    );
+				xml->addItem("idTipoSubMotivoCampanha" , Registro(x)->cidTipoSubMotivoCampanha );
+			}
+			xml->closeTag();
+		}
+	}
+}
+
+
+int CMotivoCampanha::ListPorSubCampanhaHistorico( char* cidSubCampanhaHistorico )
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidSubCampanhaHistorico = cidSubCampanhaHistorico;
+		struct
+		{
+			VARCHAR stidMotivoCampanha[21+1];
+			VARCHAR stidSubCampanhaHistorico[21+1];
+			VARCHAR stidTipoStatusCampanha[21+1];
+			VARCHAR stidTipoMotivoCampanha[21+1];
+			VARCHAR stidTipoSubMotivoCampanha[21+1];
+			VARCHAR stinAtivo[21+1];
+		} stMotivoCampanhaRegistro;
+		struct
+		{
+			short iidMotivoCampanha;
+			short iidSubCampanhaHistorico;
+			short iidTipoStatusCampanha;
+			short iidTipoMotivoCampanha;
+			short iidTipoSubMotivoCampanha;
+			short iinAtivo;
+		} stMotivoCampanhaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraMotivoCampanha();
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListPorSubCampanhaHistorico;
+	sqlca.sqlcode=0;
+
+   	EXEC SQL 
+   		DECLARE 
+   			CursorListPorSubCampanhaHistorico CURSOR FOR
+		SELECT 
+			IDMOTIVOCAMPANHA, 
+		    IDSUBCAMPANHAHISTORICO, 
+		    IDTIPOSTATUSCAMPANHA, 
+		    IDTIPOMOTIVOCAMPANHA, 
+		    IDTIPOSUBMOTIVOCAMPANHA,
+			INATIVO
+		FROM 
+			CAMPANHA.MOTIVOCAMPANHA
+		WHERE
+			IDSUBCAMPANHAHISTORICO = :cAuxidSubCampanhaHistorico;
+
+	EXEC SQL OPEN CursorListPorSubCampanhaHistorico;
+
+	if(sqlca.sqlcode)
+		return 0;
+	else
+	{
+		for(;;)
+		{
+			memset( &stMotivoCampanhaRegistro, 0, sizeof(stMotivoCampanhaRegistro) );
+			EXEC SQL FETCH CursorListPorSubCampanhaHistorico INTO :stMotivoCampanhaRegistro:stMotivoCampanhaIndicator;
+
+			Add( (char*)stMotivoCampanhaRegistro.stidMotivoCampanha.arr, 
+			     (char*)stMotivoCampanhaRegistro.stidSubCampanhaHistorico.arr,
+			     (char*)stMotivoCampanhaRegistro.stidTipoStatusCampanha.arr,
+			     (char*)stMotivoCampanhaRegistro.stidTipoMotivoCampanha.arr,
+			     (char*)stMotivoCampanhaRegistro.stidTipoSubMotivoCampanha.arr,
+			     (char*)stMotivoCampanhaRegistro.stinAtivo.arr );
+
+		}
+		EXEC SQL CLOSE CursorListPorSubCampanhaHistorico;
+	}
+
+	return Quantidade();
+
+GotoListPorSubCampanhaHistorico:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}

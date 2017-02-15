@@ -1,0 +1,121 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1.2.1 $
+ * @CVS     $Author: a5114878 $ - $Date: 2011/07/12 20:36:31 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+#include "../include/cWFAtdConAnalise.h"
+
+void WFAtdConAnalise(sqlca*sqlca);
+
+bool proCBuscarDataHora( st_AtdConAnalise *dados )
+{
+    ULOG_START("proCBuscarDataHora()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR dataAtual[256];
+        short i_dataAtual;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdConAnalise(&sqlca);
+    EXEC SQL SELECT TO_CHAR(SYSDATE, 'DD/MM/YYYY HH24:MI') 
+               INTO :dataAtual:i_dataAtual
+               FROM DUAL;
+
+    CONVIND(dataAtual,i_dataAtual);
+
+    sprintf(dados->dataAtual,"%.*s",sizeof(dados->dataAtual)-1,dataAtual.arr);
+
+    ULOGE("dataAtual='%s'",dados->dataAtual);
+
+    ULOG_END("proCBuscarDataHora()"); 
+
+    return true;
+}
+
+bool proCBuscarDataHoraSS( st_AtdConAnalise *dados )
+{
+    ULOG_START("proCBuscarDataHoraSS()"); 
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR dataAndamento[256];
+        short i_dataAndamento;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdConAnalise(&sqlca);
+    EXEC SQL SELECT TO_CHAR(SYSDATE, 'DD/MM/YYYY HH24:MI:SS') 
+               INTO :dataAndamento:i_dataAndamento 
+               FROM DUAL;
+
+    CONVIND(dataAndamento,i_dataAndamento);
+
+    sprintf(dados->dataAndamento,"%.*s",sizeof(dados->dataAndamento)-1,dataAndamento.arr);
+
+    ULOGE("dataAndamento='%s'",dados->dataAndamento);
+
+    ULOG_END("proCBuscarDataHoraSS()"); 
+
+    return true;
+}
+
+bool proCObterIdTipoLinha(int *_idTipoLinha,long _idPesLinha)
+{
+    ULOG_START("proCObterIdTipoLinha()"); 
+
+    struct sqlca sqlca;
+
+    *_idTipoLinha = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long idPesLinha = _idPesLinha;
+        int idTipoLinha;
+        short i_idTipoLinha;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND GO TO tipoLinhaNotFound;
+    EXEC SQL WHENEVER SQLERROR DO WFAtdConAnalise(&sqlca);
+
+    EXEC SQL SELECT LT.IDTIPOLINHA IDTIPOLINHA
+               INTO idTipoLinha:i_idTipoLinha
+		       FROM CUSTOMER.PESSOALINHAHISTORICO PL
+                  , LINHA.LINHATELEFONICA LT
+		      WHERE PL.IDLINHATELEFONICA = LT.IDLINHATELEFONICA
+		        AND PL.IDPESSOALINHAHISTORICO = :idPesLinha;
+
+    *_idTipoLinha = idTipoLinha;
+
+tipoLinhaNotFound:
+
+    ULOG_END("proCObterIdTipoLinha()"); 
+
+    return true;
+}
+
+void WFAtdConAnalise(sqlca*sqlca)
+{
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOGE("WFAtdConAnalise:sqlcode=%d,sqlerrmc=%.70s"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

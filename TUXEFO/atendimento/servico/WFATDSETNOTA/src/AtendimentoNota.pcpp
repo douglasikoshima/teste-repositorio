@@ -1,0 +1,245 @@
+// AtendimentoNota.cpp: implementation of the AtendimentoNota class.
+//
+//////////////////////////////////////////////////////////////////////
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include "../include/AtendimentoNota.h"
+#include "../include/svcWFAtdSetNota.h"
+
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+AtendimentoNota::AtendimentoNota()
+{
+
+}
+
+AtendimentoNota::~AtendimentoNota()
+{
+
+}
+
+int AtendimentoNota::criarNota(stNota*nota)
+{
+	ULOG_START("AtendimentoNota::criarNota()");
+	struct sqlca sqlca;
+   EXEC SQL BEGIN DECLARE SECTION;
+		char *idAtendimento = nota->idAtendimento;
+		char *idTipoNota = nota->idTipoNota;
+		char *idPessoaUsuario = nota->idPessoaUsuario;
+		char *nmLoginUsuarioCTI = nota->nmLoginUsuarioCTI;
+		char *comentario = nota->comentario;
+		char cidPessoaUsuario[21+1];
+	EXEC SQL END DECLARE SECTION;
+
+	memset(cidPessoaUsuario,0,strlen(cidPessoaUsuario));
+
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+
+	if(verificaProcesso(nota) == 0)
+		return MSG_CODE_PROCESSO_NOT_FOUND;
+	else
+	if(verificaProcessoCRI(nota) == 0)
+		return MSG_CODE_PROCESSO_CRI;
+
+	int ret = getUsuarioByProcesso(nota->idAtendimento,cidPessoaUsuario);
+	if(ret == 0)
+	{
+		ULOG("Erro ao trazer usuário");
+	}
+
+	ULOG("idAtendimento = %s",idAtendimento);
+	ULOG("idTipoNota = %s",idTipoNota);
+	ULOG("idPessoaUsuario = %s",idPessoaUsuario);
+	ULOG("nmLoginUsuarioCTI = %s",nota->nmLoginUsuarioCTI);
+	ULOG("cidPessoaUsuario = %s",cidPessoaUsuario);
+
+	EXEC SQL
+	INSERT INTO
+	 ATENDIMENTO.ATENDIMENTONOTA
+	 (IDATENDIMENTONOTA,IDPESSOAUSUARIO,DTCRIACAONOTA,DSCOMENTARIO,
+	 IDTIPONOTAATENDIMENTO,IDATENDIMENTO)
+	 VALUES
+	 (ATENDIMENTO.ATENDIMENTONOTASQ.NEXTVAL,:cidPessoaUsuario,
+	 SYSDATE,:comentario,:idTipoNota,:idAtendimento);
+
+   ULOG_END("AtendimentoNota::criarNota()");
+	return 1;
+
+Error:
+	ULOG("\nAtendimentoNota::criarNota() sqlca.sqlcode = %d",sqlca.sqlcode);
+	if(sqlca.sqlcode == -1)
+	{
+		return MSG_CODE_CONSTRAINT_VIOLADA;
+	}
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int AtendimentoNota::verificaProcesso(stNota*nota)
+{
+	ULOG_START("AtendimentoNota::verificaProcesso()");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+		char *cidAtendimento = nota->idAtendimento;
+		struct stparam{
+			int count;
+		}m_stparam;
+		struct istparam{
+			short count;
+		}m_istparam;
+	EXEC SQL END DECLARE SECTION;
+	memset(&m_stparam,0,sizeof(m_stparam));		
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+	EXEC SQL WHENEVER NOT FOUND continue;
+	EXEC SQL
+		SELECT IDATENDIMENTO 
+		INTO :m_stparam:m_istparam
+			  FROM ATENDIMENTO.ATENDIMENTO WHERE IDATENDIMENTO = :cidAtendimento;
+	if(sqlca.sqlcode == 1403)
+	{
+	   ULOG_END("AtendimentoNota::verificaProcesso() -> return 0");
+		return 0;
+	}
+	ULOG_END("AtendimentoNota::verificaProcesso() -> return 1 ");
+	return 1;
+Error:
+	ULOG("\nAtendimentoNota::verificaProcesso sqlca.sqlcode = %d",sqlca.sqlcode);
+	return 0;
+}
+
+int AtendimentoNota::verificaProcessoCRI(stNota*nota)
+{
+	ULOG_START("AtendimentoNota::verificaProcessoCRI()");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+		char *cidAtendimento = nota->idAtendimento;
+		struct stparam{
+			int count;
+		}m_stparam;
+		struct istparam{
+			short count;
+		}m_istparam;
+	EXEC SQL END DECLARE SECTION;
+	memset(&m_stparam,0,sizeof(m_stparam));		
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+	EXEC SQL WHENEVER NOT FOUND continue;
+	EXEC SQL
+		SELECT IDATENDIMENTO 
+		INTO :m_stparam:m_istparam
+			  FROM ATENDIMENTO.GRUPOCRI WHERE IDATENDIMENTO = :cidAtendimento;
+	if(sqlca.sqlcode == 1403)
+	{
+	   ULOG_END("AtendimentoNota::verificaProcessoCRI() -> return 0 ");
+		return 0;
+	}
+	ULOG_END("AtendimentoNota::verificaProcessoCRI() -> return 1 ");
+	return 1;
+Error:
+	ULOG("\nAtendimentoNota::verificaProcessoCRI sqlca.sqlcode = %d",sqlca.sqlcode);
+	return 0;
+}
+
+int AtendimentoNota::editarNota(stNota*nota)
+{
+	ULOG_START("AtendimentoNota::editarNota()");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char *idAtendimentoNota = nota->idAtendimentoNota;
+		char *comentario = nota->comentario;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+
+	ULOG("idAtendimentoNota = %s",idAtendimentoNota);
+
+	EXEC SQL
+	 UPDATE
+	 ATENDIMENTO.ATENDIMENTONOTA
+	 SET DSCOMENTARIO = :comentario,
+	 DTULTIMAALTERACAO = SYSDATE
+	 WHERE IDATENDIMENTONOTA = :idAtendimentoNota;
+	ULOG_END("AtendimentoNota::editarNota()");
+	return 1;
+Error:
+	ULOG("\nAtendimentoNota::editarNota() sqlca.sqlcode = %d",sqlca.sqlcode);
+	if(sqlca.sqlcode == -1)
+	{
+		return MSG_CODE_CONSTRAINT_VIOLADA;
+	}
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+int AtendimentoNota::getIdPessoaUsuario(char*nmLoginUsuarioCTI,char*idPessoaUsuario)
+{
+	ULOG_START("AtendimentoNota::getIdPessoaUsuario()");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+		char *cnmLoginUsuarioCTI = nmLoginUsuarioCTI;
+		struct stparam{
+			VARCHAR idPessoaUsuario[21+1];
+		}m_stparam;
+		struct istparam{
+			short idPessoaUsuario;
+		}m_istparam;
+	EXEC SQL END DECLARE SECTION;	
+
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+	EXEC SQL WHENEVER NOT FOUND do break;
+	EXEC SQL DECLARE CURSORPESSOA CURSOR FOR
+		SELECT IDPESSOAUSUARIO
+		FROM ACESSO.USUARIO
+		WHERE nmLoginUsuarioCTI = :cnmLoginUsuarioCTI;
+	EXEC SQL OPEN CURSORPESSOA;
+	for(;;)
+	{
+		memset(&m_stparam,0,sizeof(m_stparam));
+		EXEC SQL FETCH CURSORPESSOA INTO :m_stparam:m_istparam;		
+		strcpy(idPessoaUsuario,(char*)m_stparam.idPessoaUsuario.arr);
+	}
+	EXEC SQL CLOSE CURSORPESSOA;
+	
+	ULOG_END("AtendimentoNota::getIdPessoaUsuario()");
+	
+	return 1;
+Error:
+	ULOG("\nAtendimentoNota::getIdPessoaUsuario() sqlca.sqlcode = %d",sqlca.sqlcode);
+	return 0;
+}
+
+int AtendimentoNota::getUsuarioByProcesso(char*idAtendimento,char*idPessoaUsuario)
+{
+	ULOG_START("AtendimentoNota::getUsuarioByProcesso()");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+		char *cidAtendimento = idAtendimento;
+		struct stparam{
+			VARCHAR idPessoaUsuario[21+1];
+		}m_stparam;
+		struct istparam{
+			short idPessoaUsuario;
+		}m_istparam;
+	EXEC SQL END DECLARE SECTION;
+	memset(&m_stparam,0,sizeof(m_stparam));		
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+	EXEC SQL WHENEVER NOT FOUND continue;
+	EXEC SQL
+		SELECT A.IDPESSOAUSUARIO INTO :m_stparam:m_istparam FROM
+		ATENDIMENTO.ATENDIMENTOCRI A
+		WHERE A.IDATENDIMENTO = :cidAtendimento;
+	if(sqlca.sqlcode == 1403)
+	{
+	   ULOG_END("AtendimentoNota::getUsuarioByProcesso() -> return 0");
+		return 0;
+	}
+	strcpy(idPessoaUsuario,(char*)m_stparam.idPessoaUsuario.arr);
+	
+	ULOG_END("AtendimentoNota::getUsuarioByProcesso() -> return 1");
+	
+	return 1;
+Error:
+	ULOG("\nAtendimentoNota::getUsuarioByProcesso sqlca.sqlcode = %d",sqlca.sqlcode);
+	return 0;
+}

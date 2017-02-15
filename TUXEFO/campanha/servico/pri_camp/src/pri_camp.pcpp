@@ -1,0 +1,85 @@
+//
+// $Id: pri_camp.pcpp,v 1.1 2009/07/31 15:33:34 a5110702 Exp $
+//
+
+#include "../../negocio/cmputil/include/campanha.hpp"
+
+int pri_camp(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char parm[255];
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  int	    idCanal;
+  int		idCampanha; 
+  int		sgCampanha; 
+  VARCHAR	dsCampanha[255]; 
+  int		idSubCampanhaHistorico; 
+  VARCHAR	dsScriptSubCampanha[255]; 
+  int       sqVersao;
+  int       sqApresentacao;	
+  int       idPessoaUsuarioAlteracao;
+
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+  try{
+    //  Obtendo dados do xml
+    get_tag(parm, dnode, "idCanal", 0, 0);
+    idCanal = atoi(parm);
+
+    // Pegando id do usuario
+    idPessoaUsuarioAlteracao = usuario;
+
+    /* Selecionando Canal */
+
+    EXEC SQL DECLARE crsPriCamp CURSOR FOR
+	  SELECT  ac.idCampanha, 
+	   		   ac.sgcampanha, 
+			   ac.DSCAMPANHA, 
+			   scs.idSubCampanhaHistorico, 
+			   scs.dsScriptSubCampanha, 
+			   scs.sqVersao,
+			   scs.sqApresentacao			   
+		FROM  campanha.subcampanhahistorico   scs,
+			  apoio.campanha				  ac,
+			  campanha.subcampanhafixa		  scf,
+			  campanha.canalcampanha 	  cc,
+			  Campanha.CanalUFOperadora    cuo, 
+	   		  apoio.canal   			  	  c
+		WHERE cc.inativo=1
+		AND   cc.IDSUBCAMPANHAHISTORICO=scs.IDSUBCAMPANHAHISTORICO
+		AND	  ac.IDCAMPANHA=scf.IDCAMPANHA
+		AND	  SCS.IDSUBCAMPANHAFIXA=SCF.IDSUBCAMPANHAFIXA
+		AND  cc.IDCANALUFOPERADORA=cuo.IDCANALUFOPERADORA
+		AND  cuo.IDCANAL=c.IDCANAL		
+		AND   c.idcanal=:idCanal
+		ORDER BY cc.sqApresentacao;
+ 
+	EXEC SQL OPEN crsPriCamp;
+
+	for(;;)
+	{
+		EXEC SQL fetch crsPriCamp INTO  :idCampanha, :sgCampanha, :dsCampanha, 
+										:idSubCampanhaHistorico,   :dsScriptSubCampanha, 
+										:sqVersao,   :sqApresentacao;
+
+		xml->createTag("CampanhaSubCampanhaVO");
+			xml->addItem("idCampanha",idCampanha);
+			xml->addItem("sgCampanha",sgCampanha);
+			xml->addItem("nmCampanha",(char *)dsCampanha.arr);
+			xml->addItem("idSubCampanhaHistorico",idSubCampanhaHistorico);
+			xml->addItem("dsScriptSubCampanha",(char *)dsScriptSubCampanha.arr);
+			xml->addItem("sqVersao",sqVersao);
+			xml->addItem("sqApresentacao",sqApresentacao);
+		xml->closeTag();
+
+	}
+    
+  }
+  catch(...)
+  {
+	throw;
+  }
+  
+  return 1;
+}

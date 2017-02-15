@@ -1,0 +1,179 @@
+/**
+ * @author  Renato Teixeira
+ * @version $Revision: 1.1.2.1 $
+ * @CVS     $Author: a5116174 $ - $Date: 2011/08/12 17:11:15 $
+ **/
+
+#include "../include/cFchImediatoContatoPC.h"
+
+/**
+    Construtor padrão da classe.
+*/
+cFchImediatoContatoPC::cFchImediatoContatoPC(st_FchImediatoContato* origem)
+{
+    dados = origem;
+}
+
+cFchImediatoContatoPC::~cFchImediatoContatoPC()
+{
+
+}
+
+/**
+    Retorna a data atual do banco de dados para ser usada como parametro das demais chamadas.
+    Existe uma AK na tabela de atendimento.andamento que não permite dois registros do mesmo
+    atendimento tenham o mesmo horario de gravação, como essa função pode ser chamada no mesmo 
+    segundo que a função da abertura, e grava assim um segundo registro de andamento, para que
+    não ocorra o conflito foi adicionado alguns minutos no andamento.
+*/
+// void cFchImediatoContatoPC::dataAtual(char* data)
+// {
+// 
+//     ULOG_START("cFchImediatoContatoPC::dataAtual()");
+// 
+//     struct sqlca sqlca;
+// 
+//     EXEC SQL BEGIN DECLARE SECTION;
+// 
+//         VARCHAR dataAtual[64];
+// 
+//     EXEC SQL END DECLARE SECTION;
+// 
+//     EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFchImediatoAtendimento(&sqlca);
+// 
+//     EXEC SQL 
+//         SELECT
+//             TO_CHAR(SYSDATE+0.00002, 'DD/MM/YYYY HH24:MI')
+//         INTO    
+//             :dataAtual
+//         FROM
+//             dual;
+// 
+//     CONV(dataAtual)
+// 
+//     strcpy(data, (char*) dataAtual.arr);
+// 
+//     ULOG("Dados obtidos - data = [%s]", data);
+//     ULOG_END("cFchImediatoContatoPC::dataAtual()");
+// 
+// }
+
+void cFchImediatoContatoPC::dataAndamento(char* data)
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR dataAtual[64];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFchImediatoAtendimento(&sqlca);
+
+    EXEC SQL 
+        SELECT
+            TO_CHAR(SYSDATE+0.000002, 'DD/MM/YYYY HH24:MI:SS')
+        INTO    
+            :dataAtual
+        FROM
+            DUAL;
+
+    CONV(dataAtual)
+
+    strcpy(data, (char*) dataAtual.arr);
+}
+
+/**
+    Retorna o id da mensagem de baixa.  
+*/
+int cFchImediatoContatoPC::obtemBaixaMensagem(int* _idBaixa, int* _idMensagemBaixa)
+{
+
+    ULOG_START("cFchImediatoContatoPC::obtemBaixaMensagem()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idMensagemBaixa = *_idMensagemBaixa;
+        int idBaixa         = *_idBaixa;
+
+        int idBaixaMensagem;
+
+        short i_idBaixaMensagem=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFchImediatoAtendimento(&sqlca);
+
+    EXEC SQL 
+        SELECT
+            IDBAIXAMENSAGEM
+        INTO    
+            :idBaixaMensagem:i_idBaixaMensagem
+        FROM
+            CONTATOADM.BAIXAMENSAGEM
+        WHERE
+            IDBAIXA = :idBaixa
+        AND
+            IDMENSAGEMBAIXA = :idMensagemBaixa
+        AND
+            ROWNUM < 2;
+
+    if (i_idBaixaMensagem == -1)
+        idBaixaMensagem = -1;
+
+    ULOG("Dados obtidos - idBaixaMensagem = [%i]", idBaixaMensagem);
+    
+    ULOG_END("cFchImediatoContatoPC::obtemBaixaMensagem()");
+
+    return idBaixaMensagem;
+}
+
+/**
+    Retorna o id da mensagem de baixa.  
+*/
+int cFchImediatoContatoPC::verificaBaixas(long * _idAtendimento)
+{
+
+    ULOG_START("cFchImediatoContatoPC::verificaBaixas()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = *_idAtendimento;
+        int registros;
+        short i_registros;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFchImediatoAtendimento(&sqlca);
+
+    EXEC SQL 
+        SELECT
+            COUNT(1)
+        INTO    
+            :registros:i_registros
+        FROM
+            ATENDIMENTO.ATENDIMENTOBAIXAATUAL
+        WHERE
+            IDATENDIMENTO = :idAtendimento
+        AND 
+            ROWNUM < 2;
+
+    if (i_registros == -1)
+        registros = 0;
+
+    ULOG("Dados obtidos - registros = [%i]", registros);
+    
+    ULOG_END("cFchImediatoContatoPC::verificaBaixas()");
+
+    return registros;
+}
+
+void cFchImediatoContatoPC::sql_error_WFFchImediatoAtendimento( sqlca * sqlca )
+{
+    ULOGE("Ocorreu um erro na execução da consulta de dados para fechamento imediato do atendimento");
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

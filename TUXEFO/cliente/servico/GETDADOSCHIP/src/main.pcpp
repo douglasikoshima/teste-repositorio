@@ -1,0 +1,508 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include "../../negocio/clienteCmm/include/LogGSM.h"
+
+#include "../include/GETDADOSCHIP.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+DECLARE_TUXEDO_SERVICE(GETDADOSCHIP);
+
+void implGETDADOSCHIP::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    TuxRemoteService* remoteService = NULL;
+    TuxMessage* inputMessage = NULL;
+    const char *pMemBufId = "inputInfo";
+    char* ret = NULL;
+    MemBufInputSource *pMemBuf = NULL;
+    XercesDOMParser* pParser = NULL;
+    DOMNode* pDoc = NULL;
+    char *fullRet = NULL;
+    XMLGen *pclXmlGen = NULL;
+
+    char *pPointer = NULL;
+    TGetDadosChip tGetDadosChip;
+    int iFlagErro=0;
+    char szAux[256 + 1];
+    int iIdTipoLinha;
+
+    ULOG_START("implGETDADOSCHIP::Execute");
+
+    memset(&tGetDadosChip, 0x00, sizeof(TGetDadosChip));
+    
+    try
+    {
+
+        /* Referente a nrIP */
+        pPointer = walkTree(pDnode, "nrIP", 0); ULOG("nrIP[%s]", pPointer?pPointer:"..NULL..");
+        strcpy(tGetDadosChip.szNrIP, pPointer?pPointer:"");
+        if(!pPointer) {
+            ERROR(NRO_TAG_ACAO_NE); TAG_INEXISTENTE("nrIP"); iFlagErro=1;
+        }
+        else if(!*pPointer) {
+            ERROR(NRO_TAG_ACAO_VI); TAG_VALOR_VAZIO("nrIP"); iFlagErro=1;
+        }
+        if(pPointer) XMLString::release(&pPointer);
+        if(iFlagErro) {
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+
+        /* Referente a nrLinha */
+        pPointer = walkTree(pDnode, "nrLinha", 0); ULOG("nrLinha[%s]", pPointer?pPointer:"..NULL..");
+        strcpy(tGetDadosChip.szNrLinha, pPointer?pPointer:"");
+        if(!pPointer) {
+            ERROR(NRO_NR_LINHA_NE); TAG_INEXISTENTE("nrLinha"); iFlagErro=1;
+        }
+        else if(!*pPointer) {
+            ERROR(NRO_NR_LINHA_VV); TAG_VALOR_VAZIO("nrLinha"); iFlagErro=1;
+        }
+        else if(!IsNumeric(pPointer)){
+            ERROR(NRO_NR_LINHA_VI); TAG_VALOR_INVALIDO("nrLinha"); iFlagErro=1;
+        }
+        if(pPointer) XMLString::release(&pPointer);
+        if(iFlagErro) {
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        pPointer = ObtemIdTipoLinha(tGetDadosChip.szNrLinha);
+        ULOG("pPointer[%s]", pPointer?pPointer:"...NULL...");
+        if(pPointer == NULL)
+        {
+            sprintf(szAux, "Linha nao encontrada[%s]", tGetDadosChip.szNrLinha);
+            throw new TuxBasicSvcException("13E0001", szAux);
+        }
+        else
+            iIdTipoLinha = atoi(pPointer);
+
+        ULOG("iIdTipoLinha(%d)", iIdTipoLinha);
+
+        /* Referente a idLinha */
+        pPointer = walkTree(pDnode, "idLinha", 0); ULOG("idLinha[%s]", pPointer?pPointer:"..NULL..");
+        strcpy(tGetDadosChip.szIdLinhaTelefonica, pPointer?pPointer:"");
+        if(!pPointer) {
+            ERROR(NRO_ID_LINHA_NE); TAG_INEXISTENTE("idLinha"); iFlagErro=1;
+        }
+        else if(!*pPointer) {
+            ERROR(NRO_ID_LINHA_VV); TAG_VALOR_VAZIO("idLinha"); iFlagErro=1;
+        }
+        else if(!IsNumeric(pPointer)){
+            ERROR(NRO_ID_LINHA_VI); TAG_VALOR_INVALIDO("idLinha"); iFlagErro=1;
+        }
+        if(pPointer) XMLString::release(&pPointer);
+        if(iFlagErro) {
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        /* referente a idUsuarioAlteracao */
+        strcpy(tGetDadosChip.szIdUsuarioAlteracao, getUser());
+
+
+        pclXmlGen = new XMLGen;
+        if (iIdTipoLinha == 1 || iIdTipoLinha == 5)
+        {
+            pclXmlGen->addItem("ProxyOperacao", "getDetalheLinha");
+        }
+        else if(iIdTipoLinha == 2 || iIdTipoLinha == 6 || iIdTipoLinha == 4 || iIdTipoLinha == 7)
+        {
+            pclXmlGen->addItem("ProxyOperacao", "getDetalheAparelho");
+        }
+        pclXmlGen->addItem("usuario", "FO");
+        pclXmlGen->addItem("operacao", "0");
+        pclXmlGen->addItem("ProxyLinha", tGetDadosChip.szNrLinha);
+        pclXmlGen->addItem("xmlns", "cliente.fo.vivo.com.br/vo");
+
+        try
+        {
+            remoteService = new TuxRemoteService();
+            inputMessage = new TuxMessage();
+        
+            inputMessage->setUser("0");
+
+            if(iIdTipoLinha == 1 || iIdTipoLinha == 5)
+            {
+                inputMessage->setService("DTUXATLYSBE"); // pos (1) poschip (5)
+            }
+            else if(iIdTipoLinha == 2 || iIdTipoLinha == 6 || iIdTipoLinha == 4 || iIdTipoLinha == 7)
+            {
+                inputMessage->setService("DTUXNGINBE"); // pre (2) prechip (6) ControleCDMA(4) ControleGSM(7)
+            }
+
+            inputMessage->setMessageBody(pclXmlGen);
+        
+            if(iIdTipoLinha == 1 || iIdTipoLinha == 5)
+            {
+                remoteService->setServiceName("DTUXATLYSBE"); // pos (1) poschip (5)
+            }
+            else if(iIdTipoLinha == 2 || iIdTipoLinha == 6 || iIdTipoLinha == 4 || iIdTipoLinha == 7)
+            {
+                remoteService->setServiceName("DTUXNGINBE"); // pre (2) prechip (6) ControleCDMA(4) ControleGSM(7)
+            }
+
+            remoteService->setInputMessage(inputMessage);
+        
+            if(remoteService->remoteCall() != TUXFWRET_OK) {
+                ULOG("LOCAL 4");
+                throw new TuxBasicSvcException("13E0001", "Sistema DTUXNGINBE sem resposta.");
+            }
+
+            ULOG("remoteService->getOutputMessage()->getStatusCode()[%s]", remoteService->getOutputMessage()->getStatusCode()?remoteService->getOutputMessage()->getStatusCode():"...NULL...");
+            if (remoteService->getOutputMessage()->getStatusCode() != NULL) {
+                if(strlen(remoteService->getOutputMessage()->getStatusCode()) >= 3) {
+                    if(remoteService->getOutputMessage()->getStatusCode()[2] !='I') {
+                        ULOG("LOCAL 5");
+                        if(iIdTipoLinha == 1 || iIdTipoLinha == 5)
+                        {
+                            throw new TuxBasicSvcException("13E0001", "Sistema DTUXATLYSBE sem resposta..");
+                        }
+                        else if(iIdTipoLinha == 2 || iIdTipoLinha == 6 || iIdTipoLinha == 4 || iIdTipoLinha == 7)
+                        {
+                            throw new TuxBasicSvcException("13E0001", "Sistema DTUXNGINBE sem resposta..");
+                        }
+                    }
+                }
+            }
+
+            ret = remoteService->getOutputMessage()->getMessageBody();
+            ULOG("XML recebido[%s]", ret);
+        }
+        catch(TuxException* tE) {
+            ULOG("LOCAL 6");
+            throw tE;
+        }
+
+
+        fullRet = (char*) malloc(strlen(ret) + 100);
+        sprintf(fullRet, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>%s", ret);
+        
+        pParser = new XercesDOMParser;
+        pMemBuf = new MemBufInputSource((const XMLByte*)fullRet, strlen(fullRet), pMemBufId);
+
+        pParser->parse(*pMemBuf);
+        pDoc = pParser->getDocument();
+
+
+        /* Referente a nrICCID */
+        pPointer = walkTree(pDoc, "ICCID", 0); ULOG("ICCID[%s]", pPointer?pPointer:"..NULL..");
+        strcpy(tGetDadosChip.szICCID, pPointer?pPointer:"");
+        if(!pPointer) {
+            ULOG("pPointer!");
+            iFlagErro=1;
+        }
+        else if(!*pPointer) {
+            ULOG("*pPointer");
+            iFlagErro=1;
+        }
+        else if(strlen(pPointer) == 0) {
+            ULOG("strlen(pPointer)");
+            iFlagErro=1;
+        }
+        if(pPointer) XMLString::release(&pPointer);
+        if(iFlagErro){
+            throw new TuxBasicSvcException("13E1313", "O sistema não retornou o ICCID.");
+        }
+
+
+        /* desalocacao para novo uso */
+        if(fullRet) {
+            free(fullRet); fullRet=NULL;
+        }
+        if(pParser) {
+            delete pParser; pParser=NULL;
+        }
+        if(pMemBuf) {
+            delete pMemBuf; pMemBuf=NULL;
+        }
+        if(remoteService) {
+            delete remoteService; remoteService=NULL;
+        }
+        if(inputMessage) {
+            delete inputMessage; inputMessage=NULL;
+        }
+        if(pclXmlGen) {
+            delete pclXmlGen; pclXmlGen=NULL;
+        }
+
+
+
+        
+        /* Inicio do acesso a RecuperaPUK */
+        pclXmlGen = new XMLGen;
+        pclXmlGen->addItem("ICCID", tGetDadosChip.szICCID);
+        pclXmlGen->addItem("IP", tGetDadosChip.szNrIP);
+        pclXmlGen->addItem("User", tGetDadosChip.szIdUsuarioAlteracao);
+
+
+        try {
+            remoteService = new TuxRemoteService();
+            inputMessage = new TuxMessage();
+        
+            inputMessage->setUser(tGetDadosChip.szIdUsuarioAlteracao);
+            inputMessage->setService("RecuperaPUK");
+            inputMessage->setMessageBody(pclXmlGen);
+        
+            remoteService->setServiceName("RecuperaPUK");
+            remoteService->setInputMessage(inputMessage);
+        
+            if(remoteService->remoteCall() != TUXFWRET_OK) {
+                ULOG("LOCAL 1");
+                throw new TuxBasicSvcException("13E0001", "Sistema RecuperaPUK sem resposta.");
+            }
+
+
+            ULOG("remoteService->getOutputMessage()->getStatusCode()[%s]", remoteService->getOutputMessage()->getStatusCode()?remoteService->getOutputMessage()->getStatusCode():"...NULL...");
+            if (remoteService->getOutputMessage()->getStatusCode() != NULL) {
+                if(strlen(remoteService->getOutputMessage()->getStatusCode()) >= 3) {
+                    if(remoteService->getOutputMessage()->getStatusCode()[2] !='I') {
+                        ULOG("LOCAL 2");
+                        throw new TuxBasicSvcException("13E0001", "Sistema RecuperaPUK sem resposta..");
+                    }
+                }
+            }
+
+            ret = remoteService->getOutputMessage()->getMessageBody();
+            ULOG("XML recebido do RecuperaPUK [%s]", ret);
+        }
+        catch(TuxException* tE) {
+            ULOG("LOCAL 3");
+            throw tE;
+        }
+
+
+        fullRet = (char*) malloc(strlen(ret) + 100);
+        sprintf(fullRet, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>%s", ret);
+        
+        pParser = new XercesDOMParser;
+        pMemBuf = new MemBufInputSource((const XMLByte*)fullRet, strlen(fullRet), pMemBufId);
+
+        pParser->parse(*pMemBuf);
+        pDoc = pParser->getDocument();
+
+
+
+        /* Referente a ErrorCode */
+        pPointer = walkTree(pDoc, "ErrorCode", 0); ULOG("ErrorCode[%s]", pPointer?pPointer:"..NULL..");
+        strcpy(tGetDadosChip.szErrorCode, pPointer?pPointer:"");
+        if(!pPointer) {
+            ERROR(NRO_NR_ERROR_CODE_NE); TAG_INEXISTENTE("ErrorCode"); iFlagErro=1;
+        }
+        else if(!*pPointer) {
+            ERROR(NRO_NR_ERROR_CODE_VV); TAG_VALOR_VAZIO("ErrorCode"); iFlagErro=1;
+        }
+        else if(!IsNumeric(pPointer)){
+            ERROR(NRO_NR_ERROR_CODE_VI); TAG_VALOR_INVALIDO("ErrorCode"); iFlagErro=1;
+        }
+        if(pPointer) XMLString::release(&pPointer);
+        if(iFlagErro){
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        /* Verifica se houve algum erro (diferente de zero eh erro) */
+        if(atoi(tGetDadosChip.szErrorCode) != 0) {
+
+            /* Referente a ErrorDescription */
+            pPointer = walkTree(pDoc, "ErrorDescription", 0); ULOG("ErrorDescription[%s]", pPointer?pPointer:"..NULL..");
+            strcpy(tGetDadosChip.szErrorDescription, pPointer?pPointer:"");
+            if(!pPointer) {
+                ERROR(NRO_DS_ERROR_DESCRIPTION_NE); TAG_INEXISTENTE("ErrorDescription"); iFlagErro=1;
+            }
+            else if(!*pPointer) {
+                ERROR(NRO_DS_ERROR_DESCRIPTION_VV); TAG_VALOR_VAZIO("ErrorDescription"); iFlagErro=1;
+            }
+            if(pPointer) XMLString::release(&pPointer);
+            if(iFlagErro){
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+
+            /* Formatacao dos dados de saida no caso de erro*/
+            pXmlG->createTag("DadosChipVO");
+            pXmlG->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+            pXmlG->addItem("errorCode", tGetDadosChip.szErrorCode);
+            pXmlG->addItem("errorDescription", tGetDadosChip.szErrorDescription);
+            pXmlG->closeTag();
+        }
+        else
+        {
+            /* Referente a PUK1 */
+            pPointer = walkTree(pDoc, "PUK1", 0); ULOG("PUK1[%s]", pPointer?pPointer:"..NULL..");
+            strcpy(tGetDadosChip.szPUK1, pPointer?pPointer:"");
+            if(!pPointer) {
+                ERROR(NRO_NR_PUK1_NE); TAG_INEXISTENTE("PUK1"); iFlagErro=1;
+            }
+            else if(!*pPointer) {
+                ERROR(NRO_NR_PUK1_VV); TAG_VALOR_VAZIO("PUK1"); iFlagErro=1;
+            }
+            if(pPointer) XMLString::release(&pPointer);
+            if(iFlagErro){
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+    
+            /* Referente a PUK2 */
+            pPointer = walkTree(pDoc, "PUK2", 0); ULOG("PUK2[%s]", pPointer?pPointer:"..NULL..");
+            strcpy(tGetDadosChip.szPUK2, pPointer?pPointer:"");
+            if(!pPointer) {
+                ERROR(NRO_NR_PUK2_NE); TAG_INEXISTENTE("PUK2"); iFlagErro=1;
+            }
+            else if(!*pPointer) {
+                ERROR(NRO_NR_PUK2_VV); TAG_VALOR_VAZIO("PUK2"); iFlagErro=1;
+            }
+            if(pPointer) XMLString::release(&pPointer);
+            if(iFlagErro){
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+    
+            /* Referente a TipoChip */
+            pPointer = walkTree(pDoc, "TipoChip", 0); ULOG("TipoChip[%s]", pPointer?pPointer:"..NULL..");
+            strcpy(tGetDadosChip.szTipoChip, pPointer?pPointer:"");
+            if(!pPointer) {
+                ERROR(NRO_DS_TIPO_CHIP_NE); TAG_INEXISTENTE("TipoChip"); iFlagErro=1;
+            }
+            else if(!*pPointer) {
+                ERROR(NRO_DS_TIPO_CHIP_VV); TAG_VALOR_VAZIO("TipoChip"); iFlagErro=1;
+            }
+            if(pPointer) XMLString::release(&pPointer);
+            if(iFlagErro){
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+    
+            /* Referente a TamanhoChip */
+            pPointer = walkTree(pDoc, "TamanhoChip", 0); ULOG("TamanhoChip[%s]", pPointer?pPointer:"..NULL..");
+            strcpy(tGetDadosChip.szTamanhoChip, pPointer?pPointer:"");
+            if(!pPointer) {
+                ERROR(NRO_DS_TAMANHO_CHIP_NE); TAG_INEXISTENTE("TamanhoChip"); iFlagErro=1;
+            }
+            else if(!*pPointer) {
+                ERROR(NRO_DS_TAMANHO_CHIP_VV); TAG_VALOR_VAZIO("TamanhoChip"); iFlagErro=1;
+            }
+            if(pPointer) XMLString::release(&pPointer);
+            if(iFlagErro){
+                throw new TuxBasicSvcException(sNrMsg, sMsg);
+            }
+    
+    
+    
+            /* Formatacao dos dados de saida */
+            pXmlG->createTag("DadosChipVO");
+            pXmlG->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+            pXmlG->addItem("nrLinha", tGetDadosChip.szNrLinha);
+    
+            pXmlG->addItem("nrICCID", tGetDadosChip.szICCID);
+    
+            pXmlG->addItem("dsTipoChip", tGetDadosChip.szTipoChip);
+            pXmlG->addItem("dsTamanhoChip", tGetDadosChip.szTamanhoChip);
+            pXmlG->addItem("nrPUK1", tGetDadosChip.szPUK1);
+            pXmlG->addItem("nrPUK2", tGetDadosChip.szPUK2);
+    
+            pXmlG->closeTag();
+    
+            /* Grava informacoes em log */
+            ULOGI("Inicio da gravacao de log...");
+            TLogGSM tLogGSM;
+            memset(&tLogGSM, 0x00, sizeof(TLogGSM));
+            strcpy(tLogGSM.szIP, tGetDadosChip.szNrIP);
+            strcpy(tLogGSM.szIdUsuarioAlteracao, tGetDadosChip.szIdUsuarioAlteracao);
+            strcpy(tLogGSM.szIdLinhaTelefonica, tGetDadosChip.szIdLinhaTelefonica);
+            strcpy(tLogGSM.szICCID, tGetDadosChip.szICCID);
+    
+            LogGSM clLogGSM;
+    
+            clLogGSM.insereLogGSM(&tLogGSM);
+            ULOGI("Final da gravacao de log...");
+        }
+    }
+    catch(...)
+    {
+        ULOG("Exception!");
+
+        if(fullRet) free(fullRet);
+        if(pParser) delete pParser;
+        if(pMemBuf) delete pMemBuf;
+        if(remoteService) delete remoteService;
+        if(inputMessage) delete inputMessage;
+        if(pclXmlGen) delete pclXmlGen;
+
+        ULOG_END("implGETDADOSCHIP::Execute");
+        throw;
+    }
+
+    ULOG("local D");
+    if(fullRet) free(fullRet);
+    if(pParser) delete pParser;
+    if(pMemBuf) delete pMemBuf;
+    if(remoteService) delete remoteService;
+    if(inputMessage) delete inputMessage;
+    if(pclXmlGen) delete pclXmlGen;
+
+    ULOG_END("implGETDADOSCHIP::Execute");
+
+	INFORMATION(NRO_OK);
+	setStatusCode(sNrMsg, MSG_OK);
+}
+
+/************************************************************************************************************/
+char *ObtemIdTipoLinha(char *pszNrLinha)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszCdAreaRegistro[21];
+        VARCHAR oszNrLinha[21];
+        VARCHAR oszIdTipoLinha[21];
+    EXEC SQL END DECLARE SECTION;
+
+    static char szIdTipoLinha[21 + 1];
+    struct sqlca sqlca;
+    char szAux[21 + 1];
+
+    ULOGI(">>> ObtemIdTipoLinha");
+    ULOG("pszNrLinha[%s]", pszNrLinha);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    memset(szAux, 0x00, sizeof(szAux));
+    memcpy(szAux, pszNrLinha, 2);
+    STRCPY_TO_ORA(oszCdAreaRegistro, szAux);
+    STRCPY_TO_ORA(oszNrLinha, pszNrLinha+2);
+
+    EXEC SQL 
+        SELECT
+          llt.idtipolinha
+        INTO :oszIdTipoLinha
+        FROM
+          linha.linhabase llb,
+          linha.linhatelefonica llt,
+          apoio.arearegistro aar
+        WHERE
+          llb.idlinhabase = llt.idlinhabase
+        AND
+          llb.idarearegistro = aar.idarearegistro
+        AND
+          llb.idarearegistro = aar.idarearegistro
+        AND
+          aar.cdarearegistro = :oszCdAreaRegistro
+        AND
+          llb.nrlinha = :oszNrLinha;
+
+
+    STRCPY_FROM_ORA(szIdTipoLinha, oszIdTipoLinha);
+
+    ULOG("szIdTipoLinha[%s]", szIdTipoLinha);
+    ULOG("<<< ObtemIdTipoLinha <NOT NULL>");
+    return szIdTipoLinha;
+
+    erro:
+        ULOG("Finalizando com erro sqlca.sqlcode(%d)", sqlca.sqlcode);
+        ULOG("<<< ObtemIdTipoLinha <ERROR>");
+        exit(-1);
+
+    naoexiste:
+        ULOG("Chave pesquisada nao encontrada[%s]", pszNrLinha);
+        ULOG("<<< ObtemIdTipoLinha <NULL>");
+        return NULL;
+}

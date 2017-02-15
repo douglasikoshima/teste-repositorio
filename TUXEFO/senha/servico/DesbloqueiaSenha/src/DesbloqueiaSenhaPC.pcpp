@@ -1,0 +1,211 @@
+/* $Id: DesbloqueiaSenhaPC.pcpp,v 1.1.2.2 2010/07/14 23:24:25 a5114878 Exp $ */
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+#include "../../RegistraContato/include/stRegistraContato.h"
+
+extern bool proCRegistraContatoAlteracao(int, stRegistraContato*);
+
+void sql_error_desbloqueiasenha(sqlca*);
+void desbloqueiaClientes(int, int, int, int, char*);
+void registraDesbloqueio(int, int, int, int, char*);
+
+void proCDesbloqueiaSenhas(char* telefone, int idCanal, int idPessoaUsuario, int iIdTerminal, char* obsRegistro)
+{
+   
+   ULOG_START("proCDesbloqueiaSenhas()");
+
+	struct sqlca sqlca;
+
+	int prefixo = 0;
+	int numero  = 0;
+	char cConv[3];
+
+	if ( telefone[0]=='0' ) 
+	{
+		strncpy(cConv,telefone+1,2);cConv[2]=0;
+		prefixo = atoi(cConv);
+		numero  = atoi(telefone+3);
+	}
+	else
+	{
+		strncpy(cConv,telefone,2);cConv[2]=0;
+		prefixo = atoi(cConv);
+		numero  = atoi(telefone+2);
+	}
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int   oprefixo			= prefixo;
+		int   otelefone			= numero;
+
+		int   idconta			= 0;
+		short indidconta		= 0;
+
+		long   idpessoalinha		= 0;
+		short indidpessoalinha  = 0;
+
+		int   idsenha			= 0;
+		short indidsenha		= 0;
+
+		int   idstatussenha		= 0;
+		short indidstatussenha	= 0;	
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_desbloqueiasenha(&sqlca);
+
+	EXEC SQL 
+		SELECT
+			idConta,
+			idPessoaLinha
+		INTO
+			:idconta:indidconta,
+			:idpessoalinha:indidpessoalinha
+		FROM
+			customer.TelefoneUsuarioV09
+		WHERE
+			    cdAreaRegistro = :oprefixo
+			AND nrLinha    = :otelefone
+			AND idTipoRelacionamento = 1;
+	
+	if (sqlca.sqlcode == 0)
+	{
+		if ( indidconta != -1 && idconta > 0 ) 
+		{
+			desbloqueiaClientes(idconta, idCanal,  idPessoaUsuario, iIdTerminal, obsRegistro);
+		}
+	}
+
+	if (indidpessoalinha != -1 && idpessoalinha > 0)
+	{
+
+		EXEC SQL
+			SELECT
+				idSenha,
+				idTipoStatusSenha
+			INTO
+				:idsenha:indidsenha,
+				:idstatussenha:indidstatussenha
+			FROM
+				customer.Senha
+			WHERE
+				idPessoaLinha = :idpessoalinha;
+
+		if (sqlca.sqlcode == 0 && indidsenha != -1 && idsenha > 0 && idstatussenha != 1)
+		{
+			registraDesbloqueio(idsenha, idCanal, idPessoaUsuario, iIdTerminal, obsRegistro);
+		}
+
+	}
+   ULOG_START("proCDesbloqueiaSenhas()");
+}
+
+void desbloqueiaClientes(int idConta, int idCanal, int idPessoaUsuario, int iIdTerminal, char* obsRegistro)
+{
+   ULOG_START("desbloqueiaClientes()");
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int   idconta   		= idConta;
+
+		int   idcontapai		= 0;
+		short indidcontapai		= 0;
+
+		int   idpessoa      	= 0;
+		short indidpessoa       = 0;
+
+		int   idsenha			= 0;
+		short indidsenha		= 0;
+
+		int   idstatussenha		= 0;
+		short indidstatussenha	= 0;	
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_desbloqueiasenha(&sqlca);
+
+	EXEC SQL
+		SELECT
+			idContaPai
+		INTO
+			:idcontapai:indidcontapai
+		FROM	
+			customer.ContaHierarquia
+		WHERE	
+			idConta = :idconta;
+
+
+	if (indidcontapai != -1 && idcontapai > 0 && sqlca.sqlcode == 0)
+		desbloqueiaClientes(idcontapai, idCanal, idPessoaUsuario, iIdTerminal, obsRegistro);
+
+	EXEC SQL
+		SELECT
+			idSenha,
+			idTipoStatusSenha
+		INTO
+			:idsenha:indidsenha,
+			:idstatussenha:indidstatussenha
+		FROM
+			customer.ContaSenhaClienteV06
+		WHERE
+			idConta = :idconta;
+
+	if (sqlca.sqlcode == 0 && indidsenha != -1 && idsenha > 0) // && idstatussenha != 1)
+	{
+		registraDesbloqueio(idsenha, idCanal, idPessoaUsuario, iIdTerminal, obsRegistro);
+	}
+	
+	ULOG_END("desbloqueiaClientes()");
+}
+
+void registraDesbloqueio(int idSenha, int idCanal, int idPessoaUsuario, int iIdTerminal, char* obsRegistro)
+{
+   ULOG_START("registraDesbloqueio()");
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int   idsenha   		= idSenha;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_desbloqueiasenha(&sqlca);
+
+	EXEC SQL
+		UPDATE
+			customer.Senha
+		SET
+			idTipoStatusSenha = 1,
+			dtBloqueio = null,
+			qtTentativaErro = null
+		WHERE
+			idSenha = :idsenha;
+		
+	struct stRegistraContato m_stDados;
+
+	memset(&m_stDados,0,sizeof(m_stDados));
+	m_stDados.idCanal              = idCanal;
+	m_stDados.idPessoaUsuario      = idPessoaUsuario;
+	m_stDados.idTipoHistoricoSenha = 9;
+	m_stDados.idTipoSistema        = 1;
+	m_stDados.idTipoSenha          = 1;
+	m_stDados.idTipoStatusSenha    = 1;
+	m_stDados.iIdTerminal		   = iIdTerminal;
+	strcpy(m_stDados.obsRegistro, obsRegistro);
+
+	proCRegistraContatoAlteracao(idSenha, &m_stDados);				
+	
+   ULOG_END("registraDesbloqueio()");
+}
+
+void sql_error_desbloqueiasenha(sqlca*sqlca)
+{
+	throw TuxBasicOraException(sqlca->sqlcode);
+}

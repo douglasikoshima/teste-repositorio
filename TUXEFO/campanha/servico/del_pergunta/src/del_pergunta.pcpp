@@ -1,0 +1,228 @@
+//
+// $Id: del_pergunta.pcpp,v 1.1 2009/07/31 15:33:39 a5110702 Exp $
+// 
+
+#include "../../negocio/cmputil/include/campanha.hpp"
+
+int iValidaDependencias(int idPergunta, XMLGen*xml);
+void ItemNaoApagado(XMLGen*xml);
+void ItemApagado(XMLGen*xml);
+
+
+int del_pergunta(char * usuario, DOMNode*dnode,XMLGen*xml)
+{
+	char parm[256];
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+		int		idPergunta = 0;
+		int		idCanal; 
+		int		inAtivo = 0;
+		int     idUsuarioAlteracao = 0;
+		//VARCHAR dsSrcriptPergunta[255];
+	EXEC SQL END DECLARE SECTION;
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    //  Obtendo dados do xml
+
+	get_tag(parm, dnode, "idPergunta", 0, 0);
+	idPergunta = atoi(parm);
+
+	get_tag(parm, dnode, "idCanalCampanha", 0, 0);
+	idCanal = atoi(parm);
+
+	
+	// Pegando id do usuario
+	idUsuarioAlteracao = get_idUsuario(usuario);
+	
+	inAtivo = 0;
+
+	/*Valida dependencias. CVA 26/08/2004 */
+	if (iValidaDependencias(idPergunta,xml))
+	{
+		return 1;
+	}
+
+	EXEC SQL UPDATE campanha.CampanhaQuestionario
+			SET Inativo = :inAtivo,
+			idUsuarioAlteracao = :idUsuarioAlteracao,
+			dtUltimaAlteracao = sysdate
+			WHERE idPergunta = :idPergunta	
+			AND idCanalCampanha = :idCanal; 
+
+  
+
+
+    //TRAVAR TAMANHO DE STRING! NÃO PODE SER MAIRO QUE 150 CARACTERES NA EXCLUSÃO!
+	
+/*	EXEC SQL
+	select DSSCRIPTPERGUNTA  
+	into dsSrcriptPergunta
+	from questionario.pergunta
+	where idPergunta = :idPergunta
+	and rownum <=1;
+
+	if(dsSrcriptPergunta.len>200) 
+		{
+			dsSrcriptPergunta.arr[150]='\0';
+			dsSrcriptPergunta.len=150;
+     	}
+
+	 Update linha 
+	EXEC SQL UPDATE questionario.pergunta
+	    SET DSSCRIPTPERGUNTA= DSSCRIPTPERGUNTA || sysdate || :idPergunta,
+			Indisponibilidade = :inAtivo,
+			idUsuarioAlteracao = :idUsuarioAlteracao,
+			dtUltimaAlteracao = sysdate
+		WHERE idPergunta = :idPergunta;*/
+  
+
+  
+	ItemApagado(xml);
+  
+	return 1;
+}
+
+
+/*================================================================================*/	
+/*========================= Valida Dependencias Pergunta =========================*/
+/*================================================================================*/
+
+int iValidaDependencias(int iIdPergunta, XMLGen*xml)
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		int     iPergunta = 0;
+		int		idAtendimentoPesquisaResp = 0;
+
+		int		idAndamentoPergunta = 0;
+		int		idSimulacaoPergunta = 0;
+		int		idPesquisaSatisfacaoPergunta = 0;
+		int		idResposta = 0;
+		int		idRespostaProximaPergunta = 0;
+		int		reti; 
+		
+
+	EXEC SQL END DECLARE SECTION;
+
+//	EXEC SQL WHENEVER NOT FOUND GOTO DependenciaVacia;
+  
+	try{
+
+		iPergunta = iIdPergunta;
+		reti = 0; 
+		/*++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*
+		EXEC SQL 
+			SELECT COUNT(1) INTO :reti
+                FROM   Atendimento.AtendimentoPesquisaResp
+                WHERE  (idPergunta = :iPergunta );
+
+		if(reti)
+		{
+			ItemNaoApagado(xml);
+			return 1;
+		}
+
+		/*++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
+
+		EXEC SQL                 
+			SELECT COUNT(1) INTO :reti
+                FROM   campanha.AndamentoPergunta
+                WHERE  (idPergunta = :iPergunta );
+
+
+		if(reti)
+		{
+			ItemNaoApagado(xml);
+			return 1;
+		}
+
+		/*++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*
+
+
+		EXEC SQL 
+                SELECT COUNT(1) INTO :reti
+                FROM   campanha.SimulacaoPergunta
+                WHERE  (idPergunta = :iPergunta )
+
+
+		if(reti)
+		{
+			ItemNaoApagado(xml);
+			return 1;
+		}
+
+		
+		*++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*
+
+		EXEC SQL 
+                SELECT count(1) INTO :reti 
+                FROM   ContatoAdm.PesquisaSatisfacaoPergunta
+                WHERE  (idPergunta = :iPergunta );				
+
+		if(reti)
+		{
+			ItemNaoApagado(xml);
+			return 1;
+		}
+
+
+		/*++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
+		EXEC SQL 
+			SELECT COUNT(1) INTO :reti
+                FROM   Questionario.Resposta
+                WHERE  (idPergunta = :iPergunta 
+						AND Indisponibilidade = 1);
+
+
+		if(reti > 0)
+		{
+			ItemNaoApagado(xml);
+			return 1;
+		}
+
+		/*++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
+		EXEC SQL 
+			SELECT COUNT(1) INTO :reti
+                FROM   Questionario.RespostaProximaPergunta
+                WHERE  (idPergunta = :iPergunta 
+						AND Inativo = 1);
+
+	
+		if(reti > 0)
+		{
+			ItemNaoApagado(xml);
+			return 1;
+		}
+
+		/*++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++*/
+
+	return 0;
+
+	//DependenciaVacia:
+		ULOG("Sem Dependencias");
+		
+
+  }catch(...){throw;}
+
+  return 0;
+}
+
+
+void ItemNaoApagado(XMLGen*xml)
+{
+	xml->createTag("tns:retornoVO");
+    xml->addProp("xmlns:tns","retornotux.fo.vivo.com.br/vo");    
+    xml->addProp("xmlns:xsi","http://www.w3.org/2001/XMLSchema-instance");
+	xml->addItem("descricao","Não foi possível excluir a pergunta, pois existe uma ou mais respostas que apontam para ela.");
+	xml->addItem("valor","2");
+    xml->closeTag();
+}
+
+void ItemApagado(XMLGen*xml)
+{
+	xml->createTag("tns:retornoVO");
+    xml->addProp("xmlns:tns","retornotux.fo.vivo.com.br/vo");    
+    xml->addProp("xmlns:xsi","http://www.w3.org/2001/XMLSchema-instance");
+	xml->addItem("descricao","Item apagado");
+	xml->addItem("valor","1");
+    xml->closeTag();
+}

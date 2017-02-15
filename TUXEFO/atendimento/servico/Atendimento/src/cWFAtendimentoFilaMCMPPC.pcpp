@@ -1,0 +1,4416 @@
+/**
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio Garcia
+ * @version $Revision: 1.1.4.5.6.1 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/05 17:16:27 $
+ **/
+
+#ifdef WIN32
+#pragma warning(disable:4786)
+#endif
+
+#include <string>
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include<ctype.h>
+
+#include "../include/cWFAtendimento.h"
+#include "../../../commons/SmallString.h"
+#include "../include/queryMacroFila.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+using namespace std;
+
+extern void sql_error_WFAtendimento(sqlca*sqlca);
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+    #include "../include/stWFAtendimento.h"
+EXEC SQL END DECLARE SECTION;
+
+bool proCConsultaWFFilaMCPorAtendimentoMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCPorAtendimentoMP()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        long idAtendimentoFiltro = dados->idAtendimento;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        long idAtendimento;
+        VARCHAR idAtendimentoProtocolo[39];
+        int idContato;
+        int idEstado;
+        VARCHAR dsEstado[256];
+        VARCHAR sgEstado[256];
+        int idSubEstado;
+        VARCHAR dsSubEstado[256];
+        VARCHAR sgSubEstado[256];
+        long idPessoa;
+        VARCHAR nmPessoa[256];
+        VARCHAR dtAbertura[22];
+        VARCHAR dtFechamento[22];
+        long idAtendimentoAlerta;
+        VARCHAR dsMensagem[256];
+        int idAlerta;
+        VARCHAR sgAlerta[256];
+        VARCHAR dsAlerta[256];
+        VARCHAR nmIcone[256];
+        VARCHAR nmCor[256];
+        VARCHAR nrCriticidade[15];
+        VARCHAR arvore[2001];
+        VARCHAR nrTelefone[256];
+        VARCHAR inDocumento[256];
+        VARCHAR inACS[256];
+        int inPausaAtendimento;
+        VARCHAR dtSuspeito[32];
+        VARCHAR dtFimPausa[32];
+        long idAtendimentoBaixaHistorico;
+        VARCHAR nmURLDados[256];
+        VARCHAR dtSolicitacaoCancelamento[32];
+        VARCHAR dtPrazoFinalInterno[32];
+        long idAtendimentoSuspeito;
+        long idAtendimentoOrigem;
+        VARCHAR dtJanelaPortout[32];
+        VARCHAR nrProtocoloPortabilidade[39];
+
+        short i_idAtendimento = -1;
+        short i_idAtendimentoProtocolo = -1;
+        short i_idContato = -1;
+        short i_idEstado = -1;
+        short i_dsEstado = -1;
+        short i_sgEstado = -1;
+        short i_idSubEstado = -1;
+        short i_dsSubEstado = -1;
+        short i_sgSubEstado = -1;
+        short i_idPessoa = -1;
+        short i_nmPessoa = -1;
+        short i_dtAbertura = -1;
+        short i_dtFechamento = -1;
+        short i_idAtendimentoAlerta = -1;
+        short i_dsMensagem = -1;
+        short i_idAlerta = -1;
+        short i_sgAlerta = -1;
+        short i_dsAlerta = -1;
+        short i_nmIcone = -1;
+        short i_nmCor = -1;
+        short i_nrCriticidade = -1;
+        short i_arvore = -1;
+        short i_nrTelefone = -1;
+        short i_inDocumento = -1;
+        short i_inACS = -1;
+        short i_inPausaAtendimento = -1;
+        short i_dtSuspeito = -1;
+        short i_dtFimPausa = -1;
+        short i_idAtendimentoBaixaHistorico = -1;
+        short i_nmURLDados = -1;
+        short i_dtSolicitacaoCancelamento = -1;
+        short i_dtPrazoFinalInterno = -1;
+        short i_idAtendimentoSuspeito = -1;
+        short i_idAtendimentoOrigem = -1;
+        short i_dtJanelaPortout = -1;
+        short i_nrProtocoloPortabilidade = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            VW1.IDATENDIMENTO,
+            VW1.IDATENDIMENTOPROTOCOLO,
+            VW1.IDCONTATO,
+            VW1.IDESTADO,
+            VW1.DSESTADO,
+            VW1.SGESTADO,
+            VW1.IDSUBESTADO,
+            VW1.DSSUBESTADO,
+            VW1.SGSUBESTADO,
+            VW1.IDPESSOAUSUARIOGRUPO,
+            VW1.NMPESSOA,
+            TO_CHAR(VW1.DTABERTURA,'DD/MM/YYYY HH24:MI:SS') AS DTABERTURA,
+            TO_CHAR(VW1.DTFECHAMENTO,'DD/MM/YYYY HH24:MI:SS') AS DTFECHAMENTO,
+            VW1.IDATENDIMENTOALERTA,
+            VW1.DSMENSAGEM,
+            VW1.IDALERTA,
+            VW1.SGALERTA,
+            VW1.DSALERTA,
+            VW1.NMICONE,
+            VW1.NMCOR,
+            VW1.NRCRITICIDADE,
+            VW1.PATH,
+            VW1.NRTELEFONE,
+            VW1.INDOCUMENTO,
+            0 AS INACS,
+            VW1.INPAUSAATENDIMENTO,
+            TO_CHAR(VW1.DTSUSPEITO,'DD/MM/YYYY HH24:MI:SS') AS DTSUSPEITO,
+            TO_CHAR(VW1.DTFIMPAUSAATENDIMENTO,'DD/MM/YYYY HH24:MI:SS') AS DTFIMPAUSAATENDIMENTO,
+            VW1.IDATENDIMENTOBAIXAHISTORICO,
+            VW1.NMURLDADOS,
+            VW1.DTSOLICITACAOCANCELAMENTO,
+            VW1.DTPRAZOFINALINTERNO,
+            VW1.IDATENDIMENTOSUSPEITO,
+            VW1.IDATENDIMENTOORIGEM,
+            TO_CHAR(VW1.DTJANELAPORTOUT,'DD/MM/YYYY HH24:MI:SS') AS DTJANELAPORTOUT,
+            VW1.NRPROTOCOLOPORTABILIDADE
+        INTO
+            :idAtendimento:i_idAtendimento,
+            :idAtendimentoProtocolo:i_idAtendimentoProtocolo,
+            :idContato:i_idContato,
+            :idEstado:i_idEstado,
+            :dsEstado:i_dsEstado,
+            :sgEstado:i_sgEstado,
+            :idSubEstado:i_idSubEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :sgSubEstado:i_sgSubEstado,
+            :idPessoa:i_idPessoa,
+            :nmPessoa:i_nmPessoa,
+            :dtAbertura:i_dtAbertura,
+            :dtFechamento:i_dtFechamento,
+            :idAtendimentoAlerta:i_idAtendimentoAlerta,
+            :dsMensagem:i_dsMensagem,
+            :idAlerta:i_idAlerta,
+            :sgAlerta:i_sgAlerta,
+            :dsAlerta:i_dsAlerta,
+            :nmIcone:i_nmIcone,
+            :nmCor:i_nmCor,
+            :nrCriticidade:i_nrCriticidade,
+            :arvore:i_arvore,
+            :nrTelefone:i_nrTelefone,
+            :inDocumento:i_inDocumento,
+            :inACS:i_inACS,
+            :inPausaAtendimento:i_inPausaAtendimento,
+            :dtSuspeito:i_dtSuspeito,
+            :dtFimPausa:i_dtFimPausa,
+            :idAtendimentoBaixaHistorico:i_idAtendimentoBaixaHistorico,
+            :nmURLDados:i_nmURLDados,
+            :dtSolicitacaoCancelamento:i_dtSolicitacaoCancelamento,
+            :dtPrazoFinalInterno:i_dtPrazoFinalInterno,
+            :idAtendimentoSuspeito:i_idAtendimentoSuspeito,
+            :idAtendimentoOrigem:i_idAtendimentoOrigem,
+            :dtJanelaPortout:i_dtJanelaPortout,
+            :nrProtocoloPortabilidade:i_nrProtocoloPortabilidade
+        FROM
+            ATENDIMENTO.ATENDIMENTOFILAMCTODOSMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        AND VW1.IDATENDIMENTO = :idAtendimentoFiltro;
+        //AND VW1.IDPESSOACONTA IS NULL;
+
+    if ( !sqlca.sqlcode )
+    {
+        totalRegistros++;
+
+        numeroRegistros++;
+
+        CONVIND(dsEstado, i_dsEstado);
+        CONVIND(idAtendimentoProtocolo,i_idAtendimentoProtocolo);
+        CONVIND(sgEstado, i_sgEstado);
+        CONVIND(dsSubEstado, i_dsSubEstado);
+        CONVIND(sgSubEstado, i_sgSubEstado);
+        CONVIND(nmPessoa, i_nmPessoa);
+        CONVIND(dtAbertura, i_dtAbertura);
+        CONVIND(dtFechamento, i_dtFechamento);
+        CONVIND(dsMensagem, i_dsMensagem);
+        CONVIND(sgAlerta, i_sgAlerta);
+        CONVIND(dsAlerta, i_dsAlerta);
+        CONVIND(nmIcone, i_nmIcone);
+        CONVIND(nmCor, i_nmCor);
+        CONVIND(arvore, i_arvore);
+        CONVIND(nrTelefone, i_nrTelefone);
+        CONVIND(inDocumento, i_inDocumento);
+        CONVIND(inACS, i_inACS);
+        CONVIND(dtSuspeito, i_dtSuspeito);
+        CONVIND(dtFimPausa, i_dtFimPausa);
+        CONVIND(nmURLDados, i_nmURLDados);
+        CONVIND(dtSolicitacaoCancelamento, i_dtSolicitacaoCancelamento);
+        CONVIND(dtPrazoFinalInterno, i_dtPrazoFinalInterno);
+        CONVIND(nrCriticidade, i_nrCriticidade);
+        CONVIND(dtJanelaPortout, i_dtJanelaPortout);
+        CONVIND(nrProtocoloPortabilidade,i_nrProtocoloPortabilidade);
+
+        if (i_idAtendimentoBaixaHistorico == -1)
+        {
+            idAtendimentoBaixaHistorico = 0;
+        }
+
+        saida->createTag("AtendimentoFilaVO");
+            saida->addItem("operacaoWorkflow","");
+            saida->createTag("AtendimentoVO");
+                saida->addItem("idAtendimento", CONVLONG(idAtendimento,i_idAtendimento));
+                saida->addItem("nrProtocolo", (char*)idAtendimentoProtocolo.arr);
+                saida->addItem("dtAbertura", (char*)dtAbertura.arr);
+                saida->addItem("dtJanelaPortout", (char*)dtJanelaPortout.arr);
+                saida->addItem("dtFechamento", (char*)dtFechamento.arr);
+                saida->addItem("nrTelefone", (char*)nrTelefone.arr);
+                saida->addItem("inDocumento", (char*)inDocumento.arr);
+                saida->addItem("inACS", (char*)inACS.arr);
+                saida->addItem("inPausaAtendimento", CONVINT(inPausaAtendimento,i_inPausaAtendimento));
+                saida->addItem("dtSuspeito", (char*)dtSuspeito.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)dtFimPausa.arr);
+                saida->addItem("idAtendimentoBaixaHistorico", idAtendimentoBaixaHistorico);
+                saida->addItem("nmURLDados", (char*)nmURLDados.arr);
+                saida->addItem("dtSolicitacaoCancelamento", (char*)dtSolicitacaoCancelamento.arr);
+                saida->addItem("nrProtocoloPortabilidade",(char*)nrProtocoloPortabilidade.arr);
+                saida->createTag("WFEstadoVO");
+                    saida->addItem("idEstado", CONVINT(idEstado,i_idEstado));
+                    saida->addItem("dsEstado", (char*)dsEstado.arr);
+                    saida->addItem("sgEstado", (char*)sgEstado.arr);
+                saida->closeTag();
+                saida->createTag("WFSubEstadoVO");
+                    saida->addItem("idSubEstado", CONVINT(idSubEstado,i_idSubEstado));
+                    saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                    saida->addItem("sgSubEstado", (char*)sgSubEstado.arr);
+                saida->closeTag();
+                if (i_idAlerta != -1)
+                {
+                    saida->createTag("AlertaVO");
+                        saida->addItem("idAlerta", CONVINT(idAlerta,i_idAlerta));
+                        saida->addItem("dsAlerta", (char*)dsAlerta.arr);
+                        saida->addItem("sgAlerta", (char*)sgAlerta.arr);
+                        saida->addItem("nmIcone", (char*)nmIcone.arr);
+                        saida->addItem("nmCor", (char*)nmCor.arr);
+                        saida->addItem("nrCriticidade", (char*)nrCriticidade.arr);
+                    saida->closeTag();
+                }
+                saida->createTag("ns2:ArvoreAtendimentoVO");
+                    saida->addItem("ns2:idContato", CONVINT(idContato,i_idContato));
+                    saida->addItem("ns2:descricaoCompleta", (char*)arvore.arr);
+                saida->closeTag();
+                saida->createTag("ns3:UsuarioVIVO");
+                    saida->addItem("ns3:idPessoaUsuario", CONVINT(idPessoa,i_idPessoa));
+                    saida->addItem("ns3:nmLoginUsuario", "");
+                    saida->addItem("ns3:nmNome", (char*)nmPessoa.arr);
+                    saida->addItem("ns3:sgSenhaUsuario", "");
+                saida->closeTag();
+            saida->closeTag();
+        saida->closeTag();
+    } // if ( !sqlca.sqlcode )
+
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    ULOG_END( "proCConsultaWFFilaMCPorAtendimentoMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCPorAtendimentoQtdMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCPorAtendimentoQtdMP()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        long idAtendimentoFiltro = dados->idAtendimento;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        int iContador;
+        short sContador;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            COUNT(1)
+        INTO
+            :iContador:sContador
+        FROM
+            ATENDIMENTO.ATENDIMENTOFILAMCTODOSMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        AND VW1.IDATENDIMENTO = :idAtendimentoFiltro;
+        //AND VW1.IDPESSOACONTA IS NULL;
+
+    saida->addItem("totalRegistros", iContador );
+    saida->addItem("nrRegistros"   , iContador );
+
+    ULOG_END( "proCConsultaWFFilaMCPorAtendimentoQtdMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCPorProtocoloMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCPorProtocoloMP()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        char *idProtocoloFiltro = dados->idAtendimentoProtocolo;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        long idAtendimento;
+        VARCHAR idAtendimentoProtocolo[39];
+        int idContato;
+        int idEstado;
+        VARCHAR dsEstado[256];
+        VARCHAR sgEstado[256];
+        int idSubEstado;
+        VARCHAR dsSubEstado[256];
+        VARCHAR sgSubEstado[256];
+        long idPessoa;
+        VARCHAR nmPessoa[256];
+        VARCHAR dtAbertura[22];
+        VARCHAR dtFechamento[22];
+        long idAtendimentoAlerta;
+        VARCHAR dsMensagem[256];
+        int idAlerta;
+        VARCHAR sgAlerta[256];
+        VARCHAR dsAlerta[256];
+        VARCHAR nmIcone[256];
+        VARCHAR nmCor[256];
+        VARCHAR nrCriticidade[15];
+        VARCHAR arvore[2001];
+        VARCHAR nrTelefone[256];
+        VARCHAR inDocumento[256];
+        VARCHAR inACS[256];
+        int inPausaAtendimento;
+        VARCHAR dtSuspeito[32];
+        VARCHAR dtFimPausa[32];
+        long idAtendimentoBaixaHistorico;
+        VARCHAR nmURLDados[256];
+        VARCHAR dtSolicitacaoCancelamento[32];
+        VARCHAR dtPrazoFinalInterno[32];
+        long idAtendimentoSuspeito;
+        long idAtendimentoOrigem;
+        VARCHAR dtJanelaPortout[32];
+        VARCHAR nrProtocoloPortabilidade[39];
+
+        short i_idAtendimento = -1;
+        short i_idAtendimentoProtocolo = -1;
+        short i_idContato = -1;
+        short i_idEstado = -1;
+        short i_dsEstado = -1;
+        short i_sgEstado = -1;
+        short i_idSubEstado = -1;
+        short i_dsSubEstado = -1;
+        short i_sgSubEstado = -1;
+        short i_idPessoa = -1;
+        short i_nmPessoa = -1;
+        short i_dtAbertura = -1;
+        short i_dtFechamento = -1;
+        short i_idAtendimentoAlerta = -1;
+        short i_dsMensagem = -1;
+        short i_idAlerta = -1;
+        short i_sgAlerta = -1;
+        short i_dsAlerta = -1;
+        short i_nmIcone = -1;
+        short i_nmCor = -1;
+        short i_nrCriticidade = -1;
+        short i_arvore = -1;
+        short i_nrTelefone = -1;
+        short i_inDocumento = -1;
+        short i_inACS = -1;
+        short i_inPausaAtendimento = -1;
+        short i_dtSuspeito = -1;
+        short i_dtFimPausa = -1;
+        short i_idAtendimentoBaixaHistorico = -1;
+        short i_nmURLDados = -1;
+        short i_dtSolicitacaoCancelamento = -1;
+        short i_dtPrazoFinalInterno = -1;
+        short i_idAtendimentoSuspeito = -1;
+        short i_idAtendimentoOrigem = -1;
+        short i_dtJanelaPortout = -1;
+        short i_nrProtocoloPortabilidade = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE curConsultaWFProtocolo CURSOR FOR
+        SELECT
+             VW1.IDATENDIMENTO,
+             VW1.IDATENDIMENTOPROTOCOLO,
+             VW1.IDCONTATO,
+             VW1.IDESTADO,
+             VW1.DSESTADO,
+             VW1.SGESTADO,
+             VW1.IDSUBESTADO,
+             VW1.DSSUBESTADO,
+             VW1.SGSUBESTADO,
+             VW1.IDPESSOAUSUARIOGRUPO,
+             VW1.NMPESSOA,
+             TO_CHAR(VW1.DTABERTURA,'DD/MM/YYYY HH24:MI:SS') AS DTABERTURA,
+             TO_CHAR(VW1.DTFECHAMENTO,'DD/MM/YYYY HH24:MI:SS') AS DTFECHAMENTO,
+             VW1.IDATENDIMENTOALERTA,
+             VW1.DSMENSAGEM,
+             VW1.IDALERTA,
+             VW1.SGALERTA,
+             VW1.DSALERTA,
+             VW1.NMICONE,
+             VW1.NMCOR,
+             VW1.NRCRITICIDADE,
+             VW1.PATH,
+             VW1.NRTELEFONE,
+             VW1.INDOCUMENTO,
+             0 AS INACS,
+             VW1.INPAUSAATENDIMENTO,
+             TO_CHAR(VW1.DTSUSPEITO,'DD/MM/YYYY HH24:MI:SS') AS DTSUSPEITO,
+             TO_CHAR(VW1.DTFIMPAUSAATENDIMENTO,'DD/MM/YYYY HH24:MI:SS') AS DTFIMPAUSAATENDIMENTO,
+             VW1.IDATENDIMENTOBAIXAHISTORICO,
+             VW1.NMURLDADOS,
+             VW1.DTSOLICITACAOCANCELAMENTO,
+             VW1.DTPRAZOFINALINTERNO,
+             VW1.IDATENDIMENTOSUSPEITO,
+             VW1.IDATENDIMENTOORIGEM,
+             TO_CHAR(VW1.DTJANELAPORTOUT,'DD/MM/YYYY HH24:MI:SS') AS DTJANELAPORTOUT,
+             VW1.NRPROTOCOLOPORTABILIDADE
+        FROM
+             ATENDIMENTO.ATENDIMENTOFILAMCTODOSMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        AND VW1.IDATENDIMENTOPROTOCOLO = :idProtocoloFiltro
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        //AND VW1.IDPESSOACONTA IS NULL
+        ORDER BY
+            VW1.DTABERTURA DESC;
+
+    EXEC SQL OPEN curConsultaWFProtocolo;
+    while (true)
+    {
+        i_idAtendimento =
+        i_idAtendimentoProtocolo =
+        i_idContato =
+        i_idEstado =
+        i_dsEstado =
+        i_sgEstado =
+        i_idSubEstado =
+        i_dsSubEstado =
+        i_sgSubEstado =
+        i_idPessoa =
+        i_nmPessoa =
+        i_dtAbertura =
+        i_dtFechamento =
+        i_idAtendimentoAlerta =
+        i_dsMensagem =
+        i_idAlerta =
+        i_sgAlerta =
+        i_dsAlerta =
+        i_nmIcone =
+        i_nmCor =
+        i_nrCriticidade =
+        i_arvore =
+        i_nrTelefone =
+        i_inDocumento =
+        i_inACS =
+        i_inPausaAtendimento =
+        i_dtSuspeito =
+        i_dtFimPausa =
+        i_idAtendimentoBaixaHistorico =
+        i_nmURLDados =
+        i_dtSolicitacaoCancelamento =
+        i_dtPrazoFinalInterno =
+        i_idAtendimentoSuspeito =
+        i_idAtendimentoOrigem =
+        i_dtJanelaPortout =
+        i_nrProtocoloPortabilidade = -1;
+
+        EXEC SQL FETCH curConsultaWFProtocolo INTO
+            :idAtendimento:i_idAtendimento,
+            :idAtendimentoProtocolo:i_idAtendimentoProtocolo,
+            :idContato:i_idContato,
+            :idEstado:i_idEstado,
+            :dsEstado:i_dsEstado,
+            :sgEstado:i_sgEstado,
+            :idSubEstado:i_idSubEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :sgSubEstado:i_sgSubEstado,
+            :idPessoa:i_idPessoa,
+            :nmPessoa:i_nmPessoa,
+            :dtAbertura:i_dtAbertura,
+            :dtFechamento:i_dtFechamento,
+            :idAtendimentoAlerta:i_idAtendimentoAlerta,
+            :dsMensagem:i_dsMensagem,
+            :idAlerta:i_idAlerta,
+            :sgAlerta:i_sgAlerta,
+            :dsAlerta:i_dsAlerta,
+            :nmIcone:i_nmIcone,
+            :nmCor:i_nmCor,
+            :nrCriticidade:i_nrCriticidade,
+            :arvore:i_arvore,
+            :nrTelefone:i_nrTelefone,
+            :inDocumento:i_inDocumento,
+            :inACS:i_inACS,
+            :inPausaAtendimento:i_inPausaAtendimento,
+            :dtSuspeito:i_dtSuspeito,
+            :dtFimPausa:i_dtFimPausa,
+            :idAtendimentoBaixaHistorico:i_idAtendimentoBaixaHistorico,
+            :nmURLDados:i_nmURLDados,
+            :dtSolicitacaoCancelamento:i_dtSolicitacaoCancelamento,
+            :dtPrazoFinalInterno:i_dtPrazoFinalInterno,
+            :idAtendimentoSuspeito:i_idAtendimentoSuspeito,
+            :idAtendimentoOrigem:i_idAtendimentoOrigem,
+            :dtJanelaPortout:i_dtJanelaPortout,
+            :nrProtocoloPortabilidade:i_nrProtocoloPortabilidade;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(dsEstado, i_dsEstado);
+            CONVIND(idAtendimentoProtocolo,i_idAtendimentoProtocolo);
+            CONVIND(sgEstado, i_sgEstado);
+            CONVIND(dsSubEstado, i_dsSubEstado);
+            CONVIND(sgSubEstado, i_sgSubEstado);
+            CONVIND(nmPessoa, i_nmPessoa);
+            CONVIND(dtAbertura, i_dtAbertura);
+            CONVIND(dtFechamento, i_dtFechamento);
+            CONVIND(dsMensagem, i_dsMensagem);
+            CONVIND(sgAlerta, i_sgAlerta);
+            CONVIND(dsAlerta, i_dsAlerta);
+            CONVIND(nmIcone, i_nmIcone);
+            CONVIND(nmCor, i_nmCor);
+            CONVIND(arvore, i_arvore);
+            CONVIND(nrTelefone, i_nrTelefone);
+            CONVIND(inDocumento, i_inDocumento);
+            CONVIND(inACS, i_inACS);
+            CONVIND(dtSuspeito, i_dtSuspeito);
+            CONVIND(dtFimPausa, i_dtFimPausa);
+            CONVIND(nmURLDados, i_nmURLDados);
+            CONVIND(dtSolicitacaoCancelamento, i_dtSolicitacaoCancelamento);
+            CONVIND(dtPrazoFinalInterno, i_dtPrazoFinalInterno);
+            CONVIND(nrCriticidade, i_nrCriticidade);
+            CONVIND(dtJanelaPortout, i_dtJanelaPortout);
+            CONVIND(nrProtocoloPortabilidade,i_nrProtocoloPortabilidade);
+
+            if (i_idAtendimentoBaixaHistorico == -1)
+            {
+                idAtendimentoBaixaHistorico = 0;
+            }
+
+            saida->createTag("AtendimentoFilaVO");
+                saida->addItem("operacaoWorkflow","");
+                saida->createTag("AtendimentoVO");
+                    saida->addItem("idAtendimento", CONVLONG(idAtendimento,i_idAtendimento));
+                    saida->addItem("nrProtocolo", (char*)idAtendimentoProtocolo.arr);
+                    saida->addItem("dtAbertura", (char*)dtAbertura.arr);
+                    saida->addItem("dtJanelaPortout", (char*)dtJanelaPortout.arr);
+                    saida->addItem("dtFechamento", (char*)dtFechamento.arr);
+                    saida->addItem("nrTelefone", (char*)nrTelefone.arr);
+                    saida->addItem("inDocumento", (char*)inDocumento.arr);
+                    saida->addItem("inACS", (char*)inACS.arr);
+                    saida->addItem("inPausaAtendimento", CONVINT(inPausaAtendimento,i_inPausaAtendimento));
+                    saida->addItem("dtSuspeito", (char*)dtSuspeito.arr);
+                    saida->addItem("dtFimPausaAtendimento", (char*)dtFimPausa.arr);
+                    saida->addItem("idAtendimentoBaixaHistorico", idAtendimentoBaixaHistorico);
+                    saida->addItem("nmURLDados", (char*)nmURLDados.arr);
+                    saida->addItem("dtSolicitacaoCancelamento", (char*)dtSolicitacaoCancelamento.arr);
+                    saida->addItem("nrProtocoloPortabilidade",(char*)nrProtocoloPortabilidade.arr);
+                    saida->createTag("WFEstadoVO");
+                        saida->addItem("idEstado", CONVINT(idEstado,i_idEstado));
+                        saida->addItem("dsEstado", (char*)dsEstado.arr);
+                        saida->addItem("sgEstado", (char*)sgEstado.arr);
+                    saida->closeTag();
+                    saida->createTag("WFSubEstadoVO");
+                        saida->addItem("idSubEstado", CONVINT(idSubEstado,i_idSubEstado));
+                        saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                        saida->addItem("sgSubEstado", (char*)sgSubEstado.arr);
+                    saida->closeTag();
+                    if (i_idAlerta != -1)
+                    {
+                        saida->createTag("AlertaVO");
+                            saida->addItem("idAlerta", CONVINT(idAlerta,i_idAlerta));
+                            saida->addItem("dsAlerta", (char*)dsAlerta.arr);
+                            saida->addItem("sgAlerta", (char*)sgAlerta.arr);
+                            saida->addItem("nmIcone", (char*)nmIcone.arr);
+                            saida->addItem("nmCor", (char*)nmCor.arr);
+                            saida->addItem("nrCriticidade", (char*)nrCriticidade.arr);
+                        saida->closeTag();
+                    }
+                    saida->createTag("ns2:ArvoreAtendimentoVO");
+                        saida->addItem("ns2:idContato", CONVINT(idContato,i_idContato));
+                        saida->addItem("ns2:descricaoCompleta", (char*)arvore.arr);
+                    saida->closeTag();
+                    saida->createTag("ns3:UsuarioVIVO");
+                        saida->addItem("ns3:idPessoaUsuario", CONVINT(idPessoa,i_idPessoa));
+                        saida->addItem("ns3:nmLoginUsuario", "");
+                        saida->addItem("ns3:nmNome", (char*)nmPessoa.arr);
+                        saida->addItem("ns3:sgSenhaUsuario", "");
+                    saida->closeTag();
+                saida->closeTag();
+            saida->closeTag();
+        }
+    }
+
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE curConsultaWFProtocolo;
+
+    ULOG_END( "proCConsultaWFFilaMCPorProtocoloMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCPorProtocoloQtdMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCPorProtocoloQtdMP()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        char *idProtocoloFiltro = dados->idAtendimentoProtocolo;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        int iContador;
+        short sContador;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            COUNT(1)
+        INTO
+            :iContador:sContador
+        FROM
+            ATENDIMENTO.ATENDIMENTOFILAMCTODOSMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        AND VW1.IDATENDIMENTOPROTOCOLO = :idProtocoloFiltro;
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        //AND VW1.IDPESSOACONTA IS NULL
+
+    saida->addItem("totalRegistros", iContador );
+    saida->addItem("nrRegistros"   , iContador );
+
+    ULOG_END( "proCConsultaWFFilaMCPorProtocoloQtdMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCAbertosPorLinhaMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCAbertosPorLinhaMP()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->nrLinha[0]=='0' ) 
+    {
+        strncpy(cConv,dados->nrLinha+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->nrLinha,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        int  oprefixo         = prefixo;
+        int  otelefone        = numero;
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+
+        long idAtendimento;
+        VARCHAR idAtendimentoProtocolo[39];
+        int  idContato;
+        int  idEstado;
+        VARCHAR dsEstado[256];
+        VARCHAR sgEstado[256];
+        int  idSubEstado;
+        VARCHAR dsSubEstado[256];
+        VARCHAR sgSubEstado[256];
+        long  idPessoa;
+        VARCHAR nmPessoa[256];
+        VARCHAR dtAbertura[22];
+        VARCHAR dtFechamento[22];
+        long idAtendimentoAlerta;
+        VARCHAR dsMensagem[256];
+        int  idAlerta;
+        VARCHAR sgAlerta[256];
+        VARCHAR dsAlerta[256];
+        VARCHAR nmIcone[256];
+        VARCHAR nmCor[256];
+        VARCHAR nrCriticidade[15];
+        VARCHAR arvore[2001];
+        VARCHAR nrTelefone[256];
+        VARCHAR inDocumento[256];
+        VARCHAR inACS[256];
+        int inPausaAtendimento;
+        VARCHAR dtSuspeito[32];
+        VARCHAR dtFimPausa[32];
+        long idAtendimentoBaixaHistorico;
+        VARCHAR nmURLDados[256];
+        VARCHAR dtSolicitacaoCancelamento[32];
+        VARCHAR dtPrazoFinalInterno[32];
+        long idAtendimentoSuspeito;
+        long idAtendimentoOrigem;
+        VARCHAR dtJanelaPortout[32];
+        VARCHAR nrProtocoloPortabilidade[39];
+
+        short i_idAtendimento;
+        short i_idAtendimentoProtocolo;
+        short i_idContato;
+        short i_idEstado;
+        short i_dsEstado;
+        short i_sgEstado;
+        short i_idSubEstado;
+        short i_dsSubEstado;
+        short i_sgSubEstado;
+        short i_idPessoa;
+        short i_nmPessoa;
+        short i_dtAbertura;
+        short i_dtFechamento;
+        short i_idAtendimentoAlerta;
+        short i_dsMensagem;
+        short i_idAlerta;
+        short i_sgAlerta;
+        short i_dsAlerta;
+        short i_nmIcone;
+        short i_nmCor;
+        short i_nrCriticidade;
+        short i_arvore;
+        short i_nrTelefone;
+        short i_inDocumento;
+        short i_inACS;
+        short i_inPausaAtendimento;
+        short i_dtSuspeito;
+        short i_dtFimPausa;
+        short i_idAtendimentoBaixaHistorico;
+        short i_nmURLDados;
+        short i_dtSolicitacaoCancelamento;
+        short i_dtPrazoFinalInterno;
+        short i_idAtendimentoSuspeito;
+        short i_idAtendimentoOrigem;
+        short i_dtJanelaPortout;
+        short i_nrProtocoloPortabilidade;
+
+    EXEC SQL END DECLARE SECTION;
+
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+
+    indIdGrupo = status->idGrupo;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE curConsultaWFPorLinha CURSOR FOR
+        SELECT 
+            VW1.IDATENDIMENTO,
+            VW1.IDATENDIMENTOPROTOCOLO,
+            VW1.IDCONTATO, 
+            VW1.IDESTADO, 
+            VW1.DSESTADO, 
+            VW1.SGESTADO, 
+            VW1.IDSUBESTADO, 
+            VW1.DSSUBESTADO, 
+            VW1.SGSUBESTADO, 
+            VW1.IDPESSOAUSUARIOGRUPO, 
+            VW1.NMPESSOA, 
+            TO_CHAR(VW1.DTABERTURA,'DD/MM/YYYY HH24:MI:SS') DTABERTURA, 
+            TO_CHAR(VW1.DTFECHAMENTO,'DD/MM/YYYY HH24:MI:SS'), 
+            VW1.IDATENDIMENTOALERTA, 
+            VW1.DSMENSAGEM, 
+            VW1.IDALERTA, 
+            VW1.SGALERTA, 
+            VW1.DSALERTA, 
+            VW1.NMICONE, 
+            VW1.NMCOR, 
+            VW1.NRCRITICIDADE, 
+            VW1.PATH, 
+            VW1.NRTELEFONE, 
+            VW1.INDOCUMENTO, 
+            0 AS INACS, 
+            VW1.INPAUSAATENDIMENTO, 
+            TO_CHAR(VW1.DTSUSPEITO,'DD/MM/YYYY HH24:MI:SS'), 
+            TO_CHAR(VW1.DTFIMPAUSAATENDIMENTO,'DD/MM/YYYY HH24:MI:SS'), 
+            VW1.IDATENDIMENTOBAIXAHISTORICO, 
+            VW1.NMURLDADOS, 
+            VW1.DTSOLICITACAOCANCELAMENTO, 
+            VW1.DTPRAZOFINALINTERNO, 
+            VW1.IDATENDIMENTOSUSPEITO, 
+            VW1.IDATENDIMENTOORIGEM,
+            TO_CHAR(VW1.DTJANELAPORTOUT,'DD/MM/YYYY HH24:MI:SS'),
+            VW1.NRPROTOCOLOPORTABILIDADE
+        FROM 
+            ATENDIMENTO.ATENDIMENTOFILAMCLINHAMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        AND VW1.CDAREAREGISTRO = :oprefixo
+        AND VW1.NRLINHA = :otelefone
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        //AND VW1.IDPESSOACONTA IS NULL
+        ORDER BY
+            VW1.NRCRITICIDADE DESC,VW1.IDATENDIMENTOPR;
+
+    EXEC SQL OPEN curConsultaWFPorLinha;
+    while (true)
+    {
+        i_idAtendimento =
+        i_idAtendimentoProtocolo =
+        i_idContato =
+        i_idEstado =
+        i_dsEstado =
+        i_sgEstado =
+        i_idSubEstado =
+        i_dsSubEstado =
+        i_sgSubEstado =
+        i_idPessoa =
+        i_nmPessoa =
+        i_dtAbertura =
+        i_dtFechamento =
+        i_idAtendimentoAlerta =
+        i_dsMensagem =
+        i_idAlerta =
+        i_sgAlerta =
+        i_dsAlerta =
+        i_nmIcone =
+        i_nmCor =
+        i_nrCriticidade =
+        i_arvore =
+        i_nrTelefone =
+        i_inDocumento =
+        i_inACS =
+        i_inPausaAtendimento =
+        i_dtSuspeito =
+        i_dtFimPausa =
+        i_idAtendimentoBaixaHistorico =
+        i_nmURLDados =
+        i_dtSolicitacaoCancelamento =
+        i_dtPrazoFinalInterno =
+        i_idAtendimentoSuspeito =
+        i_dtJanelaPortout =
+        i_idAtendimentoOrigem =
+        i_nrProtocoloPortabilidade = -1;
+
+        EXEC SQL FETCH curConsultaWFPorLinha INTO
+            :idAtendimento:i_idAtendimento,
+            :idAtendimentoProtocolo:i_idAtendimentoProtocolo,
+            :idContato:i_idContato,
+            :idEstado:i_idEstado,
+            :dsEstado:i_dsEstado,
+            :sgEstado:i_sgEstado,
+            :idSubEstado:i_idSubEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :sgSubEstado:i_sgSubEstado,
+            :idPessoa:i_idPessoa,
+            :nmPessoa:i_nmPessoa,
+            :dtAbertura:i_dtAbertura,
+            :dtFechamento:i_dtFechamento,
+            :idAtendimentoAlerta:i_idAtendimentoAlerta,
+            :dsMensagem:i_dsMensagem,
+            :idAlerta:i_idAlerta,
+            :sgAlerta:i_sgAlerta,
+            :dsAlerta:i_dsAlerta,
+            :nmIcone:i_nmIcone,
+            :nmCor:i_nmCor,
+            :nrCriticidade:i_nrCriticidade,
+            :arvore:i_arvore,
+            :nrTelefone:i_nrTelefone,
+            :inDocumento:i_inDocumento,
+            :inACS:i_inACS,
+            :inPausaAtendimento:i_inPausaAtendimento,
+            :dtSuspeito:i_dtSuspeito,
+            :dtFimPausa:i_dtFimPausa,
+            :idAtendimentoBaixaHistorico:i_idAtendimentoBaixaHistorico,
+            :nmURLDados:i_nmURLDados,
+            :dtSolicitacaoCancelamento:i_dtSolicitacaoCancelamento,
+            :dtPrazoFinalInterno:i_dtPrazoFinalInterno,
+            :idAtendimentoSuspeito:i_idAtendimentoSuspeito,
+            :idAtendimentoOrigem:i_idAtendimentoOrigem,
+            :dtJanelaPortout:i_dtJanelaPortout,
+            :nrProtocoloPortabilidade:i_nrProtocoloPortabilidade;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(idAtendimentoProtocolo, i_idAtendimentoProtocolo);
+            CONVIND(dsEstado, i_dsEstado);
+            CONVIND(sgEstado, i_sgEstado);
+            CONVIND(dsSubEstado, i_dsSubEstado);
+            CONVIND(sgSubEstado, i_sgSubEstado);
+            CONVIND(nmPessoa, i_nmPessoa);
+            CONVIND(dtAbertura, i_dtAbertura);
+            CONVIND(dtFechamento, i_dtFechamento);
+            CONVIND(dsMensagem, i_dsMensagem);
+            CONVIND(sgAlerta, i_sgAlerta);
+            CONVIND(dsAlerta, i_dsAlerta);
+            CONVIND(nmIcone, i_nmIcone);
+            CONVIND(nmCor, i_nmCor);
+            CONVIND(arvore, i_arvore);
+            CONVIND(nrTelefone, i_nrTelefone);
+            CONVIND(inDocumento, i_inDocumento);
+            CONVIND(inACS, i_inACS);
+            CONVIND(dtSuspeito, i_dtSuspeito);
+            CONVIND(dtFimPausa, i_dtFimPausa);
+            CONVIND(nmURLDados, i_nmURLDados);
+            CONVIND(dtSolicitacaoCancelamento, i_dtSolicitacaoCancelamento);
+            CONVIND(dtPrazoFinalInterno, i_dtPrazoFinalInterno);
+            CONVIND(nrCriticidade, i_nrCriticidade);
+            CONVIND(dtJanelaPortout, i_dtJanelaPortout);
+            CONVIND(nrProtocoloPortabilidade,i_nrProtocoloPortabilidade);
+
+            if (i_idAtendimentoBaixaHistorico == -1)
+            {
+                idAtendimentoBaixaHistorico = 0;
+            }
+
+            saida->createTag("AtendimentoFilaVO");
+                
+                saida->addItem("operacaoWorkflow","");
+                
+                saida->createTag("AtendimentoVO");
+                
+                    saida->addItem("idAtendimento", CONVLONG(idAtendimento,i_idAtendimento));
+                    saida->addItem("nrProtocolo", (char*)idAtendimentoProtocolo.arr);
+                    saida->addItem("dtAbertura", (char*)dtAbertura.arr);
+                    saida->addItem("dtJanelaPortout", (char*)dtJanelaPortout.arr);
+                    saida->addItem("dtFechamento", (char*)dtFechamento.arr);
+                    saida->addItem("nrTelefone", (char*)nrTelefone.arr);
+                    saida->addItem("inDocumento", (char*)inDocumento.arr);
+                    saida->addItem("inACS", (char*)inACS.arr);
+                    saida->addItem("inPausaAtendimento", CONVINT(inPausaAtendimento,i_inPausaAtendimento));
+                    saida->addItem("dtSuspeito", (char*)dtSuspeito.arr);
+                    saida->addItem("dtFimPausaAtendimento", (char*)dtFimPausa.arr);
+                    saida->addItem("idAtendimentoBaixaHistorico", idAtendimentoBaixaHistorico);
+                    saida->addItem("nmURLDados", (char*)nmURLDados.arr);
+                    saida->addItem("dtSolicitacaoCancelamento", (char*)dtSolicitacaoCancelamento.arr);
+                    saida->addItem("nrProtocoloPortabilidade",(char*)nrProtocoloPortabilidade.arr);
+                        
+                    saida->createTag("WFEstadoVO");
+                
+                        saida->addItem("idEstado", CONVINT(idEstado,i_idEstado));
+                        saida->addItem("dsEstado", (char*)dsEstado.arr);
+                        saida->addItem("sgEstado", (char*)sgEstado.arr);
+            
+                    saida->closeTag();
+                
+                    saida->createTag("WFSubEstadoVO");
+                
+                        saida->addItem("idSubEstado", CONVINT(idSubEstado,i_idSubEstado));
+                        saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                        saida->addItem("sgSubEstado", (char*)sgSubEstado.arr);
+                
+                    saida->closeTag();
+                
+                    if (i_idAlerta != -1)
+                    {
+                        saida->createTag("AlertaVO");
+                        
+                            saida->addItem("idAlerta", CONVINT(idAlerta,i_idAlerta));
+                            saida->addItem("dsAlerta", (char*)dsAlerta.arr);
+                            saida->addItem("sgAlerta", (char*)sgAlerta.arr);
+                            saida->addItem("nmIcone", (char*)nmIcone.arr);
+                            saida->addItem("nmCor", (char*)nmCor.arr);
+                            saida->addItem("nrCriticidade", (char*)nrCriticidade.arr);
+                        
+                        saida->closeTag();
+                    }
+                
+                    saida->createTag("ns2:ArvoreAtendimentoVO");
+                
+                        saida->addItem("ns2:idContato", CONVINT(idContato,i_idContato));
+                        saida->addItem("ns2:descricaoCompleta", (char*)arvore.arr);
+                
+                    saida->closeTag();
+                
+                    saida->createTag("ns3:UsuarioVIVO");
+                    
+                        saida->addItem("ns3:idPessoaUsuario", CONVINT(idPessoa,i_idPessoa));
+                        saida->addItem("ns3:nmLoginUsuario", "");
+                        saida->addItem("ns3:nmNome", (char*)nmPessoa.arr);
+                        saida->addItem("ns3:sgSenhaUsuario", "");
+                
+                    saida->closeTag();
+                            
+                saida->closeTag();
+                
+            saida->closeTag();
+        }
+    }
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE curConsultaWFPorLinha;
+
+    ULOG_END( "proCConsultaWFFilaMCAbertosPorLinhaMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCAbertosPorLinhaQtdMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCAbertosPorLinhaQtdMP()" );
+
+    struct sqlca sqlca;
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->nrLinha[0]=='0' ) 
+    {
+        strncpy(cConv,dados->nrLinha+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->nrLinha,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        int  oprefixo         = prefixo;
+        int  otelefone        = numero;
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+        
+        int iContador;
+        short sContador;
+    EXEC SQL END DECLARE SECTION;
+
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+
+    indIdGrupo = status->idGrupo;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT 
+    	    COUNT(1)
+        INTO
+    	    :iContador:sContador
+	    FROM 
+		    ATENDIMENTO.ATENDIMENTOFILAMCLINHAMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        AND VW1.CDAREAREGISTRO = :oprefixo
+        AND VW1.NRLINHA = :otelefone;
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        //AND VW1.IDPESSOACONTA IS NULL
+
+    saida->addItem("totalRegistros", iContador);
+    saida->addItem("nrRegistros", 0);
+
+    ULOG_END( "proCConsultaWFFilaMCAbertosPorLinhaQtdMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCAbertosPorContaMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCAbertosPorContaMP()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        char *nrContaParam;
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+
+        long idAtendimento;
+        VARCHAR idAtendimentoProtocolo[39];
+        int  idContato;
+        int  idEstado;
+        VARCHAR dsEstado[256];
+        VARCHAR sgEstado[256];
+        int  idSubEstado;
+        VARCHAR dsSubEstado[256];
+        VARCHAR sgSubEstado[256];
+        long idPessoa;
+        VARCHAR nmPessoa[256];
+        VARCHAR dtAbertura[22];
+        VARCHAR dtFechamento[22];
+        long idAtendimentoAlerta;
+        VARCHAR dsMensagem[256];
+        int  idAlerta;
+        VARCHAR sgAlerta[256];
+        VARCHAR dsAlerta[256];
+        VARCHAR nmIcone[256];
+        VARCHAR nmCor[256];
+        VARCHAR nrCriticidade[15];
+        VARCHAR arvore[2001];
+        VARCHAR nrTelefone[256];
+        VARCHAR inDocumento[256];
+        VARCHAR inACS[256];
+        int inPausaAtendimento;
+        VARCHAR dtSuspeito[32];
+        VARCHAR dtFimPausa[32];
+        long idAtendimentoBaixaHistorico;
+        VARCHAR nmURLDados[256];
+        VARCHAR dtSolicitacaoCancelamento[32];
+        VARCHAR dtPrazoFinalInterno[32];
+        long idAtendimentoSuspeito;
+        long idAtendimentoOrigem;
+        VARCHAR dtJanelaPortout[32];
+        VARCHAR nrProtocoloPortabilidade[39];
+
+        short i_idAtendimento;
+        short i_idAtendimentoProtocolo;
+        short i_idContato;
+        short i_idEstado;
+        short i_dsEstado;
+        short i_sgEstado;
+        short i_idSubEstado;
+        short i_dsSubEstado;
+        short i_sgSubEstado;
+        short i_idPessoa;
+        short i_nmPessoa;
+        short i_dtAbertura;
+        short i_dtFechamento;
+        short i_idAtendimentoAlerta;
+        short i_dsMensagem;
+        short i_idAlerta;
+        short i_sgAlerta;
+        short i_dsAlerta;
+        short i_nmIcone;
+        short i_nmCor;
+        short i_nrCriticidade;
+        short i_arvore;
+        short i_nrTelefone;
+        short i_inDocumento;
+        short i_inACS;
+        short i_inPausaAtendimento;
+        short i_dtSuspeito;
+        short i_dtFimPausa;
+        short i_idAtendimentoBaixaHistorico;
+        short i_nmURLDados;
+        short i_dtSolicitacaoCancelamento;
+        short i_dtPrazoFinalInterno;
+        short i_idAtendimentoSuspeito;
+        short i_idAtendimentoOrigem;
+        short i_dtJanelaPortout;
+        short i_nrProtocoloPortabilidade;
+
+    EXEC SQL END DECLARE SECTION;
+
+    nrContaParam = dados->nrConta;
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+
+    indIdGrupo = status->idGrupo;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE curConsultaWFPorConta CURSOR FOR
+        SELECT 
+            VW1.IDATENDIMENTO,
+            VW1.IDATENDIMENTOPROTOCOLO,
+            VW1.IDCONTATO, 
+            VW1.IDESTADO, 
+            VW1.DSESTADO, 
+            VW1.SGESTADO, 
+            VW1.IDSUBESTADO, 
+            VW1.DSSUBESTADO, 
+            VW1.SGSUBESTADO, 
+            VW1.IDPESSOAUSUARIOGRUPO, 
+            VW1.NMPESSOA, 
+            TO_CHAR(VW1.DTABERTURA,'DD/MM/YYYY HH24:MI:SS') DTABERTURA, 
+            TO_CHAR(VW1.DTFECHAMENTO,'DD/MM/YYYY HH24:MI:SS'), 
+            VW1.IDATENDIMENTOALERTA, 
+            VW1.DSMENSAGEM, 
+            VW1.IDALERTA, 
+            VW1.SGALERTA, 
+            VW1.DSALERTA, 
+            VW1.NMICONE, 
+            VW1.NMCOR, 
+            VW1.NRCRITICIDADE, 
+            VW1.PATH, 
+            VW1.NRTELEFONE, 
+            VW1.INDOCUMENTO, 
+            0 AS INACS, 
+            VW1.INPAUSAATENDIMENTO, 
+            TO_CHAR(VW1.DTSUSPEITO,'DD/MM/YYYY HH24:MI:SS'), 
+            TO_CHAR(VW1.DTFIMPAUSAATENDIMENTO,'DD/MM/YYYY HH24:MI:SS'), 
+            VW1.IDATENDIMENTOBAIXAHISTORICO, 
+            VW1.NMURLDADOS, 
+            VW1.DTSOLICITACAOCANCELAMENTO, 
+            VW1.DTPRAZOFINALINTERNO, 
+            VW1.IDATENDIMENTOSUSPEITO, 
+            VW1.IDATENDIMENTOORIGEM,
+            TO_CHAR(VW1.DTJANELAPORTOUT,'DD/MM/YYYY HH24:MI:SS') AS DTJANELAPORTOUT,
+            VW1.NRPROTOCOLOPORTABILIDADE
+        FROM 
+            ATENDIMENTO.ATENDIMENTOFILAMCCONTAMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        AND VW1.CDCONTA = :nrContaParam
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        //AND VW1.IDPESSOACONTA IS NULL
+        ORDER BY
+            VW1.NRCRITICIDADE DESC, VW1.IDATENDIMENTOPR;
+
+    EXEC SQL OPEN curConsultaWFPorConta;
+
+    while (true)
+    {
+        i_idAtendimento =
+        i_idAtendimentoProtocolo =
+        i_idContato =
+        i_idEstado =
+        i_dsEstado =
+        i_sgEstado =
+        i_idSubEstado =
+        i_dsSubEstado =
+        i_sgSubEstado =
+        i_idPessoa =
+        i_nmPessoa =
+        i_dtAbertura =
+        i_dtFechamento =
+        i_idAtendimentoAlerta =
+        i_dsMensagem =
+        i_idAlerta =
+        i_sgAlerta =
+        i_dsAlerta =
+        i_nmIcone =
+        i_nmCor =
+        i_nrCriticidade =
+        i_arvore =
+        i_nrTelefone =
+        i_inDocumento =
+        i_inACS =
+        i_inPausaAtendimento =
+        i_dtSuspeito =
+        i_dtFimPausa =
+        i_idAtendimentoBaixaHistorico =
+        i_nmURLDados =
+        i_dtSolicitacaoCancelamento =
+        i_dtPrazoFinalInterno =
+        i_idAtendimentoSuspeito =
+        i_dtJanelaPortout =
+        i_nrProtocoloPortabilidade =
+        i_idAtendimentoOrigem = -1;
+
+        EXEC SQL FETCH curConsultaWFPorConta INTO
+            :idAtendimento:i_idAtendimento,
+            :idAtendimentoProtocolo:i_idAtendimentoProtocolo,
+            :idContato:i_idContato,
+            :idEstado:i_idEstado,
+            :dsEstado:i_dsEstado,
+            :sgEstado:i_sgEstado,
+            :idSubEstado:i_idSubEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :sgSubEstado:i_sgSubEstado,
+            :idPessoa:i_idPessoa,
+            :nmPessoa:i_nmPessoa,
+            :dtAbertura:i_dtAbertura,
+            :dtFechamento:i_dtFechamento,
+            :idAtendimentoAlerta:i_idAtendimentoAlerta,
+            :dsMensagem:i_dsMensagem,
+            :idAlerta:i_idAlerta,
+            :sgAlerta:i_sgAlerta,
+            :dsAlerta:i_dsAlerta,
+            :nmIcone:i_nmIcone,
+            :nmCor:i_nmCor,
+            :nrCriticidade:i_nrCriticidade,
+            :arvore:i_arvore,
+            :nrTelefone:i_nrTelefone,
+            :inDocumento:i_inDocumento,
+            :inACS:i_inACS,
+            :inPausaAtendimento:i_inPausaAtendimento,
+            :dtSuspeito:i_dtSuspeito,
+            :dtFimPausa:i_dtFimPausa,
+            :idAtendimentoBaixaHistorico:i_idAtendimentoBaixaHistorico,
+            :nmURLDados:i_nmURLDados,
+            :dtSolicitacaoCancelamento:i_dtSolicitacaoCancelamento,
+            :dtPrazoFinalInterno:i_dtPrazoFinalInterno,
+            :idAtendimentoSuspeito:i_idAtendimentoSuspeito,
+            :idAtendimentoOrigem:i_idAtendimentoOrigem,
+            :dtJanelaPortout:i_dtJanelaPortout,
+            :nrProtocoloPortabilidade:i_nrProtocoloPortabilidade;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(idAtendimentoProtocolo, i_idAtendimentoProtocolo);
+            CONVIND(dsEstado, i_dsEstado);
+            CONVIND(sgEstado, i_sgEstado);
+            CONVIND(dsSubEstado, i_dsSubEstado);
+            CONVIND(sgSubEstado, i_sgSubEstado);
+            CONVIND(nmPessoa, i_nmPessoa);
+            CONVIND(dtAbertura, i_dtAbertura);
+            CONVIND(dtFechamento, i_dtFechamento);
+            CONVIND(dsMensagem, i_dsMensagem);
+            CONVIND(sgAlerta, i_sgAlerta);
+            CONVIND(dsAlerta, i_dsAlerta);
+            CONVIND(nmIcone, i_nmIcone);
+            CONVIND(nmCor, i_nmCor);
+            CONVIND(arvore, i_arvore);
+            CONVIND(nrTelefone, i_nrTelefone);
+            CONVIND(inDocumento, i_inDocumento);
+            CONVIND(inACS, i_inACS);
+            CONVIND(dtSuspeito, i_dtSuspeito);
+            CONVIND(dtFimPausa, i_dtFimPausa);
+            CONVIND(nmURLDados, i_nmURLDados);
+            CONVIND(dtSolicitacaoCancelamento, i_dtSolicitacaoCancelamento);
+            CONVIND(dtPrazoFinalInterno, i_dtPrazoFinalInterno);
+            CONVIND(nrCriticidade, i_nrCriticidade);
+            CONVIND(dtJanelaPortout, i_dtJanelaPortout);
+            CONVIND(nrProtocoloPortabilidade,i_nrProtocoloPortabilidade);
+
+            if (i_idAtendimentoBaixaHistorico == -1)
+            {
+                idAtendimentoBaixaHistorico = 0;
+            }
+            
+            saida->createTag("AtendimentoFilaVO");
+                
+                saida->addItem("operacaoWorkflow","");
+                
+                saida->createTag("AtendimentoVO");
+                
+                    saida->addItem("idAtendimento", CONVLONG(idAtendimento,i_idAtendimento));
+                    saida->addItem("nrProtocolo", (char*)idAtendimentoProtocolo.arr);
+                    saida->addItem("dtAbertura", (char*)dtAbertura.arr);
+                    saida->addItem("dtJanelaPortout", (char*)dtJanelaPortout.arr);
+                    saida->addItem("dtFechamento", (char*)dtFechamento.arr);
+                    saida->addItem("nrTelefone", (char*)nrTelefone.arr);
+                    saida->addItem("inDocumento", (char*)inDocumento.arr);
+                    saida->addItem("inACS", (char*)inACS.arr);
+                    saida->addItem("inPausaAtendimento", CONVINT(inPausaAtendimento,i_inPausaAtendimento));
+                    saida->addItem("dtSuspeito", (char*)dtSuspeito.arr);
+                    saida->addItem("dtFimPausaAtendimento", (char*)dtFimPausa.arr);
+                    saida->addItem("idAtendimentoBaixaHistorico", idAtendimentoBaixaHistorico);
+                    saida->addItem("nmURLDados", (char*)nmURLDados.arr);
+                    saida->addItem("dtSolicitacaoCancelamento", (char*)dtSolicitacaoCancelamento.arr);
+                    saida->addItem("nrProtocoloPortabilidade",(char*)nrProtocoloPortabilidade.arr);
+                        
+                    saida->createTag("WFEstadoVO");
+                
+                        saida->addItem("idEstado", CONVINT(idEstado,i_idEstado));
+                        saida->addItem("dsEstado", (char*)dsEstado.arr);
+                        saida->addItem("sgEstado", (char*)sgEstado.arr);
+            
+                    saida->closeTag();
+                
+                    saida->createTag("WFSubEstadoVO");
+                
+                        saida->addItem("idSubEstado", CONVINT(idSubEstado,i_idSubEstado));
+                        saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                        saida->addItem("sgSubEstado", (char*)sgSubEstado.arr);
+                
+                    saida->closeTag();
+                
+                    if (i_idAlerta != -1)
+                    {
+                        saida->createTag("AlertaVO");
+                        
+                            saida->addItem("idAlerta", CONVINT(idAlerta,i_idAlerta));
+                            saida->addItem("dsAlerta", (char*)dsAlerta.arr);
+                            saida->addItem("sgAlerta", (char*)sgAlerta.arr);
+                            saida->addItem("nmIcone", (char*)nmIcone.arr);
+                            saida->addItem("nmCor", (char*)nmCor.arr);
+                            saida->addItem("nrCriticidade", (char*)nrCriticidade.arr);
+                        
+                        saida->closeTag();
+                    }
+                
+                    saida->createTag("ns2:ArvoreAtendimentoVO");
+                
+                        saida->addItem("ns2:idContato", CONVINT(idContato,i_idContato));
+                        saida->addItem("ns2:descricaoCompleta", (char*)arvore.arr);
+                
+                    saida->closeTag();
+                
+                    saida->createTag("ns3:UsuarioVIVO");
+                    
+                        saida->addItem("ns3:idPessoaUsuario", CONVINT(idPessoa,i_idPessoa));
+                        saida->addItem("ns3:nmLoginUsuario", "");
+                        saida->addItem("ns3:nmNome", (char*)nmPessoa.arr);
+                        saida->addItem("ns3:sgSenhaUsuario", "");
+                
+                    saida->closeTag();
+                            
+                saida->closeTag();
+                
+            saida->closeTag();
+        }
+    }
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE curConsultaWFPorConta;
+
+    ULOG_END( "proCConsultaWFFilaMCAbertosPorContaMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCAbertosPorContaQtdMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCAbertosPorContaQtdMP()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char *nrContaParam;
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+        
+        int iContador;
+        short sContador;
+    EXEC SQL END DECLARE SECTION;
+
+    nrContaParam = dados->nrConta;
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+
+    indIdGrupo = status->idGrupo;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT 
+    	    COUNT(1)
+        INTO
+    	    :iContador:sContador
+	    FROM 
+		    ATENDIMENTO.ATENDIMENTOFILAMCCONTAMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        AND VW1.CDCONTA = :nrContaParam;
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        //AND VW1.IDPESSOACONTA IS NULL
+
+    saida->addItem("totalRegistros", iContador);
+    saida->addItem("nrRegistros", 0);
+
+    ULOG_END( "proCConsultaWFFilaMCAbertosPorContaQtdMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCUsuarioLinhaMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCUsuarioLinhaMP()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->nrLinha[0]=='0' ) 
+    {
+        strncpy(cConv,dados->nrLinha+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->nrLinha,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        int  oprefixo         = prefixo;
+        int  otelefone        = numero;
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        int  idUfOperadora;
+        char *idClassificacaoTipoLinhaFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+        short indIdUfOperadora;
+        short indIdClassificacaoTipoLinha;
+
+        long idAtendimento;
+        VARCHAR idAtendimentoProtocolo[39];
+        int  idContato;
+        int  idEstado;
+        VARCHAR dsEstado[256];
+        VARCHAR sgEstado[256];
+        int  idSubEstado;
+        VARCHAR dsSubEstado[256];
+        VARCHAR sgSubEstado[256];
+        long idPessoa;
+        VARCHAR nmPessoa[256];
+        VARCHAR dtAbertura[22];
+        VARCHAR dtFechamento[22];
+        long idAtendimentoAlerta;
+        VARCHAR dsMensagem[256];
+        int  idAlerta;
+        VARCHAR sgAlerta[256];
+        VARCHAR dsAlerta[256];
+        VARCHAR nmIcone[256];
+        VARCHAR nmCor[256];
+        VARCHAR nrCriticidade[15];
+        VARCHAR arvore[2001];
+        VARCHAR nrTelefone[256];
+        VARCHAR inDocumento[256];
+        VARCHAR inACS[256];
+        int inPausaAtendimento;
+        VARCHAR dtSuspeito[32];
+        VARCHAR dtFimPausa[32];
+        long idAtendimentoBaixaHistorico;
+        VARCHAR nmURLDados[256];
+        VARCHAR dtSolicitacaoCancelamento[32];
+        VARCHAR dtPrazoFinalInterno[32];   
+        long idAtendimentoSuspeito;
+        long idAtendimentoOrigem;
+        VARCHAR dtJanelaPortout[32];
+        VARCHAR nrProtocoloPortabilidade[39];
+
+        short i_idAtendimento;
+        short i_idAtendimentoProtocolo;
+        short i_idContato;
+        short i_idEstado;
+        short i_dsEstado;
+        short i_sgEstado;
+        short i_idSubEstado;
+        short i_dsSubEstado;
+        short i_sgSubEstado;
+        short i_idPessoa;
+        short i_nmPessoa;
+        short i_dtAbertura;
+        short i_dtFechamento;
+        short i_idAtendimentoAlerta;
+        short i_dsMensagem;
+        short i_idAlerta;
+        short i_sgAlerta;
+        short i_dsAlerta;
+        short i_nmIcone;
+        short i_nmCor;
+        short i_nrCriticidade;
+        short i_arvore;
+        short i_nrTelefone;
+        short i_inDocumento;
+        short i_inACS;
+        short i_inPausaAtendimento;
+        short i_dtSuspeito;
+        short i_dtFimPausa;
+        short i_idAtendimentoBaixaHistorico;
+        short i_nmURLDados;
+        short i_dtSolicitacaoCancelamento;
+        short i_dtPrazoFinalInterno;
+        short i_idAtendimentoSuspeito;
+        short i_idAtendimentoOrigem;
+        short i_dtJanelaPortout;
+        short i_nrProtocoloPortabilidade;
+
+    EXEC SQL END DECLARE SECTION;
+
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+    idUfOperadora = dados->idUfOperadora;
+    idClassificacaoTipoLinhaFiltro = dados->idClassificacaoTipoLinha;
+
+    indIdGrupo = status->idGrupo;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+    indIdUfOperadora = status->idUfOperadora;
+    indIdClassificacaoTipoLinha = status->idClassificacaoTipoLinha;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE consultaWFFilaUsuarioLinha CURSOR FOR
+        SELECT 
+            VW1.IDATENDIMENTO,
+            VW1.IDATENDIMENTOPROTOCOLO,
+            VW1.IDCONTATO, 
+            VW1.IDESTADO, 
+            VW1.DSESTADO, 
+            VW1.SGESTADO, 
+            VW1.IDSUBESTADO, 
+            VW1.DSSUBESTADO, 
+            VW1.SGSUBESTADO, 
+            VW1.IDPESSOAUSUARIOGRUPO, 
+            VW1.NMPESSOA, 
+            TO_CHAR(VW1.DTABERTURA,'DD/MM/YYYY HH24:MI:SS') AS DTABERTURA, 
+            TO_CHAR(VW1.DTFECHAMENTO,'DD/MM/YYYY HH24:MI:SS'), 
+            VW1.IDATENDIMENTOALERTA, 
+            VW1.DSMENSAGEM, 
+            VW1.IDALERTA, 
+            VW1.SGALERTA, 
+            VW1.DSALERTA, 
+            VW1.NMICONE, 
+            VW1.NMCOR, 
+            VW1.NRCRITICIDADE, 
+            VW1.PATH, 
+            VW1.NRTELEFONE, 
+            VW1.INDOCUMENTO, 
+            0 AS INACS, 
+            VW1.INPAUSAATENDIMENTO, 
+            TO_CHAR(VW1.DTSUSPEITO,'DD/MM/YYYY HH24:MI:SS'), 
+            TO_CHAR(VW1.DTFIMPAUSAATENDIMENTO,'DD/MM/YYYY HH24:MI:SS'), 
+            VW1.IDATENDIMENTOBAIXAHISTORICO, 
+            VW1.NMURLDADOS, 
+            VW1.DTSOLICITACAOCANCELAMENTO, 
+            VW1.DTPRAZOFINALINTERNO, 
+            VW1.IDATENDIMENTOSUSPEITO, 
+            VW1.IDATENDIMENTOORIGEM,
+            TO_CHAR(VW1.DTJANELAPORTOUT,'DD/MM/YYYY HH24:MI:SS'),
+            VW1.NRPROTOCOLOPORTABILIDADE
+        FROM 
+            ATENDIMENTO.ATDFILAMCUSUARIOLINHAMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        AND VW1.CDAREAREGISTRO = :oprefixo
+        AND VW1.NRLINHA = :otelefone
+        AND (VW1.IDUFOPERADORA = :idUfOperadora OR -1=:indIdUfOperadora)
+        AND (VW1.IDGRUPO = :idGrupoFiltro OR -1=:indIdGrupo)
+        AND (VW1.IDATENDIMENTO = :idAtendimentoFiltro OR -1=:indIdAtendimento)
+        AND (VW1.IDCONTATO = :idContatoFiltro OR -1=:indIdContato)
+        AND (VW1.IDCLASSIFICACAOTIPOLINHA = :idClassificacaoTipoLinhaFiltro OR -1=:indIdClassificacaoTipoLinha)
+        AND (VW1.IDESTADO = :idEstadoFiltro OR -1=:indIdEstado)
+        AND (VW1.IDSUBESTADO = :idSubEstadoFiltro OR -1=:indIdSubEstado)
+        AND (TRUNC(VW1.DTABERTURA)>=TO_DATE(:dtAberturaInicioFiltro, 'DD/MM/YYYY' ) OR -1 = :indDtAberturaInicio)
+        AND (TRUNC(VW1.DTABERTURA)<=TO_DATE(:dtAberturaFimFiltro,'DD/MM/YYYY') OR -1 = :indDtAberturaFim)
+        //AND VW1.IDPESSOACONTA IS NULL
+        ORDER BY
+            VW1.NRCRITICIDADE DESC,VW1.IDATENDIMENTOPR;
+
+    EXEC SQL OPEN consultaWFFilaUsuarioLinha;
+    while (true)
+    {
+        i_idAtendimento =
+        i_idAtendimentoProtocolo =
+        i_idContato =
+        i_idEstado =
+        i_dsEstado =
+        i_sgEstado =
+        i_idSubEstado =
+        i_dsSubEstado =
+        i_sgSubEstado =
+        i_idPessoa =
+        i_nmPessoa =
+        i_dtAbertura =
+        i_dtFechamento =
+        i_idAtendimentoAlerta =
+        i_dsMensagem =
+        i_idAlerta =
+        i_sgAlerta =
+        i_dsAlerta =
+        i_nmIcone =
+        i_nmCor =
+        i_nrCriticidade =
+        i_arvore =
+        i_nrTelefone =
+        i_inDocumento =
+        i_inACS =
+        i_inPausaAtendimento =
+        i_dtSuspeito =
+        i_dtFimPausa =
+        i_idAtendimentoBaixaHistorico =
+        i_nmURLDados =
+        i_dtSolicitacaoCancelamento =
+        i_dtPrazoFinalInterno =
+        i_idAtendimentoSuspeito =
+        i_dtJanelaPortout =
+        i_nrProtocoloPortabilidade =
+        i_idAtendimentoOrigem = -1;
+
+        EXEC SQL FETCH consultaWFFilaUsuarioLinha INTO
+            :idAtendimento:i_idAtendimento,
+            :idAtendimentoProtocolo:i_idAtendimentoProtocolo,
+            :idContato:i_idContato,
+            :idEstado:i_idEstado,
+            :dsEstado:i_dsEstado,
+            :sgEstado:i_sgEstado,
+            :idSubEstado:i_idSubEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :sgSubEstado:i_sgSubEstado,
+            :idPessoa:i_idPessoa,
+            :nmPessoa:i_nmPessoa,
+            :dtAbertura:i_dtAbertura,
+            :dtFechamento:i_dtFechamento,
+            :idAtendimentoAlerta:i_idAtendimentoAlerta,
+            :dsMensagem:i_dsMensagem,
+            :idAlerta:i_idAlerta,
+            :sgAlerta:i_sgAlerta,
+            :dsAlerta:i_dsAlerta,
+            :nmIcone:i_nmIcone,
+            :nmCor:i_nmCor,
+            :nrCriticidade:i_nrCriticidade,
+            :arvore:i_arvore,
+            :nrTelefone:i_nrTelefone,
+            :inDocumento:i_inDocumento,
+            :inACS:i_inACS,
+            :inPausaAtendimento:i_inPausaAtendimento,
+            :dtSuspeito:i_dtSuspeito,
+            :dtFimPausa:i_dtFimPausa,
+            :idAtendimentoBaixaHistorico:i_idAtendimentoBaixaHistorico,
+            :nmURLDados:i_nmURLDados,
+            :dtSolicitacaoCancelamento:i_dtSolicitacaoCancelamento,
+            :dtPrazoFinalInterno:i_dtPrazoFinalInterno,
+            :idAtendimentoSuspeito:i_idAtendimentoSuspeito,
+            :idAtendimentoOrigem:i_idAtendimentoOrigem,
+            :dtJanelaPortout:i_dtJanelaPortout,
+            :nrProtocoloPortabilidade:i_nrProtocoloPortabilidade;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(idAtendimentoProtocolo, i_idAtendimentoProtocolo);
+            CONVIND(dsEstado, i_dsEstado);
+            CONVIND(sgEstado, i_sgEstado);
+            CONVIND(dsSubEstado, i_dsSubEstado);
+            CONVIND(sgSubEstado, i_sgSubEstado);
+            CONVIND(nmPessoa, i_nmPessoa);
+            CONVIND(dtAbertura, i_dtAbertura);
+            CONVIND(dtFechamento, i_dtFechamento);
+            CONVIND(dsMensagem, i_dsMensagem);
+            CONVIND(sgAlerta, i_sgAlerta);
+            CONVIND(dsAlerta, i_dsAlerta);
+            CONVIND(nmIcone, i_nmIcone);
+            CONVIND(nmCor, i_nmCor);
+            CONVIND(arvore, i_arvore);
+            CONVIND(nrTelefone, i_nrTelefone);
+            CONVIND(inDocumento, i_inDocumento);
+            CONVIND(inACS, i_inACS);
+            CONVIND(dtSuspeito, i_dtSuspeito);
+            CONVIND(dtFimPausa, i_dtFimPausa);
+            CONVIND(nmURLDados, i_nmURLDados);
+            CONVIND(dtSolicitacaoCancelamento, i_dtSolicitacaoCancelamento);
+            CONVIND(dtPrazoFinalInterno, i_dtPrazoFinalInterno);
+            CONVIND(nrCriticidade, i_nrCriticidade);
+            CONVIND(dtJanelaPortout, i_dtJanelaPortout);
+            CONVIND(nrProtocoloPortabilidade,i_nrProtocoloPortabilidade);
+
+            if (i_idAtendimentoBaixaHistorico == -1)
+            {
+                idAtendimentoBaixaHistorico = 0;
+            }
+            
+            saida->createTag("AtendimentoFilaVO");
+                
+                saida->addItem("operacaoWorkflow","");
+                
+                saida->createTag("AtendimentoVO");
+                
+                    saida->addItem("idAtendimento", CONVLONG(idAtendimento,i_idAtendimento));
+                    saida->addItem("nrProtocolo", (char*)idAtendimentoProtocolo.arr);
+                    saida->addItem("dtAbertura", (char*)dtAbertura.arr);
+                    saida->addItem("dtJanelaPortout", (char*)dtJanelaPortout.arr);
+                    saida->addItem("dtFechamento", (char*)dtFechamento.arr);
+                    saida->addItem("nrTelefone", (char*)nrTelefone.arr);
+                    saida->addItem("inDocumento", (char*)inDocumento.arr);
+                    saida->addItem("inACS", (char*)inACS.arr);
+                    saida->addItem("inPausaAtendimento", CONVINT(inPausaAtendimento,i_inPausaAtendimento));
+                    saida->addItem("dtSuspeito", (char*)dtSuspeito.arr);
+                    saida->addItem("dtFimPausaAtendimento", (char*)dtFimPausa.arr);
+                    saida->addItem("idAtendimentoBaixaHistorico", idAtendimentoBaixaHistorico);
+                    saida->addItem("nmURLDados", (char*)nmURLDados.arr);
+                    saida->addItem("dtSolicitacaoCancelamento", (char*)dtSolicitacaoCancelamento.arr);
+                    saida->addItem("nrProtocoloPortabilidade", (char*)nrProtocoloPortabilidade.arr);
+                        
+                    saida->createTag("WFEstadoVO");
+                
+                        saida->addItem("idEstado", CONVINT(idEstado,i_idEstado));
+                        saida->addItem("dsEstado", (char*)dsEstado.arr);
+                        saida->addItem("sgEstado", (char*)sgEstado.arr);
+            
+                    saida->closeTag();
+                
+                    saida->createTag("WFSubEstadoVO");
+                
+                        saida->addItem("idSubEstado", CONVINT(idSubEstado,i_idSubEstado));
+                        saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                        saida->addItem("sgSubEstado", (char*)sgSubEstado.arr);
+                
+                    saida->closeTag();
+                
+                    if (i_idAlerta != -1)
+                    {
+                        saida->createTag("AlertaVO");
+                        
+                            saida->addItem("idAlerta", CONVINT(idAlerta,i_idAlerta));
+                            saida->addItem("dsAlerta", (char*)dsAlerta.arr);
+                            saida->addItem("sgAlerta", (char*)sgAlerta.arr);
+                            saida->addItem("nmIcone", (char*)nmIcone.arr);
+                            saida->addItem("nmCor", (char*)nmCor.arr);
+                            saida->addItem("nrCriticidade", (char*)nrCriticidade.arr);
+                        
+                        saida->closeTag();
+                    }
+                
+                    saida->createTag("ns2:ArvoreAtendimentoVO");
+                
+                        saida->addItem("ns2:idContato", CONVINT(idContato,i_idContato));
+                        saida->addItem("ns2:descricaoCompleta", (char*)arvore.arr);
+                
+                    saida->closeTag();
+                
+                    saida->createTag("ns3:UsuarioVIVO");
+                    
+                        saida->addItem("ns3:idPessoaUsuario", CONVINT(idPessoa,i_idPessoa));
+                        saida->addItem("ns3:nmLoginUsuario", "");
+                        saida->addItem("ns3:nmNome", (char*)nmPessoa.arr);
+                        saida->addItem("ns3:sgSenhaUsuario", "");
+                
+                    saida->closeTag();
+                            
+                saida->closeTag();
+                
+            saida->closeTag();
+            
+        }
+    }
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE consultaWFFilaUsuarioLinha;
+
+    ULOG_END( "proCConsultaWFFilaMCUsuarioLinhaMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCUsuarioLinhaQtdMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCUsuarioLinhaQtdMP()" );
+
+    struct sqlca sqlca;
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->nrLinha[0]=='0' ) 
+    {
+        strncpy(cConv,dados->nrLinha+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->nrLinha,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        int   oprefixo         = prefixo;
+        int   otelefone        = numero;
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+        int  idUfOperadora;
+        char *idClassificacaoTipoLinhaFiltro;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+        short indIdUfOperadora;
+        short indIdClassificacaoTipoLinha;
+
+        int iContador;
+        short sContador;
+    EXEC SQL END DECLARE SECTION;
+
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+    idUfOperadora = dados->idUfOperadora;
+    idClassificacaoTipoLinhaFiltro = dados->idClassificacaoTipoLinha;
+
+    indIdGrupo = status->idGrupo;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+    indIdUfOperadora = status->idUfOperadora;
+    indIdClassificacaoTipoLinha = status->idClassificacaoTipoLinha;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+	    SELECT 
+		    COUNT(1)
+	    INTO
+		    :iContador:sContador
+	    FROM 
+		    ATENDIMENTO.ATDFILAMCUSUARIOLINHAMPWFV01 VW1
+	    WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+	    AND VW1.CDAREAREGISTRO = :oprefixo
+	    AND VW1.NRLINHA = :otelefone
+	    AND (VW1.IDUFOPERADORA = :idUfOperadora OR -1=:indIdUfOperadora)
+	    AND (VW1.IDGRUPO = :idGrupoFiltro OR -1=:indIdGrupo)
+	    AND (VW1.IDATENDIMENTO = :idAtendimentoFiltro OR -1=:indIdAtendimento)
+	    AND (VW1.IDCONTATO = :idContatoFiltro OR -1=:indIdContato)
+	    AND (VW1.IDESTADO = :idEstadoFiltro OR -1=:indIdEstado)
+	    AND (VW1.IDSUBESTADO = :idSubEstadoFiltro OR -1=:indIdSubEstado)
+        AND (VW1.IDCLASSIFICACAOTIPOLINHA = :idClassificacaoTipoLinhaFiltro OR -1=:indIdClassificacaoTipoLinha)
+	    AND (TRUNC(VW1.DTABERTURA)>=TO_DATE(:dtAberturaInicioFiltro, 'DD/MM/YYYY' ) OR -1 = :indDtAberturaInicio)
+	    AND (TRUNC(VW1.DTABERTURA)<=TO_DATE(:dtAberturaFimFiltro,'DD/MM/YYYY') OR -1 = :indDtAberturaFim);
+        //AND VW1.IDPESSOACONTA IS NULL;
+
+    saida->addItem("totalRegistros", iContador);
+    saida->addItem("nrRegistros"   , 0);
+
+    ULOG_END( "proCConsultaWFFilaMCUsuarioLinhaQtdMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCLinhaMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCLinhaMP()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->nrLinha[0]=='0' ) 
+    {
+        strncpy(cConv,dados->nrLinha+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->nrLinha,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        int  oprefixo         = prefixo;
+        int  otelefone        = numero;
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+        char *idClassificacaoTipoLinhaFiltro;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+        short indIdClassificacaoTipoLinha;
+
+        long idAtendimento;
+        VARCHAR idAtendimentoProtocolo[39];
+        int  idContato;
+        int  idEstado;
+        VARCHAR dsEstado[256];
+        VARCHAR sgEstado[256];
+        int  idSubEstado;
+        VARCHAR dsSubEstado[256];
+        VARCHAR sgSubEstado[256];
+        long idPessoa;
+        VARCHAR nmPessoa[256];
+        VARCHAR dtAbertura[22];
+        VARCHAR dtFechamento[22];
+        long idAtendimentoAlerta;
+        VARCHAR dsMensagem[256];
+        int  idAlerta;
+        VARCHAR sgAlerta[256];
+        VARCHAR dsAlerta[256];
+        VARCHAR nmIcone[256];
+        VARCHAR nmCor[256];
+        VARCHAR nrCriticidade[15];
+        VARCHAR arvore[2001];
+        VARCHAR nrTelefone[256];
+        VARCHAR inDocumento[256];
+        VARCHAR inACS[256];
+        int inPausaAtendimento;
+        VARCHAR dtSuspeito[32];
+        VARCHAR dtFimPausa[32];
+        long idAtendimentoBaixaHistorico;
+        VARCHAR nmURLDados[256];
+        VARCHAR dtSolicitacaoCancelamento[32];
+        VARCHAR dtPrazoFinalInterno[32];   
+        long idAtendimentoSuspeito;
+        long idAtendimentoOrigem;
+        VARCHAR dtJanelaPortout[32];
+        VARCHAR nrProtocoloPortabilidade[39];
+
+        short i_idAtendimento;
+        short i_idAtendimentoProtocolo;
+        short i_idContato;
+        short i_idEstado;
+        short i_dsEstado;
+        short i_sgEstado;
+        short i_idSubEstado;
+        short i_dsSubEstado;
+        short i_sgSubEstado;
+        short i_idPessoa;
+        short i_nmPessoa;
+        short i_dtAbertura;
+        short i_dtFechamento;
+        short i_idAtendimentoAlerta;
+        short i_dsMensagem;
+        short i_idAlerta;
+        short i_sgAlerta;
+        short i_dsAlerta;
+        short i_nmIcone;
+        short i_nmCor;
+        short i_nrCriticidade;
+        short i_arvore;
+        short i_nrTelefone;
+        short i_inDocumento;
+        short i_inACS;
+        short i_inPausaAtendimento;
+        short i_dtSuspeito;
+        short i_dtFimPausa;
+        short i_idAtendimentoBaixaHistorico;
+        short i_nmURLDados;
+        short i_dtSolicitacaoCancelamento;
+        short i_dtPrazoFinalInterno;
+        short i_idAtendimentoSuspeito;
+        short i_idAtendimentoOrigem;
+        short i_dtJanelaPortout;
+        short i_nrProtocoloPortabilidade;
+
+    EXEC SQL END DECLARE SECTION;
+
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+    idClassificacaoTipoLinhaFiltro = dados->idClassificacaoTipoLinha;
+
+    indIdGrupo = status->idGrupo;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+    indIdClassificacaoTipoLinha = status->idClassificacaoTipoLinha;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE consultaWFFilaLinha CURSOR FOR
+        SELECT 
+            VW1.IDATENDIMENTO, 
+            VW1.IDATENDIMENTOPROTOCOLO,
+            VW1.IDCONTATO, 
+            VW1.IDESTADO, 
+            VW1.DSESTADO, 
+            VW1.SGESTADO, 
+            VW1.IDSUBESTADO, 
+            VW1.DSSUBESTADO, 
+            VW1.SGSUBESTADO, 
+            VW1.IDPESSOAUSUARIOGRUPO, 
+            VW1.NMPESSOA, 
+            TO_CHAR(VW1.DTABERTURA,'DD/MM/YYYY HH24:MI:SS') AS DTABERTURA, 
+            TO_CHAR(VW1.DTFECHAMENTO,'DD/MM/YYYY HH24:MI:SS'), 
+            VW1.IDATENDIMENTOALERTA, 
+            VW1.DSMENSAGEM, 
+            VW1.IDALERTA, 
+            VW1.SGALERTA, 
+            VW1.DSALERTA, 
+            VW1.NMICONE, 
+            VW1.NMCOR, 
+            VW1.NRCRITICIDADE, 
+            VW1.PATH, 
+            VW1.NRTELEFONE, 
+            VW1.INDOCUMENTO, 
+            0 AS INACS, 
+            VW1.INPAUSAATENDIMENTO, 
+            TO_CHAR(VW1.DTSUSPEITO,'DD/MM/YYYY HH24:MI:SS'), 
+            TO_CHAR(VW1.DTFIMPAUSAATENDIMENTO,'DD/MM/YYYY HH24:MI:SS'), 
+            VW1.IDATENDIMENTOBAIXAHISTORICO, 
+            VW1.NMURLDADOS, 
+            VW1.DTSOLICITACAOCANCELAMENTO, 
+            VW1.DTPRAZOFINALINTERNO, 
+            VW1.IDATENDIMENTOSUSPEITO, 
+            VW1.IDATENDIMENTOORIGEM,
+            TO_CHAR(VW1.DTJANELAPORTOUT,'DD/MM/YYYY HH24:MI:SS'),
+            VW1.NRPROTOCOLOPORTABILIDADE
+        FROM 
+            ATENDIMENTO.ATENDIMENTOFILAMCLINHAMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        AND VW1.CDAREAREGISTRO = :oprefixo
+        AND VW1.NRLINHA = :otelefone
+        AND (VW1.IDGRUPO = :idGrupoFiltro OR -1=:indIdGrupo)
+        AND (VW1.IDATENDIMENTO = :idAtendimentoFiltro OR -1=:indIdAtendimento)
+        AND (VW1.IDCONTATO = :idContatoFiltro OR -1=:indIdContato)
+        AND (VW1.IDESTADO = :idEstadoFiltro OR -1=:indIdEstado)
+        AND (VW1.IDSUBESTADO = :idSubEstadoFiltro OR -1=:indIdSubEstado)
+        AND (VW1.IDCLASSIFICACAOTIPOLINHA = :idClassificacaoTipoLinhaFiltro OR -1=:indIdClassificacaoTipoLinha)
+        AND (TRUNC(VW1.DTABERTURA)>=TO_DATE(:dtAberturaInicioFiltro, 'DD/MM/YYYY' ) OR -1 = :indDtAberturaInicio)
+        AND (TRUNC(VW1.DTABERTURA)<=TO_DATE(:dtAberturaFimFiltro,'DD/MM/YYYY') OR -1 = :indDtAberturaFim)
+        //AND VW1.IDPESSOACONTA IS NULL
+        ORDER BY
+            VW1.NRCRITICIDADE DESC,VW1.IDATENDIMENTOPR;
+
+    EXEC SQL OPEN consultaWFFilaLinha;
+    while (true)
+    {
+        i_idAtendimento =
+        i_idAtendimentoProtocolo =
+        i_idContato =
+        i_idEstado =
+        i_dsEstado =
+        i_sgEstado =
+        i_idSubEstado =
+        i_dsSubEstado =
+        i_sgSubEstado =
+        i_idPessoa =
+        i_nmPessoa =
+        i_dtAbertura =
+        i_dtFechamento =
+        i_idAtendimentoAlerta =
+        i_dsMensagem =
+        i_idAlerta =
+        i_sgAlerta =
+        i_dsAlerta =
+        i_nmIcone =
+        i_nmCor =
+        i_nrCriticidade =
+        i_arvore =
+        i_nrTelefone =
+        i_inDocumento =
+        i_inACS =
+        i_inPausaAtendimento =
+        i_dtSuspeito =
+        i_dtFimPausa =
+        i_idAtendimentoBaixaHistorico =
+        i_nmURLDados =
+        i_dtSolicitacaoCancelamento =
+        i_dtPrazoFinalInterno =
+        i_idAtendimentoSuspeito =
+        i_dtJanelaPortout =
+        i_nrProtocoloPortabilidade =
+        i_idAtendimentoOrigem = -1;
+
+        EXEC SQL FETCH consultaWFFilaLinha INTO
+            :idAtendimento:i_idAtendimento,
+            :idAtendimentoProtocolo:i_idAtendimentoProtocolo,
+            :idContato:i_idContato,
+            :idEstado:i_idEstado,
+            :dsEstado:i_dsEstado,
+            :sgEstado:i_sgEstado,
+            :idSubEstado:i_idSubEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :sgSubEstado:i_sgSubEstado,
+            :idPessoa:i_idPessoa,
+            :nmPessoa:i_nmPessoa,
+            :dtAbertura:i_dtAbertura,
+            :dtFechamento:i_dtFechamento,
+            :idAtendimentoAlerta:i_idAtendimentoAlerta,
+            :dsMensagem:i_dsMensagem,
+            :idAlerta:i_idAlerta,
+            :sgAlerta:i_sgAlerta,
+            :dsAlerta:i_dsAlerta,
+            :nmIcone:i_nmIcone,
+            :nmCor:i_nmCor,
+            :nrCriticidade:i_nrCriticidade,
+            :arvore:i_arvore,
+            :nrTelefone:i_nrTelefone,
+            :inDocumento:i_inDocumento,
+            :inACS:i_inACS,
+            :inPausaAtendimento:i_inPausaAtendimento,
+            :dtSuspeito:i_dtSuspeito,
+            :dtFimPausa:i_dtFimPausa,
+            :idAtendimentoBaixaHistorico:i_idAtendimentoBaixaHistorico,
+            :nmURLDados:i_nmURLDados,
+            :dtSolicitacaoCancelamento:i_dtSolicitacaoCancelamento,
+            :dtPrazoFinalInterno:i_dtPrazoFinalInterno,
+            :idAtendimentoSuspeito:i_idAtendimentoSuspeito,
+            :idAtendimentoOrigem:i_idAtendimentoOrigem,
+            :dtJanelaPortout:i_dtJanelaPortout,
+            :nrProtocoloPortabilidade:i_nrProtocoloPortabilidade;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(idAtendimentoProtocolo, i_idAtendimentoProtocolo);
+            CONVIND(dsEstado, i_dsEstado);
+            CONVIND(sgEstado, i_sgEstado);
+            CONVIND(dsSubEstado, i_dsSubEstado);
+            CONVIND(sgSubEstado, i_sgSubEstado);
+            CONVIND(nmPessoa, i_nmPessoa);
+            CONVIND(dtAbertura, i_dtAbertura);
+            CONVIND(dtFechamento, i_dtFechamento);
+            CONVIND(dsMensagem, i_dsMensagem);
+            CONVIND(sgAlerta, i_sgAlerta);
+            CONVIND(dsAlerta, i_dsAlerta);
+            CONVIND(nmIcone, i_nmIcone);
+            CONVIND(nmCor, i_nmCor);
+            CONVIND(arvore, i_arvore);
+            CONVIND(nrTelefone, i_nrTelefone);
+            CONVIND(inDocumento, i_inDocumento);
+            CONVIND(inACS, i_inACS);
+            CONVIND(dtSuspeito, i_dtSuspeito);
+            CONVIND(dtFimPausa, i_dtFimPausa);
+            CONVIND(nmURLDados, i_nmURLDados);
+            CONVIND(dtSolicitacaoCancelamento, i_dtSolicitacaoCancelamento);
+            CONVIND(dtPrazoFinalInterno, i_dtPrazoFinalInterno);
+            CONVIND(nrCriticidade, i_nrCriticidade);
+            CONVIND(dtJanelaPortout, i_dtJanelaPortout);
+            CONVIND(nrProtocoloPortabilidade,i_nrProtocoloPortabilidade);
+
+            if (i_idAtendimentoBaixaHistorico == -1)
+            {
+                idAtendimentoBaixaHistorico = 0;
+            }
+            
+            saida->createTag("AtendimentoFilaVO");
+                
+                saida->addItem("operacaoWorkflow","");
+                
+                saida->createTag("AtendimentoVO");
+                
+                    saida->addItem("idAtendimento", CONVLONG(idAtendimento,i_idAtendimento));
+                    saida->addItem("nrProtocolo", (char*)idAtendimentoProtocolo.arr);
+                    saida->addItem("dtAbertura", (char*)dtAbertura.arr);
+                    saida->addItem("dtJanelaPortout", (char*)dtJanelaPortout.arr);
+                    saida->addItem("dtFechamento", (char*)dtFechamento.arr);
+                    saida->addItem("nrTelefone", (char*)nrTelefone.arr);
+                    saida->addItem("inDocumento", (char*)inDocumento.arr);
+                    saida->addItem("inACS", (char*)inACS.arr);
+                    saida->addItem("inPausaAtendimento", CONVINT(inPausaAtendimento,i_inPausaAtendimento));
+                    saida->addItem("dtSuspeito", (char*)dtSuspeito.arr);
+                    saida->addItem("dtFimPausaAtendimento", (char*)dtFimPausa.arr);
+                    saida->addItem("idAtendimentoBaixaHistorico", idAtendimentoBaixaHistorico);
+                    saida->addItem("nmURLDados", (char*)nmURLDados.arr);
+                    saida->addItem("dtSolicitacaoCancelamento", (char*)dtSolicitacaoCancelamento.arr);
+                    saida->addItem("nrProtocoloPortabilidade", (char*)nrProtocoloPortabilidade.arr);
+                        
+                    saida->createTag("WFEstadoVO");
+                
+                        saida->addItem("idEstado", CONVINT(idEstado,i_idEstado));
+                        saida->addItem("dsEstado", (char*)dsEstado.arr);
+                        saida->addItem("sgEstado", (char*)sgEstado.arr);
+            
+                    saida->closeTag();
+                
+                    saida->createTag("WFSubEstadoVO");
+                
+                        saida->addItem("idSubEstado", CONVINT(idSubEstado,i_idSubEstado));
+                        saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                        saida->addItem("sgSubEstado", (char*)sgSubEstado.arr);
+                
+                    saida->closeTag();
+                
+                    if (i_idAlerta != -1)
+                    {
+
+                        saida->createTag("AlertaVO");
+                        
+                            saida->addItem("idAlerta", CONVINT(idAlerta,i_idAlerta));
+                            saida->addItem("dsAlerta", (char*)dsAlerta.arr);
+                            saida->addItem("sgAlerta", (char*)sgAlerta.arr);
+                            saida->addItem("nmIcone", (char*)nmIcone.arr);
+                            saida->addItem("nmCor", (char*)nmCor.arr);
+                            saida->addItem("nrCriticidade", (char*)nrCriticidade.arr);
+                        
+                        saida->closeTag();
+                    }
+                
+                    saida->createTag("ns2:ArvoreAtendimentoVO");
+                
+                        saida->addItem("ns2:idContato", CONVINT(idContato,i_idContato));
+                        saida->addItem("ns2:descricaoCompleta", (char*)arvore.arr);
+                
+                    saida->closeTag();
+                
+                    saida->createTag("ns3:UsuarioVIVO");
+                    
+                        saida->addItem("ns3:idPessoaUsuario", CONVINT(idPessoa,i_idPessoa));
+                        saida->addItem("ns3:nmLoginUsuario", "");
+                        saida->addItem("ns3:nmNome", (char*)nmPessoa.arr);
+                        saida->addItem("ns3:sgSenhaUsuario", "");
+                
+                    saida->closeTag();
+                            
+                saida->closeTag();
+                
+            saida->closeTag();
+
+        }
+    }
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE consultaWFFilaLinha;
+
+    ULOG_END( "proCConsultaWFFilaMCLinhaMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCLinhaQtdMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCLinhaQtdMP()" );
+
+    struct sqlca sqlca;
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->nrLinha[0]=='0' ) 
+    {
+        strncpy(cConv,dados->nrLinha+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->nrLinha,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        int  oprefixo         = prefixo;
+        int  otelefone        = numero;
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+        char *idClassificacaoTipoLinhaFiltro;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+        short indIdClassificacaoTipoLinha;
+
+        int iContador;
+        short sContador;
+
+    EXEC SQL END DECLARE SECTION;
+
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+    idClassificacaoTipoLinhaFiltro = dados->idClassificacaoTipoLinha;
+
+    indIdGrupo = status->idGrupo;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+    indIdClassificacaoTipoLinha = status->idClassificacaoTipoLinha;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+	    SELECT 
+		    COUNT(1)
+	    INTO
+		    :iContador:sContador
+	    FROM 
+            ATENDIMENTO.ATENDIMENTOFILAMCLINHAMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        AND VW1.CDAREAREGISTRO = :oprefixo
+        AND VW1.NRLINHA = :otelefone
+        AND (VW1.IDGRUPO = :idGrupoFiltro OR -1=:indIdGrupo)
+        AND (VW1.IDATENDIMENTO = :idAtendimentoFiltro OR -1=:indIdAtendimento)
+        AND (VW1.IDCONTATO = :idContatoFiltro OR -1=:indIdContato)
+        AND (VW1.IDESTADO = :idEstadoFiltro OR -1=:indIdEstado)
+        AND (VW1.IDSUBESTADO = :idSubEstadoFiltro OR -1=:indIdSubEstado)
+        AND (VW1.IDCLASSIFICACAOTIPOLINHA = :idClassificacaoTipoLinhaFiltro OR -1=:indIdClassificacaoTipoLinha)
+        AND (TRUNC(VW1.DTABERTURA)>=TO_DATE(:dtAberturaInicioFiltro, 'DD/MM/YYYY' ) OR -1 = :indDtAberturaInicio)
+        AND (TRUNC(VW1.DTABERTURA)<=TO_DATE(:dtAberturaFimFiltro,'DD/MM/YYYY') OR -1 = :indDtAberturaFim);
+        //AND VW1.IDPESSOACONTA IS NULL;
+
+    saida->addItem("totalRegistros", iContador);
+    saida->addItem("nrRegistros"   , 0);
+
+    ULOG_END( "proCConsultaWFFilaMCLinhaQtdMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCUsuarioMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCUsuarioMP()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+        int  idUfOperadora;
+        char *idClassificacaoTipoLinhaFiltro;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+        short indIdUfOperadora;
+        short indIdClassificacaoTipoLinha;
+
+        long idAtendimento;
+        VARCHAR idAtendimentoProtocolo[39];
+        int  idContato;
+        int  idEstado;
+        VARCHAR dsEstado[256];
+        VARCHAR sgEstado[256];
+        int  idSubEstado;
+        VARCHAR dsSubEstado[256];
+        VARCHAR sgSubEstado[256];
+        long idPessoa;
+        VARCHAR nmPessoa[256];
+        VARCHAR dtAbertura[22];
+        VARCHAR dtFechamento[22];
+        long idAtendimentoAlerta;
+        VARCHAR dsMensagem[256];
+        int  idAlerta;
+        VARCHAR sgAlerta[256];
+        VARCHAR dsAlerta[256];
+        VARCHAR nmIcone[256];
+        VARCHAR nmCor[256];
+        VARCHAR nrCriticidade[15];
+        VARCHAR arvore[2001];
+        VARCHAR nrTelefone[256];
+        VARCHAR inDocumento[256];
+        VARCHAR inACS[256];
+        int inPausaAtendimento;
+        VARCHAR dtSuspeito[32];
+        VARCHAR dtFimPausa[32];
+        long idAtendimentoBaixaHistorico;
+        VARCHAR nmURLDados[256];
+        VARCHAR dtSolicitacaoCancelamento[32];
+        VARCHAR dtPrazoFinalInterno[32];   
+        long idAtendimentoSuspeito;
+        long idAtendimentoOrigem;
+        VARCHAR dtJanelaPortout[32];
+        VARCHAR nrProtocoloPortabilidade[39];
+
+        short i_idAtendimento;
+        short i_idAtendimentoProtocolo;
+        short i_idContato;
+        short i_idEstado;
+        short i_dsEstado;
+        short i_sgEstado;
+        short i_idSubEstado;
+        short i_dsSubEstado;
+        short i_sgSubEstado;
+        short i_idPessoa;
+        short i_nmPessoa;
+        short i_dtAbertura;
+        short i_dtFechamento;
+        short i_idAtendimentoAlerta;
+        short i_dsMensagem;
+        short i_idAlerta;
+        short i_sgAlerta;
+        short i_dsAlerta;
+        short i_nmIcone;
+        short i_nmCor;
+        short i_nrCriticidade;
+        short i_arvore;
+        short i_nrTelefone;
+        short i_inDocumento;
+        short i_inACS;
+        short i_inPausaAtendimento;
+        short i_dtSuspeito;
+        short i_dtFimPausa;
+        short i_idAtendimentoBaixaHistorico;
+        short i_nmURLDados;
+        short i_dtSolicitacaoCancelamento;
+        short i_dtPrazoFinalInterno;
+        short i_idAtendimentoSuspeito;
+        short i_idAtendimentoOrigem;
+        short i_dtJanelaPortout;
+        short i_nrProtocoloPortabilidade;
+
+    EXEC SQL END DECLARE SECTION;
+
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+    idUfOperadora = dados->idUfOperadora;
+    idClassificacaoTipoLinhaFiltro = dados->idClassificacaoTipoLinha;
+
+    indIdGrupo = status->idGrupo;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+    indIdUfOperadora = status->idUfOperadora;
+    indIdClassificacaoTipoLinha = status->idClassificacaoTipoLinha;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    /*
+        Incidência 2984/3038
+        A pesquisa fica limitada em 100 registros sem nenhuma ordem
+        Apenas os 100 que vão para a tela que são ordenados
+    */
+    EXEC SQL DECLARE consultaWFFilaUsuario CURSOR FOR
+        SELECT 
+            IDATENDIMENTO,
+            IDATENDIMENTOPROTOCOLO,
+            IDCONTATO, 
+            IDESTADO, 
+            DSESTADO, 
+            SGESTADO, 
+            IDSUBESTADO, 
+            DSSUBESTADO, 
+            SGSUBESTADO, 
+            IDPESSOAUSUARIO, 
+            NMPESSOA, 
+            DTABERTURA, 
+            DTFECHAMENTO,
+            IDATENDIMENTOALERTA, 
+            DSMENSAGEM, 
+            IDALERTA, 
+            SGALERTA, 
+            DSALERTA, 
+            NMICONE, 
+            NMCOR, 
+            NRCRITICIDADE, 
+            PATH, 
+            NRTELEFONE, 
+            INDOCUMENTO, 
+            INACS, 
+            INPAUSAATENDIMENTO, 
+            DTSUSPEITO, 
+            DTFIMPAUSAATENDIMENTO,
+            IDATENDIMENTOBAIXAHISTORICO, 
+            NMURLDADOS, 
+            DTSOLICITACAOCANCELAMENTO, 
+            DTPRAZOFINALINTERNO, 
+            IDATENDIMENTOSUSPEITO, 
+            IDATENDIMENTOORIGEM,
+            DTJANELAPORTOUT,
+            NRPROTOCOLOPORTABILIDADE
+        FROM
+        (
+            SELECT 
+                VW1.IDATENDIMENTO,
+                VW1.IDATENDIMENTOPROTOCOLO,
+                VW1.IDCONTATO, 
+                VW1.IDESTADO, 
+                VW1.DSESTADO, 
+                VW1.SGESTADO, 
+                VW1.IDSUBESTADO, 
+                VW1.DSSUBESTADO, 
+                VW1.SGSUBESTADO, 
+                VW1.IDPESSOAUSUARIO, 
+                VW1.NMPESSOA, 
+                TO_CHAR(VW1.DTABERTURA,'DD/MM/YYYY HH24:MI:SS') AS DTABERTURA,
+                TO_CHAR(VW1.DTFECHAMENTO,'DD/MM/YYYY HH24:MI:SS') AS DTFECHAMENTO,
+                VW1.IDATENDIMENTOALERTA, 
+                VW1.DSMENSAGEM, 
+                VW1.IDALERTA, 
+                VW1.SGALERTA, 
+                VW1.DSALERTA, 
+                VW1.NMICONE, 
+                VW1.NMCOR, 
+                VW1.NRCRITICIDADE, 
+                VW1.PATH, 
+                VW1.NRTELEFONE, 
+                VW1.INDOCUMENTO, 
+                0 AS INACS, 
+                VW1.INPAUSAATENDIMENTO, 
+                TO_CHAR(VW1.DTSUSPEITO,'DD/MM/YYYY HH24:MI:SS') AS DTSUSPEITO, 
+                TO_CHAR(VW1.DTFIMPAUSAATENDIMENTO,'DD/MM/YYYY HH24:MI:SS') AS DTFIMPAUSAATENDIMENTO, 
+                VW1.IDATENDIMENTOBAIXAHISTORICO, 
+                VW1.NMURLDADOS, 
+                VW1.DTSOLICITACAOCANCELAMENTO, 
+                VW1.DTPRAZOFINALINTERNO, 
+                VW1.IDATENDIMENTOSUSPEITO, 
+                VW1.IDATENDIMENTOORIGEM,
+                VW1.IDATENDIMENTOPR,
+                TO_CHAR(VW1.DTJANELAPORTOUT,'DD/MM/YYYY HH24:MI:SS') AS DTJANELAPORTOUT,
+                VW1.NRPROTOCOLOPORTABILIDADE
+            FROM 
+                ATENDIMENTO.ATENDIMENTOFILAMCUSUMPWFV01 VW1
+            WHERE 1=1
+                //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+            //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+            // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+            AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+            //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+            // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+            //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+            //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+            //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+            AND (VW1.IDUFOPERADORA = :idUfOperadora OR -1=:indIdUfOperadora)
+            AND (VW1.IDGRUPO = :idGrupoFiltro OR -1=:indIdGrupo)
+            AND (VW1.IDATENDIMENTO = :idAtendimentoFiltro OR -1=:indIdAtendimento)
+            AND (VW1.IDCONTATO = :idContatoFiltro OR -1=:indIdContato)
+            AND (VW1.IDESTADO = :idEstadoFiltro OR -1=:indIdEstado)
+            AND (VW1.IDSUBESTADO = :idSubEstadoFiltro OR -1=:indIdSubEstado)
+            AND (VW1.IDCLASSIFICACAOTIPOLINHA = :idClassificacaoTipoLinhaFiltro OR -1=:indIdClassificacaoTipoLinha)
+            AND (TRUNC(VW1.DTABERTURA)>=TO_DATE(:dtAberturaInicioFiltro, 'DD/MM/YYYY' ) OR -1 = :indDtAberturaInicio)
+            AND (TRUNC(VW1.DTABERTURA)<=TO_DATE(:dtAberturaFimFiltro,'DD/MM/YYYY') OR -1 = :indDtAberturaFim)
+            //AND VW1.IDPESSOACONTA IS NULL
+            AND ROWNUM < 101
+        )
+        ORDER BY 
+            NRCRITICIDADE DESC,IDATENDIMENTOPR;
+
+    EXEC SQL OPEN consultaWFFilaUsuario;
+    while (true)
+    {
+        i_idAtendimento =
+        i_idAtendimentoProtocolo =
+        i_idContato =
+        i_idEstado =
+        i_dsEstado =
+        i_sgEstado =
+        i_idSubEstado =
+        i_dsSubEstado =
+        i_sgSubEstado =
+        i_idPessoa =
+        i_nmPessoa =
+        i_dtAbertura =
+        i_dtFechamento =
+        i_idAtendimentoAlerta =
+        i_dsMensagem =
+        i_idAlerta =
+        i_sgAlerta =
+        i_dsAlerta =
+        i_nmIcone =
+        i_nmCor =
+        i_nrCriticidade =
+        i_arvore =
+        i_nrTelefone =
+        i_inDocumento =
+        i_inACS =
+        i_inPausaAtendimento =
+        i_dtSuspeito =
+        i_dtFimPausa =
+        i_idAtendimentoBaixaHistorico =
+        i_nmURLDados =
+        i_dtSolicitacaoCancelamento =
+        i_dtPrazoFinalInterno =
+        i_idAtendimentoSuspeito =
+        i_dtJanelaPortout =
+        i_nrProtocoloPortabilidade =
+        i_idAtendimentoOrigem = -1;
+
+        EXEC SQL FETCH consultaWFFilaUsuario INTO
+            :idAtendimento:i_idAtendimento,
+            :idAtendimentoProtocolo:i_idAtendimentoProtocolo,
+            :idContato:i_idContato,
+            :idEstado:i_idEstado,
+            :dsEstado:i_dsEstado,
+            :sgEstado:i_sgEstado,
+            :idSubEstado:i_idSubEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :sgSubEstado:i_sgSubEstado,
+            :idPessoa:i_idPessoa,
+            :nmPessoa:i_nmPessoa,
+            :dtAbertura:i_dtAbertura,
+            :dtFechamento:i_dtFechamento,
+            :idAtendimentoAlerta:i_idAtendimentoAlerta,
+            :dsMensagem:i_dsMensagem,
+            :idAlerta:i_idAlerta,
+            :sgAlerta:i_sgAlerta,
+            :dsAlerta:i_dsAlerta,
+            :nmIcone:i_nmIcone,
+            :nmCor:i_nmCor,
+            :nrCriticidade:i_nrCriticidade,
+            :arvore:i_arvore,
+            :nrTelefone:i_nrTelefone,
+            :inDocumento:i_inDocumento,
+            :inACS:i_inACS,
+            :inPausaAtendimento:i_inPausaAtendimento,
+            :dtSuspeito:i_dtSuspeito,
+            :dtFimPausa:i_dtFimPausa,
+            :idAtendimentoBaixaHistorico:i_idAtendimentoBaixaHistorico,
+            :nmURLDados:i_nmURLDados,
+            :dtSolicitacaoCancelamento:i_dtSolicitacaoCancelamento,
+            :dtPrazoFinalInterno:i_dtPrazoFinalInterno,
+            :idAtendimentoSuspeito:i_idAtendimentoSuspeito,
+            :idAtendimentoOrigem:i_idAtendimentoOrigem,
+            :dtJanelaPortout:i_dtJanelaPortout,
+            :nrProtocoloPortabilidade:i_nrProtocoloPortabilidade;
+
+        totalRegistros++;
+        
+        if (numeroRegistros < 100)
+        {
+
+            numeroRegistros++;
+
+            CONVIND(idAtendimentoProtocolo, i_idAtendimentoProtocolo);
+            CONVIND(dsEstado, i_dsEstado);
+            CONVIND(sgEstado, i_sgEstado);
+            CONVIND(dsSubEstado, i_dsSubEstado);
+            CONVIND(sgSubEstado, i_sgSubEstado);
+            CONVIND(nmPessoa, i_nmPessoa);
+            CONVIND(dtAbertura, i_dtAbertura);
+            CONVIND(dtFechamento, i_dtFechamento);
+            CONVIND(dsMensagem, i_dsMensagem);
+            CONVIND(sgAlerta, i_sgAlerta);
+            CONVIND(dsAlerta, i_dsAlerta);
+            CONVIND(nmIcone, i_nmIcone);
+            CONVIND(nmCor, i_nmCor);
+            CONVIND(arvore, i_arvore);
+            CONVIND(nrTelefone, i_nrTelefone);
+            CONVIND(inDocumento, i_inDocumento);
+            CONVIND(inACS, i_inACS);
+            CONVIND(dtSuspeito, i_dtSuspeito);
+            CONVIND(dtFimPausa, i_dtFimPausa);
+            CONVIND(nmURLDados, i_nmURLDados);
+            CONVIND(dtSolicitacaoCancelamento, i_dtSolicitacaoCancelamento);
+            CONVIND(dtPrazoFinalInterno, i_dtPrazoFinalInterno);
+            CONVIND(nrCriticidade, i_nrCriticidade);
+            CONVIND(dtJanelaPortout, i_dtJanelaPortout);
+            CONVIND(nrProtocoloPortabilidade,i_nrProtocoloPortabilidade);
+
+            if (i_idAtendimentoBaixaHistorico == -1)
+            {
+                idAtendimentoBaixaHistorico = 0;
+            }
+            
+            saida->createTag("AtendimentoFilaVO");
+                
+                saida->addItem("operacaoWorkflow","");
+                
+                saida->createTag("AtendimentoVO");
+                
+                    saida->addItem("idAtendimento", CONVLONG(idAtendimento,i_idAtendimento));
+                    saida->addItem("nrProtocolo", (char*)idAtendimentoProtocolo.arr);
+                    saida->addItem("dtAbertura", (char*)dtAbertura.arr);
+                    saida->addItem("dtJanelaPortout", (char*)dtJanelaPortout.arr);
+                    saida->addItem("dtFechamento", (char*)dtFechamento.arr);
+                    saida->addItem("nrTelefone", (char*)nrTelefone.arr);
+                    saida->addItem("inDocumento", (char*)inDocumento.arr);
+                    saida->addItem("inACS", (char*)inACS.arr);
+                    saida->addItem("inPausaAtendimento", CONVINT(inPausaAtendimento,i_inPausaAtendimento));
+                    saida->addItem("dtSuspeito", (char*)dtSuspeito.arr);
+                    saida->addItem("dtFimPausaAtendimento", (char*)dtFimPausa.arr);
+                    saida->addItem("idAtendimentoBaixaHistorico", idAtendimentoBaixaHistorico);
+                    saida->addItem("nmURLDados", (char*)nmURLDados.arr);
+                    saida->addItem("dtSolicitacaoCancelamento", (char*)dtSolicitacaoCancelamento.arr);
+                    saida->addItem("nrProtocoloPortabilidade", (char*)nrProtocoloPortabilidade.arr);
+                        
+                    saida->createTag("WFEstadoVO");
+                
+                        saida->addItem("idEstado", CONVINT(idEstado,i_idEstado));
+                        saida->addItem("dsEstado", (char*)dsEstado.arr);
+                        saida->addItem("sgEstado", (char*)sgEstado.arr);
+            
+                    saida->closeTag();
+                
+                    saida->createTag("WFSubEstadoVO");
+                
+                        saida->addItem("idSubEstado", CONVINT(idSubEstado,i_idSubEstado));
+                        saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                        saida->addItem("sgSubEstado", (char*)sgSubEstado.arr);
+                
+                    saida->closeTag();
+                
+                    if (i_idAlerta != -1)
+                    {
+                        saida->createTag("AlertaVO");
+                        
+                            saida->addItem("idAlerta", CONVINT(idAlerta,i_idAlerta));
+                            saida->addItem("dsAlerta", (char*)dsAlerta.arr);
+                            saida->addItem("sgAlerta", (char*)sgAlerta.arr);
+                            saida->addItem("nmIcone", (char*)nmIcone.arr);
+                            saida->addItem("nmCor", (char*)nmCor.arr);
+                            saida->addItem("nrCriticidade", (char*)nrCriticidade.arr);
+                        
+                        saida->closeTag();
+                    }
+                
+                    saida->createTag("ns2:ArvoreAtendimentoVO");
+                
+                        saida->addItem("ns2:idContato", CONVINT(idContato,i_idContato));
+                        saida->addItem("ns2:descricaoCompleta", (char*)arvore.arr);
+                
+                    saida->closeTag();
+                
+                    saida->createTag("ns3:UsuarioVIVO");
+                    
+                        saida->addItem("ns3:idPessoaUsuario", CONVINT(idPessoa,i_idPessoa));
+                        saida->addItem("ns3:nmLoginUsuario", "");
+                        saida->addItem("ns3:nmNome", (char*)nmPessoa.arr);
+                        saida->addItem("ns3:sgSenhaUsuario", "");
+                
+                    saida->closeTag();
+                            
+                saida->closeTag();
+                
+            saida->closeTag();
+        }
+    }
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE consultaWFFilaUsuario;
+
+    ULOG_END( "proCConsultaWFFilaMCUsuarioMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCUsuarioQtdMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCUsuarioQtdMP()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+        int  idUfOperadora;
+        char *idClassificacaoTipoLinhaFiltro;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+        short indIdUfOperadora;
+        short indIdClassificacaoTipoLinha;
+
+        int iContador;
+        short sContador;
+    EXEC SQL END DECLARE SECTION;
+
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+    idUfOperadora = dados->idUfOperadora;
+    idClassificacaoTipoLinhaFiltro = dados->idClassificacaoTipoLinha;
+
+    indIdGrupo = status->idGrupo;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+    indIdUfOperadora = status->idUfOperadora;
+    indIdClassificacaoTipoLinha = status->idClassificacaoTipoLinha;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT 
+    	    COUNT(1)
+        INTO
+    	    :iContador:sContador
+	    FROM 
+		    ATENDIMENTO.ATENDIMENTOFILAMCUSUMPWFV01 VW1
+	    WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+	    AND (VW1.IDUFOPERADORA = :idUfOperadora OR -1=:indIdUfOperadora)
+	    AND (VW1.IDGRUPO = :idGrupoFiltro OR -1=:indIdGrupo)
+	    AND (VW1.IDATENDIMENTO = :idAtendimentoFiltro OR -1=:indIdAtendimento)
+	    AND (VW1.IDCONTATO = :idContatoFiltro OR -1=:indIdContato)
+	    AND (VW1.IDESTADO = :idEstadoFiltro OR -1=:indIdEstado)
+	    AND (VW1.IDSUBESTADO = :idSubEstadoFiltro OR -1=:indIdSubEstado)
+        AND (VW1.IDCLASSIFICACAOTIPOLINHA = :idClassificacaoTipoLinhaFiltro OR -1=:indIdClassificacaoTipoLinha)
+	    AND (TRUNC(VW1.DTABERTURA)>=TO_DATE(:dtAberturaInicioFiltro, 'DD/MM/YYYY' ) OR -1 = :indDtAberturaInicio)
+	    AND (TRUNC(VW1.DTABERTURA)<=TO_DATE(:dtAberturaFimFiltro,'DD/MM/YYYY') OR -1 = :indDtAberturaFim);
+        //AND VW1.IDPESSOACONTA IS NULL;
+
+    saida->addItem("totalRegistros", iContador);
+    saida->addItem("nrRegistros", 0);
+
+    ULOG_END( "proCConsultaWFFilaMCUsuarioQtdMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCMP()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        char *nrContaParam;
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+        int  idUfOperadora;
+        int idAlertaFiltro;
+        int idTipoCarteiraFiltro;
+        int idSegmentacaoFiltro;
+        char *idClassificacaoTipoLinhaFiltro;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdUfOperadora;
+        short indNrContaParam;
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+        short indIdAlertaFiltro;
+        short indIdTipoCarteiraFiltro;
+        short indIdSegmentacaoFiltro;
+        short indIdClassificacaoTipoLinha;
+
+        long idAtendimento;
+        VARCHAR idAtendimentoProtocolo[39];
+        int  idContato;
+        int  idEstado;
+        VARCHAR dsEstado[256];
+        VARCHAR sgEstado[256];
+        int  idSubEstado;
+        VARCHAR dsSubEstado[256];
+        VARCHAR sgSubEstado[256];
+        long idPessoa;
+        VARCHAR nmPessoa[256];
+        VARCHAR dtAbertura[22];
+        VARCHAR dtFechamento[22];
+        long idAtendimentoAlerta;
+        VARCHAR dsMensagem[256];
+        int  idAlerta;
+        VARCHAR sgAlerta[256];
+        VARCHAR dsAlerta[256];
+        VARCHAR nmIcone[256];
+        VARCHAR nmCor[256];
+        VARCHAR nrCriticidade[15];
+        VARCHAR arvore[2001];
+        VARCHAR nrTelefone[256];
+        VARCHAR inDocumento[256];
+        VARCHAR inACS[256];
+        int inPausaAtendimento;
+        VARCHAR dtSuspeito[32];
+        VARCHAR dtFimPausa[32];
+        long idAtendimentoBaixaHistorico;
+        VARCHAR nmURLDados[256];
+        VARCHAR dtSolicitacaoCancelamento[32];
+        VARCHAR dtPrazoFinalInterno[32];   
+        long idAtendimentoSuspeito;
+        long idAtendimentoOrigem;
+        VARCHAR dtJanelaPortout[32];
+        VARCHAR nrProtocoloPortabilidade[39];
+
+        short i_idAtendimento;
+        short i_idAtendimentoProtocolo;
+        short i_idContato;
+        short i_idEstado;
+        short i_dsEstado;
+        short i_sgEstado;
+        short i_idSubEstado;
+        short i_dsSubEstado;
+        short i_sgSubEstado;
+        short i_idPessoa;
+        short i_nmPessoa;
+        short i_dtAbertura;
+        short i_dtFechamento;
+        short i_idAtendimentoAlerta;
+        short i_dsMensagem;
+        short i_idAlerta;
+        short i_sgAlerta;
+        short i_dsAlerta;
+        short i_nmIcone;
+        short i_nmCor;
+        short i_nrCriticidade;
+        short i_arvore;
+        short i_nrTelefone;
+        short i_inDocumento;
+        short i_inACS;
+        short i_inPausaAtendimento;
+        short i_dtSuspeito;
+        short i_dtFimPausa;
+        short i_idAtendimentoBaixaHistorico;
+        short i_nmURLDados;
+        short i_dtSolicitacaoCancelamento;
+        short i_dtPrazoFinalInterno;
+        short i_idAtendimentoSuspeito;
+        short i_idAtendimentoOrigem;
+        short i_dtJanelaPortout;
+        short i_nrProtocoloPortabilidade;
+
+    EXEC SQL END DECLARE SECTION;
+
+    nrContaParam = dados->nrConta;
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+    idUfOperadora = dados->idUfOperadora;
+    idAlertaFiltro = dados->idAlerta;
+    idTipoCarteiraFiltro = dados->idTipoCarteira;
+    idSegmentacaoFiltro = dados->idSegmentacao;
+    idClassificacaoTipoLinhaFiltro = dados->idClassificacaoTipoLinha;
+
+    indIdGrupo = status->idGrupo;
+    indNrContaParam = status->nrConta;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+    indIdUfOperadora = status->idUfOperadora;
+    indIdAlertaFiltro = status->idAlerta;
+    indIdTipoCarteiraFiltro = status->idTipoCarteira;
+    indIdSegmentacaoFiltro = status->idSegmentacao;
+    indIdClassificacaoTipoLinha = status->idClassificacaoTipoLinha;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    /*
+        Incidência 2984/3038
+        A pesquisa fica limitada em 100 registros sem nenhuma ordem
+        Apenas os 100 que vão para a tela que são ordenados
+    */
+    EXEC SQL 
+    DECLARE consultaWFFila CURSOR FOR
+        SELECT
+            IDATENDIMENTO,
+            IDATENDIMENTOPROTOCOLO,
+            IDCONTATO, 
+            IDESTADO, 
+            DSESTADO, 
+            SGESTADO, 
+            IDSUBESTADO, 
+            DSSUBESTADO, 
+            SGSUBESTADO, 
+            IDPESSOAUSUARIOGRUPO, 
+            NMPESSOA, 
+            DTABERTURA, 
+            DTFECHAMENTO, 
+            IDATENDIMENTOALERTA, 
+            DSMENSAGEM, 
+            IDALERTA, 
+            SGALERTA, 
+            DSALERTA, 
+            NMICONE, 
+            NMCOR, 
+            NRCRITICIDADE, 
+            PATH, 
+            NRTELEFONE, 
+            INDOCUMENTO, 
+            INACS, 
+            INPAUSAATENDIMENTO, 
+            DTSUSPEITO, 
+            DTFIMPAUSAATENDIMENTO, 
+            IDATENDIMENTOBAIXAHISTORICO, 
+            NMURLDADOS, 
+            DTSOLICITACAOCANCELAMENTO, 
+            DTPRAZOFINALINTERNO, 
+            IDATENDIMENTOSUSPEITO, 
+            IDATENDIMENTOORIGEM,
+            DTJANELAPORTOUT,
+            NRPROTOCOLOPORTABILIDADE
+        FROM
+        (
+            SELECT 
+                VW1.IDATENDIMENTO, 
+                VW1.IDATENDIMENTOPROTOCOLO,
+                VW1.IDCONTATO, 
+                VW1.IDESTADO, 
+                VW1.DSESTADO, 
+                VW1.SGESTADO, 
+                VW1.IDSUBESTADO, 
+                VW1.DSSUBESTADO, 
+                VW1.SGSUBESTADO, 
+                VW1.IDPESSOAUSUARIOGRUPO, 
+                VW1.NMPESSOA, 
+                TO_CHAR(VW1.DTABERTURA,'DD/MM/YYYY HH24:MI:SS') AS DTABERTURA, 
+                TO_CHAR(VW1.DTFECHAMENTO,'DD/MM/YYYY HH24:MI:SS') AS DTFECHAMENTO, 
+                VW1.IDATENDIMENTOALERTA, 
+                VW1.DSMENSAGEM, 
+                VW1.IDALERTA, 
+                VW1.SGALERTA, 
+                VW1.DSALERTA, 
+                VW1.NMICONE, 
+                VW1.NMCOR, 
+                VW1.NRCRITICIDADE, 
+                VW1.PATH, 
+                VW1.NRTELEFONE, 
+                VW1.INDOCUMENTO, 
+                0 AS INACS, 
+                VW1.INPAUSAATENDIMENTO, 
+                TO_CHAR(VW1.DTSUSPEITO,'DD/MM/YYYY HH24:MI:SS') AS DTSUSPEITO, 
+                TO_CHAR(VW1.DTFIMPAUSAATENDIMENTO,'DD/MM/YYYY HH24:MI:SS') AS DTFIMPAUSAATENDIMENTO, 
+                VW1.IDATENDIMENTOBAIXAHISTORICO, 
+                VW1.NMURLDADOS, 
+                VW1.DTSOLICITACAOCANCELAMENTO, 
+                VW1.DTPRAZOFINALINTERNO, 
+                VW1.IDATENDIMENTOSUSPEITO, 
+                VW1.IDATENDIMENTOORIGEM,
+                VW1.IDATENDIMENTOPR,
+                TO_CHAR(VW1.DTJANELAPORTOUT,'DD/MM/YYYY HH24:MI:SS') AS DTJANELAPORTOUT,
+                VW1.NRPROTOCOLOPORTABILIDADE
+             FROM 
+                ATENDIMENTO.ATENDIMENTOFILAMCMPWFV01 VW1
+             WHERE 1=1
+                    //MP Não usa este critério --VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+                //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+                // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+                AND (VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro OR IDPESSOAUSUARIOMC = :idUsuarioGrupoFiltro)
+                //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+                // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+                //MP Não usa este critério --AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+                //MP Não usa este critério --AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+                //MP Não usa este critério --AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+                //MP Não usa este critério --AND NVL(VW1.IDUFOPERADORA) = DECODE(:indIdUfOperadora,-1,NVL(VW1.IDUFOPERADORA),:idUfOperadora)
+                //MP Não usa este critério --AND NVL(VW1.IDGRUPO) = DECODE(:indIdGrupo,-1,NVL(VW1.IDGRUPO),:idGrupoFiltro)
+                //MP Não usa este critério --AND NVL(VW1.IDATENDIMENTO) = DECODE(:indIdAtendimento,-1,NVL(VW1.IDATENDIMENTO),:idAtendimentoFiltro)
+                //MP Não usa este critério --AND NVL(VW1.IDCONTATO) = DECODE(:indIdContato,-1,NVL(VW1.IDCONTATO),:idContatoFiltro)
+                //MP Não usa este critério --AND NVL(VW1.IDESTADO) = DECODE(:indIdEstado,-1,NVL(VW1.IDESTADO),:idEstadoFiltro)
+                //MP Não usa este critério --AND NVL(VW1.IDSUBESTADO) = DECODE(:indIdSubEstado),-1,NVL(VW1.IDSUBESTADO),:indIdSubEstad:idSubEstadoFiltro 
+                //MP Não usa este critério --AND VW1.IDALERTA = DECODE(:indIdAlertaFiltro,-1,VW1.IDALERTA,:idAlertaFiltro)
+                //MP Não usa este critério --AND NVL(VW1.IDTIPOCARTEIRA,0) = DECODE(:indIdTipoCarteiraFiltro,-1,NVL(VW1.IDTIPOCARTEIRA,0),:idTipoCarteiraFiltro)
+                //MP Não usa este critério --AND NVL(VW1.IDSEGMENTACAO,0) = DECODE(:indIdSegmentacaoFiltro,-1,NVL(VW1.IDSEGMENTACAO,0),:idSegmentacaoFiltro)
+                //MP Não usa este critério --AND NVL(VW1.CDCONTA,0) = DECODE(:indNrContaParam,-1,NVL(VW1.CDCONTA,0),:nrContaParam)
+                //MP Não usa este critério --AND (VW1.IDCLASSIFICACAOTIPOLINHA = :idClassificacaoTipoLinhaFiltro OR -1=:indIdClassificacaoTipoLinha)
+                //MP Não usa este critério --AND (TRUNC(VW1.DTABERTURA)>=TO_DATE(:dtAberturaInicioFiltro, 'DD/MM/YYYY' ) OR -1 = :indDtAberturaInicio)
+                //MP Não usa este critério --AND (TRUNC(VW1.DTABERTURA)<=TO_DATE(:dtAberturaFimFiltro,'DD/MM/YYYY') OR -1 = :indDtAberturaFim)
+                //AND VW1.IDPESSOACONTA IS NULL
+                AND ROWNUM < 101
+        )
+        ORDER BY
+            NRCRITICIDADE DESC, IDATENDIMENTOPR;
+
+    EXEC SQL OPEN consultaWFFila;
+    while (true)
+    {
+        i_idAtendimento =
+        i_idAtendimentoProtocolo =
+        i_idContato =
+        i_idEstado =
+        i_dsEstado =
+        i_sgEstado =
+        i_idSubEstado =
+        i_dsSubEstado =
+        i_sgSubEstado =
+        i_idPessoa =
+        i_nmPessoa =
+        i_dtAbertura =
+        i_dtFechamento =
+        i_idAtendimentoAlerta =
+        i_dsMensagem =
+        i_idAlerta =
+        i_sgAlerta =
+        i_dsAlerta =
+        i_nmIcone =
+        i_nmCor =
+        i_nrCriticidade =
+        i_arvore =
+        i_nrTelefone =
+        i_inDocumento =
+        i_inACS =
+        i_inPausaAtendimento =
+        i_dtSuspeito =
+        i_dtFimPausa =
+        i_idAtendimentoBaixaHistorico =
+        i_nmURLDados =
+        i_dtSolicitacaoCancelamento =
+        i_dtPrazoFinalInterno =
+        i_idAtendimentoSuspeito =
+        i_dtJanelaPortout =
+        i_nrProtocoloPortabilidade =
+        i_idAtendimentoOrigem = -1;
+
+        EXEC SQL FETCH consultaWFFila INTO
+            :idAtendimento:i_idAtendimento,
+            :idAtendimentoProtocolo:i_idAtendimentoProtocolo,
+            :idContato:i_idContato,
+            :idEstado:i_idEstado,
+            :dsEstado:i_dsEstado,
+            :sgEstado:i_sgEstado,
+            :idSubEstado:i_idSubEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :sgSubEstado:i_sgSubEstado,
+            :idPessoa:i_idPessoa,
+            :nmPessoa:i_nmPessoa,
+            :dtAbertura:i_dtAbertura,
+            :dtFechamento:i_dtFechamento,
+            :idAtendimentoAlerta:i_idAtendimentoAlerta,
+            :dsMensagem:i_dsMensagem,
+            :idAlerta:i_idAlerta,
+            :sgAlerta:i_sgAlerta,
+            :dsAlerta:i_dsAlerta,
+            :nmIcone:i_nmIcone,
+            :nmCor:i_nmCor,
+            :nrCriticidade:i_nrCriticidade,
+            :arvore:i_arvore,
+            :nrTelefone:i_nrTelefone,
+            :inDocumento:i_inDocumento,
+            :inACS:i_inACS,
+            :inPausaAtendimento:i_inPausaAtendimento,
+            :dtSuspeito:i_dtSuspeito,
+            :dtFimPausa:i_dtFimPausa,
+            :idAtendimentoBaixaHistorico:i_idAtendimentoBaixaHistorico,
+            :nmURLDados:i_nmURLDados,
+            :dtSolicitacaoCancelamento:i_dtSolicitacaoCancelamento,
+            :dtPrazoFinalInterno:i_dtPrazoFinalInterno,
+            :idAtendimentoSuspeito:i_idAtendimentoSuspeito,
+            :idAtendimentoOrigem:i_idAtendimentoOrigem,
+            :dtJanelaPortout:i_dtJanelaPortout,
+            :nrProtocoloPortabilidade:i_nrProtocoloPortabilidade;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(idAtendimentoProtocolo, i_idAtendimentoProtocolo);
+            CONVIND(dsEstado, i_dsEstado);
+            CONVIND(sgEstado, i_sgEstado);
+            CONVIND(dsSubEstado, i_dsSubEstado);
+            CONVIND(sgSubEstado, i_sgSubEstado);
+            CONVIND(nmPessoa, i_nmPessoa);
+            CONVIND(dtAbertura, i_dtAbertura);
+            CONVIND(dtFechamento, i_dtFechamento);
+            CONVIND(dsMensagem, i_dsMensagem);
+            CONVIND(sgAlerta, i_sgAlerta);
+            CONVIND(dsAlerta, i_dsAlerta);
+            CONVIND(nmIcone, i_nmIcone);
+            CONVIND(nmCor, i_nmCor);
+            CONVIND(arvore, i_arvore);
+            CONVIND(nrTelefone, i_nrTelefone);
+            CONVIND(inDocumento, i_inDocumento);
+            CONVIND(inACS, i_inACS);
+            CONVIND(dtSuspeito, i_dtSuspeito);
+            CONVIND(dtFimPausa, i_dtFimPausa);
+            CONVIND(nmURLDados, i_nmURLDados);
+            CONVIND(dtSolicitacaoCancelamento, i_dtSolicitacaoCancelamento);
+            CONVIND(dtPrazoFinalInterno, i_dtPrazoFinalInterno);
+            CONVIND(nrCriticidade, i_nrCriticidade);
+            CONVIND(dtJanelaPortout, i_dtJanelaPortout);
+            CONVIND(nrProtocoloPortabilidade,i_nrProtocoloPortabilidade);
+
+            if (i_idAtendimentoBaixaHistorico == -1)
+            {
+                idAtendimentoBaixaHistorico = 0;
+            }
+            
+            saida->createTag("AtendimentoFilaVO");
+                
+                saida->addItem("operacaoWorkflow","");
+                
+                saida->createTag("AtendimentoVO");
+                
+                    saida->addItem("idAtendimento", CONVLONG(idAtendimento,i_idAtendimento));
+                    saida->addItem("nrProtocolo", (char*)idAtendimentoProtocolo.arr);
+                    saida->addItem("dtAbertura", (char*)dtAbertura.arr);
+                    saida->addItem("dtJanelaPortout", (char*)dtJanelaPortout.arr);
+                    saida->addItem("dtFechamento", (char*)dtFechamento.arr);
+                    saida->addItem("nrTelefone", (char*)nrTelefone.arr);
+                    saida->addItem("inDocumento", (char*)inDocumento.arr);
+                    saida->addItem("inACS", (char*)inACS.arr);
+                    saida->addItem("inPausaAtendimento", CONVINT(inPausaAtendimento,i_inPausaAtendimento));
+                    saida->addItem("dtSuspeito", (char*)dtSuspeito.arr);
+                    saida->addItem("dtFimPausaAtendimento", (char*)dtFimPausa.arr);
+                    saida->addItem("idAtendimentoBaixaHistorico", idAtendimentoBaixaHistorico);
+                    saida->addItem("nmURLDados", (char*)nmURLDados.arr);
+                    saida->addItem("dtSolicitacaoCancelamento", (char*)dtSolicitacaoCancelamento.arr);
+                    saida->addItem("nrProtocoloPortabilidade", (char*)nrProtocoloPortabilidade.arr);
+                        
+                    saida->createTag("WFEstadoVO");
+                
+                        saida->addItem("idEstado", CONVINT(idEstado,i_idEstado));
+                        saida->addItem("dsEstado", (char*)dsEstado.arr);
+                        saida->addItem("sgEstado", (char*)sgEstado.arr);
+            
+                    saida->closeTag();
+                
+                    saida->createTag("WFSubEstadoVO");
+                
+                        saida->addItem("idSubEstado", CONVINT(idSubEstado,i_idSubEstado));
+                        saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                        saida->addItem("sgSubEstado", (char*)sgSubEstado.arr);
+                
+                    saida->closeTag();
+                
+                    if (i_idAlerta != -1)
+                    {
+                        saida->createTag("AlertaVO");
+                        
+                            saida->addItem("idAlerta", CONVINT(idAlerta,i_idAlerta));
+                            saida->addItem("dsAlerta", (char*)dsAlerta.arr);
+                            saida->addItem("sgAlerta", (char*)sgAlerta.arr);
+                            saida->addItem("nmIcone", (char*)nmIcone.arr);
+                            saida->addItem("nmCor", (char*)nmCor.arr);
+                            saida->addItem("nrCriticidade", (char*)nrCriticidade.arr);
+                        
+                        saida->closeTag();
+                    }
+                
+                    saida->createTag("ns2:ArvoreAtendimentoVO");
+                
+                        saida->addItem("ns2:idContato", CONVINT(idContato,i_idContato));
+                        saida->addItem("ns2:descricaoCompleta", (char*)arvore.arr);
+                
+                    saida->closeTag();
+                
+                    saida->createTag("ns3:UsuarioVIVO");
+                    
+                        saida->addItem("ns3:idPessoaUsuario", CONVINT(idPessoa,i_idPessoa));
+                        saida->addItem("ns3:nmLoginUsuario", "");
+                        saida->addItem("ns3:nmNome", (char*)nmPessoa.arr);
+                        saida->addItem("ns3:sgSenhaUsuario", "");
+                
+                    saida->closeTag();
+                            
+                saida->closeTag();
+                
+            saida->closeTag();
+        }
+    }
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE consultaWFFila;
+
+    ULOG_END( "proCConsultaWFFilaMCMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCQtdMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCQtdMP()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int  idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int  idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        int  idGrupoFiltro;
+        long idAtendimentoFiltro;
+        int  idContatoFiltro;
+        int  idEstadoFiltro;
+        int  idSubEstadoFiltro;
+        char dtAberturaInicioFiltro[11];
+        char dtAberturaFimFiltro[11];
+        int  idUfOperadora;
+        char *idClassificacaoTipoLinhaFiltro;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        short indIdUfOperadora;
+        short indIdGrupo;
+        short indIdAtendimento;
+        short indIdContato;
+        short indIdEstado;
+        short indIdSubEstado;
+        short indDtAberturaInicio;
+        short indDtAberturaFim;
+        short indIdClassificacaoTipoLinha;
+
+        int iContador;
+        short sContador;
+
+    EXEC SQL END DECLARE SECTION;
+
+    idGrupoFiltro = dados->idGrupo;
+    idAtendimentoFiltro = dados->idAtendimento;
+    idContatoFiltro = dados->idContato;
+    idEstadoFiltro = dados->idEstado;
+    idSubEstadoFiltro = dados->idSubEstado;
+    strcpy(dtAberturaInicioFiltro, dados->dtAberturaInicio);
+    strcpy(dtAberturaFimFiltro, dados->dtAberturaFim);
+    idUfOperadora = dados->idUfOperadora;
+    idClassificacaoTipoLinhaFiltro = dados->idClassificacaoTipoLinha;
+
+    indIdGrupo = status->idGrupo;
+    indIdAtendimento = status->idAtendimento;
+    indIdContato = status->idContato;
+    indIdEstado = status->idEstado;
+    indIdSubEstado = status->idSubEstado;
+    indDtAberturaInicio = status->dtAberturaInicio;
+    indDtAberturaFim = status->dtAberturaFim;
+    indIdUfOperadora = status->idUfOperadora;
+    indIdClassificacaoTipoLinha = status->idClassificacaoTipoLinha;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    if( indIdEstado != -1 || indIdSubEstado != -1 )
+    {
+    	//Se existir indIdEstado ou indIdSubEstado então realiza a pesquisa pesada com mais parametros
+	    EXEC SQL 
+		    SELECT 
+			    COUNT(1)
+		    INTO
+			    :iContador:sContador
+		    FROM 
+			    ATENDIMENTO.ATENDIMENTOFILAMCMPWFV01 VW1
+		    WHERE 1=1
+                //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+            //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+            // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+            AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+            //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+            // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+            //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+            //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+            //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+		    AND (VW1.IDUFOPERADORA = :idUfOperadora OR -1=:indIdUfOperadora)
+		    AND (VW1.IDGRUPO = :idGrupoFiltro OR -1=:indIdGrupo)
+		    AND (VW1.IDATENDIMENTO = :idAtendimentoFiltro OR -1=:indIdAtendimento)
+		    AND (VW1.IDCONTATO = :idContatoFiltro OR -1=:indIdContato)
+		    AND (VW1.IDESTADO = :idEstadoFiltro OR -1=:indIdEstado)
+		    AND (VW1.IDSUBESTADO = :idSubEstadoFiltro OR -1=:indIdSubEstado) 
+            AND (VW1.IDCLASSIFICACAOTIPOLINHA = :idClassificacaoTipoLinhaFiltro OR -1=:indIdClassificacaoTipoLinha)
+            AND TRUNC(VW1.DTABERTURA) >= DECODE(:indDtAberturaInicio,-1,TRUNC(VW1.DTABERTURA),TO_DATE(:dtAberturaInicioFiltro,'YYYYMMDD'))
+            AND TRUNC(VW1.DTABERTURA) <= DECODE(:indDtAberturaFim ,-1,TRUNC(VW1.DTABERTURA),TO_DATE(:dtAberturaFimFiltro,'YYYYMMDD'));
+            //AND VW1.IDPESSOACONTA IS NULL;
+	}
+	else
+	{
+    	//Se não existir indIdEstado ou indIdSubEstado então realiza a pesquisa menos pesada com menos parametros
+        // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+        // Esta rotina absorveu a antiga view ATENDIMENTO.ATENDIMENTOFILAWFV02. Esta view só era usada neste ponto do
+        // sistema e por este motivo foi absorvida aqui e deletada do banco de dados. - Fev/2007 - Cassio.
+	    EXEC SQL 
+		    SELECT 
+			    COUNT(1)
+		    INTO
+			    :iContador:sContador
+            FROM
+                ATENDIMENTO.ATENDIMENTOPRIORIZACAO VW1
+                //,ACESSO.USUARIOGRUPO USUARIOGRUPO
+            WHERE 1=1
+                //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+            //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+            // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+            AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+            //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+            // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+            //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+            //AND USUARIOGRUPO.IDPESSOAUSUARIO = :idUsuarioGrupoFiltro
+            //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+            AND VW1.SGREGRAENCAMINHAMENTO = 'MC'
+            //AND VW1.IDGRUPOATUAL = USUARIOGRUPO.IDGRUPO
+            AND VW1.SGTIPOPORTABILIDADE IS NULL
+		    //AND USUARIOGRUPO.IDPESSOAUSUARIO = :idUsuarioGrupoFiltro
+		    AND (VW1.IDUFOPERADORA = :idUfOperadora OR -1=:indIdUfOperadora)
+		    AND (VW1.IDGRUPOABERTURA = :idGrupoFiltro OR -1=:indIdGrupo)
+		    AND (VW1.IDATENDIMENTO = :idAtendimentoFiltro OR -1=:indIdAtendimento)
+		    AND (VW1.IDCONTATO = :idContatoFiltro OR -1=:indIdContato)
+            AND TRUNC(VW1.DTABERTURA) >= DECODE(:indDtAberturaInicio,-1,TRUNC(VW1.DTABERTURA),TO_DATE(:dtAberturaInicioFiltro,'YYYYMMDD'))
+            AND TRUNC(VW1.DTABERTURA) <= DECODE(:indDtAberturaFim ,-1,TRUNC(VW1.DTABERTURA),TO_DATE(:dtAberturaFimFiltro,'YYYYMMDD'));
+            //AND VW1.IDPESSOACONTA IS NULL;
+	}
+
+    saida->addItem("totalRegistros", iContador);
+    saida->addItem("nrRegistros", 0);
+
+    ULOG_END( "proCConsultaWFFilaMCQtdMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCPorProtocoloMCMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCPorProtocoloMCMP()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        char *idProtocoloFiltro = dados->nrProtocoloPortabilidade;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        long idAtendimento;
+        VARCHAR idAtendimentoProtocolo[39];
+        int idContato;
+        int idEstado;
+        VARCHAR dsEstado[256];
+        VARCHAR sgEstado[256];
+        int idSubEstado;
+        VARCHAR dsSubEstado[256];
+        VARCHAR sgSubEstado[256];
+        long idPessoa;
+        VARCHAR nmPessoa[256];
+        VARCHAR dtAbertura[22];
+        VARCHAR dtFechamento[22];
+        long idAtendimentoAlerta;
+        VARCHAR dsMensagem[256];
+        int idAlerta;
+        VARCHAR sgAlerta[256];
+        VARCHAR dsAlerta[256];
+        VARCHAR nmIcone[256];
+        VARCHAR nmCor[256];
+        VARCHAR nrCriticidade[15];
+        VARCHAR arvore[2001];
+        VARCHAR nrTelefone[256];
+        VARCHAR inDocumento[256];
+        VARCHAR inACS[256];
+        int inPausaAtendimento;
+        VARCHAR dtSuspeito[32];
+        VARCHAR dtFimPausa[32];
+        long idAtendimentoBaixaHistorico;
+        VARCHAR nmURLDados[256];
+        VARCHAR dtSolicitacaoCancelamento[32];
+        VARCHAR dtPrazoFinalInterno[32];
+        long idAtendimentoSuspeito;
+        long idAtendimentoOrigem;
+        VARCHAR dtJanelaPortout[32];
+        VARCHAR nrProtocoloPortabilidade[32];
+
+        short i_idAtendimento = -1;
+        short i_idAtendimentoProtocolo = -1;
+        short i_idContato = -1;
+        short i_idEstado = -1;
+        short i_dsEstado = -1;
+        short i_sgEstado = -1;
+        short i_idSubEstado = -1;
+        short i_dsSubEstado = -1;
+        short i_sgSubEstado = -1;
+        short i_idPessoa = -1;
+        short i_nmPessoa = -1;
+        short i_dtAbertura = -1;
+        short i_dtFechamento = -1;
+        short i_idAtendimentoAlerta = -1;
+        short i_dsMensagem = -1;
+        short i_idAlerta = -1;
+        short i_sgAlerta = -1;
+        short i_dsAlerta = -1;
+        short i_nmIcone = -1;
+        short i_nmCor = -1;
+        short i_nrCriticidade = -1;
+        short i_arvore = -1;
+        short i_nrTelefone = -1;
+        short i_inDocumento = -1;
+        short i_inACS = -1;
+        short i_inPausaAtendimento = -1;
+        short i_dtSuspeito = -1;
+        short i_dtFimPausa = -1;
+        short i_idAtendimentoBaixaHistorico = -1;
+        short i_nmURLDados = -1;
+        short i_dtSolicitacaoCancelamento = -1;
+        short i_dtPrazoFinalInterno = -1;
+        short i_idAtendimentoSuspeito = -1;
+        short i_idAtendimentoOrigem = -1;
+        short i_dtJanelaPortout = -1;
+        short i_nrProtocoloPortabilidade = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG( "idUsuarioGrupoFiltro='%d'",idUsuarioGrupoFiltro );
+    ULOG( "idProtocoloFiltro='%s'",idProtocoloFiltro );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE consultaWFFilaProcPO CURSOR FOR
+        SELECT
+            VW1.IDATENDIMENTO,
+            VW1.IDATENDIMENTOPROTOCOLO,
+            VW1.IDCONTATO,
+            VW1.IDESTADO,
+            VW1.DSESTADO,
+            VW1.SGESTADO,
+            VW1.IDSUBESTADO,
+            VW1.DSSUBESTADO,
+            VW1.SGSUBESTADO,
+            VW1.IDPESSOAUSUARIOGRUPO,
+            VW1.NMPESSOA,
+            TO_CHAR(VW1.DTABERTURA,'DD/MM/YYYY HH24:MI:SS') AS DTABERTURA,
+            TO_CHAR(VW1.DTFECHAMENTO,'DD/MM/YYYY HH24:MI:SS') AS DTFECHAMENTO,
+            VW1.IDATENDIMENTOALERTA,
+            VW1.DSMENSAGEM,
+            VW1.IDALERTA,
+            VW1.SGALERTA,
+            VW1.DSALERTA,
+            VW1.NMICONE,
+            VW1.NMCOR,
+            VW1.NRCRITICIDADE,
+            VW1.PATH,
+            VW1.NRTELEFONE,
+            VW1.INDOCUMENTO,
+            0 AS INACS,
+            VW1.INPAUSAATENDIMENTO,
+            TO_CHAR(VW1.DTSUSPEITO,'DD/MM/YYYY HH24:MI:SS') AS DTSUSPEITO,
+            TO_CHAR(VW1.DTFIMPAUSAATENDIMENTO,'DD/MM/YYYY HH24:MI:SS') AS DTFIMPAUSAATENDIMENTO,
+            VW1.IDATENDIMENTOBAIXAHISTORICO,
+            VW1.NMURLDADOS,
+            VW1.DTSOLICITACAOCANCELAMENTO,
+            VW1.DTPRAZOFINALINTERNO,
+            VW1.IDATENDIMENTOSUSPEITO,
+            VW1.IDATENDIMENTOORIGEM,
+            TO_CHAR(VW1.DTJANELAPORTOUT,'DD/MM/YYYY HH24:MI:SS') AS DTJANELAPORTOUT,
+            VW1.NRPROTOCOLOPORTABILIDADE
+        FROM
+            ATENDIMENTO.ATENDIMENTOFILAMCTODOSMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        AND VW1.NRPROTOCOLOPORTABILIDADE = :idProtocoloFiltro;
+        //AND VW1.IDPESSOACONTA IS NULL;
+
+    EXEC SQL OPEN consultaWFFilaProcPO;
+
+    while (true)
+    {
+        i_idAtendimento = 
+        i_idAtendimentoProtocolo = 
+        i_idContato = 
+        i_idEstado = 
+        i_dsEstado = 
+        i_sgEstado = 
+        i_idSubEstado = 
+        i_dsSubEstado = 
+        i_sgSubEstado = 
+        i_idPessoa = 
+        i_nmPessoa = 
+        i_dtAbertura = 
+        i_dtFechamento = 
+        i_idAtendimentoAlerta = 
+        i_dsMensagem = 
+        i_idAlerta = 
+        i_sgAlerta = 
+        i_dsAlerta = 
+        i_nmIcone = 
+        i_nmCor = 
+        i_nrCriticidade = 
+        i_arvore = 
+        i_nrTelefone = 
+        i_inDocumento = 
+        i_inACS = 
+        i_inPausaAtendimento = 
+        i_dtSuspeito = 
+        i_dtFimPausa = 
+        i_idAtendimentoBaixaHistorico = 
+        i_nmURLDados = 
+        i_dtSolicitacaoCancelamento = 
+        i_dtPrazoFinalInterno = 
+        i_idAtendimentoSuspeito = 
+        i_idAtendimentoOrigem = 
+        i_nrProtocoloPortabilidade =
+        i_dtJanelaPortout = -1;
+
+        EXEC SQL FETCH consultaWFFilaProcPO INTO
+            :idAtendimento:i_idAtendimento,
+            :idAtendimentoProtocolo:i_idAtendimentoProtocolo,
+            :idContato:i_idContato,
+            :idEstado:i_idEstado,
+            :dsEstado:i_dsEstado,
+            :sgEstado:i_sgEstado,
+            :idSubEstado:i_idSubEstado,
+            :dsSubEstado:i_dsSubEstado,
+            :sgSubEstado:i_sgSubEstado,
+            :idPessoa:i_idPessoa,
+            :nmPessoa:i_nmPessoa,
+            :dtAbertura:i_dtAbertura,
+            :dtFechamento:i_dtFechamento,
+            :idAtendimentoAlerta:i_idAtendimentoAlerta,
+            :dsMensagem:i_dsMensagem,
+            :idAlerta:i_idAlerta,
+            :sgAlerta:i_sgAlerta,
+            :dsAlerta:i_dsAlerta,
+            :nmIcone:i_nmIcone,
+            :nmCor:i_nmCor,
+            :nrCriticidade:i_nrCriticidade,
+            :arvore:i_arvore,
+            :nrTelefone:i_nrTelefone,
+            :inDocumento:i_inDocumento,
+            :inACS:i_inACS,
+            :inPausaAtendimento:i_inPausaAtendimento,
+            :dtSuspeito:i_dtSuspeito,
+            :dtFimPausa:i_dtFimPausa,
+            :idAtendimentoBaixaHistorico:i_idAtendimentoBaixaHistorico,
+            :nmURLDados:i_nmURLDados,
+            :dtSolicitacaoCancelamento:i_dtSolicitacaoCancelamento,
+            :dtPrazoFinalInterno:i_dtPrazoFinalInterno,
+            :idAtendimentoSuspeito:i_idAtendimentoSuspeito,
+            :idAtendimentoOrigem:i_idAtendimentoOrigem,
+            :dtJanelaPortout:i_dtJanelaPortout,
+            :nrProtocoloPortabilidade:i_nrProtocoloPortabilidade;
+
+        totalRegistros++;
+
+        numeroRegistros++;
+
+        CONVIND(dsEstado, i_dsEstado);
+        CONVIND(idAtendimentoProtocolo,i_idAtendimentoProtocolo);
+        CONVIND(sgEstado, i_sgEstado);
+        CONVIND(dsSubEstado, i_dsSubEstado);
+        CONVIND(sgSubEstado, i_sgSubEstado);
+        CONVIND(nmPessoa, i_nmPessoa);
+        CONVIND(dtAbertura, i_dtAbertura);
+        CONVIND(dtFechamento, i_dtFechamento);
+        CONVIND(dsMensagem, i_dsMensagem);
+        CONVIND(sgAlerta, i_sgAlerta);
+        CONVIND(dsAlerta, i_dsAlerta);
+        CONVIND(nmIcone, i_nmIcone);
+        CONVIND(nmCor, i_nmCor);
+        CONVIND(arvore, i_arvore);
+        CONVIND(nrTelefone, i_nrTelefone);
+        CONVIND(inDocumento, i_inDocumento);
+        CONVIND(inACS, i_inACS);
+        CONVIND(dtSuspeito, i_dtSuspeito);
+        CONVIND(dtFimPausa, i_dtFimPausa);
+        CONVIND(nmURLDados, i_nmURLDados);
+        CONVIND(dtSolicitacaoCancelamento, i_dtSolicitacaoCancelamento);
+        CONVIND(dtPrazoFinalInterno, i_dtPrazoFinalInterno);
+        CONVIND(nrCriticidade, i_nrCriticidade);
+        CONVIND(dtJanelaPortout, i_dtJanelaPortout);
+        CONVIND(nrProtocoloPortabilidade,i_nrProtocoloPortabilidade);
+
+        if (i_idAtendimentoBaixaHistorico == -1)
+        {
+            idAtendimentoBaixaHistorico = 0;
+        }
+
+        saida->createTag("AtendimentoFilaVO");
+            saida->addItem("operacaoWorkflow","");
+            saida->createTag("AtendimentoVO");
+                saida->addItem("idAtendimento", CONVLONG(idAtendimento,i_idAtendimento));
+                saida->addItem("nrProtocolo", (char*)idAtendimentoProtocolo.arr);
+                saida->addItem("dtAbertura", (char*)dtAbertura.arr);
+                saida->addItem("dtJanelaPortout", (char*)dtJanelaPortout.arr);
+                saida->addItem("dtFechamento", (char*)dtFechamento.arr);
+                saida->addItem("nrTelefone", (char*)nrTelefone.arr);
+                saida->addItem("inDocumento", (char*)inDocumento.arr);
+                saida->addItem("inACS", (char*)inACS.arr);
+                saida->addItem("inPausaAtendimento", CONVINT(inPausaAtendimento,i_inPausaAtendimento));
+                saida->addItem("dtSuspeito", (char*)dtSuspeito.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)dtFimPausa.arr);
+                saida->addItem("idAtendimentoBaixaHistorico", idAtendimentoBaixaHistorico);
+                saida->addItem("nmURLDados", (char*)nmURLDados.arr);
+                saida->addItem("dtSolicitacaoCancelamento", (char*)dtSolicitacaoCancelamento.arr);
+                saida->addItem("nrProtocoloPortabilidade", (char*)nrProtocoloPortabilidade.arr);
+
+                saida->createTag("WFEstadoVO");
+                    saida->addItem("idEstado", CONVINT(idEstado,i_idEstado));
+                    saida->addItem("dsEstado", (char*)dsEstado.arr);
+                    saida->addItem("sgEstado", (char*)sgEstado.arr);
+                saida->closeTag();
+                saida->createTag("WFSubEstadoVO");
+                    saida->addItem("idSubEstado", CONVINT(idSubEstado,i_idSubEstado));
+                    saida->addItem("dsSubEstado", (char*)dsSubEstado.arr);
+                    saida->addItem("sgSubEstado", (char*)sgSubEstado.arr);
+                saida->closeTag();
+                if (i_idAlerta != -1)
+                {
+                    saida->createTag("AlertaVO");
+                        saida->addItem("idAlerta", CONVINT(idAlerta,i_idAlerta));
+                        saida->addItem("dsAlerta", (char*)dsAlerta.arr);
+                        saida->addItem("sgAlerta", (char*)sgAlerta.arr);
+                        saida->addItem("nmIcone", (char*)nmIcone.arr);
+                        saida->addItem("nmCor", (char*)nmCor.arr);
+                        saida->addItem("nrCriticidade", (char*)nrCriticidade.arr);
+                    saida->closeTag();
+                }
+                saida->createTag("ns2:ArvoreAtendimentoVO");
+                    saida->addItem("ns2:idContato", CONVINT(idContato,i_idContato));
+                    saida->addItem("ns2:descricaoCompleta", (char*)arvore.arr);
+                saida->closeTag();
+                saida->createTag("ns3:UsuarioVIVO");
+                    saida->addItem("ns3:idPessoaUsuario", CONVINT(idPessoa,i_idPessoa));
+                    saida->addItem("ns3:nmLoginUsuario", "");
+                    saida->addItem("ns3:nmNome", (char*)nmPessoa.arr);
+                    saida->addItem("ns3:sgSenhaUsuario", "");
+                saida->closeTag();
+            saida->closeTag();
+        saida->closeTag();
+    } // while (true)
+
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    EXEC SQL CLOSE consultaWFFilaProcPO;
+
+    ULOG_END( "proCConsultaWFFilaMCPorProtocoloMCMP()" );
+
+    return true;
+}
+
+bool proCConsultaWFFilaMCPorProtocoloMCQtdMP(st_AtendimentoFila* dados, st_vlAtendimentoFila* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFFilaMCPorProtocoloMCQtdMP()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idUsuarioGrupoFiltro = dados->idUsuarioGrupo; // usuário web
+        int idPessoaUsuarioFiltro = dados->idPessoaUsuario; // usuário do combo de lista de usuários
+        char *idProtocoloFiltro = dados->nrProtocoloPortabilidade;
+
+        const char *nrPesoHierarquiaFiltro = dados->nrPesoHierarquia;
+        const char *idFornecedorConsultorAtdFiltro = dados->idFornecedorConsultorAtd;
+        const char *idPerfilConsultorAtdFiltro = dados->idPerfilConsultorAtd==0?"-1":dados->idPerfilConsultorAtd;
+
+        int iContador;
+        short sContador;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            COUNT(1)
+        INTO
+            :iContador:sContador
+        FROM
+            ATENDIMENTO.ATENDIMENTOFILAMCTODOSMPWFV01 VW1
+        WHERE 1=1
+            //VW1.NRPESOHIERARQUIA <= DECODE(:idPerfilConsultorAtdFiltro,'ATD',VW1.NRPESOHIERARQUIA,:nrPesoHierarquiaFiltro)
+        //AND ((VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro AND VW1.IDPESSOAUSUARIOATUAL IS NULL)
+        // OR VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro)
+        AND VW1.IDPESSOAUSUARIOATUAL = :idUsuarioGrupoFiltro
+        //AND (VW1.IDPESSOAUSUARIOABERTURA = :idUsuarioGrupoFiltro 
+        // OR NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(NVL(VW1.IDPESSOAUSUARIOATUAL,0),0,0,:idUsuarioGrupoFiltro))
+        //AND NVL(VW1.IDPESSOAUSUARIOATUAL,0) = DECODE(:idPessoaUsuarioFiltro,0,NVL(VW1.IDPESSOAUSUARIOATUAL,0),:idPessoaUsuarioFiltro)
+        //AND VW1.IDPESSOAUSUARIOGRUPO = :idUsuarioGrupoFiltro
+        //AND NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO') = DECODE(:idFornecedorConsultorAtdFiltro,'VIVO',NVL(VW1.IDFORNECEDORCONSULTORATD,'VIVO'),:idFornecedorConsultorAtdFiltro)
+        AND VW1.NRPROTOCOLOPORTABILIDADE = :idProtocoloFiltro;
+        //AND VW1.IDPESSOACONTA IS NULL;
+
+    saida->addItem("totalRegistros", iContador );
+    saida->addItem("nrRegistros"   , iContador );
+
+    ULOG_END( "proCConsultaWFFilaMCPorProtocoloMCQtdMP()" );
+
+    return true;
+}
+
+bool proCConsultorRelacionamentoSimNaoMP(int idPessoaUsuario)
+{
+    ULOG_START("proCConsultorRelacionamentoSimNaoMP()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int varOraIdPessoaUsuario = idPessoaUsuario;
+        int varOraCount;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            COUNT(1)
+        INTO
+            :varOraCount
+        FROM
+            CUSTOMER.PESSOA PESSOA,
+            CUSTOMER.PESSOADEPARA PESSOADEPARA,
+            CUSTOMER.PESSOACONTA PESSOACONTA,
+            CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO
+        WHERE
+            PESSOA.IDPESSOA = :varOraIdPessoaUsuario
+        AND PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+        AND PESSOADEPARA.IDPESSOADEPARA = PESSOACONTA.IDPESSOADEPARA
+        AND PESSOACONTA.DTEXPIRACAO IS NULL
+        AND PESSOACONTA.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+        AND TIPORELACIONAMENTO.NMTIPORELACIONAMENTO = 'CONSULTOR RELACIONAMENTO'
+        AND ROWNUM < 2;
+
+    ULOG("totalRegistros=%d",varOraCount);
+
+    ULOG_END("proCConsultorRelacionamentoSimNaoMP()");
+
+    return varOraCount==0?false:true;
+}
+
+bool proCObterInfoConsultorAtdMP(st_AtendimentoFila* dados,st_vlAtendimentoFila* status)
+{
+    ULOG_START("proCObterInfoConsultorAtdMP()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int varOraIdPessoaUsuario = dados->idUsuarioGrupo;
+
+        VARCHAR varOraIdPerfilConsultorAtd[11];
+        short statOraIdPerfilConsultorAtd=-1;
+
+        VARCHAR varOraNrPesoHierarquia[11];
+        short statOraNrPesoHierarquia=-1;
+
+        VARCHAR varOraIdFornecedorConsultorAtd[11];
+        short statOraIdFornecedorConsultorAtd=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("idPessoaUsuario=%d",varOraIdPessoaUsuario);
+
+    EXEC SQL
+        SELECT
+            PERFILCONSULTORATD.NRPESOHIERARQUIA,
+            PERFILCONSULTORATD.IDPERFILCONSULTORATD,
+            NVL(USUARIO.IDFORNECEDORCONSULTORATD,'VIVO') AS IDFORNECEDORCONSULTORATD
+        INTO
+            :varOraNrPesoHierarquia:statOraNrPesoHierarquia,
+            :varOraIdPerfilConsultorAtd:statOraIdPerfilConsultorAtd,
+            :varOraIdFornecedorConsultorAtd:statOraIdFornecedorConsultorAtd
+        FROM
+            ACESSO.USUARIO USUARIO,
+            APOIO.PERFILCONSULTORATD PERFILCONSULTORATD
+        WHERE
+            USUARIO.IDPESSOAUSUARIO = :varOraIdPessoaUsuario
+        AND NVL(USUARIO.IDPERFILCONSULTORATD,'VIVO') = PERFILCONSULTORATD.IDPERFILCONSULTORATD;
+
+    if ( sqlca.sqlcode )
+    {
+        *(dados->nrPesoHierarquia)=*(dados->idFornecedorConsultorAtd)=*(dados->idPerfilConsultorAtd)=0;
+        ULOG_END("proCObterInfoConsultorAtdMP() ==> NOT FOUND");
+        return false;
+    }
+
+    CONVIND(varOraNrPesoHierarquia,statOraNrPesoHierarquia);
+    CONVIND(varOraIdPerfilConsultorAtd,statOraIdPerfilConsultorAtd);
+    CONVIND(varOraIdFornecedorConsultorAtd,statOraIdFornecedorConsultorAtd);
+
+    SAFE_STRNCPY(dados->nrPesoHierarquia,(char*)varOraNrPesoHierarquia.arr);
+    SAFE_STRNCPY(dados->idFornecedorConsultorAtd,(char*)varOraIdFornecedorConsultorAtd.arr);
+    SAFE_STRNCPY(dados->idPerfilConsultorAtd,(char*)varOraIdPerfilConsultorAtd.arr);
+
+    ULOG("idFornecedorConsultorAtd='%s'",dados->idFornecedorConsultorAtd);
+    ULOG("    idPerfilConsultorAtd='%s'",dados->idPerfilConsultorAtd);
+    ULOG("        nrPesoHierarquia='%s'",dados->nrPesoHierarquia);
+
+    ULOG_END("proCObterInfoConsultorAtdMP()");
+
+    return true;
+}

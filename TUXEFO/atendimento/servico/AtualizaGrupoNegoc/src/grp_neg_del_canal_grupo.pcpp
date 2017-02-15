@@ -1,0 +1,977 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <tuxfw.h>
+
+class TuxHelperImpl:public TuxHelper
+{
+public:
+	DOMNode * walkDOMImpl( DOMNode*a , char*b , int*c , int d )
+	{
+		return walkDOM( a , b , c , d );
+	}
+};
+
+int RemoveSkillCanalGrupo( const char *pzcIdGrupo );
+int RemoveSkillParametros( const char *pzcIdGrupoSkill );
+int SomenteInclusaoVariaveis( char* idGupoPar, DOMNode* XMLIn );
+
+int RemoveCanalGrupo( const char *whereClause )
+{
+   ULOG_START("RemoveCanalGrupo()");
+   struct sqlca sqlca;
+   EXEC SQL BEGIN DECLARE SECTION;
+      int ORA_where;
+   EXEC SQL END DECLARE SECTION;
+
+
+   ORA_where = atoi( whereClause );
+
+   EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+   EXEC SQL DELETE FROM contatoadm.CanalGrupo
+         WHERE idGrupo = :ORA_where;
+
+   if( sqlca.sqlcode )
+   {
+     if( sqlca.sqlcode != -1403 && sqlca.sqlcode != 1403 )
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+   }
+   else
+   {
+      ULOG_END("RemoveCanalGrupo()");
+      return 1;
+   }
+
+UndefinedError:
+        if( sqlca.sqlcode != -1403 && sqlca.sqlcode != 1403 )
+           throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+        return 1;
+}
+
+
+int RemoveSkillCanalGrupo( const char *pzcIdGrupo )
+{
+   ULOG_START("RemoveSkillCanalGrupo()");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iIdGrupo;
+		VARCHAR stidGrupoSkill[21+1];
+		short sidGrupoSkill;
+		int iTotalAtual;
+		int iTotalNovo;
+	EXEC SQL END DECLARE SECTION;
+
+	iIdGrupo = atoi( pzcIdGrupo );
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoRemoveSkillCanalGrupo;
+	
+	//Recupera todos os Skills de um grupo
+	EXEC SQL
+	DECLARE 
+		CurRemoveSkillCanalGrupo CURSOR FOR
+	SELECT
+		IDGRUPOSKILL
+	FROM
+		ACESSO.GRUPOSKILL GRUPOSKILL
+	WHERE
+		IDGRUPO = :iIdGrupo
+	AND
+		IDGRUPOSKILL = ( SELECT IDGRUPOSKILL FROM ACESSO.TIPOLINHAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL AND ROWNUM < 2);
+
+	//Na busca acima eh realizada uma pesquisa validando se o skill tem ou nao parametros, não precisa
+	//verificar todas as tabelas, pois ou ele tem parametros em todas as nove tabelas ou em nenhuma
+	//entao eu soh verifico em canalgruposkill, eu escolhi a tabela ACESSO.TIPOLINHAGRUPOSKILL porque
+	//ela tem poucos registros em relacao as outras
+
+	EXEC SQL OPEN CurRemoveSkillCanalGrupo;
+	
+	for(;;)
+	{
+		memset( &stidGrupoSkill, 0, sizeof( stidGrupoSkill ) );
+		EXEC SQL
+		FETCH
+			CurRemoveSkillCanalGrupo
+		INTO
+			:stidGrupoSkill:sidGrupoSkill;
+			
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		iTotalAtual = 0;
+		iTotalNovo = 0;
+		//Verifica quantas variaveis tem cada Skill
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iTotalAtual
+		FROM
+			ACESSO.CANALGRUPOSKILL
+		WHERE
+			IDGRUPOSKILL = :stidGrupoSkill;
+
+		//Verifica quantas variaveis apartir do filtro das variaveis do grupo
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iTotalNovo
+		FROM
+			ACESSO.CANALGRUPOSKILL
+		WHERE
+			IDGRUPOSKILL = :stidGrupoSkill
+		AND
+			IDCANAL IN 
+			( 
+				SELECT
+					IDCANAL
+				FROM
+					CONTATOADM.CANALGRUPO
+				WHERE
+					IDGRUPO = :iIdGrupo
+			);
+
+		//se iTotalAtual > iTotalNovo, quer dizer que alguma variável que este perfil
+		//utiliza foi apaga do grupo, entao apaga o perfil
+		ULOG( "IDGRUPOSKILL[%s]", (char*)stidGrupoSkill.arr );
+		ULOG( "iTotalAtual[%d] > iTotalNovo[%d]", iTotalAtual, iTotalNovo );
+		if( iTotalAtual > iTotalNovo )
+		{
+			ULOG( "Removendo os skills RemoveSkillParametros(%s)", (char*)stidGrupoSkill.arr );
+			//deletando TODAS as variáveis de um SKILL
+			RemoveSkillParametros( (char*)stidGrupoSkill.arr );
+		}
+
+	}//for(;;)
+	EXEC SQL CLOSE CurRemoveSkillCanalGrupo;
+	
+	ULOG_END("RemoveSkillCanalGrupo()");
+	
+	return 1;
+	
+GotoRemoveSkillCanalGrupo:
+	throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+int RemoveSkillParametros( const char *pzcIdGrupoSkill )
+{
+   ULOG_START("RemoveSkillParametros()");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		const char* pzcIdGrupoSkillAux = pzcIdGrupoSkill;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoRemoveSkillParametros;
+	
+	EXEC SQL 
+	DELETE FROM 
+		ACESSO.CANALGRUPOSKILL
+	WHERE 
+		IDGRUPOSKILL = :pzcIdGrupoSkillAux;
+
+	EXEC SQL 
+	DELETE FROM 
+		ACESSO.GRUPOABERTURAGRUPOSKILL
+	WHERE 
+		IDGRUPOSKILL = :pzcIdGrupoSkillAux;
+
+	EXEC SQL 
+	DELETE FROM 
+		ACESSO.TIPOCARTEIRAGRUPOSKILL
+	WHERE 
+		IDGRUPOSKILL = :pzcIdGrupoSkillAux;
+
+	EXEC SQL 
+	DELETE FROM 
+		ACESSO.TIPOLINHAGRUPOSKILL
+	WHERE 
+		IDGRUPOSKILL = :pzcIdGrupoSkillAux;
+
+	EXEC SQL 
+	DELETE FROM 
+		ACESSO.TIPOPESSOAGRUPOSKILL
+	WHERE 
+		IDGRUPOSKILL = :pzcIdGrupoSkillAux;
+
+	EXEC SQL 
+	DELETE FROM 
+		ACESSO.TPRELACIONAMENTOGRUPOSKILL
+	WHERE 
+		IDGRUPOSKILL = :pzcIdGrupoSkillAux;
+
+	EXEC SQL 
+	DELETE FROM 
+		ACESSO.SEGMENTACAOGRUPOSKILL
+	WHERE 
+		IDGRUPOSKILL = :pzcIdGrupoSkillAux;
+
+	EXEC SQL 
+	DELETE FROM 
+		ACESSO.UFOPERADORAGRUPOSKILL
+	WHERE 
+		IDGRUPOSKILL = :pzcIdGrupoSkillAux;
+
+	EXEC SQL 
+	DELETE FROM 
+		ACESSO.PROCEDENCIAGRUPOSKILL
+	WHERE 
+		IDGRUPOSKILL = :pzcIdGrupoSkillAux;
+		
+	EXEC SQL
+	DELETE FROM 
+		ACESSO.CONTATOGRUPOSKILL
+	WHERE 
+		IDGRUPOSKILL = :pzcIdGrupoSkillAux;
+		
+	EXEC SQL
+	DELETE FROM 
+		ACESSO.USUARIOGRUPOSKILL
+	WHERE 
+		IDGRUPOSKILL = :pzcIdGrupoSkillAux;
+		
+   ULOG_END("RemoveSkillParametros()");		
+		
+	return 1;
+	
+GotoRemoveSkillParametros:
+	throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+	return 1;
+}
+
+
+int SomenteInclusaoVariaveis( char* idGupoPar, DOMNode* XMLIn )
+{
+	ULOG_START("SomenteInclusaoVariaveis()");
+	struct sqlca sqlca;
+	TuxHelperImpl tuxHelper;
+	DOMNode* dnNode;
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iCont = 0;
+		int iContAtuais;
+		int iContNovos;
+		int iRet = 1;
+		int subNo = 0;
+		char* idGupoAux = idGupoPar;
+		char* pAux;
+		char cPesquisa[10000];
+
+		char cPesquisaCanal[1000];
+		char cPesquisaSegmentacao[1000];
+		char cPesquisaProcedencia[1000];
+		char cPesquisaGrupoAbertura[10000];
+		char cPesquisaUFOperadora[1000];
+		char cPesquisaTipoCarteira[1000];
+		char cPesquisaTipoPessoa[1000];
+		char cPesquisaTipoRelacionamento[1000];
+		char cPesquisaTipoLinha[1000];
+
+		//Variaveis para contato Skill
+		int iSkillAtual = 0;
+		int iSkillNovo = 0;
+	EXEC SQL END DECLARE SECTION;
+	sqlca.sqlcode=0;
+
+	memset( &cPesquisaCanal, 0, sizeof( cPesquisaCanal ) );
+	memset( &cPesquisaSegmentacao, 0, sizeof( cPesquisaSegmentacao ) );
+	memset( &cPesquisaProcedencia, 0, sizeof( cPesquisaProcedencia ) );
+	memset( &cPesquisaGrupoAbertura, 0, sizeof( cPesquisaGrupoAbertura ) );
+	memset( &cPesquisaUFOperadora, 0, sizeof( cPesquisaUFOperadora ) );
+	memset( &cPesquisaTipoCarteira, 0, sizeof( cPesquisaTipoCarteira ) );
+	memset( &cPesquisaTipoPessoa, 0, sizeof( cPesquisaTipoPessoa ) );
+	memset( &cPesquisaTipoRelacionamento, 0, sizeof( cPesquisaTipoRelacionamento ) );
+	memset( &cPesquisaTipoLinha, 0, sizeof( cPesquisaTipoLinha ) );
+    
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR GOTO GotoSomenteInclusaoVariaveis;
+
+	///////////////////////////////////////////////////////////////////
+	//
+	//   1) VERIFICA CANAIS
+	//
+	///////////////////////////////////////////////////////////////////
+	//Conta quantos registros tem um certo grupo
+	iContAtuais = 0;
+	iContNovos = 0;
+	EXEC SQL
+	SELECT
+		COUNT(1)
+	INTO
+		:iContAtuais
+	FROM
+		CONTATOADM.CANALGRUPO
+	WHERE
+		IDGRUPO = :idGupoAux;
+	//Conta quantos existem nas parametros de entrada
+	memset( cPesquisa, 0, sizeof( cPesquisa ) );
+	strcpy( cPesquisa,
+		"SELECT "
+			"COUNT(1) "
+		"FROM "
+			"CONTATOADM.CANALGRUPO "
+		"WHERE "
+			"IDGRUPO = "
+	);
+	strcat( cPesquisa, idGupoAux );
+	strcat( cPesquisa,
+		" AND "
+			"IDCANAL IN ( "
+	);
+	for (iCont=0;;iCont++)  
+	{
+		subNo = 0;
+		if( ( dnNode = tuxHelper.walkDOMImpl( XMLIn,"CanalVO",&subNo,iCont ) ) == NULL )
+			break;
+
+		if( ( pAux = tuxHelper.walkTree( dnNode,"idCanal",0 ) ) == NULL )
+			break;
+
+		if( iCont > 0 )
+			strcat( cPesquisaCanal, "," );
+
+		strcat( cPesquisaCanal, pAux );
+		
+		//Libera a string
+		XMLString::release(&pAux);
+    }//for (iCont=0;;iCont++)
+	if( strlen( cPesquisaCanal ) <= 0 )
+		strcpy( cPesquisaCanal, "-1" );
+	strcat( cPesquisa, cPesquisaCanal );
+	strcat( cPesquisa, " )" );
+	ULOG( "\n\n%s\n\n", cPesquisa );
+	if( iCont > 0 )
+	{
+		ULOG( "Efetuando a pesquisa de canal" );
+		EXEC SQL PREPARE qPesquisa1 FROM :cPesquisa;
+		EXEC SQL DECLARE Cursor1 CURSOR FOR qPesquisa1;
+		EXEC SQL OPEN Cursor1;
+		EXEC SQL FETCH Cursor1 INTO :iContNovos;
+		EXEC SQL CLOSE Cursor1;
+	}
+	//Verifica se tem alguma variavel foi excluida
+	if( iContAtuais < iContNovos )
+		iRet = 0;
+	///////////////////////////////////////////////////////////////////
+	//
+	//   2) VERIFICA REGIONAIS
+	//
+	///////////////////////////////////////////////////////////////////
+		//Conta quantos registros tem um certo grupo
+		iContAtuais = 0;
+		iContNovos = 0;
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iContAtuais
+		FROM
+			CONTATOADM.UFOPERADORAGRUPO
+		WHERE
+			IDGRUPO = :idGupoAux;
+		//Conta quantos existem nas parametros de entrada
+	memset( cPesquisa, 0, sizeof( cPesquisa ) );
+		strcpy( cPesquisa,
+			"SELECT "
+				"COUNT(1) "
+			"FROM "
+				"CONTATOADM.UFOPERADORAGRUPO "
+			"WHERE "
+				"IDGRUPO = "
+		);
+		strcat( cPesquisa, idGupoAux );
+		strcat( cPesquisa,
+			" AND "
+				"IDUFOPERADORA IN ( "
+		);
+		for (iCont=0;;iCont++)  
+		{
+			subNo = 0;
+			if( ( dnNode = tuxHelper.walkDOMImpl( XMLIn,"RegionalVO",&subNo,iCont ) ) == NULL )
+				break;
+
+			if( ( pAux = tuxHelper.walkTree( dnNode,"idRegional",0 ) ) == NULL )
+				break;
+
+			if( iCont > 0 )
+			strcat( cPesquisaUFOperadora, "," );
+
+		strcat( cPesquisaUFOperadora, pAux );
+
+			//Libera a string
+			XMLString::release(&pAux);
+	    }//for (iCont=0;;iCont++)
+	if( strlen( cPesquisaUFOperadora ) <= 0 )
+		strcpy( cPesquisaUFOperadora, "-1" );
+	strcat( cPesquisa, cPesquisaUFOperadora );
+		strcat( cPesquisa, " )" );
+		ULOG( "\n\n%s\n\n", cPesquisa );
+	if( ( iCont > 0 ) && ( iRet != 0 ) )
+		{
+			ULOG( "Efetuando a pesquisa de regional" );
+			EXEC SQL PREPARE qPesquisa2 FROM :cPesquisa;
+			EXEC SQL DECLARE Cursor2 CURSOR FOR qPesquisa2;
+			EXEC SQL OPEN Cursor2;
+			EXEC SQL FETCH Cursor2 INTO :iContNovos;
+			EXEC SQL CLOSE Cursor2;
+		}
+		//Verifica se tem alguma variavel foi excluida
+		if( iContAtuais > iContNovos )
+			iRet = 0;//Foi excluida alguma variavel
+	///////////////////////////////////////////////////////////////////
+	//
+	//   3) VERIFICA GRUPO
+	//
+	///////////////////////////////////////////////////////////////////
+		//Conta quantos registros tem um certo grupo
+		iContAtuais = 0;
+		iContNovos = 0;
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iContAtuais
+		FROM
+			CONTATOADM.GRUPOABERTURAGRUPO
+		WHERE
+			IDGRUPO = :idGupoAux;
+		//Conta quantos existem nas parametros de entrada
+	memset( cPesquisa, 0, sizeof( cPesquisa ) );
+		strcpy( cPesquisa,
+			"SELECT "
+				"COUNT(1) "
+			"FROM "
+				"CONTATOADM.GRUPOABERTURAGRUPO "
+			"WHERE "
+				"IDGRUPO = "
+		);
+		strcat( cPesquisa, idGupoAux );
+		strcat( cPesquisa,
+			" AND "
+				"IDGRUPOPAI IN ( "
+		);
+		for (iCont=0;;iCont++)  
+		{
+			subNo = 0;
+			if( ( dnNode = tuxHelper.walkDOMImpl( XMLIn,"GrupoVO",&subNo,iCont ) ) == NULL )
+				break;
+
+			if( ( pAux = tuxHelper.walkTree( dnNode,"codigo",0 ) ) == NULL )
+				break;
+
+			if( iCont > 0 )
+			strcat( cPesquisaGrupoAbertura, "," );
+
+		strcat( cPesquisaGrupoAbertura, pAux );
+
+			//Libera a string
+			XMLString::release(&pAux);
+	    }//for (iCont=0;;iCont++)
+	if( strlen( cPesquisaGrupoAbertura ) <= 0 )
+		strcpy( cPesquisaGrupoAbertura, "-1" );
+	strcat( cPesquisa, cPesquisaGrupoAbertura );
+		strcat( cPesquisa, " )" );
+		ULOG( "\n\n%s\n\n", cPesquisa );
+	if( ( iCont > 0 ) && ( iRet != 0 ) )
+		{
+			ULOG( "Efetuando a pesquisa de grupoabertura" );
+			EXEC SQL PREPARE qPesquisa3 FROM :cPesquisa;
+			EXEC SQL DECLARE Cursor3 CURSOR FOR qPesquisa3;
+			EXEC SQL OPEN Cursor3;
+			EXEC SQL FETCH Cursor3 INTO :iContNovos;
+			EXEC SQL CLOSE Cursor3;
+		}
+		//Verifica se tem alguma variavel foi excluida
+		if( iContAtuais > iContNovos )
+			iRet = 0;//Foi excluida alguma variavel
+	///////////////////////////////////////////////////////////////////
+	//
+	//   4) VERIFICA TIPOPESSOA
+	//
+	///////////////////////////////////////////////////////////////////
+		//Conta quantos registros tem um certo grupo
+		iContAtuais = 0;
+		iContNovos = 0;
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iContAtuais
+		FROM
+			CONTATOADM.TIPOPESSOAGRUPO
+		WHERE
+			IDGRUPO = :idGupoAux;
+		//Conta quantos existem nas parametros de entrada
+	memset( cPesquisa, 0, sizeof( cPesquisa ) );
+		strcpy( cPesquisa,
+			"SELECT "
+				"COUNT(1) "
+			"FROM "
+				"CONTATOADM.TIPOPESSOAGRUPO "
+			"WHERE "
+				"IDGRUPO = "
+		);
+		strcat( cPesquisa, idGupoAux );
+		strcat( cPesquisa,
+			" AND "
+				"IDTIPOPESSOA IN ( "
+		);
+		for (iCont=0;;iCont++)  
+		{
+			subNo = 0;
+			if( ( dnNode = tuxHelper.walkDOMImpl( XMLIn,"TipoClienteVO",&subNo,iCont ) ) == NULL )
+				break;
+
+			if( ( pAux = tuxHelper.walkTree( dnNode,"codigo",0 ) ) == NULL )
+				break;
+
+			if( iCont > 0 )
+			strcat( cPesquisaTipoPessoa, "," );
+
+		strcat( cPesquisaTipoPessoa, pAux );
+
+			//Libera a string
+			XMLString::release(&pAux);
+	    }//for (iCont=0;;iCont++)
+	if( strlen( cPesquisaTipoPessoa ) <= 0 )
+		strcpy( cPesquisaTipoPessoa, "-1" );
+	strcat( cPesquisa, cPesquisaTipoPessoa );
+		strcat( cPesquisa, " )" );
+		ULOG( "\n\n%s\n\n", cPesquisa );
+	if( ( iCont > 0 ) && ( iRet != 0 ) )
+		{
+			ULOG( "Efetuando a pesquisa de tipo pessoa" );
+			EXEC SQL PREPARE qPesquisa4 FROM :cPesquisa;
+			EXEC SQL DECLARE Cursor4 CURSOR FOR qPesquisa4;
+			EXEC SQL OPEN Cursor4;
+			EXEC SQL FETCH Cursor4 INTO :iContNovos;
+			EXEC SQL CLOSE Cursor4;
+		}
+		//Verifica se tem alguma variavel foi excluida
+		if( iContAtuais > iContNovos )
+			iRet = 0;//Foi excluida alguma variavel
+	///////////////////////////////////////////////////////////////////
+	//
+	//   5) VERIFICA TIPORELACIONAMENTO
+	//
+	///////////////////////////////////////////////////////////////////
+		//Conta quantos registros tem um certo grupo
+		iContAtuais = 0;
+		iContNovos = 0;
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iContAtuais
+		FROM
+			CONTATOADM.TIPORELACIONAMENTOGRUPO
+		WHERE
+			IDGRUPO = :idGupoAux;
+		//Conta quantos existem nas parametros de entrada
+	memset( cPesquisa, 0, sizeof( cPesquisa ) );
+		strcpy( cPesquisa,
+			"SELECT "
+				"COUNT(1) "
+			"FROM "
+				"CONTATOADM.TIPORELACIONAMENTOGRUPO "
+			"WHERE "
+				"IDGRUPO = "
+		);
+		strcat( cPesquisa, idGupoAux );
+		strcat( cPesquisa,
+			" AND "
+				"IDTIPORELACIONAMENTO IN ( "
+		);
+		for (iCont=0;;iCont++)  
+		{
+			subNo = 0;
+			if( ( dnNode = tuxHelper.walkDOMImpl( XMLIn,"TipoPessoaVO",&subNo,iCont ) ) == NULL )
+				break;
+
+			if( ( pAux = tuxHelper.walkTree( dnNode,"idtipopessoa",0 ) ) == NULL )
+				break;
+
+			if( iCont > 0 )
+			strcat( cPesquisaTipoRelacionamento, "," );
+
+		strcat( cPesquisaTipoRelacionamento, pAux );
+
+			//Libera a string
+			XMLString::release(&pAux);
+	    }//for (iCont=0;;iCont++)
+	if( strlen( cPesquisaTipoRelacionamento ) <= 0 )
+		strcpy( cPesquisaTipoRelacionamento, "-1" );
+	strcat( cPesquisa, cPesquisaTipoRelacionamento );
+		strcat( cPesquisa, " )" );
+		ULOG( "\n\n%s\n\n", cPesquisa );
+	if( ( iCont > 0 ) && ( iRet != 0 ) )
+		{
+			ULOG( "Efetuando a pesquisa de tipo relacionamento" );
+			EXEC SQL PREPARE qPesquisa5 FROM :cPesquisa;
+			EXEC SQL DECLARE Cursor5 CURSOR FOR qPesquisa5;
+			EXEC SQL OPEN Cursor5;
+			EXEC SQL FETCH Cursor5 INTO :iContNovos;
+			EXEC SQL CLOSE Cursor5;
+		}
+		//Verifica se tem alguma variavel foi excluida
+		if( iContAtuais > iContNovos )
+			iRet = 0;//Foi excluida alguma variavel
+	///////////////////////////////////////////////////////////////////
+	//
+	//   6) VERIFICA PROCEDENCIA
+	//
+	///////////////////////////////////////////////////////////////////
+		//Conta quantos registros tem um certo grupo
+		iContAtuais = 0;
+		iContNovos = 0;
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iContAtuais
+		FROM
+			CONTATOADM.PROCEDENCIAGRUPO
+		WHERE
+			IDGRUPO = :idGupoAux;
+		//Conta quantos existem nas parametros de entrada
+	memset( cPesquisa, 0, sizeof( cPesquisa ) );
+		strcpy( cPesquisa,
+			"SELECT "
+				"COUNT(1) "
+			"FROM "
+				"CONTATOADM.PROCEDENCIAGRUPO "
+			"WHERE "
+				"IDGRUPO = "
+		);
+		strcat( cPesquisa, idGupoAux );
+		strcat( cPesquisa,
+			" AND "
+				"IDPROCEDENCIA IN ( "
+		);
+		for (iCont=0;;iCont++)  
+		{
+			subNo = 0;
+			if( ( dnNode = tuxHelper.walkDOMImpl( XMLIn,"ProcedenciaVO",&subNo,iCont ) ) == NULL )
+				break;
+
+			if( ( pAux = tuxHelper.walkTree( dnNode,"codigo",0 ) ) == NULL )
+				break;
+
+			if( iCont > 0 )
+			strcat( cPesquisaProcedencia, "," );
+
+		strcat( cPesquisaProcedencia, pAux );
+
+			//Libera a string
+			XMLString::release(&pAux);
+	    }//for (iCont=0;;iCont++)
+	if( strlen( cPesquisaProcedencia ) <= 0 )
+		strcpy( cPesquisaProcedencia, "-1" );
+	strcat( cPesquisa, cPesquisaProcedencia );
+		strcat( cPesquisa, " )" );
+		ULOG( "\n\n%s\n\n", cPesquisa );
+	if( ( iCont > 0 ) && ( iRet != 0 ) )
+		{
+			ULOG( "Efetuando a pesquisa de procedencia" );
+			EXEC SQL PREPARE qPesquisa6 FROM :cPesquisa;
+			EXEC SQL DECLARE Cursor6 CURSOR FOR qPesquisa6;
+			EXEC SQL OPEN Cursor6;
+			EXEC SQL FETCH Cursor6 INTO :iContNovos;
+			EXEC SQL CLOSE Cursor6;
+		}
+		//Verifica se tem alguma variavel foi excluida
+		if( iContAtuais > iContNovos )
+			iRet = 0;//Foi excluida alguma variavel
+	///////////////////////////////////////////////////////////////////
+	//
+	//   7) VERIFICA TIPOCARTEIRA
+	//
+	///////////////////////////////////////////////////////////////////
+		//Conta quantos registros tem um certo grupo
+		iContAtuais = 0;
+		iContNovos = 0;
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iContAtuais
+		FROM
+			CONTATOADM.TIPOCARTEIRAGRUPO
+		WHERE
+			IDGRUPO = :idGupoAux;
+		//Conta quantos existem nas parametros de entrada
+	memset( cPesquisa, 0, sizeof( cPesquisa ) );
+		strcpy( cPesquisa,
+			"SELECT "
+				"COUNT(1) "
+			"FROM "
+				"CONTATOADM.TIPOCARTEIRAGRUPO "
+			"WHERE "
+				"IDGRUPO = "
+		);
+		strcat( cPesquisa, idGupoAux );
+		strcat( cPesquisa,
+			" AND "
+				"IDTIPOCARTEIRA IN ( "
+		);
+		for (iCont=0;;iCont++)  
+		{
+			subNo = 0;
+			if( ( dnNode = tuxHelper.walkDOMImpl( XMLIn,"CarterizacaoVO",&subNo,iCont ) ) == NULL )
+				break;
+
+			if( ( pAux = tuxHelper.walkTree( dnNode,"codigo",0 ) ) == NULL )
+				break;
+
+			if( iCont > 0 )
+			strcat( cPesquisaTipoCarteira, "," );
+
+		strcat( cPesquisaTipoCarteira, pAux );
+
+			//Libera a string
+			XMLString::release(&pAux);
+	    }//for (iCont=0;;iCont++)
+	if( strlen( cPesquisaTipoCarteira ) <= 0 )
+		strcpy( cPesquisaTipoCarteira, "-1" );
+	strcat( cPesquisa, cPesquisaTipoCarteira );
+		strcat( cPesquisa, " )" );
+		ULOG( "\n\n%s\n\n", cPesquisa );
+	if( ( iCont > 0 ) && ( iRet != 0 ) )
+		{
+			ULOG( "Efetuando a pesquisa de carteirizacao" );
+			EXEC SQL PREPARE qPesquisa7 FROM :cPesquisa;
+			EXEC SQL DECLARE Cursor7 CURSOR FOR qPesquisa7;
+			EXEC SQL OPEN Cursor7;
+			EXEC SQL FETCH Cursor7 INTO :iContNovos;
+			EXEC SQL CLOSE Cursor7;
+		}
+		//Verifica se tem alguma variavel foi excluida
+		if( iContAtuais > iContNovos )
+			iRet = 0;//Foi excluida alguma variavel
+	///////////////////////////////////////////////////////////////////
+	//
+	//   8) VERIFICA SEGMENTACAO
+	//
+	///////////////////////////////////////////////////////////////////
+		//Conta quantos registros tem um certo grupo
+		iContAtuais = 0;
+		iContNovos = 0;
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iContAtuais
+		FROM
+			CONTATOADM.SEGMENTACAOGRUPO
+		WHERE
+			IDGRUPO = :idGupoAux;
+		//Conta quantos existem nas parametros de entrada
+	memset( cPesquisa, 0, sizeof( cPesquisa ) );
+		strcpy( cPesquisa,
+			"SELECT "
+				"COUNT(1) "
+			"FROM "
+				"CONTATOADM.SEGMENTACAOGRUPO "
+			"WHERE "
+				"IDGRUPO = "
+		);
+		strcat( cPesquisa, idGupoAux );
+		strcat( cPesquisa,
+			" AND "
+				"IDSEGMENTACAO IN ( "
+		);
+		for (iCont=0;;iCont++)  
+		{
+			subNo = 0;
+			if( ( dnNode = tuxHelper.walkDOMImpl( XMLIn,"SegmentacaoVO",&subNo,iCont ) ) == NULL )
+				break;
+
+			if( ( pAux = tuxHelper.walkTree( dnNode,"codigo",0 ) ) == NULL )
+				break;
+
+			if( iCont > 0 )
+			strcat( cPesquisaSegmentacao, "," );
+
+		strcat( cPesquisaSegmentacao, pAux );
+
+			//Libera a string
+			XMLString::release(&pAux);
+	    }//for (iCont=0;;iCont++)
+	if( strlen( cPesquisaSegmentacao ) <= 0 )
+		strcpy( cPesquisaSegmentacao, "-1" );
+	strcat( cPesquisa, cPesquisaSegmentacao );
+		strcat( cPesquisa, " )" );
+		ULOG( "\n\n%s\n\n", cPesquisa );
+	if( ( iCont > 0 ) && ( iRet != 0 ) )
+		{
+			ULOG( "Efetuando a pesquisa de segmentacao" );
+			EXEC SQL PREPARE qPesquisa8 FROM :cPesquisa;
+			EXEC SQL DECLARE Cursor8 CURSOR FOR qPesquisa8;
+			EXEC SQL OPEN Cursor8;
+			EXEC SQL FETCH Cursor8 INTO :iContNovos;
+			EXEC SQL CLOSE Cursor8;
+		}
+		//Verifica se tem alguma variavel foi excluida
+		if( iContAtuais > iContNovos )
+			iRet = 0;//Foi excluida alguma variavel
+	///////////////////////////////////////////////////////////////////
+	//
+	//   9) VERIFICA TIPOLINHA
+	//
+	///////////////////////////////////////////////////////////////////
+		//Conta quantos registros tem um certo grupo
+		iContAtuais = 0;
+		iContNovos = 0;
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iContAtuais
+		FROM
+			CONTATOADM.TIPOLINHAGRUPO
+		WHERE
+			IDGRUPO = :idGupoAux;
+		//Conta quantos existem nas parametros de entrada
+	memset( cPesquisa, 0, sizeof( cPesquisa ) );
+		strcpy( cPesquisa,
+			"SELECT "
+				"COUNT(1) "
+			"FROM "
+				"CONTATOADM.TIPOLINHAGRUPO "
+			"WHERE "
+				"IDGRUPO = "
+		);
+		strcat( cPesquisa, idGupoAux );
+		strcat( cPesquisa,
+			" AND "
+				"IDTIPOLINHA IN ( "
+		);
+		for (iCont=0;;iCont++)  
+		{
+			subNo = 0;
+			if( ( dnNode = tuxHelper.walkDOMImpl( XMLIn,"TipoLinhaVO",&subNo,iCont ) ) == NULL )
+				break;
+
+			if( ( pAux = tuxHelper.walkTree( dnNode,"id",0 ) ) == NULL )
+				break;
+
+			if( iCont > 0 )
+			strcat( cPesquisaTipoLinha, "," );
+
+		strcat( cPesquisaTipoLinha, pAux );
+
+			//Libera a string
+			XMLString::release(&pAux);
+	    }//for (iCont=0;;iCont++)
+	if( strlen( cPesquisaTipoLinha ) <= 0 )
+		strcpy( cPesquisaTipoLinha, "-1" );
+	strcat( cPesquisa, cPesquisaTipoLinha );
+		strcat( cPesquisa, " )" );
+		ULOG( "\n\n%s\n\n", cPesquisa );
+	if( ( iCont > 0 ) && ( iRet != 0 ) )
+		{
+			ULOG( "Efetuando a pesquisa de tipo linha" );
+			EXEC SQL PREPARE qPesquisa9 FROM :cPesquisa;
+			EXEC SQL DECLARE Cursor9 CURSOR FOR qPesquisa9;
+			EXEC SQL OPEN Cursor9;
+			EXEC SQL FETCH Cursor9 INTO :iContNovos;
+			EXEC SQL CLOSE Cursor9;
+		}
+		//Verifica se tem alguma variavel foi excluida
+		if( iContAtuais > iContNovos )
+			iRet = 0;//Foi excluida alguma variavel
+
+	//CURSOR PARA VERIFICAR SE HOUVE ALGUMA MODIFICACAO EM ALGUM SKILL
+
+	if( iRet == 0 )
+	{
+		memset( cPesquisa, 0, sizeof( cPesquisa ) );
+		//Como entrou aqui, a variavel muda para 1, indicando que embora alguma variavel de grupo
+		//foi removida, havera uma verificacao para saber se esta variavel que esta sendo removida 
+		//afetara algum Skill
+		iRet = 1;
+		ULOG( "iRet = 0 Alguma variavel de grupo foi excluida, tem que verificar se afeta algum Skill" );
+		strcpy( cPesquisa,
+			"SELECT "
+				"( SELECT COUNT(1) FROM ACESSO.CANALGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL )+ "
+				"( SELECT COUNT(1) FROM ACESSO.TIPOCARTEIRAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL )+ "
+				"( SELECT COUNT(1) FROM ACESSO.TIPOPESSOAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL )+ "
+				"( SELECT COUNT(1) FROM ACESSO.TIPOLINHAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL )+ "
+				"( SELECT COUNT(1) FROM ACESSO.TPRELACIONAMENTOGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL )+ "
+				"( SELECT COUNT(1) FROM ACESSO.SEGMENTACAOGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL )+ "
+				"( SELECT COUNT(1) FROM ACESSO.PROCEDENCIAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL )+ "
+				"( SELECT COUNT(1) FROM ACESSO.UFOPERADORAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL )+ "
+				"( SELECT COUNT(1) FROM ACESSO.GRUPOABERTURAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL ) AS TOTALSKILL, "
+				"( SELECT COUNT(1) FROM ACESSO.CANALGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL AND IDCANAL IN ( " );
+		strcat( cPesquisa, cPesquisaCanal );
+		strcat( cPesquisa, 
+				" ) )+ "
+				"( SELECT COUNT(1) FROM ACESSO.TIPOCARTEIRAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL AND IDTIPOCARTEIRA IN ( " );
+		strcat( cPesquisa, cPesquisaTipoCarteira );
+		strcat( cPesquisa, 
+				" ) )+ "
+				"( SELECT COUNT(1) FROM ACESSO.TIPOPESSOAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL AND IDTIPOPESSOA IN ( " );
+		strcat( cPesquisa, cPesquisaTipoPessoa );
+		strcat( cPesquisa, 
+				" ) )+ "
+				"( SELECT COUNT(1) FROM ACESSO.TIPOLINHAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL AND IDTIPOLINHA IN ( " );
+		strcat( cPesquisa, cPesquisaTipoLinha );
+		strcat( cPesquisa, 
+				" ) )+ "
+				"( SELECT COUNT(1) FROM ACESSO.TPRELACIONAMENTOGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL AND IDTIPORELACIONAMENTO IN ( " );
+		strcat( cPesquisa, cPesquisaTipoRelacionamento );
+		strcat( cPesquisa, 
+				" ) )+ "
+				"( SELECT COUNT(1) FROM ACESSO.SEGMENTACAOGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL AND IDSEGMENTACAO IN ( " );
+		strcat( cPesquisa, cPesquisaSegmentacao );
+		strcat( cPesquisa, 
+				" ) )+ "
+				"( SELECT COUNT(1) FROM ACESSO.PROCEDENCIAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL AND IDPROCEDENCIA IN ( " );
+		strcat( cPesquisa, cPesquisaProcedencia );
+		strcat( cPesquisa, 
+				" ) )+ "
+				"( SELECT COUNT(1) FROM ACESSO.UFOPERADORAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL AND IDUFOPERADORA IN ( " );
+		strcat( cPesquisa, cPesquisaUFOperadora );
+		strcat( cPesquisa, 
+				" ) )+ "
+				"( SELECT COUNT(1) FROM ACESSO.GRUPOABERTURAGRUPOSKILL WHERE IDGRUPOSKILL = GRUPOSKILL.IDGRUPOSKILL AND IDGRUPO IN ( " );
+		strcat( cPesquisa, cPesquisaGrupoAbertura );
+		strcat( cPesquisa, 
+				" ) ) AS TOTALNOVO "
+			"FROM "
+				"ACESSO.GRUPOSKILL GRUPOSKILL "
+			"WHERE "
+				"IDGRUPO = " );
+		strcat( cPesquisa, idGupoAux );
+		ULOG( "\n\n%s\n\n", cPesquisa );
+		
+		EXEC SQL PREPARE qCursorGrupoSkill FROM :cPesquisa;
+		EXEC SQL DECLARE CursorGrupoSkill CURSOR FOR qCursorGrupoSkill;
+		EXEC SQL OPEN CursorGrupoSkill;
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			EXEC SQL FETCH CursorGrupoSkill INTO :iSkillAtual,iSkillNovo;
+			//se iSkillAtual > iSkillNovo indica que houve exclusao de variaveis que afetam Skill
+			if( iSkillAtual > iSkillNovo )
+			{
+				ULOG( "if( iSkillAtual[%d] > iSkillNovo[%d] )", iSkillAtual, iSkillNovo );
+				iRet = 0;
+				break;
+			}
+		}//for(;;)
+
+		EXEC SQL CLOSE CursorGrupoSkill;
+	}//if( iRet == 0 )
+
+	ULOG("iRet[%d]", iRet );
+	ULOG_END("SomenteInclusaoVariaveis()");
+    //Retorna 1 se apenas houve inclusao de variaveis ou 0 se houve exclusao
+    return iRet;
+
+GotoSomenteInclusaoVariaveis:
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}

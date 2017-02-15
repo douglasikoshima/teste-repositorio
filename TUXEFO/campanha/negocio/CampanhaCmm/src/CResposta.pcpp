@@ -1,0 +1,404 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <CResposta.h>
+
+CResposta::CResposta()
+{
+}
+
+CResposta::~CResposta()
+{
+}
+
+int CResposta::Insert( char* cidPergunta, 
+		       char* cdsResposta, 
+		       char* cdsScriptResposta, 
+		       char* csqApresentacao,
+		       char* cinEncerramento,
+		       char* cinDisponibilidade )
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+	VARCHAR cAuxidResposta[21+1];
+	char* cAuxidPergunta  = cidPergunta;
+	char* cAuxdsResposta  = cdsResposta;
+	char* cAuxdsScriptResposta  = cdsScriptResposta;
+	char* cAuxsqApresentacao = csqApresentacao;
+	char* cAuxinEncerramento  = cinEncerramento;
+	char* cAuxinDisponibilidade = cinDisponibilidade;
+
+	int		iCont = 0;
+	int		iRet=0;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraResposta();
+
+	memset( &cAuxidResposta, 0, sizeof(cAuxidResposta) );
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+	sqlca.sqlcode=0;
+
+	EXEC SQL SELECT	COUNT( idResposta ) 
+			INTO :iCont 
+			FROM QUESTIONARIO.RESPOSTA
+			WHERE UPPER(trim(dsScriptResposta)) = UPPER(trim(:cAuxdsScriptResposta))
+			and idPergunta = :cAuxidPergunta;
+	
+	if(!iCont)
+	{
+	  //Pega um id unico e sequencia para a insercao
+	  EXEC SQL
+		SELECT QUESTIONARIO.RESPOSTASQ.NEXTVAL
+		INTO :cAuxidResposta
+		FROM DUAL;
+
+	  EXEC SQL 
+		INSERT INTO QUESTIONARIO.RESPOSTA
+							(IDRESPOSTA, 
+							 IDPERGUNTA, 
+							 DSRESPOSTA, 
+							 INDISPONIBILIDADE, 
+							 SQAPRESENTACAO, 
+							 DSSCRIPTRESPOSTA, 
+							 INENCERRAMENTO)
+		VALUES
+							(:cAuxidResposta, 
+							 :cAuxidPergunta, 
+							 :cAuxdsResposta, 
+							 :cAuxinDisponibilidade, 
+							 :cAuxsqApresentacao, 
+							 :cAuxdsScriptResposta, 
+							 :cAuxinEncerramento);
+		
+		if( sqlca.sqlcode == 0 ) iRet= atoi((char *)cAuxidResposta.arr);
+	}
+	else
+	{
+		iRet= -3;//ya existe 
+    }
+
+	return iRet;
+
+	GotoInsert:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CResposta::Update( char* cidResposta, 
+                       char* cidPergunta, 
+		       char* cdsResposta, 
+		       char* cdsScriptResposta, 
+		       char* csqApresentacao,
+		       char* cinEncerramento,
+		       char* cinDisponibilidade )
+{
+  struct sqlca sqlca;
+  EXEC SQL BEGIN DECLARE SECTION;
+  char* cAuxidResposta  = cidResposta;
+  char* cAuxidPergunta  = cidPergunta;
+  char* cAuxdsResposta  = cdsResposta;
+  char* cAuxdsScriptResposta  = cdsScriptResposta;
+  char* cAuxsqApresentacao = csqApresentacao;
+  char* cAuxinEncerramento  = cinEncerramento;
+  char* cAuxinDisponibilidade = cinDisponibilidade;
+  EXEC SQL END DECLARE SECTION;
+  int iCont=0;
+  int iRet=0; 	
+
+  ZeraResposta();
+	
+  EXEC SQL WHENEVER NOT FOUND CONTINUE;
+  EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+  sqlca.sqlcode=0;
+	
+   EXEC SQL SELECT	COUNT( idResposta ) 
+			INTO :iCont 
+			FROM QUESTIONARIO.RESPOSTA
+			WHERE UPPER(trim(dsScriptResposta)) = UPPER(trim(:cAuxdsScriptResposta))
+			and idPergunta = :cAuxidPergunta
+			and idResposta !=:cAuxidResposta;
+
+
+if(iCont==0)
+  {
+	EXEC SQL 
+    UPDATE QUESTIONARIO.RESPOSTA
+    SET IDPERGUNTA  =   :cAuxidPergunta,
+    DSRESPOSTA        = :cAuxdsResposta,
+    INENCERRAMENTO    = :cAuxinEncerramento,
+    INDISPONIBILIDADE = :cAuxinDisponibilidade,
+    DSSCRIPTRESPOSTA  = :cAuxdsScriptResposta,
+    SQAPRESENTACAO    = :cAuxsqApresentacao
+    WHERE IDRESPOSTA =  :cAuxidResposta;   
+	
+  //if( sqlca.sqlcode == 0 )
+    iRet=1;
+  }
+else
+  {
+     iRet=-1;
+  }
+
+  return iRet;
+
+ GotoUpdate:
+  throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+
+int CResposta::ListId( char* cid )
+{
+  int    iCont = 0;
+  struct sqlca sqlca;
+  EXEC SQL BEGIN DECLARE SECTION;
+  char* cidOra = cid;
+  struct
+  {
+    VARCHAR stidResposta[21+1];
+    VARCHAR stidPergunta[21+1];
+    VARCHAR stdsResposta[2000+1];
+    VARCHAR stinDisponibilidade[21+1];
+    VARCHAR stsqApresentacao[21+1];
+    VARCHAR stdsScriptResposta[2000+1];
+    VARCHAR stinEncerramento[21+1];
+  } stRespostaRegistro;
+  struct
+  {
+    short iidResposta;
+    short iidPergunta;
+    short idsResposta;
+    short iinDisponibilidade;
+    short isqApresentacao;
+    short idsScriptResposta;
+    short iinEncerramento;
+  } stRespostaIndicator;
+  EXEC SQL END DECLARE SECTION;
+
+  ZeraResposta();
+
+  EXEC SQL WHENEVER NOT FOUND DO break;
+  EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+  sqlca.sqlcode=0;
+
+  EXEC SQL DECLARE CursorRespostaId CURSOR FOR
+    SELECT IDRESPOSTA, 
+    IDPERGUNTA, 
+    DSRESPOSTA, 
+    INDISPONIBILIDADE, 
+    SQAPRESENTACAO, 
+    DSSCRIPTRESPOSTA, 
+    INENCERRAMENTO 
+    FROM QUESTIONARIO.RESPOSTA RESPOSTA
+    WHERE IDRESPOSTA = :cidOra;
+
+  EXEC SQL OPEN CursorRespostaId;
+
+  if(sqlca.sqlcode)
+    return 0;
+  else
+    {
+      for(;;)
+	{
+	  memset( &stRespostaRegistro, 0, sizeof(stRespostaRegistro) );
+	  EXEC SQL FETCH CursorRespostaId INTO :stRespostaRegistro:stRespostaIndicator;
+
+	  Add( (char*)stRespostaRegistro.stidResposta.arr, 
+	       (char*)stRespostaRegistro.stidPergunta.arr,
+	       (char*)stRespostaRegistro.stdsResposta.arr,
+	       (char*)stRespostaRegistro.stdsScriptResposta.arr,
+	       (char*)stRespostaRegistro.stsqApresentacao.arr,
+	       (char*)stRespostaRegistro.stinEncerramento.arr,
+	       (char*)stRespostaRegistro.stinDisponibilidade.arr );
+
+	  iCont++;
+
+	}
+      EXEC SQL CLOSE CursorRespostaId;
+    }
+
+  return iCont;
+
+ GotoListId:
+  throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CResposta::ListAll( void )
+{
+  int    iCont = 0;
+  struct sqlca sqlca;
+  EXEC SQL BEGIN DECLARE SECTION;
+  struct
+  {
+    VARCHAR stidResposta[21+1];
+    VARCHAR stidPergunta[21+1];
+    VARCHAR stdsResposta[2000+1];
+    VARCHAR stinDisponibilidade[21+1];
+    VARCHAR stsqApresentacao[12+1];
+    VARCHAR stdsScriptResposta[2000+1];
+    VARCHAR stinEncerramento[21+1];
+  } stRespostaRegistro;
+  struct
+  {
+    short iidResposta;
+    short iidPergunta;
+    short idsResposta;
+    short iinDisponibilidade;
+    short isqApresentacao;
+    short idsScriptResposta;
+    short iinEncerramento;
+  } stRespostaIndicator;
+  EXEC SQL END DECLARE SECTION;
+
+  ZeraResposta();
+
+  EXEC SQL WHENEVER NOT FOUND DO break;
+  EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+  sqlca.sqlcode=0;
+
+  EXEC SQL DECLARE CursorRespostaAll CURSOR FOR
+    SELECT IDRESPOSTA, 
+    IDPERGUNTA, 
+    DSRESPOSTA, 
+    INDISPONIBILIDADE, 
+    SQAPRESENTACAO, 
+    DSSCRIPTRESPOSTA, 
+    INENCERRAMENTO 
+    FROM QUESTIONARIO.RESPOSTA RESPOSTA;
+
+  EXEC SQL OPEN CursorRespostaAll;
+
+  if(sqlca.sqlcode)
+    return 0;
+  else
+    {
+      for(;;)
+	{
+	  memset( &stRespostaRegistro, 0, sizeof(stRespostaRegistro) );
+	  EXEC SQL FETCH CursorRespostaAll INTO :stRespostaRegistro:stRespostaIndicator;
+
+	  Add( (char*)stRespostaRegistro.stidResposta.arr, 
+	       (char*)stRespostaRegistro.stidPergunta.arr,
+	       (char*)stRespostaRegistro.stdsResposta.arr,
+	       (char*)stRespostaRegistro.stdsScriptResposta.arr,
+	       (char*)stRespostaRegistro.stsqApresentacao.arr,
+	       (char*)stRespostaRegistro.stinEncerramento.arr,
+	       (char*)stRespostaRegistro.stinDisponibilidade.arr );
+
+	  iCont++;
+
+	}
+      EXEC SQL CLOSE CursorRespostaAll;
+    }
+
+  return iCont;
+
+ GotoListAll:
+  throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CResposta::ListIdPergunta( char* cid )
+{
+  int    iCont = 0;
+  struct sqlca sqlca;
+  EXEC SQL BEGIN DECLARE SECTION;
+  char* cidOra = cid;
+  struct
+  {
+    VARCHAR stidResposta[21+1];
+    VARCHAR stidPergunta[21+1];
+    VARCHAR stdsResposta[2000+1];
+    VARCHAR stinDisponibilidade[21+1];
+    VARCHAR stsqApresentacao[12+1];
+    VARCHAR stdsScriptResposta[2000+1];
+    VARCHAR stinEncerramento[21+1];
+  } stRespostaRegistro;
+  struct
+  {
+    short iidResposta;
+    short iidPergunta;
+    short idsResposta;
+    short iinDisponibilidade;
+    short isqApresentacao;
+    short idsScriptResposta;
+    short iinEncerramento;
+  } stRespostaIndicator;
+  EXEC SQL END DECLARE SECTION;
+
+  ZeraResposta();
+
+  EXEC SQL WHENEVER NOT FOUND DO break;
+  EXEC SQL WHENEVER SQLERROR GOTO GotoListIdPergunta;
+  sqlca.sqlcode=0;
+
+  EXEC SQL DECLARE CursorRespostaIdPergunta CURSOR FOR
+    SELECT IDRESPOSTA, 
+    IDPERGUNTA, 
+    DSRESPOSTA, 
+    INDISPONIBILIDADE, 
+    SQAPRESENTACAO, 
+    DSSCRIPTRESPOSTA, 
+    INENCERRAMENTO 
+    FROM QUESTIONARIO.RESPOSTA RESPOSTA
+    WHERE IDPERGUNTA = :cidOra;
+
+  EXEC SQL OPEN CursorRespostaIdPergunta;
+
+  if(sqlca.sqlcode)
+    return 0;
+  else
+    {
+      for(;;)
+	{
+	  memset( &stRespostaRegistro, 0, sizeof(stRespostaRegistro) );
+	  EXEC SQL FETCH CursorRespostaIdPergunta INTO :stRespostaRegistro:stRespostaIndicator;
+
+	  Add( (char*)stRespostaRegistro.stidResposta.arr, 
+	       (char*)stRespostaRegistro.stidPergunta.arr,
+	       (char*)stRespostaRegistro.stdsResposta.arr,
+	       (char*)stRespostaRegistro.stdsScriptResposta.arr,
+	       (char*)stRespostaRegistro.stsqApresentacao.arr,
+	       (char*)stRespostaRegistro.stinEncerramento.arr,
+	       (char*)stRespostaRegistro.stinDisponibilidade.arr );
+
+	  iCont++;
+
+	}
+      EXEC SQL CLOSE CursorRespostaIdPergunta;
+    }
+
+  return iCont;
+
+ GotoListIdPergunta:
+  throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CResposta::GetXml( char* cNomeTag, XMLGen*xml )
+{
+  if( Quantidade() > 0 )
+    {
+      for( int x = 0; x < Quantidade(); x++ )
+	{
+	  xml->createTag(cNomeTag);
+	  xml->addProp( "xmlns", "campanha.fo.vivo.com.br/vo" );
+	  if( Registro( x ) != NULL )
+	    {
+	      xml->addItem("idResposta", Registro(x)->cidResposta );
+	      xml->addItem("idPergunta", Registro(x)->cidPergunta );
+	      xml->addItem("dsResposta", Registro(x)->cdsResposta );
+	      xml->addItem("inEncerramento", Registro(x)->cinEncerramento );
+	      xml->addItem("inDisponibilidade", Registro(x)->cinDisponibilidade );
+	      xml->addItem("dsScriptResposta", Registro(x)->cdsScriptResposta );
+	      xml->addItem("sqApresentacao", Registro(x)->csqApresentacao );
+	    }
+	  xml->closeTag();
+	}
+    }
+}

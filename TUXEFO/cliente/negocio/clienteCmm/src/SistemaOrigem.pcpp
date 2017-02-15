@@ -1,0 +1,268 @@
+// SistemaOrigem.pcpp: implementation for the 
+// CSistemaOrigem class.
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw.h>
+#include "../include/Global.h"
+EXEC SQL INCLUDE "../include/SistemaOrigem.h";
+
+//
+// Construtor e Destrutor
+CSistemaOrigem::CSistemaOrigem() {
+
+	memset(sIdUsuarioAlteracao,0,256);
+}
+
+CSistemaOrigem::CSistemaOrigem(int iIdTipoCorr) {
+    
+    ULOG_START("CSistemaOrigem::CSistemaOrigem()");
+    
+	struct sqlca sqlca;
+
+	iIdSistemaOrigem = iIdTipoCorr;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL SELECT
+	 SgSistemaOrigem,
+	 DsSistemaOrigem
+	INTO
+	 :cSgSistemaOrigem,
+	 :cDsSistemaOrigem
+	FROM
+	 apoio.SistemaOrigem
+	WHERE
+	 IdSistemaOrigem = :iIdSistemaOrigem;
+
+	// ID não existe. Seta o ID para -1.
+	if (sqlca.sqlcode == NO_DATA_FOUND)
+		iIdSistemaOrigem = -1;
+
+	ULOG_END("CSistemaOrigem::CSistemaOrigem()");
+	return;
+
+	sqlErrorConstrutor:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+CSistemaOrigem::~CSistemaOrigem() {
+}
+
+// Usuário de alteração
+void CSistemaOrigem::setUsuarioAlteracao(char* value) {
+	if (value != NULL) {
+		strncpy(sIdUsuarioAlteracao,value, 255);
+		sIdUsuarioAlteracao[255]='\0';
+	}
+}
+
+//
+// Metodos getter
+int CSistemaOrigem::getIdSistemaOrigem(){
+	return iIdSistemaOrigem;
+}
+
+char* CSistemaOrigem::getSgSistemaOrigem(){
+	return cSgSistemaOrigem;
+}
+
+char* CSistemaOrigem::getDsSistemaOrigem(){
+	return cDsSistemaOrigem;
+}
+
+//
+// Metodos setter
+void CSistemaOrigem::setIdSistemaOrigem(int value){
+	iIdSistemaOrigem = value;
+}
+
+void CSistemaOrigem::setSgSistemaOrigem(char* value){
+	strncpy(cSgSistemaOrigem, value?value:"", 255);
+	cSgSistemaOrigem[255]='\0';
+}
+
+void CSistemaOrigem::setDsSistemaOrigem(char* value){
+	strncpy(cDsSistemaOrigem, value?value:"", 255);
+	cDsSistemaOrigem[255]='\0';
+}
+
+//
+// Métodos de acesso a banco de dados
+void CSistemaOrigem::inclui(){
+
+	ULOG_START("CSistemaOrigem::inclui()");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iNovoId;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorInc;
+
+	// Busca o novo ID da sequence.
+	EXEC SQL
+		SELECT apoio.SistemaOrigemSQ.NEXTVAL
+		INTO :iNovoId
+		FROM DUAL;
+	if (sqlca.sqlcode)
+	{
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CSistemaOrigem::inclui()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+    }
+
+	// Insere no banco de dados
+	EXEC SQL
+	INSERT INTO apoio.SistemaOrigem
+	(IdSistemaOrigem,
+	 SgSistemaOrigem,
+	 DsSistemaOrigem,
+	 IdUsuarioAlteracao,
+	 DtUltimaAlteracao)
+	VALUES
+	(:iNovoId,
+	 :cSgSistemaOrigem,
+	 :cDsSistemaOrigem,
+	 :sIdUsuarioAlteracao,
+	 SYSDATE);
+
+	// Inserção OK, coloca o ID no objeto
+	iIdSistemaOrigem = iNovoId;
+
+	ULOG_END("CSistemaOrigem::inclui()");
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorInc:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CSistemaOrigem::inclui()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CSistemaOrigem::exclui(){
+
+	ULOG_START("CSistemaOrigem::exclui()");
+	struct sqlca sqlca;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorExc;
+
+	// Remove do banco de dados
+	EXEC SQL
+	DELETE apoio.SistemaOrigem
+	WHERE IdSistemaOrigem = :iIdSistemaOrigem;
+
+	// Remoção OK, seta ID do objeto para -1
+	iIdSistemaOrigem = -1;
+
+	ULOG_END("CSistemaOrigem::exclui()");
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorExc:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CSistemaOrigem::exclui()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CSistemaOrigem::altera(){
+
+	ULOG_START("CSistemaOrigem::altera()");
+	struct sqlca sqlca;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorAlt;
+
+	// Altera no banco de dados para os dados atuais
+	EXEC SQL
+	UPDATE apoio.SistemaOrigem
+	SET
+	 SgSistemaOrigem = :cSgSistemaOrigem,
+	 DsSistemaOrigem = :cDsSistemaOrigem,
+	 IdUsuarioAlteracao = :sIdUsuarioAlteracao,
+	 DtUltimaAlteracao = SYSDATE
+	WHERE
+	 IdSistemaOrigem = :iIdSistemaOrigem;
+
+	ULOG_END("CSistemaOrigem::altera()");
+	return;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorAlt:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CSistemaOrigem::altera()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+CSistemaOrigem* CSistemaOrigem::lista(int* iNroObjetos){
+
+	ULOG_START("CSistemaOrigem::lista()");
+	struct sqlca sqlca;
+	CSistemaOrigem* listaSisOr = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdSisOr;
+	char cSgSisOr[256];
+	char cDsSisOr[256];
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE motivos CURSOR FOR
+	SELECT
+	 IdSistemaOrigem,
+	 SgSistemaOrigem,
+	 DsSistemaOrigem
+	FROM
+	 apoio.SistemaOrigem;
+	EXEC SQL OPEN motivos;
+
+	// Corre os dados e monta a lista de objetos
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) {
+		
+		EXEC SQL FETCH motivos INTO
+		 :iIdSisOr,
+		 :cSgSisOr,
+		 :cDsSisOr;
+
+		// Aloca memória para o objeto atual.
+		if ((listaSisOr = (CSistemaOrigem*) realloc((void *)listaSisOr, (sizeof(CSistemaOrigem) * iNroObjLocal))) != NULL) {
+			
+			// Coloca os dados do objeto atual.
+			listaSisOr[iNroObjLocal-1].setIdSistemaOrigem(iIdSisOr);
+			listaSisOr[iNroObjLocal-1].setSgSistemaOrigem(cSgSisOr);
+			listaSisOr[iNroObjLocal-1].setDsSistemaOrigem(cDsSisOr);
+
+		} else {
+			if (listaSisOr)
+				free(listaSisOr);
+				
+			ULOG_END("CSistemaOrigem::lista()");
+			throw new TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	return listaSisOr;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CSistemaOrigem::lista()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CSistemaOrigem::getIdSistemaFO() {
+	return 7;
+}

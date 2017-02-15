@@ -1,0 +1,277 @@
+
+                        
+//Imports;
+#import WFAtdSuspeito:WFAtdSuspExcluir;
+#import WFAndamento:WFAndameIncluir;
+#import WFAtdAndAtual:WFAtdAnAAlterar;
+#import WFAndObservacao:WFAndObsIncluir;
+#import WFAtdGrupoAtual:ObtemGrAt;
+#import WFAtdNivel:WFAtdNivIncluir;
+#import WFAtdGrpDevol:WFAtdGrDExcluir;
+#import WFAtdUsrDevol:WFAtdUsDExcluir;
+#import WFAtendimento:WFAtendiAlterar;
+#import WFAtdUsuAtual:WFAtdUsAConsultar;
+#import WFAtdUsuAtual:WFAtdUsAExcluir;
+#import WFAndTrf:WFAndTrfAlterar;
+#import WFAndTrf:WFObtemAndTrf;
+#import WFAtdGrupoAtual:WFAtdGrAExcluir;
+#import WFAtdFechamento:WFAtdFchIncluir;
+#import WFAndMotivo:WFAndMotIncluir;
+
+//Definições;
+DOMNODE domScript;
+DOMNODE domWorkflow;
+DOMNODE domGrupo;
+DOMNODE domMotivo;
+DOMNODE parametro;
+DOMNODE paramAtdNv;
+DOMNODE paramSusp;
+DOMNODE parametroAnd;
+DOMNODE parametroAndAt;
+DOMNODE parametroAndOb;
+DOMNODE paramAtdUs;
+DOMNODE paramFec;
+DOMNODE domTratWf;
+DOMNODE paramUltAnd;
+DOMNODE paramAndMot;
+
+XMLGen xmlObtemAtGrAt;
+XMLGen AtdNivel;
+XMLGen ExcSusp;
+XMLGen AndAtual;
+XMLGen AndamentoIns;
+XMLGen Observacao;
+XMLGen AtdGrpRecep;
+XMLGen AtdUsrRecep;
+XMLGen xmlAtdFec;
+XMLGen AtdUsrAt;
+XMLGen AtdGrAt;
+XMLGen AtdActUsrAt;
+XMLGen xmlAltAndTrf;
+XMLGen xmlUltAndTrf;
+XMLGen Motivo;
+
+string txt;
+string urlDestino;
+string txtUltAnd;
+
+int UsuarioAtual;
+int idAgrEstTPrAt;
+int idAgrEstTPrFt;
+int idAtividade;
+int idAtendimento;
+int idFase;
+int idGrupoAtual;
+int idAndamentoIns;
+
+SQL SELECT TO_CHAR(SYSDATE, 'DD/MM/YYYY HH24:MI') DATAATUAL FROM DUAL;
+SQL SELECT TO_CHAR(SYSDATE, 'DD/MM/YYYY HH24:MI:SS') DATAANDAMENTO FROM DUAL;
+
+domScript = XML:ScriptExecucaoVO;
+
+UsuarioAtual = domScript:idPessoaUsuario;
+idAtendimento = domScript:idAtendimento;
+idAgrEstTPrFt = domScript:idAgrupamentoEstadoTProcFut;
+idAgrEstTPrAt = domScript:idAgrupamentoEstadoTProcAt;
+idAtividade = domScript:idAtividade;
+urlDestino = domScript:nmUrlDestino;
+
+domTratWf = XML:AtendimentoWorkflowVO;
+domWorkflow = domTratWf:AtendimentoWorkflowComumVO;
+domMotivo = domWorkflow:WFMotivoVO;
+
+txt = "<EncaminhaFilaVO>\n";
+txt += "<idAtendimento>" + idAtendimento + "</idAtendimento>\n";
+txt += "</EncaminhaFilaVO>\n";
+parametro = txt;
+
+// Obteniendo Fase Atual;
+
+idFase = domScript:idFase;
+
+// Obteniendo Grupo Atual;
+xmlObtemAtGrAt=WFAtdGrupoAtual.ObtemGrAt(parametro);
+
+if(xmlObtemAtGrAt)
+	domGrupo = xmlObtemAtGrAt;
+	idGrupoAtual = domGrupo:idGrupo;
+fi;
+
+// Gerando Entrada Inclusao;
+txt = "<AtendimentoUsuarioAtualVO>\n";
+txt += "<idAtendimento>" + idAtendimento + "</idAtendimento>\n";
+txt += "</AtendimentoUsuarioAtualVO>\n";
+		
+paramAtdUs = txt;
+
+// Inclui o Atendimento Transferencia;
+AtdUsrAt = WFAtdUsuAtual.WFAtdUsAConsultar(paramAtdUs);
+	
+if (AtdUsrAt)
+
+ 	// Atualiza o Usuario Atual;
+	AtdActUsrAt = WFAtdUsuAtual.WFAtdUsAExcluir(paramAtdUs);
+			
+	// Atualiza o ultimo Andamento Transferencia
+	xmlUltAndTrf = WFAndTrf.WFObtemAndTrf(paramAtdUs);
+			
+	if (xmlUltAndTrf)
+		txtUltAnd = "<AtendimentoTransferenciaVO>\n";
+		txtUltAnd += "<idAndamento>" + xmlUltAndTrf:idAndamento + "</idAndamento>\n";
+		txtUltAnd += "<dtFinTransferencia>" + DATAATUAL + "</dtFinTransferencia>\n";
+		txtUltAnd += "</AtendimentoTransferenciaVO>\n";
+				
+		paramUltAnd = txtUltAnd;
+		xmlAltAndTrf = WFAndTrf.WFAndTrfAlterar(paramUltAnd);
+	fi;
+fi;
+
+// Eliminando Marcacao Suspeito;
+Clean(txt);
+
+// Gerando Entrada Inclusao;
+txt = "<AtendimentoSuspeitoVO>\n";
+txt += "<idAtendimento>" + idAtendimento + "</idAtendimento>\n";
+txt += "</AtendimentoSuspeitoVO>\n";
+
+paramSusp = txt;
+
+// Inclui o Atendimento Transferencia;
+ExcSusp = WFAtdSuspeito.WFAtdSuspExcluir(paramSusp);
+
+// Inseriendo Nivel do Processo;
+Clean(txt);
+
+// Gerando Entrada Inclusao;
+txt = "<AtendimentoNivelVO>\n";
+txt += "<idAtendimento>" + idAtendimento + "</idAtendimento>\n";
+txt += "<idGrupo>" + idGrupoAtual + "</idGrupo>\n";
+txt += "<idPessoaUsuario>" + UsuarioAtual + "</idPessoaUsuario>\n";
+txt += "<idFase>" + idFase + "</idFase>\n";
+txt += "<nrNivel>0</nrNivel>\n";
+txt += "<dtNivel>" + DATAATUAL + "</dtNivel>\n";
+txt += "<idAtividade>" + idAtividade + "</idAtividade>\n";
+txt += "<idUsuarioAlteracao>" + UsuarioAtual + "</idUsuarioAlteracao>\n";
+txt += "</AtendimentoGrupoAtualVO>\n";
+
+paramAtdNv = txt;
+
+// Inclui o Atendimento Nivel;
+AtdNivel = WFAtdNivel.WFAtdNivIncluir(paramAtdNv);
+
+// Exclui o Atendimento Grupo Receptor;
+AtdGrpRecep = WFAtdGrpDevol.WFAtdGrDExcluir(paramAtdNv);
+
+// Exclui o Atendimento Usuario Receptor;
+AtdUsrRecep = WFAtdUsrDevol.WFAtdUsDExcluir(paramAtdNv);
+
+AtdGrAt = WFAtdGrupoAtual.WFAtdGrAExcluir(paramAtdNv);
+//;
+//************* Inclusao do Andamento ********************;
+//;
+Clean(txt);
+
+// Gerando Parametro de Entrada para Metodo de Inclusao;
+txt = "<AndamentoVO>\n";
+txt += "<idAtividade>" + idAtividade + "</idAtividade>\n";
+txt += "<idAgrupamentoEstadoTpProc>" + idAgrEstTPrFt + "</idAgrupamentoEstadoTpProc>\n";
+txt += "<idAtendimento>" + idAtendimento + "</idAtendimento>\n";
+txt += "<idPessoaUsuario>" + UsuarioAtual + "</idPessoaUsuario>\n";
+txt += "<dtAndamento>" + DATAANDAMENTO + "</dtAndamento>\n";
+txt += "<idGrupo>" + idGrupoAtual + "</idGrupo>\n";
+txt += "<idUsuarioAlteracao>" + UsuarioAtual + "</idUsuarioAlteracao>\n";
+txt += "<dtUltimaAlteracao>" + DATAATUAL + "</dtUltimaAlteracao>\n";
+txt += "</AndamentoVO>\n";
+
+parametroAnd = txt;
+
+// Inclui o atendimento;
+AndamentoIns = WFAndamento.WFAndameIncluir(parametroAnd);
+idAndamentoIns = AndamentoIns:idAndamento;
+
+//;
+//************* Atualiza Andamento Atual ********************;
+//;
+Clean(txt);
+
+// Entrada para Alteracao;
+txt = "<AndamentoAtualVO>";
+txt += "<idAtendimento>" + idAtendimento + "</idAtendimento>\n";
+txt += "<idAndamento>" + idAndamentoIns + "</idAndamento>\n";
+txt += "<idUsuarioAlteracao>" + UsuarioAtual + "</idUsuarioAlteracao>\n";
+txt += "<dtUltimaAlteracao>" + DATAATUAL + "</dtUltimaAlteracao>\n";
+txt += "</AndamentoAtualVO>\n";
+
+parametroAndAt = txt;
+
+// Inclui o atendimento;
+AndAtual = WFAtdAndAtual.WFAtdAnAAlterar(parametroAndAt);
+
+//;
+//********** Inclusao do Andamento Observacao *************;
+//;
+Clean(txt);
+
+// Gerando Entrada Inclusao;
+txt = "<AndamentoObservacaoVO>";
+txt += "<idAndamento>" + idAndamentoIns + "</idAndamento>\n";
+txt += "<dsAndamentoObservacao>" + domWorkflow:dsObservacao + "</dsAndamentoObservacao>\n";
+txt += "<idUsuarioAlteracao>" + UsuarioAtual + "</idUsuarioAlteracao>\n";
+txt += "<dtUltimaAlteracao>" + DATAATUAL + "</dtUltimaAlteracao>\n";
+txt += "</AndamentoObservacaoVO>";
+
+parametroAndOb = txt;
+
+// Inclui o Atendimento Observacao;
+Observacao = WFAndObservacao.WFAndObsIncluir(parametroAndOb);
+
+// Inserir Fechamento de Processo;
+Clean(txt);
+// Gerando Entrada Inclusao;
+txt = "<AtendimentoFechamentoVO>\n";
+txt += "<idAtendimento>" + idAtendimento + "</idAtendimento>\n";
+txt += "<idAndamento>" + idAndamentoIns + "</idAndamento>\n";
+txt += "<dtFechamento>" + DATAATUAL + "</dtFechamento>\n";
+txt += "<idPessoaUsuario>" + UsuarioAtual + "</idPessoaUsuario>\n";
+txt += "</AtendimentoFechamentoVO>\n";
+	
+paramFec = txt;
+xmlAtdFec = WFAtdFechamento.WFAtdFchIncluir(paramFec);
+
+int idMotivo;
+idMotivo = domMotivo:idMotivo;
+if (idMotivo > 0)
+	Clean(txt);
+	
+	// Gerando Entrada Inclusao;
+	txt = "<AndamentoMotivoVO>";
+	txt += "<idAndamento>" + idAndamentoIns + "</idAndamento>\n";
+	txt += "<idMotivo>" + domMotivo:idMotivo + "</idMotivo>\n";
+	txt += "<idFase>" + idFase + "</idFase>\n";
+	txt += "<idUsuarioAlteracao>" + UsuarioAtual + "</idUsuarioAlteracao>\n";
+	txt += "<dtUltimaAlteracao>" + DATAATUAL + "</dtUltimaAlteracao>\n";
+	txt += "</AndamentoMotivoVO>";
+	
+	paramAndMot = txt;
+	
+	// Inclui o Atendimento Observacao;
+	Motivo = WFAndMotivo.WFAndMotIncluir(paramAndMot);
+fi;
+
+//;
+//*** FIM DE PROCESSO ***;
+//;
+Clean(txt);
+
+
+//Retorna processamento;
+txt = "<WFAcaoRetornoVO xmlns=\"workflow.fo.vivo.com.br/vo\">\n";
+txt += "<acaoExecucao>S</acaoExecucao>\n";
+txt += "<mensagem>Fechamento Concluido</mensagem>\n";
+txt += "<urlDestino>" + urlDestino + "</urlDestino>\n";
+txt += "</WFAcaoRetornoVO>\n";
+
+
+return txt;
+                        
+			

@@ -1,0 +1,305 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include"../../../commons/queryMacro.h"
+
+#include "../include/cWFCondicaoAparicao.h"
+#include "../include/stWFCondicaoAparicao.h"
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+	#include "../include/stWFCondicaoAparicao.h"
+EXEC SQL END DECLARE SECTION;
+
+void sql_error_WFCondicaoAparicao(sqlca*sqlca);
+int proCExecutaWFCondicaoAparicao(char* sDsQuery, unsigned long sIdParametro);
+
+bool proCIncluirWFCondicaoAparicao(st_CondicaoAparicao* dados, st_vlCondicaoAparicao* status, XMLGen* saida)
+{
+	ULOG_START("proCIncluirWFCondicaoAparicao()");
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_CondicaoAparicao   oDados;
+		struct st_vlCondicaoAparicao oStatus;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCondicaoAparicao(&sqlca);
+
+	EXEC SQL SELECT workflow.CondicaoAparicaoSQ.NEXTVAL INTO :oDados.idCondicaoAparicao FROM DUAL;
+
+	EXEC SQL 
+		INSERT INTO
+			workflow.CondicaoAparicao
+			(
+				idCondicaoAparicao,
+				idFluxoFase,
+				dsQuery
+			)
+			VALUES
+			(
+				:oDados.idCondicaoAparicao,
+				:oDados.idFluxoFase,
+				:oDados.dsQuery
+			);
+
+	saida->createTag("Registro");
+		saida->addItem("idCondicaoAparicao", oDados.idCondicaoAparicao);
+	saida->closeTag();
+
+	ULOG_END("proCIncluirWFCondicaoAparicao()");
+
+	return true;
+}
+
+bool proCAlterarWFCondicaoAparicao(st_CondicaoAparicao* dados, st_vlCondicaoAparicao* status, XMLGen* saida)
+{
+	ULOG_START("proCAlterarWFCondicaoAparicao()");
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_CondicaoAparicao   oDados;
+		struct st_vlCondicaoAparicao oStatus;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCondicaoAparicao(&sqlca);
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+	sprintf(query,"%s", "UPDATE workflow.CondicaoAparicao SET ");
+
+	bool separa = false;
+
+	if (status->idCondicaoAparicao != -1) 
+		montaUpdate("idCondicaoAparicao", oDados.idCondicaoAparicao, 1);
+
+	if (status->idFluxoFase != -1) 
+		montaUpdate("idFluxoFase", oDados.idFluxoFase, 1);
+
+	if (status->dsQuery != -1)
+		montaUpdate("dsQuery", dados->dsQuery, 2);
+
+	sprintf(query, "%s WHERE idCondicaoAparicao = %i", query, dados->idCondicaoAparicao);
+
+	EXEC SQL EXECUTE IMMEDIATE :query;
+
+	ULOGI("< proCAlterarWFCondicaoAparicao");
+
+   ULOG_END("proCAlterarWFCondicaoAparicao()");
+	return true;
+}
+
+bool proCExcluirWFCondicaoAparicao(st_CondicaoAparicao* dados, st_vlCondicaoAparicao* status, XMLGen* saida)
+{
+	ULOG_START("proCExcluirWFCondicaoAparicao()");
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idCondicaoAparicao = dados->idCondicaoAparicao;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCondicaoAparicao(&sqlca);
+
+	EXEC SQL 
+		DELETE
+			workflow.CondicaoAparicao
+		WHERE
+			idCondicaoAparicao = :idCondicaoAparicao;
+
+	ULOG_END("proCExcluirWFCondicaoAparicao()");
+
+	return true;
+}
+
+bool proCConsultaWFCondicaoAparicao(st_CondicaoAparicao* dados, st_vlCondicaoAparicao* status, char* order, XMLGen* saida)
+{
+	ULOG_START("proCConsultaWFCondicaoAparicao()");
+
+	struct sqlca sqlca;
+
+    int condicaoSaida = 1;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idFluxoFaseConsulta =  dados->idFluxoFase;
+		int idCondicaoAparicao;
+		int idFluxoFase;
+		VARCHAR dsQuery[2049];
+
+		short i_idCondicaoAparicao;
+		short i_idFluxoFase;
+		short i_dsQuery;
+		
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCondicaoAparicao(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE cursorCondAparicao CURSOR FOR 
+		SELECT 
+			idCondicaoAparicao, 
+			idFluxoFase, 
+			dsQuery 
+		FROM 
+			workflow.CondicaoAparicao	
+		WHERE 
+			idFluxoFase = :idFluxoFaseConsulta;
+
+	EXEC SQL OPEN cursorCondAparicao;
+
+	while (true)
+	{
+		i_idCondicaoAparicao = i_idFluxoFase = i_dsQuery = -1;
+
+        EXEC SQL FETCH cursorCondAparicao INTO :idCondicaoAparicao:i_idCondicaoAparicao
+                                              ,:idFluxoFase:i_idFluxoFase
+                                              ,:dsQuery:i_dsQuery;
+
+		CONVIND(dsQuery, i_dsQuery);
+
+		if ( proCExecutaWFCondicaoAparicao((char *)dsQuery.arr, dados->idParametro) == 0 )
+        {
+			condicaoSaida = 0;
+            break; // se uma das condições encontrada for impeditiva já é suficiente.
+        }
+	}
+
+	EXEC SQL CLOSE cursorCondAparicao;
+
+	saida->createTag("WFCondicaoAparicaoVO");
+		saida->addItem("idCondicaoAparicao", 1);
+		saida->addItem("idFluxoFase", idFluxoFase);
+		saida->addItem("condicao", condicaoSaida);
+	saida->closeTag();
+
+	ULOG_END("proCConsultaWFCondicaoAparicao()");
+
+	return true;
+}
+
+bool proCObterWFCondicaoAparicao(st_CondicaoAparicao* dados, st_vlCondicaoAparicao* status)
+{
+    ULOG_START("proCObterWFCondicaoAparicao()");
+
+    struct sqlca sqlca;
+
+    int condicaoSaida = 1;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idFluxoFase =  dados->idFluxoFase;
+        VARCHAR dsQuery[2049];
+        short i_dsQuery;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCondicaoAparicao(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE cursorObtCAparicao CURSOR FOR 
+        SELECT
+            dsQuery
+        FROM
+            workflow.CondicaoAparicao
+        WHERE
+            idFluxoFase = :idFluxoFase;
+
+    EXEC SQL OPEN cursorObtCAparicao;
+
+    while (true)
+    {
+        i_dsQuery = -1;
+
+        EXEC SQL FETCH cursorObtCAparicao INTO :dsQuery:i_dsQuery;
+
+        CONVIND(dsQuery,i_dsQuery);
+
+        if ( proCExecutaWFCondicaoAparicao((char *)dsQuery.arr, dados->idParametro) == 0 )
+        {
+            condicaoSaida = 0;
+            break; // se uma das condições encontrada for impeditiva já é suficiente.
+        }
+    }
+
+    EXEC SQL CLOSE cursorObtCAparicao;
+
+    ULOG_END("proCObterWFCondicaoAparicao()");
+
+    return condicaoSaida == 0 ? false : true;
+}
+
+int proCExecutaWFCondicaoAparicao(char* sDsQuery, unsigned long sIdParametro)
+{
+	ULOG_START("proCExecutaWFCondicaoAparicao()");
+
+	struct sqlca sqlca;
+
+    int condicaoQuery = 0;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		//int idParametro = sIdParametro;
+		VARCHAR idParametro[256];
+		int condicao=0;
+		short scondicao=-1;
+        char *query = sDsQuery;
+
+    EXEC SQL END DECLARE SECTION;
+
+	memset(&idParametro,0x0,sizeof(idParametro ));
+	ULOG("sIdParametro=[%ld]",sIdParametro);
+	sprintf((char *)idParametro.arr,"%ld", sIdParametro);
+	idParametro.len = strlen((char*)idParametro.arr);
+	ULOG("(char *)idParametro.arr=[%s]",(char *)idParametro.arr);
+
+	ULOG("Query ==> %s", sDsQuery);
+    ULOG("idParametro = %d", idParametro);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCondicaoAparicao(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	EXEC SQL PREPARE executaCondicaoAparicao FROM :query;
+	EXEC SQL DECLARE consultaCnd CURSOR FOR executaCondicaoAparicao;
+
+    if ( strstr(sDsQuery,":") )
+    {
+	    EXEC SQL OPEN consultaCnd USING :idParametro;
+    }
+    else
+    {
+	    EXEC SQL OPEN consultaCnd;
+    }
+
+	EXEC SQL FETCH consultaCnd INTO :condicao:scondicao;
+
+	condicaoQuery = condicao;
+
+	EXEC SQL CLOSE consultaCnd;
+
+	ULOG_END("proCExecutaWFCondicaoAparicao()");
+
+	ULOG("condicaoQuery=[%d]",condicaoQuery);
+	return condicaoQuery;
+}
+
+void sql_error_WFCondicaoAparicao(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

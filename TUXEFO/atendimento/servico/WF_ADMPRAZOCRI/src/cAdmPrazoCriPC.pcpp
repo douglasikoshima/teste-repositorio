@@ -1,0 +1,192 @@
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/cAdmPrazoCRI.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/SmallString.h"
+#include "../../../commons/msgPadrao.h"
+
+// Prototipos
+bool proCGetPrazoCRI( XMLGen * saida );
+bool proCPutPrazoCRI
+( 
+    unsigned long idUserPrm, 
+    unsigned long valorPrm,
+    XMLGen * saida 
+);
+
+void SqlError( sqlca * sqlca );
+
+
+/*------------------------------------------------------*/
+bool proCGetPrazoCRI( XMLGen * saida )
+{
+    ULOG_START("proCGetPrazoCRI()"); 
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+        
+        unsigned long idPrazoCRI = 0;
+        unsigned long qtDias = 0;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ObtemValor CURSOR FOR 
+        SELECT
+            idPrazoAtendimentoCRI, 
+            qtDias 
+        FROM 
+            Atendimento.PrazoAtendimentoCRI 
+        WHERE 
+            idPrazoAtendimentoCRI > 0        
+        AND
+            ROWNUM <= 1;
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    bool encontrou = false;
+    EXEC SQL OPEN ObtemValor;
+    for( ;; )
+    {
+        EXEC SQL FETCH ObtemValor INTO :idPrazoCRI,
+                                       :qtDias;
+
+            encontrou = true;
+
+            saida->createTag( "WFAcaoRetornoVO" );
+            saida->addProp( "xmlns","workflow.fo.vivo.com.br/vo" );
+            
+            saida->addItem( "acaoExecucao",2 );
+            saida->addItem( "mensagem",qtDias );
+            
+            saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ObtemValor;
+
+    if ( encontrou == false )
+    {
+            saida->createTag( "WFAcaoRetornoVO" );
+            saida->addProp( "xmlns","workflow.fo.vivo.com.br/vo" );
+            
+            saida->addItem( "acaoExecucao",2 );
+            saida->addItem( "mensagem",0 );
+            
+            saida->closeTag();
+    }
+
+    ULOG_END("proCGetPrazoCRI()"); 
+
+	return true;
+
+}
+
+
+
+
+bool proCPutPrazoCRI
+( 
+    unsigned long idUserPrm, 
+    unsigned long valorPrm,
+    XMLGen * saida 
+)
+{
+    ULOG_START("proCPutPrazoCRI()"); 
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+        
+        unsigned long idPrazoCRI = 0;
+        unsigned long idUser = idUserPrm;
+        unsigned long valor = valorPrm;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE AjustaValor CURSOR FOR 
+        SELECT
+            idPrazoAtendimentoCRI 
+        FROM 
+            Atendimento.PrazoAtendimentoCRI 
+        WHERE 
+            idPrazoAtendimentoCRI > 0
+        AND
+            ROWNUM <= 1;
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    
+    EXEC SQL OPEN AjustaValor;
+    for( ;; )
+    {
+        EXEC SQL FETCH AjustaValor INTO :idPrazoCRI;
+
+    }
+    EXEC SQL CLOSE AjustaValor;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    if ( idPrazoCRI > 0 )
+    {
+        EXEC SQL
+            UPDATE 
+                Atendimento.PrazoAtendimentoCRI
+            SET
+                qtDias = :valor,
+                idUsuarioAlteracao = :idUser,
+                dtUltimaAlteracao  = SYSDATE
+            WHERE
+                idPrazoAtendimentoCRI = :idPrazoCRI;
+    }
+    else
+    {
+        EXEC SQL
+            INSERT INTO
+                Atendimento.PrazoAtendimentoCRI
+                (
+                    idPrazoAtendimentoCRI,
+                    dsPrazoAtendimento,
+                    qtDias
+                )
+                VALUES
+                (
+                    Atendimento.PrazoAtendimentoCRISQ.NextVal,
+                    'Prazo Atendimento CRI',
+                    :valor
+                );
+    }
+
+    
+
+    saida->createTag( "WFAcaoRetornoVO" );
+    saida->addProp( "xmlns","workflow.fo.vivo.com.br/vo" );
+    
+    saida->addItem( "acaoExecucao","S" );
+    saida->addItem( "mensagem","Alteração Efetuada com Sucesso" );
+    
+    saida->closeTag();
+
+    ULOG_END("proCPutPrazoCRI()"); 
+    
+	return true;
+
+}
+
+
+
+
+void SqlError( sqlca * sqlca )
+{
+	throw new 
+        TuxBasicOraException(
+            sqlca->sqlcode,
+            sqlca->sqlerrm.sqlerrmc,
+            sqlca->sqlerrm.sqlerrml
+            );
+}

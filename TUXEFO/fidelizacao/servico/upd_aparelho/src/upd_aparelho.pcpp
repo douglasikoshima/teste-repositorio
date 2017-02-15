@@ -1,0 +1,332 @@
+//
+// $Id: upd_aparelho.pcpp,v 1.1.2.2 2010/06/02 11:33:36 a5114878 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+
+// Prototipos
+void AtualizaTipoAparelho( int idAparelhoPrm, int iTipoAparelhoPrm );
+
+
+int upd_aparelho(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+    ULOG_START("upd_aparelho()");
+
+    char parm[256];
+    int  iId=0;
+    int i=0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR idAparelho[40];
+        VARCHAR idMarca[40];
+        VARCHAR dsModelo[256];
+        //VARCHAR dsManualURL[256];
+        int     idPessoaUsuarioAlteracao;
+        int     existe;
+        int     iRte;
+        VARCHAR idCor[40];
+        int     indCorUpdate;
+        int     iTipoAparelho = -1;
+        VARCHAR cdSAP[256];
+        VARCHAR vlPreco[64];
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &cdSAP,0x0,sizeof(cdSAP) );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    try
+    {
+        get_tag(parm,dnode,"idAparelho",0,0);
+        strToOra( idAparelho, parm );
+
+        get_tag(parm,dnode,"idMarca",0,0);
+        strToOra( idMarca, parm );
+
+        get_tag(parm,dnode,"dsModelo",0,0);
+        strToOra( dsModelo, parm );
+
+        //get_tag(parm,dnode,"dsManualURL",0,0);
+        //strToOra(dsManualURL,parm);
+
+        /* get_tag( parm, dnode, "cdSAP", 0, -1 ); */
+        
+        //get_tag( parm, dnode, "codigoSAP", 0, -1 );
+		//
+        //
+        //strToOra( cdSAP, parm );
+        //ULOG_VAR( cdSAP );
+//
+//        get_tag( parm, dnode, "valorAparelho", 0, -1 );
+//        char bf[256]; memset( bf, 0x0, sizeof(bf) );
+//        int i;
+//        int k;
+//        for( k=i=0;;i++)
+//        {
+//            if ( parm[i] == '.' )
+//            {
+//                continue;
+//            }
+//            if ( parm[i] == ',' )
+//            {
+//               parm[i] = '.';
+//            }
+//            if ( parm[i] == 0x0 )
+//            {
+//                break;
+//            }
+//            bf[k] = parm[i];
+//            k++;
+//        }
+//        strToOra( vlPreco, bf );
+//        ULOG_VAR( vlPreco );
+        
+
+        // Pegando id do usuario
+        idPessoaUsuarioAlteracao = usuario;
+
+        get_tag( parm, dnode, "inTipoAparelho", 0, 0 );
+        iTipoAparelho = atoi(parm);
+
+        EXEC SQL
+        SELECT 
+            COUNT(idAparelho)
+        INTO 
+            :existe
+        FROM 
+            RETENCAO.APARELHO
+        WHERE 
+            UPPER(TRIM(dsModelo)) = UPPER(TRIM(:dsModelo))
+        AND 
+            idaparelho != :idAparelho
+        AND 
+            INATIVO = 1
+        AND 
+            IDMARCA = :idMarca
+        AND 
+            IDTIPOAPARELHO = :iTipoAparelho;
+
+
+
+        //#######################################
+        //# RTE A MISSÃO!!!
+        //#######################################
+        EXEC SQL 
+        SELECT 
+            COUNT(IDAPARELHO)
+        INTO 
+            :iRte
+        FROM 
+            RETENCAO.APARELHO
+        WHERE 
+            DSMODELO = :dsModelo
+        AND 
+            IDMARCA = :idMarca
+        AND 
+            INATIVO = 0
+        AND 
+            IDTIPOAPARELHO = :iTipoAparelho;
+
+        if( iRte ) 
+        {
+          throw new TuxBasicSvcException(NOKFID,"Aparelho jah existe");
+        }
+        //#######################################
+        //#			RTE A MISSÃO!!!
+        //#######################################
+ 
+        if( !existe )
+        {
+            EXEC SQL 
+            UPDATE  
+                RETENCAO.APARELHO
+            SET 
+                IDMARCA = :idMarca,
+                DSMODELO = :dsModelo,
+                //DSMANUALURL = :dsManualURL,
+                IDTIPOAPARELHO =:iTipoAparelho,
+                IDPESSOAUSUARIOALTERACAO = :idPessoaUsuarioAlteracao,
+                DTALTERACAO = sysdate,
+                IDUSUARIOALTERACAO = :idPessoaUsuarioAlteracao,
+                DTULTIMAALTERACAO=sysdate
+            WHERE   
+                IDAPARELHO = :idAparelho;
+        
+            // insert OK 
+            xml->addItem( "descricao", "MODIFICADO" );
+            xml->addItem( "valor", sqlca.sqlerrd[2] );
+        }
+        else
+        {
+            throw new TuxBasicSvcException(NOKFID,"Aparelho jah existe");
+        }
+
+        //Excluir cores
+        i = 0;
+        while( get_tag(parm,dnode,"idExcluir",i,-1) != -1 )  //  Por mais estranho que pareça, aqui é o idCor
+        {
+            strToOra( idCor, parm );
+
+            EXEC SQL
+            UPDATE  RETENCAO.APARELHOCOR
+               SET  INATIVO = 0,
+                    IDUSUARIOALTERACAO = :idPessoaUsuarioAlteracao,
+                    DTULTIMAALTERACAO = sysdate,
+                    IDPESSOAUSUARIOALTERACAO = :idPessoaUsuarioAlteracao,
+                    DTALTERACAO = sysdate
+             WHERE   
+                    IDAPARELHOCOR = :idCor;
+
+            i++;
+        }
+        
+		
+		/* Wakim B. Saba - Inicio */
+		TuxHelper txh;
+		DOMNode* dnCoresIncluir=NULL;				
+	
+		int iIndex;
+		for ( iIndex=0;;++iIndex )
+		{
+			dnCoresIncluir = txh.walkDOM( dnode, "coresIncluir", iIndex );
+			if ( dnCoresIncluir == NULL )
+				break;
+			
+				
+			get_tag( parm, dnCoresIncluir, "codigoSAP", 0, -1 );
+			
+			
+			strToOra( cdSAP, parm );
+			ULOG_VAR( cdSAP );
+
+			get_tag( parm, dnCoresIncluir, "valorAparelho", 0, -1 );
+			char bf[256]; memset( bf, 0x0, sizeof(bf) );
+			int i;
+			int k;
+			for( k=i=0;;i++)
+			{
+				if ( parm[i] == '.' )
+				{
+					continue;
+				}
+				if ( parm[i] == ',' )
+				{
+				   parm[i] = '.';
+				}
+				if ( parm[i] == 0x0 )
+        {
+					break;
+				}
+				bf[k] = parm[i];
+				k++;
+			}
+			strToOra( vlPreco, bf );
+			ULOG_VAR( vlPreco );
+
+
+			// incluir cores
+			get_tag(parm,dnCoresIncluir,"idIncluir",0,-1);
+            strToOra( idCor, parm );
+
+            EXEC SQL
+            SELECT 
+                COUNT (IDAPARELHOCOR)
+            INTO 
+                :indCorUpdate
+            FROM 
+                RETENCAO.APARELHOCOR
+            WHERE 
+               IDAPARELHO = :idAparelho
+            AND   
+               IDCOR = :idCor;
+
+            if ( indCorUpdate )
+            {
+                EXEC SQL
+                UPDATE RETENCAO.APARELHOCOR
+                   SET INATIVO = 1,
+                       CDSAPAPARELHO = :cdSAP,
+                       VLAPARELHO = TO_NUMBER(:vlPreco),
+                       IDUSUARIOALTERACAO = :idPessoaUsuarioAlteracao,
+                       DTULTIMAALTERACAO = sysdate
+                 WHERE   
+                      IDAPARELHOCOR = :idCor;
+            }
+            else
+            {
+                EXEC SQL
+                INSERT INTO retencao.AparelhoCor
+                (
+                    IDAPARELHOCOR,
+                    IDAPARELHO,
+                    IDCOR,
+                    IDPESSOAUSUARIOINCLUSAO,
+                    DTINCLUSAO,
+                    INATIVO,
+                    CDSAPAPARELHO,
+                    VLAPARELHO,
+                    IDUSUARIOALTERACAO,
+                    DTULTIMAALTERACAO
+                )
+                VALUES
+                (
+                    retencao.AparelhoCorSQ.NEXTVAL,
+                    :idAparelho,
+                    :idCor,
+                    :idPessoaUsuarioAlteracao,
+                    SYSDATE,
+                    1,
+                    :cdSAP,
+                    TO_NUMBER(:vlPreco),
+                    :idPessoaUsuarioAlteracao,
+                    SYSDATE
+                );
+            }
+
+        }
+		ULOG( "Foram atualizados [%d] TAGs <coresIncluir>", iIndex );		
+		/* Wakim B. Saba - FIM */
+		
+        i = 0;
+        //incluir cores
+
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    ULOG_END("upd_aparelho()");
+    return 1;
+}
+
+
+
+/*
+ * SM 250 - Venda de Aparelhos GSM
+ * Jan/2007 - Marcelo
+ */
+void AtualizaTipoAparelho( int idAparelhoPrm, int iTipoAparelhoPrm )
+{
+    ULOG_START( "AtualizaTipoAparelho()" );
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        
+        int idAparelho = idAparelhoPrm;
+        int iTipoAparelho = iTipoAparelhoPrm;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error( NULL );
+
+    ULOG( "Atualizando Aparelho id [%d], TipoAparelho [%d]", idAparelho, iTipoAparelho );
+
+    EXEC SQL
+        UPDATE RETENCAO.APARELHO
+        SET IDTIPOAPARELHO = :iTipoAparelho
+        WHERE IDAPARELHO = :idAparelho;
+
+    ULOG_END( "AtualizaTipoAparelho()" );
+
+}

@@ -1,0 +1,4 @@
+#ifndef GETLINHACONVERGENTE
+#define GETLINHACONVERGENTE
+
+#endif

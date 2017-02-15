@@ -1,0 +1,348 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "CCrgPosAre.h"
+
+CCrgPosAre::CCrgPosAre()
+{
+}
+
+CCrgPosAre::~CCrgPosAre()
+{
+}
+
+char* CCrgPosAre::RTrim(char *pszString)
+{
+    ULOG_START("CCrgPosAre::RTrim()");
+    
+    int iLen;
+
+    iLen=strlen(pszString);
+
+    for(;;)
+    {
+        if(pszString[iLen-1] != ' ')
+            break;
+
+        iLen--;
+
+        if(iLen == 0)
+            break;
+    }
+    pszString[iLen] = 0x00;
+	
+	ULOG_END("CCrgPosAre::RTrim()");
+	return pszString;
+}
+
+int CCrgPosAre::Insert( char* cidCargo,
+		                char* cidPosicao,
+		                char* cidDepartamento,
+                        char* cidPessoaUsuario,
+                        char* cidSessao,
+				        char* cLogUser )
+{
+	ULOG_START(" CCrgPosAre::Insert( )");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidCargoPosicaoArea[21+1];
+		char* cAuxidCargo = cidCargo;
+		char* cAuxidPosicao = cidPosicao;
+		char* cAuxidDepartamento = cidDepartamento;
+		char* cAuxidPessoaUsuario = cidPessoaUsuario;
+		char* cAuxidSessao = cidSessao;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraCargoPosicaoArea();
+		
+		memset( &cAuxidCargoPosicaoArea, 0, sizeof(cAuxidCargoPosicaoArea) );
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		sqlca.sqlcode=0;
+		
+		//Pega um id unico e sequencia para a insercao
+		EXEC SQL
+			SELECT C_EMARINS.CARGOPOSICAOAREASQ.NEXTVAL
+			INTO :cAuxidCargoPosicaoArea
+			FROM DUAL;
+	
+		EXEC SQL 
+			INSERT INTO C_EMARINS.CARGOPOSICAOAREA
+			  (IDCARGOPOSICAOAREA, 
+			   IDCARGO,
+			   IDPOSICAO,
+			   IDDEPARTAMENTO,
+			   IDPESSOAUSUARIO,
+			   IDSESSAO )
+			VALUES
+			  (:cAuxidCargoPosicaoArea, 
+			   :cAuxidCargo,
+			   :cAuxidPosicao,
+			   :cAuxidDepartamento,
+			   :cAuxidPessoaUsuario,
+			   :cAuxidSessao);
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+	ULOG_END("CCrgPosAre::Insert(  )");
+	
+	if( sqlca.sqlcode == 0 )
+		return 1;
+	else
+		return 0;
+
+GotoInsert:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CCrgPosAre::Update( char* cidCargoPosicaoArea, 
+				        char* cidCargo,
+		                char* cidPosicao,
+		                char* cidDepartamento,
+                        char* cidPessoaUsuario,
+                        char* cidSessao,
+				        char* cLogUser )
+{
+	ULOG_START("CCrgPosAre::Update( )");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidCargoPosicaoArea  = cidCargoPosicaoArea;
+		char* cAuxidCargo  = cidCargo;
+		char* cAuxidPosicao  = cidPosicao;
+		char* cAuxidDepartamento  = cidDepartamento;
+		char* cAuxidPessoaUsuario = cidPessoaUsuario;
+		char* cAuxidSessao = cidSessao;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraCargoPosicaoArea();
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+		sqlca.sqlcode=0;
+		
+		EXEC SQL 
+			UPDATE C_EMARINS.CARGOPOSICAOAREA
+			   SET IDCARGO = :cAuxidCargo
+			   SET IDPOSICAO = :cAuxidPosicao
+			   SET IDDEPARTAMENTO = :cAuxidDepartamento
+			   SET IDPESSOAUSUARIO = :cidPessoaUsuario
+			   SET IDSESSAO = :cidSessao
+			 WHERE IDCARGOPOSICAOAREA = :cAuxidCargoPosicaoArea;  
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+	ULOG_END("CCrgPosAre::Update( )");
+	
+	if( sqlca.sqlcode == 0 )
+		return 1;
+	else
+		return 0;
+
+GotoUpdate:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CCrgPosAre::ListId( char* cid )
+{
+	ULOG_START("CCrgPosAre::ListId( )");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidOra = cid;
+		struct
+		{
+			VARCHAR stidCargoPosicaoArea[21+1];
+			VARCHAR stidCargo[21+1];
+			VARCHAR stidPosicao[21+1];
+			VARCHAR stidDepartamento[21+1];
+			VARCHAR stidPessoaUsuario[21+1];
+			VARCHAR stidSessao[21+1];
+		} stCargoPosicaoArea;
+		struct
+		{
+			short iidCargoPosicaoArea;
+			short iidCargo;
+			short iidPosicao;
+			short iidDepartamento;
+			short iidPessoaUsuario;
+			short iidSessao;
+		} stCargoPosicaoAreaInd;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraCargoPosicaoArea();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorCargoPosicaoAreaListId CURSOR FOR
+			SELECT IDCARGOPOSICAOAREA, 
+			       IDCARGO,
+			       IDPOSICAO,
+			       IDDEPARTAMENTO,
+			       IDPESSOAUSUARIO,
+			       IDSESSAO
+			  FROM C_EMARINS.CARGOPOSICAOAREA
+			 WHERE IDCARGOPOSICAOAREA = :cidOra;
+	
+		EXEC SQL OPEN CursorCargoPosicaoAreaListId;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CCrgPosAre::ListId( )");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stCargoPosicaoArea, 0, sizeof(stCargoPosicaoArea) );
+				EXEC SQL FETCH CursorCargoPosicaoAreaListId INTO :stCargoPosicaoArea:stCargoPosicaoAreaInd;
+	
+				Add( (char*)stCargoPosicaoArea.stidCargoPosicaoArea.arr, 
+				     (char*)stCargoPosicaoArea.stidCargo.arr,
+				     (char*)stCargoPosicaoArea.stidPosicao.arr,
+				     (char*)stCargoPosicaoArea.stidDepartamento.arr,
+				     (char*)stCargoPosicaoArea.stidPessoaUsuario.arr,
+				     (char*)stCargoPosicaoArea.stidSessao.arr );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorCargoPosicaoAreaListId;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CCrgPosAre::ListId( )");
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CCrgPosAre::ListAll( void )
+{
+	ULOG_START("CCrgPosAre::ListAll( )");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidCargoPosicaoArea[21+1];
+			VARCHAR stidCargo[21+1];
+			VARCHAR stidPosicao[21+1];
+			VARCHAR stidDepartamento[21+1];
+			VARCHAR stidPessoaUsuario[21+1];
+			VARCHAR stidSessao[21+1];
+		} stCargoPosicaoArea;
+		struct
+		{
+			short iidCargoPosicaoArea;
+			short iidCargo;
+			short iidPosicao;
+			short iidDepartamento;
+			short iidPessoaUsuario;
+			short iidSessao;
+		} stCargoPosicaoAreaInd;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraCargoPosicaoArea();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorCargoPosicaoAreaListAll CURSOR FOR
+			SELECT IDCARGOPOSICAOAREA, 
+			       IDCARGO,
+			       IDPOSICAO,
+			       IDDEPARTAMENTO,
+			       IDPESSOAUSUARIO,
+			       IDSESSAO
+			  FROM C_EMARINS.CARGOPOSICAOAREA;
+	
+		EXEC SQL OPEN CursorCargoPosicaoAreaListAll;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CCrgPosAre::ListAll( )");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stCargoPosicaoArea, 0, sizeof(stCargoPosicaoArea) );
+				EXEC SQL FETCH CursorCargoPosicaoAreaListAll INTO :stCargoPosicaoArea:stCargoPosicaoAreaInd;
+	
+				Add( (char*)stCargoPosicaoArea.stidCargoPosicaoArea.arr, 
+				     (char*)stCargoPosicaoArea.stidCargo.arr,
+				     (char*)stCargoPosicaoArea.stidPosicao.arr,
+				     (char*)stCargoPosicaoArea.stidDepartamento.arr,
+				     (char*)stCargoPosicaoArea.stidPessoaUsuario.arr,
+				     (char*)stCargoPosicaoArea.stidSessao.arr );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorCargoPosicaoAreaListAll;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+    ULOG_END("CCrgPosAre::ListAll( )");
+	return iCont;
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CCrgPosAre::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	ULOG_START("CCrgPosAre::GetXml(  )");
+	
+	if( Quantidade() > 0 )
+	{
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			xml->createTag(cNomeTag);
+			xml->addProp(	"xmlns", "usuario.fo.vivo.com.br/vo" );
+			if( Registro( x ) != NULL )
+			{
+				xml->addItem("idCargoPosicaoArea", Registro(x)->cidCargoPosicaoArea );
+				xml->addItem("idCargo", Registro(x)->cidCargo );
+				xml->addItem("idPosicao", Registro(x)->cidPosicao );
+				xml->addItem("idDepartamento", Registro(x)->cidDepartamento );
+			}
+			xml->closeTag();
+		}
+	}
+	
+	ULOG_END("CCrgPosAre::GetXml( )");
+}

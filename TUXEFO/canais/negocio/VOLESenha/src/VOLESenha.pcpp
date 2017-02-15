@@ -1,0 +1,467 @@
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <tuxfw.h>
+#include <sqlca.h>
+//#include <tuxfw/tuxfw.h>
+//#include <Lojista/Lojista.hpp>
+#include <ctype.h>
+ 
+EXEC SQL INCLUDE SQLCA;
+
+char * rtrim(char *pStr)
+{
+	int rInd;
+
+	if (pStr == NULL)
+			return NULL;
+
+   rInd = strlen(pStr) - 1;
+   while ( isspace(pStr[rInd]) && rInd >= 0){
+      rInd--;
+   }
+
+   pStr[rInd + 1] = '\0';
+   
+   return pStr;
+}
+
+char * ltrim(char *pStr)
+{
+	int lInd = 0;
+
+	if (pStr == NULL)
+			return NULL;
+
+    //rInd = strlen(pStr) - 1;
+
+    while (isspace(pStr[lInd])){
+        lInd++;
+	}
+
+	pStr = pStr + lInd;
+     
+   return pStr;
+}
+
+char * trim(char *pStr){
+	return ltrim(rtrim(pStr));		
+}
+
+
+
+void getSenhaByIdPessoaGestor( char * idPessoaGestorPrm, XMLGen* xml_g )
+{
+    ULOG_START( "getSenhaByIdPessoaGestor()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char idPessoaGestor[42];
+       char cdSenha[256];
+       int  inTrocaSenha;
+       int  qtTentativaErro;
+       char dtUltimaAtualizacao[32];
+       char sgtipostatussenha[256];
+       
+       short i_cdSenha             = -1;
+       short i_inTrocaSenha        = -1;
+       short i_qtTentativaErro     = -1;
+       short i_dtUltimaAtualizacao = -1;
+       short i_sgtipostatussenha   = -1;
+       
+    EXEC SQL END DECLARE SECTION;	
+    
+    memset( cdSenha            , 0x0, sizeof(cdSenha) );
+    memset( dtUltimaAtualizacao, 0x0, sizeof(dtUltimaAtualizacao) );
+    memset( sgtipostatussenha  , 0x0, sizeof(sgtipostatussenha) );
+    strcpy( idPessoaGestor, idPessoaGestorPrm );
+    
+    ULOG( "idPessoaGestor [%s]", idPessoaGestor );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+    EXEC SQL DECLARE csr_1 CURSOR FOR
+        select 
+           pgs.cdsenha, 
+           pgs.introcasenha, 
+           pgs.qttentativaerro, 
+           TO_CHAR( pgs.dtultimaatualizacao, 'DD/MM/YYYY HH24:MI:SS') , 
+           ss.sgtipostatussenha 
+        from 
+           customer.pessoagestorsenha pgs, 
+           apoio.tipostatussenha ss 
+        where 
+           ss.idtipostatussenha = pgs.idtipostatussenha 
+        and pgs.idpessoagestor = :idPessoaGestor
+        and rownum < 2;
+
+
+
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL OPEN csr_1;
+    for( ;; ) 
+    {
+        EXEC SQL FETCH csr_1 INTO
+             :cdSenha:i_cdSenha ,
+             :inTrocaSenha:i_inTrocaSenha ,
+             :qtTentativaErro:i_qtTentativaErro ,
+             :dtUltimaAtualizacao:i_dtUltimaAtualizacao ,
+             :sgtipostatussenha:i_sgtipostatussenha ;
+
+        xml_g->createTag( "PessoaGestorVO" );
+            xml_g->addItem( "cdSenha",  trim(cdSenha) );
+            if ( inTrocaSenha )
+            {
+                xml_g->addItem( "inTrocaSenha", "S" );
+            }
+            else
+            {
+                xml_g->addItem( "inTrocaSenha", "N" );
+            }
+            xml_g->addItem( "qtTentativaErro", qtTentativaErro );
+            xml_g->addItem( "dtUltimaAtualizacao", trim(dtUltimaAtualizacao) );
+            xml_g->addItem( "sgtipostatussenha", trim(sgtipostatussenha) );
+        xml_g->closeTag();
+    }
+
+	// xml_g->closeTag();
+
+
+    EXEC SQL CLOSE csr_1;
+
+    ULOG_END( "getSenhaByIdPessoaGestor()" );
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}
+
+
+
+void salvaSenhaTemporaria( char * gestorIdPrm, char * senhaTemporariaPrm )
+{
+    ULOG_START( "salvaSenhaTemporaria()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;	
+
+        char gestorId[256];
+        char senhaTemporaria[256];
+        
+    EXEC SQL END DECLARE SECTION;	
+
+
+    strcpy ( gestorId, gestorIdPrm );
+    strcpy ( senhaTemporaria, senhaTemporariaPrm );
+
+    ULOG( "gestorId        [%s]", gestorId );
+    ULOG( "senhaTemporaria [%s]", senhaTemporaria );
+
+    EXEC SQL WHENEVER SQLERROR  GOTO  sqlErrorConstrutor;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+    UPDATE CUSTOMER.PESSOAGESTORSENHA
+    SET IDTIPOSTATUSSENHA = 1 ,
+       CDSENHA = :senhaTemporaria ,
+       INTROCASENHA = 1 ,
+       QTTENTATIVAERRO = 0 ,
+       DTULTIMAATUALIZACAO = SYSDATE
+    WHERE
+       IDPESSOAGESTOR = :gestorId;
+    if ( sqlca.sqlerrd[2] == 0 )
+    {
+        EXEC SQL
+        INSERT INTO CUSTOMER.PESSOAGESTORSENHA
+        (
+           IDPESSOAGESTORSENHA,
+           IDPESSOAGESTOR, 
+           IDTIPOSTATUSSENHA, 
+           CDSENHA, 
+           INTROCASENHA, 
+           QTTENTATIVAERRO,
+           DTULTIMAATUALIZACAO
+        ) 
+        VALUES
+        (
+           CUSTOMER.PESSOAGESTORSENHASQ.NEXTVAL ,
+           :gestorId ,
+           1 , 
+           :senhaTemporaria , 
+           1 , 
+           0 , 
+           SYSDATE
+        );
+    }
+
+    ULOG_END( "salvaSenhaTemporaria()" );
+
+    return;
+
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+bool isSenhaJaCadastrada( char * gestorIdPrm )
+{
+    ULOG_START( "isSenhaJaCadastrada()" );
+
+    struct sqlca sqlca;
+    bool retorno;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       int ct;
+       char gestorId[42];
+       
+    EXEC SQL END DECLARE SECTION;
+    
+    strcpy( gestorId, gestorIdPrm );
+    
+    ULOG( "gestorId [%s]", gestorId );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    EXEC SQL
+    SELECT 
+       count(idpessoagestor) as count
+    INTO
+       :ct
+    FROM 
+       customer.pessoagestorsenha 
+    WHERE 
+       idpessoagestor = :gestorId;
+
+    ULOG( "ct [%d]", ct );
+    
+    retorno = (ct > 0) ? true : false ;
+    
+    ULOG( "retorno [%d]", retorno );
+
+    ULOG_END( "isSenhaJaCadastrada()" );
+
+    return retorno;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}
+
+
+
+void getSenhaByConta( char * cdContaPrm, XMLGen * xml_g )
+{
+    ULOG_START( "getSenhaByConta()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+       char cdConta[256];
+       char cdSenha[256];
+       char flStatus[2];
+       
+       short i_cdSenha       = -1;
+       short i_flStatus      = -1;
+       
+    EXEC SQL END DECLARE SECTION;	
+    
+    memset( cdSenha  , 0x0, sizeof(cdSenha) );
+    memset( flStatus , 0x0, sizeof(flStatus) );
+    strcpy( cdConta, cdContaPrm );
+    
+    ULOG( "cdConta [%s]", cdConta );
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+    EXEC SQL DECLARE csrSenhaConta CURSOR FOR
+        select 
+           cs.cdsenha, 
+           cs.flstatus 
+        from 
+           customer.contasenha cs 
+        where 
+           cs.cdconta = :cdConta ;
+
+
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL OPEN csrSenhaConta;
+    for( ;; ) 
+    {
+        EXEC SQL FETCH csrSenhaConta INTO
+             :cdSenha:i_cdSenha ,
+             :flStatus:i_flStatus ;
+
+        xml_g->createTag( "SenhaContaVO" );
+            xml_g->addItem( "cdSenha",  trim(cdSenha) );
+            xml_g->addItem( "flStatus", trim(flStatus) );
+        xml_g->closeTag();
+    }
+
+    EXEC SQL CLOSE csrSenhaConta;
+
+    ULOG_END( "getSenhaByConta()" );
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode); 
+}
+
+
+
+void incrementTentativesCounter( char * idPessoaGestorPrm )
+{
+    ULOG_START( "incrementTentativesCounter()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;	
+
+        char gestorId[256];
+        
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy ( gestorId, idPessoaGestorPrm );
+    
+    ULOG( "idpessoagestor [%s]", gestorId );
+
+    EXEC SQL WHENEVER SQLERROR  GOTO  sqlErrorConstrutor;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+    update customer.pessoagestorsenha 
+       set dtultimaatualizacao = sysdate, 
+           qttentativaerro = qttentativaerro + 1 
+     where idpessoagestor = :gestorId ;
+
+    ULOG_END( "incrementTentativesCounter()" );
+    return;
+
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+void resetTentativesCounter( char * idPessoaGestorPrm )
+{
+    ULOG_START( "resetTentativesCounter()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;	
+
+        char gestorId[256];
+        
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy ( gestorId, idPessoaGestorPrm );
+    
+    ULOG( "idpessoagestor [%s]", gestorId );
+
+    EXEC SQL WHENEVER SQLERROR  GOTO  sqlErrorConstrutor;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+    update customer.pessoagestorsenha 
+       set dtultimaatualizacao = sysdate, 
+           qttentativaerro = 0 
+     where idpessoagestor = :gestorId;
+ 
+    ULOG_END( "resetTentativesCounter()" );
+
+    return;
+
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+void blockSenha( char * idPessoaGestorPrm )
+{
+    ULOG_START( "blockSenha()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;	
+
+        char gestorId[256];
+        
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy ( gestorId, idPessoaGestorPrm );
+    ULOG( "idpessoagestor [%s]", gestorId );
+
+    EXEC SQL WHENEVER SQLERROR  GOTO  sqlErrorConstrutor;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+    update customer.pessoagestorsenha 
+       set dtultimaatualizacao = sysdate, 
+           idtipostatussenha = (select t.idtipostatussenha 
+                                  from apoio.tipostatussenha t 
+                                 where t.sgtipostatussenha = 'B') 
+     where idpessoagestor = :gestorId ;
+ 
+    ULOG_END( "blockSenha()" );
+
+    return;
+
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+void atualizaSenha( char * gestorIdPrm, char * senhaTemporariaPrm, char * inTrocaSenhaPrm )
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;	
+
+        char gestorId[256];
+        char cdSenha[256];
+        char inTrocaSenha[2];
+        
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy ( gestorId     , gestorIdPrm );
+    strcpy ( cdSenha      , senhaTemporariaPrm );
+    strcpy ( inTrocaSenha , inTrocaSenhaPrm );
+
+    ULOG( "idpessoagestor [%s]", gestorId );
+    ULOG( "cdSenha        [%s]", cdSenha );
+    ULOG( "inTrocaSenha   [%s]", inTrocaSenha );
+
+    EXEC SQL WHENEVER SQLERROR  GOTO  sqlErrorConstrutor;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+    update customer.pessoagestorsenha 
+       set cdsenha = :cdSenha , 
+           introcasenha = :inTrocaSenha , 
+           dtultimaatualizacao = sysdate, 
+           idtipostatussenha = 1, 
+           qttentativaerro = 0 
+     where idpessoagestor = :gestorId ;
+ 
+    return;
+
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode);
+
+}

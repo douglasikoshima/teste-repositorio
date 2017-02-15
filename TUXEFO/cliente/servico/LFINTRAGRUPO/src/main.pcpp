@@ -1,0 +1,85 @@
+/*
+ * Serviço de preenchimento da lupa de faturamento do cliente
+ * Versão inicial, 07/06/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/Conta.h";
+
+#include "../include/LFINTRAGRUPO.h"
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+DECLARE_TUXEDO_SERVICE(LFINTRAGRUPO);
+
+void implLFINTRAGRUPO::Execute(DOMNode* dnode, XMLGen* xml_g) 
+{
+    ULOG_START( "implLFINTRAGRUPO::Execute()" );
+
+	CConta oConta;
+	int iNroReg;
+	int iAux;
+
+	char *pcCdConta;
+	int iCdConta;
+	char** pcLinhas;
+
+    try{
+         pcCdConta = walkTree(dnode, XML_IN_NR_CONTA, 0);
+         if (pcCdConta == NULL) {
+             ERROR(NRO_CONTA_NR_NE);
+             TAG_INEXISTENTE(XML_IN_NR_CONTA);
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if (!*pcCdConta) {
+             ERROR(NRO_CONTA_NR_VV);
+             TAG_VALOR_VAZIO(XML_IN_NR_CONTA);
+
+             XMLString::release(&pcCdConta);
+
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if ((iCdConta = atoi(pcCdConta)) <= 0) {
+             ERROR(NRO_CONTA_NR_VI);
+             TAG_VALOR_INVALIDO(XML_IN_NR_CONTA);
+
+             XMLString::release(&pcCdConta);
+
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+
+		 oConta.setCdConta(pcCdConta);
+
+         // Busca lista de conta/linha
+         pcLinhas = oConta.listaLinhasIntraGrupo(&iNroReg);
+         
+         // Monta XML de saída
+         xml_g->createTag(XML_OUT_ROOT);
+         xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+         for (iAux = 0; iAux < iNroReg; iAux++) {
+			xml_g->createTag(XML_OUT_LF_LINHA_INTRA_GRUPO);
+			xml_g->addItem(XML_OUT_ID_CONTA, pcCdConta);
+			xml_g->addItem(XML_OUT_NR_LINHA, pcLinhas[iAux]);
+            xml_g->closeTag();
+         }
+         xml_g->closeTag();
+
+        //Liberando memoria alocada
+		for (iAux=0; iAux < iNroReg; iAux++)
+			free(pcLinhas[iAux]);
+        if (pcLinhas) 
+			free(pcLinhas);
+
+    }catch(...){
+        throw;
+    }
+
+	// Execução OK.
+    ULOG_END( "implLFINTRAGRUPO::Execute()" );
+
+   	INFORMATION(NRO_OK);
+	setStatusCode(sNrMsg, MSG_OK);
+}

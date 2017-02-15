@@ -1,0 +1,120 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Modulo: main.pcpp
+//* Servico: LupaCarteiraPJ
+//* Servidor: LupaCarteira
+//*
+//* Ficheiro: TUXEFO/cliente/LupaCarteira/LupaCarteiraPJ/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson da S. Martins
+//*
+//* Fecha primeira version:25/06/2004
+//*
+//* Version actual: 01.00
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Servico para listar todas as linhas da tabela PessoaRecusaMeioContato.
+//*
+//*//-------------------------------------------------------------------------------
+//---------------------------------------------------------------------
+
+//EXEC SQL INCLUDE SQLCA; 
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/Exception.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+
+#include "../include/LupaCarteiraPJ.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classCarteirizacao.h";
+
+DECLARE_TUXEDO_SERVICE(LupaCarteiraPJ);
+
+void implLupaCarteiraPJ::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    CCarteirizacao* oObj;
+    char* pParam;
+    int iNroReg = 0;
+    int iAux=0;
+
+    ULOG_START( "implLupaCarteiraPJ::Execute()" );
+    try{
+        pParam = walkTree(pDnode, XML_IN_ID, 0);
+        if(!pParam)
+        {
+            ERROR(NRO_ID_PESSOA_NE);
+            TAG_INEXISTENTE(XML_IN_ID);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !*pParam)
+        {
+            ERROR(NRO_ID_PESSOA_VV);
+            TAG_VALOR_VAZIO(XML_IN_ID);
+            XMLString::release(&pParam);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !IsNumeric(pParam) ){
+            ERROR(NRO_ID_PESSOA_VI);
+            TAG_VALOR_INVALIDO(XML_IN_ID);
+            XMLString::release(&pParam);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        oObj = CCarteirizacao::RecuperaPorIdPessoa(&iNroReg, pParam);
+
+
+        pXmlG->createTag(XML_OUT_NO_ROOT);
+        pXmlG->addProp("xmlns",XML_PROP);
+
+            for(; iAux < iNroReg ;iAux++)
+            {
+                pXmlG->createTag(XML_OUT_ROOT);
+                    pXmlG->addItem(XML_OUT_NOME, oObj[iAux].getNome());
+                    pXmlG->addItem(XML_OUT_FONE, oObj[iAux].getTelefone());
+                    pXmlG->addItem(XML_OUT_CELULAR, oObj[iAux].getCelular());
+                    pXmlG->addItem(XML_OUT_EMAIL, oObj[iAux].getEmail());
+                    pXmlG->createTag(XML_OUT_TPRELA);
+                        pXmlG->createTag(XML_OUT_OBJETO);
+                            pXmlG->addItem(XML_OUT_TIPO, oObj[iAux].getIdTipoRelacionamento());
+                            pXmlG->addItem(XML_OUT_SGTIPO, oObj[iAux].getSgTipoRelacionamento());
+                            pXmlG->addItem(XML_OUT_DSTIPO, oObj[iAux].getDsTipoRelacionamento());
+                        pXmlG->closeTag();
+                    pXmlG->closeTag();
+                    pXmlG->closeTag();
+            }
+            pXmlG->addItem(XML_OUT_NRLINHA, oObj->obterQtdeLinhas(pParam));
+    
+        pXmlG->closeTag();
+
+        //Liberando memoria alocada
+        free(oObj);
+    }
+    catch(...){
+        throw;  //repassando o erro para nucleo
+    }
+
+    ULOG_END( "implLupaCarteiraPJ::Execute()" );
+    
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}

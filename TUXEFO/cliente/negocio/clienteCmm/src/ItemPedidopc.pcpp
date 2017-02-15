@@ -1,0 +1,349 @@
+/**
+ * @modulo  Clientes
+ * @usecase Aba Tracking
+ * @remark  Rotinas básicas para a tabela ItemPedido
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:17 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../include/ItemPedidopc.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/GlobalPedido.h"
+EXEC SQL END DECLARE SECTION;
+
+//==============================================================================
+int CItemPedidopc::proCbuscarLstItemPedidoPorPedDoc(struct DadosParametros *pDadosParametros
+                                                   ,VEC_TITEMPEDIDO &vecTItemPedido)
+{
+    ULOG_START("CItemPedidopc::proCbuscarLstItemPedidoPorPedDoc()");
+
+    if ( 0 == *pDadosParametros->nrDoc )
+    {
+        throw new TuxException("24E9999","Número do documento não fornecido para busca de itens de pedido.");
+    }
+
+    if ( *pDadosParametros->nrPedido == 0 )
+    {
+        ULOG_END("CItemPedidopc::proCbuscarLstItemPedidoPorPedDoc()");
+        return RET_NAO_EXISTEM_DADOS;
+    }
+
+    int retorno = RET_SUCESSO;
+    int nLinhas = 0;
+    struct sqlca sqlca;
+    TItemPedido tItemPedido;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct
+        {
+            //VARCHAR nrItem[LEN_NUMBER+LEN_EOS];
+            VARCHAR idItemPedido[LEN_IDITEMPEDIDO+LEN_EOS];
+            VARCHAR cdCpfCnpj[LEN_CDCPFCNPJ+LEN_EOS];
+            VARCHAR idPedido[LEN_IDPEDIDO+LEN_EOS];
+            VARCHAR idSistemaOrigem[LEN_IDSISTEMAORIGEM+LEN_EOS];
+            VARCHAR dsItemPedido[LEN_DSITEMPEDIDO+LEN_EOS];
+            VARCHAR cdProduto[LEN_CDPRODUTO+LEN_EOS];
+            VARCHAR qtItem[LEN_QTITEM+LEN_EOS];
+            VARCHAR vlItem[LEN_VLITEM+LEN_EOS];
+            VARCHAR nrLinha[LEN_NRLINHAORDEMVENDA+LEN_EOS];
+            VARCHAR planoLinha[LEN_PLANOLINHAPEDIDO+LEN_EOS];
+            VARCHAR tecnologiaLinha[LEN_TECNOLOGIALINHA+LEN_EOS];
+            VARCHAR observacaoItem[LEN_OBSERVACAOITEM+LEN_EOS];
+        } tItemPedidoOra;
+
+        struct
+        {
+            //short nrItem;
+            short idItemPedido;
+            short cdCpfCnpj;
+            short idPedido;
+            short idSistemaOrigem;
+            short dsItemPedido;
+            short cdProduto;
+            short qtItem;
+            short vlItem;
+            short nrLinha;
+            short planoLinha;
+            short tecnologiaLinha;
+            short observacaoItem;
+        } tItemPedidoStatusOra;
+
+        const char *pOraCdCpfCnpj = pDadosParametros->nrDoc;
+        const char *pOraIdPedido = pDadosParametros->nrPedido;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("          nrDoc = '%s'",pDadosParametros->nrDoc);
+    ULOG("       nrPedido = '%s'",pDadosParametros->nrPedido);
+
+    EXEC SQL WHENEVER SQLERROR GOTO erro;
+
+    EXEC SQL DECLARE CursorItemPedido CURSOR FOR
+        SELECT /*+ INDEX(ITEMPEDIDO ITEMPEDIDOIE1) */
+            --//ROWNUM AS NRITEM,
+            ITEMPEDIDO.IDITEMPEDIDO,
+            ITEMPEDIDO.CDCPFCNPJ,
+            ITEMPEDIDO.IDPEDIDO,
+            ITEMPEDIDO.IDSISTEMAORIGEM,
+            ITEMPEDIDO.DSITEMPEDIDO,
+            ITEMPEDIDO.CDPRODUTO,
+            ITEMPEDIDO.QTITEM,
+            RTRIM(LTRIM(TO_CHAR(ITEMPEDIDO.VLITEM,'9999,999,999,990.00MI'))) AS VLITEM,
+            ITEMPEDIDO.NRLINHA,
+            ITEMPEDIDO.PLANOLINHA,
+            ITEMPEDIDO.TECNOLOGIALINHA,
+            ITEMPEDIDO.OBSERVACAOITEM
+        FROM
+            RETENCAO.ITEMPEDIDO ITEMPEDIDO
+        WHERE
+            ITEMPEDIDO.IDPEDIDO = :pOraIdPedido
+        AND ITEMPEDIDO.CDCPFCNPJ = :pOraCdCpfCnpj
+        ORDER BY
+            ITEMPEDIDO.IDITEMPEDIDO;
+
+    EXEC SQL OPEN CursorItemPedido;
+
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    while(true)
+    {
+        memset( &tItemPedidoOra, 0, sizeof(tItemPedidoOra) );
+        memset( &tItemPedidoStatusOra,-1, sizeof(tItemPedidoStatusOra) );
+
+        EXEC SQL FETCH CursorItemPedido INTO :tItemPedidoOra:tItemPedidoStatusOra;
+
+        nLinhas++;
+
+        //CONVIND(tItemPedidoOra.nrItem,tItemPedidoStatusOra.nrItem);
+        CONVIND(tItemPedidoOra.idItemPedido,tItemPedidoStatusOra.idItemPedido);
+        CONVIND(tItemPedidoOra.cdCpfCnpj,tItemPedidoStatusOra.cdCpfCnpj);
+        CONVIND(tItemPedidoOra.idPedido,tItemPedidoStatusOra.idPedido);
+        CONVIND(tItemPedidoOra.idSistemaOrigem,tItemPedidoStatusOra.idSistemaOrigem);
+        CONVIND(tItemPedidoOra.dsItemPedido,tItemPedidoStatusOra.dsItemPedido);
+        CONVIND(tItemPedidoOra.cdProduto,tItemPedidoStatusOra.cdProduto);
+        CONVIND(tItemPedidoOra.qtItem,tItemPedidoStatusOra.qtItem);
+        CONVIND(tItemPedidoOra.vlItem,tItemPedidoStatusOra.vlItem);
+        CONVIND(tItemPedidoOra.nrLinha,tItemPedidoStatusOra.nrLinha);
+        CONVIND(tItemPedidoOra.planoLinha,tItemPedidoStatusOra.planoLinha);
+        CONVIND(tItemPedidoOra.tecnologiaLinha,tItemPedidoStatusOra.tecnologiaLinha);
+        CONVIND(tItemPedidoOra.observacaoItem,tItemPedidoStatusOra.observacaoItem);
+
+        //tItemPedido.setNrItem(tItemPedidoOra.nrItem.arr);
+        tItemPedido.setIdItemPedido(tItemPedidoOra.idItemPedido.arr);
+        tItemPedido.setCdCpfCnpj(tItemPedidoOra.cdCpfCnpj.arr);
+        tItemPedido.setIdPedido(tItemPedidoOra.idPedido.arr);
+        tItemPedido.setIdSistemaOrigem(tItemPedidoOra.idSistemaOrigem.arr);
+        tItemPedido.setDsItemPedido(tItemPedidoOra.dsItemPedido.arr);
+        tItemPedido.setCdProduto(tItemPedidoOra.cdProduto.arr);
+        tItemPedido.setQtItem(tItemPedidoOra.qtItem.arr);
+        tItemPedido.setVlItem(tItemPedidoOra.vlItem.arr);
+        tItemPedido.setNrLinha(tItemPedidoOra.nrLinha.arr);
+        tItemPedido.setPlanoLinha(tItemPedidoOra.planoLinha.arr);
+        tItemPedido.setTecnologiaLinha(tItemPedidoOra.tecnologiaLinha.arr);
+        tItemPedido.setObservacaoItem(tItemPedidoOra.observacaoItem.arr);
+
+        vecTItemPedido.push_back(tItemPedido);
+    }
+
+    if ( 1403 == sqlca.sqlcode )
+    {
+        if ( 0 == nLinhas )
+        {
+            retorno = RET_NAO_EXISTEM_DADOS;
+        }
+        else
+        {
+            retorno = RET_FIM_LEITURA;
+        }
+    }
+
+    ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+    ULOG("retorno=%d",retorno);
+
+    EXEC SQL CLOSE CursorItemPedido;
+
+    ULOG("sqlca.sqlcode(close)=%d",sqlca.sqlcode);
+
+    ULOG_END("CItemPedidopc::proCbuscarLstItemPedidoPorPedDoc()");
+
+    return retorno;
+
+    erro:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("CItemPedidopc::proCbuscarLstItemPedidoPorPedDoc()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}
+
+//==============================================================================
+int CItemPedidopc::proCbuscarLstItemOrdemVendaPorPedDoc(struct DadosParametros *pDadosParametros
+                                                   ,VEC_TITEMPEDIDO &vecTItemPedido)
+{
+    ULOG_START("CItemPedidopc::proCbuscarLstItemOrdemVendaPorPedDoc()");
+
+    if ( 0 == *pDadosParametros->nrDoc )
+    {
+        throw new TuxException("24E9999","Número do documento não fornecido para busca de itens de pedido.");
+    }
+
+    if ( *pDadosParametros->nrPedido == 0 )
+    {
+        ULOG_END("CItemPedidopc::proCbuscarLstItemOrdemVendaPorPedDoc()");
+        return RET_NAO_EXISTEM_DADOS;
+    }
+
+    int retorno = RET_SUCESSO;
+    int nLinhas = 0;
+    struct sqlca sqlca;
+    TItemPedido tItemPedido;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct
+        {
+            //VARCHAR nrItem[LEN_NUMBER+LEN_EOS];
+            VARCHAR idItemPedido[LEN_IDITEMPEDIDO+LEN_EOS];
+            VARCHAR cdCpfCnpj[LEN_CDCPFCNPJ+LEN_EOS];
+            VARCHAR idPedido[LEN_IDPEDIDO+LEN_EOS];
+            VARCHAR idSistemaOrigem[LEN_IDSISTEMAORIGEM+LEN_EOS];
+            VARCHAR dsItemPedido[LEN_DSITEMPEDIDO+LEN_EOS];
+            VARCHAR cdProduto[LEN_CDPRODUTO+LEN_EOS];
+            VARCHAR qtItem[LEN_QTITEM+LEN_EOS];
+            VARCHAR vlItem[LEN_VLITEM+LEN_EOS];
+            VARCHAR nrLinha[LEN_NRLINHAORDEMVENDA+LEN_EOS];
+            VARCHAR planoLinha[LEN_PLANOLINHAPEDIDO+LEN_EOS];
+            VARCHAR tecnologiaLinha[LEN_TECNOLOGIALINHA+LEN_EOS];
+            VARCHAR observacaoItem[LEN_OBSERVACAOITEM+LEN_EOS];
+        } tItemPedidoOra;
+
+        struct
+        {
+            //short nrItem;
+            short idItemPedido;
+            short cdCpfCnpj;
+            short idPedido;
+            short idSistemaOrigem;
+            short dsItemPedido;
+            short cdProduto;
+            short qtItem;
+            short vlItem;
+            short nrLinha;
+            short planoLinha;
+            short tecnologiaLinha;
+            short observacaoItem;
+        } tItemPedidoStatusOra;
+
+        const char *pOraCdCpfCnpj = pDadosParametros->nrDoc;
+        const char *pOraIdPedido = pDadosParametros->nrPedido;
+        const char *pOraNrOrdemVenda = pDadosParametros->nrOrdemVenda;
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("              nrDoc = '%s'",pDadosParametros->nrDoc);
+    ULOG("           nrPedido = '%s'",pDadosParametros->nrPedido);
+    ULOG("       nrOrdemVenda = '%s'",pDadosParametros->nrOrdemVenda);
+
+    EXEC SQL WHENEVER SQLERROR GOTO erro;
+
+    EXEC SQL DECLARE CursorItemOrdemVenda CURSOR FOR
+        SELECT
+            ITEMORDEMVENDA.IDITEMORDEM,
+            ORDEMVENDA.CDCPFCNPJ,
+            ORDEMVENDA.NRPEDIDO,
+            ORDEMVENDA.IDSISTEMAORIGEM,
+            ITEMORDEMVENDA.DSITEMORDEM,
+            ITEMORDEMVENDA.CDPRODUTO,
+            ITEMORDEMVENDA.QTITEM,
+            RTRIM(LTRIM(TO_CHAR(ITEMORDEMVENDA.VLITEM,'9999,999,999,990.00MI'))) AS VLITEM,
+            ITEMORDEMVENDA.NRLINHA,
+            ITEMORDEMVENDA.PLANOLINHA,
+            ITEMORDEMVENDA.TECNOLOGIALINHA,
+            ITEMORDEMVENDA.OBSERVACAOITEM
+        FROM
+            RETENCAO.ORDEMVENDA ORDEMVENDA,
+            RETENCAO.ITEMORDEMVENDA ITEMORDEMVENDA
+        WHERE
+            ORDEMVENDA.CDCPFCNPJ = :pOraCdCpfCnpj
+        AND ORDEMVENDA.IDORDEMVENDA = ITEMORDEMVENDA.IDORDEMVENDA
+        AND ORDEMVENDA.NRPEDIDO = :pOraIdPedido
+        AND ORDEMVENDA.NRORDEMVENDA = :pOraNrOrdemVenda
+        ORDER BY
+            ITEMORDEMVENDA.IDORDEMVENDA;
+
+    EXEC SQL OPEN CursorItemOrdemVenda;
+
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    while(true)
+    {
+        memset( &tItemPedidoOra, 0, sizeof(tItemPedidoOra) );
+        memset( &tItemPedidoStatusOra,-1, sizeof(tItemPedidoStatusOra) );
+
+        EXEC SQL FETCH CursorItemOrdemVenda INTO :tItemPedidoOra:tItemPedidoStatusOra;
+
+        nLinhas++;
+
+        //CONVIND(tItemPedidoOra.nrItem,tItemPedidoStatusOra.nrItem);
+        CONVIND(tItemPedidoOra.idItemPedido,tItemPedidoStatusOra.idItemPedido);
+        CONVIND(tItemPedidoOra.cdCpfCnpj,tItemPedidoStatusOra.cdCpfCnpj);
+        CONVIND(tItemPedidoOra.idPedido,tItemPedidoStatusOra.idPedido);
+        CONVIND(tItemPedidoOra.idSistemaOrigem,tItemPedidoStatusOra.idSistemaOrigem);
+        CONVIND(tItemPedidoOra.dsItemPedido,tItemPedidoStatusOra.dsItemPedido);
+        CONVIND(tItemPedidoOra.cdProduto,tItemPedidoStatusOra.cdProduto);
+        CONVIND(tItemPedidoOra.qtItem,tItemPedidoStatusOra.qtItem);
+        CONVIND(tItemPedidoOra.vlItem,tItemPedidoStatusOra.vlItem);
+        CONVIND(tItemPedidoOra.nrLinha,tItemPedidoStatusOra.nrLinha);
+        CONVIND(tItemPedidoOra.planoLinha,tItemPedidoStatusOra.planoLinha);
+        CONVIND(tItemPedidoOra.tecnologiaLinha,tItemPedidoStatusOra.tecnologiaLinha);
+        CONVIND(tItemPedidoOra.observacaoItem,tItemPedidoStatusOra.observacaoItem);
+
+        //tItemPedido.setNrItem(tItemPedidoOra.nrItem.arr);
+        tItemPedido.setIdItemPedido(tItemPedidoOra.idItemPedido.arr);
+        tItemPedido.setCdCpfCnpj(tItemPedidoOra.cdCpfCnpj.arr);
+        tItemPedido.setIdPedido(tItemPedidoOra.idPedido.arr);
+        tItemPedido.setIdSistemaOrigem(tItemPedidoOra.idSistemaOrigem.arr);
+        tItemPedido.setDsItemPedido(tItemPedidoOra.dsItemPedido.arr);
+        tItemPedido.setCdProduto(tItemPedidoOra.cdProduto.arr);
+        tItemPedido.setQtItem(tItemPedidoOra.qtItem.arr);
+        tItemPedido.setVlItem(tItemPedidoOra.vlItem.arr);
+        tItemPedido.setNrLinha(tItemPedidoOra.nrLinha.arr);
+        tItemPedido.setPlanoLinha(tItemPedidoOra.planoLinha.arr);
+        tItemPedido.setTecnologiaLinha(tItemPedidoOra.tecnologiaLinha.arr);
+        tItemPedido.setObservacaoItem(tItemPedidoOra.observacaoItem.arr);
+
+        vecTItemPedido.push_back(tItemPedido);
+    }
+
+    if ( 1403 == sqlca.sqlcode )
+    {
+        if ( 0 == nLinhas )
+        {
+            retorno = RET_NAO_EXISTEM_DADOS;
+        }
+        else
+        {
+            retorno = RET_FIM_LEITURA;
+        }
+    }
+
+    ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+    ULOG("retorno=%d",retorno);
+
+    EXEC SQL CLOSE CursorItemOrdemVenda;
+
+    ULOG("sqlca.sqlcode(close)=%d",sqlca.sqlcode);
+
+    ULOG_END("CItemPedidopc::proCbuscarLstItemOrdemVendaPorPedDoc()");
+
+    return retorno;
+
+    erro:
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("CItemPedidopc::proCbuscarLstItemOrdemVendaPorPedDoc()");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

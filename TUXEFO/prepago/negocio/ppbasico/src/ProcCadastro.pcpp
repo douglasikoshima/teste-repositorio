@@ -1,0 +1,486 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+
+#include <tuxfw.h>
+
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+//==============================================================================
+// Protótipos
+int sendXML(char *pXmlSaida, char *pRetMsg, long * iErrorNumber );
+bool DeletaRegistro(char * pszIdFila );
+bool AtualizaRegistro( char * pszIdFila, char * pszStatusCode, char * pszStatusText );
+char *ObtemValorTag(char *pXml, char *pTag);
+char *TrataErroNGIN(char *pStatusText);
+char *replace( char *st, char *orig, char *repl );
+void retira_apostrofe( char * bf );
+
+int ProcCadastro( char * idFila )
+{
+    ULOG_START( "ProcCadastro()" );
+   
+    char szRetMsg[2000 + 1];
+    char szStatusCode[255 + 1];
+    char szStatusText[255 + 1];
+    char szXml[4000 + 1];
+    char szXmlTmp[4000 + 1];
+
+    long iErrorNumber=0;
+
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdFila[40+1];
+        VARCHAR oszXML1[4000+1];
+
+        short   i_oszXML1 = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG(">>>EnviaLegado\n");
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA( oszIdFila, idFila );
+
+    char *pc_statusCode = 0x0;
+    char *pc_statusText = 0x0;
+    TuxRemoteService* remoteService;
+    TuxMessage* inputMessage;
+    XMLGen oEntrada;
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    EXEC SQL
+    SELECT
+       XML1
+    INTO
+       :oszXML1:i_oszXML1
+    FROM
+       INFRA.FILASETCLIENTINFO
+    WHERE
+       IDFILASETCLIENTINFO = :oszIdFila;
+       
+    STRCPY_FROM_ORA(szXmlTmp, oszXML1);
+
+
+    /* reformata o XML para envio */
+    /*
+    memset(szXml, 0x00, sizeof(szXml));
+    strcpy(szXml, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>");
+    strcat(szXml, "<msg><msgHdr><user>1</user><service>TUXPREPAGOBE</service></msgHdr><msgBody>");
+    strcat(szXml, szXmlTmp+5);
+    szXml[strlen(szXml)-6]=0x00;
+    strcat(szXml, "</msgBody></msg>");
+    ULOG( "szXml [%s]", szXml );
+    */
+    
+    ULOG( "szXml [%s]", szXml );
+    oEntrada.aggregateXML(szXmlTmp);
+
+    // Faz a solicitação ao serviço
+    remoteService = new TuxRemoteService();
+    inputMessage = new TuxMessage();
+    inputMessage->setUser("FO");
+    inputMessage->setService("TUXPREPAGOBE");
+    inputMessage->setMessageBody(&oEntrada);
+    // Repassa configuracoes ao manipulador do serviço remoto e invoca o servico.
+    remoteService->setServiceName("TUXPREPAGOBE");
+    remoteService->setInputMessage(inputMessage);
+
+    if(remoteService->remoteCall() != TUXFWRET_OK)
+    {
+        delete remoteService;
+        delete inputMessage;
+    }
+
+    memset( szStatusCode, 0x0, sizeof(szStatusCode) );
+    memset( szStatusText, 0x0, sizeof(szStatusText) );
+
+    pc_statusCode = remoteService->getOutputMessage()->getStatusCode();
+    pc_statusText = remoteService->getOutputMessage()->getStatusText();
+
+    if(pc_statusCode)
+        strcpy(szStatusCode, pc_statusCode);
+
+    if(pc_statusText)
+    {
+        if(strlen(pc_statusText) >= sizeof(szStatusText))
+            strncpy(szStatusText, pc_statusText, sizeof(szStatusText) - 1);
+        else
+            strcpy(szStatusText, pc_statusText);
+    }
+
+    free(pc_statusCode);
+    free(pc_statusText);
+
+    /*
+    memset(szRetMsg, 0x00, sizeof(szRetMsg));
+    sendXML( szXml, szRetMsg, &iErrorNumber );
+    */
+    
+
+    /* Obtem os valores das tags de retorno do XML */    
+    /*    SAFE_STRNCPY(szStatusCode,ObtemValorTag(szRetMsg, "statusCode"));    */
+    ULOG( "statusCode=[%s]\n",szStatusCode );
+
+    /*   SAFE_STRNCPY(szStatusText,ObtemValorTag(szRetMsg, "statusText"));   */
+    ULOG( "statusText=[%s]\n",szStatusText );
+
+    if ( szStatusCode[2] != 'I' )
+    {
+        iErrorNumber = TPESYSTEM;
+    }
+    
+    if ( iErrorNumber )
+    {
+        //if ( 0 == szStatusCode[0] ) 
+        //{
+            switch (iErrorNumber) 
+            {
+                case TPEABORT     : strcpy(szStatusCode,"TPEABORT");strcpy(szStatusText,"TPEABORT"); break;
+                case TPEBADDESC   : strcpy(szStatusCode,"TPEBADDESC");strcpy(szStatusText,"TPEBADDESC"); break;
+                case TPEBLOCK     : strcpy(szStatusCode,"TPEBLOCK");strcpy(szStatusText,"TPEBLOCK"); break;
+                case TPEINVAL     : strcpy(szStatusCode,"TPEINVAL");strcpy(szStatusText,"TPEINVAL"); break;
+                case TPELIMIT     : strcpy(szStatusCode,"TPELIMIT");strcpy(szStatusText,"TPELIMIT"); break;
+                case TPENOENT     : strcpy(szStatusCode,"TPENOENT");strcpy(szStatusText,"TPENOENT"); break;
+                case TPEOS        : strcpy(szStatusCode,"TPEOS");strcpy(szStatusText,"TPEOS"); break;
+                case TPEPERM      : strcpy(szStatusCode,"TPEPERM");strcpy(szStatusText,"TPEPERM"); break;
+                case TPEPROTO     : strcpy(szStatusCode,"TPEPROTO");strcpy(szStatusText,"TPEPROTO"); break;
+                case TPESVCERR    : strcpy(szStatusCode,"TPESVCERR");strcpy(szStatusText,"TPESVCERR"); break;
+                case TPESVCFAIL   : strcpy(szStatusCode,"TPESVCFAIL");strcpy(szStatusText,"TPESVCFAIL"); break;
+                case TPESYSTEM    : strcpy(szStatusCode,"TPESYSTEM");strcpy(szStatusText,"TPESYSTEM"); break;
+                case TPETIME      : strcpy(szStatusCode,"TPETIME");strcpy(szStatusText,"TPETIME"); break;
+                case TPETRAN      : strcpy(szStatusCode,"TPETRAN");strcpy(szStatusText,"TPETRAN"); break;
+                case TPGOTSIG     : strcpy(szStatusCode,"TPGOTSIG");strcpy(szStatusText,"TPGOTSIG"); break;
+                case TPERMERR     : strcpy(szStatusCode,"TPERMERR");strcpy(szStatusText,"TPERMERR"); break;
+                case TPEITYPE     : strcpy(szStatusCode,"TPEITYPE");strcpy(szStatusText,"TPEITYPE"); break;
+                case TPEOTYPE     : strcpy(szStatusCode,"TPEOTYPE");strcpy(szStatusText,"TPEOTYPE"); break;
+                case TPERELEASE   : strcpy(szStatusCode,"TPERELEASE");strcpy(szStatusText,"TPERELEASE"); break;
+                case TPEHAZARD    : strcpy(szStatusCode,"TPEHAZARD");strcpy(szStatusText,"TPEHAZARD"); break;
+                case TPEHEURISTIC : strcpy(szStatusCode,"TPEHEURISTIC");strcpy(szStatusText,"TPEHEURISTIC"); break;
+                case TPEEVENT     : strcpy(szStatusCode,"TPEEVENT");strcpy(szStatusText,"TPEEVENT"); break;
+                case TPEMATCH     : strcpy(szStatusCode,"TPEMATCH");strcpy(szStatusText,"TPEMATCH"); break;
+                case TPEDIAGNOSTIC: strcpy(szStatusCode,"TPEDIAGNOSTIC");strcpy(szStatusText,"TPEDIAGNOSTIC"); break;
+                case TPEMIB       : strcpy(szStatusCode,"TPEMIB");strcpy(szStatusText,"TPEMIB"); break;
+                default           : strcpy(szStatusCode,"ERRDESCONHECIDO");strcpy(szStatusText,"ERRDESCONHECIDO"); break;
+            } // switch (iErrorNumber)
+        //} // if ( 0 == szStatusCode[0] )
+    }
+
+    /* Se sucesso grava o XML em disco e apaga o registro */
+    if(szStatusCode[2] == 'I' && 0 == iErrorNumber) {
+        ULOG( "idFila [%s] processado pelo legado com sucesso", idFila );
+        if(DeletaRegistro(idFila) == false) {
+            goto finalizaProcess;
+        }
+    }
+    else /* Grava Codigo de erro e mensagem */
+    {
+        ULOG( ">>> ERRO: idFila [%s] processado com erro", idFila );
+        /* Verifica se eh erro NGIN */
+        if(!memcmp(szStatusCode, "46E0000", 8)) {
+            ULOG("Inicio tratamento de erro NGIN...");
+            ULOG( "Mensagem original -> szStatusCode[%s] szStatusText[%s]\n", szStatusCode, szStatusText);
+
+            strcpy(szStatusCode, TrataErroNGIN(szStatusText));
+
+            ULOG("Final tratamento de erro NGIN...");
+        }
+        retira_apostrofe( szStatusText );
+
+        ULOG( "Mensagem tratada -> szStatusCode[%s] szStatusText[%s]\n", szStatusCode, szStatusText);
+        ULOG("Atualizando registro com erro...");
+
+        if(AtualizaRegistro(idFila, szStatusCode, szStatusText) == false) {
+            goto finalizaProcess;
+        }
+
+    }
+
+    delete remoteService;
+    delete inputMessage;
+
+    ULOG("Processamento encerrado com sucesso...\n");
+    ULOG_END( "ProcCadastro()" );
+ 
+    return 0;
+
+    sqlError:
+        ULOG( "Finalizando processo com erro ORACLE (%d)\n", sqlca.sqlcode );
+        delete remoteService;
+        delete inputMessage;
+        return -1;
+
+    /* Tratamento de erro de processamento */
+    finalizaProcess:
+        ULOG( "Finalizando processo...\n" );
+        ULOG_END( "ProcCadastro()" );
+        delete remoteService;
+        delete inputMessage;
+        return -1;
+}
+
+
+
+/************************************************************************************************************/
+char *TrataErroNGIN(char *pStatusText)
+{
+    char szStatusTextAux[255 + 1];
+    static char szCdErro[255 + 1];
+    register int iCont;
+    int iLen;
+
+    /* copia string a ser analisada para buffer local (strtok altera o ponteiro de entrada) */
+    strcpy(szStatusTextAux, pStatusText);
+
+    memset(szCdErro, 0x00, sizeof(szCdErro));
+    iLen=strlen(szStatusTextAux);
+    for(iCont=0; iCont < iLen && szStatusTextAux[iCont] != '.'; iCont++) {
+        szCdErro[iCont] = szStatusTextAux[iCont];
+    }
+
+    strcpy(pStatusText, szStatusTextAux+iCont+1);
+
+    return szCdErro;
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemValorTag(char *pXml, char *pTag)
+{
+    static char szValue[255 + 1];
+
+    szValue[0] = 0;
+    if ( pXml )
+    {
+        if ( *pXml )
+        {
+            char *p0 = strstr(pXml,pTag) + strlen(pTag) + 1;
+            if ( p0 )
+            {
+                char *p1 = strstr(p0,pTag) - 2;
+                if ( p1 )
+                {
+                    if ( p1 > p0 )
+                    {
+                        int tam = p1-p0;
+                        if (tam > 255) tam = 255;
+                        strncpy(szValue,p0,tam);
+                        szValue[tam]=0;
+                    }
+                }
+            }
+        }
+    }
+
+    return szValue;
+}
+
+
+
+/************************************************************************************************************/
+int sendXML( char *pXmlSaida, char *pRetMsg, long * iErrorNumber ) 
+{
+    ULOG_START( "sendXML()" );
+    
+    char *sendbuf, *rcvbuf;
+    long sendlen, rcvlen;
+
+    sendlen = strlen( pXmlSaida );
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        ULOGE("Error allocating send buffer\n");
+        return -1;
+    }
+
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        ULOGE("Error allocating receive buffer\n");
+        tpfree( sendbuf );
+        return -1;
+    }
+
+    strcpy( sendbuf, pXmlSaida );
+
+    if( tpcall("TUXPREPAGOBE", (char *)sendbuf, sendlen, (char **)&rcvbuf, &rcvlen, (long)0 ) == -1 ) 
+    {
+        ULOG( ">>> ERRO: TUXPREPAGOBE --> TPERRNO [%d]",tperrno  );
+        
+        ULOGE( "rcvbuf [%s]\n", rcvbuf);
+
+        *iErrorNumber = tperrno;
+        strcpy( pRetMsg, rcvbuf );
+
+        tpfree( sendbuf );
+        tpfree( rcvbuf );
+
+        ULOG_END( "sendXML()" );
+        return 1;
+    }
+
+    *iErrorNumber=0;
+    strcpy( pRetMsg, rcvbuf );
+
+    tpfree( sendbuf );
+    tpfree( rcvbuf );
+
+    ULOG_END( "sendXML()" );
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+bool AtualizaRegistro( char * pszIdFila, char * pszStatusCode, char * pszStatusText )
+{
+    ULOG_START( "AtualizaRegistro()" );
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char *oszIdFila = pszIdFila;
+        char *oszCdErro = pszStatusCode;
+        char *oszDsErro = pszStatusText;
+
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+    
+    ULOG( "Atualizando idfilasetclientinfo [%s]", oszIdFila );
+    ULOG( "oszCdErro [%s]", oszCdErro );
+    ULOG( "oszDsErro [%s]", oszDsErro );
+
+    /* atualiza base com código de erro da transacao de envio para legado */
+    EXEC SQL
+        UPDATE
+            infra.filasetclientinfo
+        SET
+            cderro = :oszCdErro,
+            dserro = SUBSTR(TRIM(:oszDsErro),1,150),
+            dterro = SYSDATE,
+            inerro = 1,
+            qtretry = qtretry + 1
+        WHERE
+            idfilasetclientinfo = :oszIdFila;
+
+    ULOG_END( "AtualizaRegistro()" );
+    return true;
+
+    erro:
+        ULOG( "*** ERRO: Finalizando com erro sqlca.sqlcode [%d]\n", sqlca.sqlcode );
+        ULOG_END( "AtualizaRegistro()" );
+        return false;
+
+    naoexiste:
+        ULOG( "*** ERRO: idfilasetclientinfo [%s] nao encontrado\n", oszIdFila );
+        ULOG_END( "AtualizaRegistro()" );
+        return false;
+}
+
+
+
+/************************************************************************************************************/
+bool DeletaRegistro(char * pszIdFila )
+{
+    ULOG_START( "DeletaRegistro()" );
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * oszIdFila = pszIdFila;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    ULOG( ">>> Removendo idFila [%s] de infra.filasetclientinfo", oszIdFila );
+    EXEC SQL
+    DELETE
+        FROM infra.filasetclientinfo
+    WHERE
+        idfilasetclientinfo = :oszIdFila;
+    
+    ULOG_END( "DeletaRegistro()" );
+    return true;
+
+    erro:
+        ULOG( "*** ERRO: Finalizando com erro sqlca.sqlcode [%d]\n", sqlca.sqlcode );
+        ULOG_END( "DeletaRegistro()" );
+        return false;
+
+    naoexiste:
+        ULOG( "*** ERRO: idfilasetclientinfo [%s] nao encontrado\n", oszIdFila );
+        ULOG_END( "DeletaRegistro()" );
+        return false;
+}
+
+
+
+char *replace( char *st, char *orig, char *repl ) 
+{
+   static char buffer[4096];
+   char *ch;
+   buffer[0] = 0x0;
+   
+   if (!(ch = strstr(st, orig)))
+      return st;
+   
+   strncpy(buffer, st, ch-st);  
+   buffer[ch-st] = 0;
+   sprintf(buffer+(ch-st), "%s%s", repl, ch+strlen(orig));
+   
+   return buffer;
+}
+
+
+void retira_apostrofe( char * bf )
+{
+    char buffer[4096];
+    char *p;
+    char *s;
+    
+    strcpy( buffer, bf );
+        
+    p = strstr( buffer, "&apos;" );
+    
+    while ( p != NULL )
+    {
+        s = replace( buffer, "&apos;", "" );
+        strcpy( buffer, s );
+        p = strstr( buffer, "&apos;" );
+    }
+    
+    strcpy( bf, buffer );
+    
+}

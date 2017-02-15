@@ -1,0 +1,307 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1.2.1 $
+ * @CVS     $Author: a5116174 $ - $Date: 2011/08/12 17:11:19 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+#include "../include/cWFAtdFechDocTec.h"
+
+void WFAtdFechDocTec(sqlca*sqlca);
+bool WFGravaAtdAlerta( char *nrDocumentoPrm,int idUsuarioPrm, int idAtividadePrm );
+int  BuscaDataAbertura( char *nrDocumentoPrm, char *dtAbertura );
+
+
+bool WFGravaAtdAlerta( char *nrDocumentoPrm,int idUsuarioPrm, int idAtividadePrm )
+{
+    ULOG_START("WFGravaAtdAlerta()");
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimentoAlerta;
+        long idAtendimento;
+        int idAtividade = idAtividadePrm;
+        int idAlerta;
+        int idAlertaDinamica;
+        int idUsuario = idUsuarioPrm;
+        VARCHAR nrDocumento[256];
+
+        VARCHAR nrCriticidade[256];
+        VARCHAR nrCriticidadeDinamica[256];
+        VARCHAR nrCriticidadeTotal[256];
+        VARCHAR nmCor[256];
+        VARCHAR nmCorDinamico[256];
+
+        short   i_nrCriticidade = -1;
+        short   i_nmCor         = -1;
+        short   i_nrCriticidadeTotal = -1;
+        short   i_nrCriticidadeDinamica = -1;
+        short   i_nmCorDinamico         = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( (char *)nrDocumento.arr,nrDocumentoPrm );
+    nrDocumento.len = strlen( nrDocumentoPrm );
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdFechDocTec( &sqlca );
+
+    EXEC SQL
+	SELECT 
+		A.IDALERTA, 
+		A.NRCRITICIDADE,
+		A.NMCOR
+	INTO
+		:idAlerta,
+		:nrCriticidade:i_nrCriticidade,
+		:nmCor:i_nmCor
+	FROM
+		WORKFLOW.ATIVIDADEALERTA AA
+		,WORKFLOW.ALERTA A
+	WHERE
+		AA.IDALERTA = A.IDALERTA
+		AND AA.IDATIVIDADE = : idAtividade;
+
+    if (sqlca.sqlcode == 0)
+    {
+        CONVIND(nrCriticidade, i_nrCriticidade);
+        CONVIND(nmCor, i_nmCor);
+    }
+    else
+	return true;
+
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	EXEC SQL DECLARE ReadAtd CURSOR FOR 
+        SELECT DISTINCT
+	        a.idAtendimento
+        FROM	  
+            Atendimento.AtendimentoDocumento a,
+	        Atendimento.DocumentoTecnico     b
+        WHERE
+	        a.idDocumentoTecnico = b.idDocumentoTecnico
+        AND
+            b.nrDocumento = :nrDocumento
+		and 
+			a.idatendimento > 0;
+
+	EXEC SQL OPEN ReadAtd;
+
+    for ( ;; )
+    {
+		EXEC SQL FETCH ReadAtd INTO 
+                :idAtendimento;
+        
+	EXEC SQL
+           SELECT Atendimento.AtendimentoAlertaSQ.NEXTVAL INTO :idAtendimentoAlerta FROM DUAL;
+
+        ULOG("Insert Atendimento.AtendimentoAlerta");
+
+        EXEC SQL 
+	        INSERT INTO
+		        Atendimento.AtendimentoAlerta
+		        (
+			        idAtendimentoAlerta,
+			        idAlerta,
+			        idAtendimento,
+			        dsMensagem,
+			        idUsuarioAlteracao,
+			        dtUltimaAlteracao
+		        )
+		        VALUES
+		        (
+                    :idAtendimentoAlerta,
+                    :idAlerta,
+                    :idAtendimento,
+                    :nrDocumento,
+                    :idUsuario,
+                    SYSDATE
+		        );
+
+
+	EXEC SQL WHENEVER NOT FOUND DO CONTINUE;
+	    // Vai atualizar a prioridade do atendimento.
+	    ULOG("Buscando dado de nova prioridade do atendimento...");
+	    EXEC SQL
+		SELECT
+		    nrCriticidadeAlerta,
+		    nrCriticidade,
+		    idAlerta,
+		    nmCor
+		INTO
+		    nrCriticidadeDinamica:i_nrCriticidadeDinamica,
+		    nrCriticidadeTotal:i_nrCriticidadeTotal,
+		    idAlertaDinamica,
+		    nmCorDinamico:i_nmCorDinamico
+		FROM
+		    atendimento.AtendimentoNovasPrioridadesV01
+		WHERE
+		    idAtendimento = :idAtendimento;
+
+	    if (sqlca.sqlcode == 0)
+	    {
+		    CONVIND(nrCriticidadeDinamica, i_nrCriticidadeDinamica);
+		    CONVIND(nrCriticidadeTotal, i_nrCriticidadeTotal);
+		    CONVIND(nmCorDinamico, i_nmCorDinamico);
+
+		    if (atof((char*)nrCriticidadeDinamica.arr) > atof((char*)nrCriticidade.arr))
+		    {
+			    ULOG("Encontrada nova prioridade, atualizando...");
+
+			    EXEC SQL
+			        UPDATE
+				        atendimento.AtendimentoPriorizacao
+			        SET
+				        nrCriticidade = :nrCriticidadeTotal,
+				        nmCor = :nmCorDinamico,
+				        idAlerta = :idAlertaDinamica,
+				        dtUltimaAlteracao = SYSDATE,
+				        dtAtualizacao = SYSDATE
+			        WHERE
+				        idAtendimento = :idAtendimento;
+		    }
+		    else
+		    {
+			    ULOG("Encontrada sem prioridade, atualizando...");
+
+			    EXEC SQL
+			        UPDATE
+				        atendimento.AtendimentoPriorizacao
+			        SET
+				        nrCriticidade = :nrCriticidadeTotal,
+				        nmCor = :nmCor,
+				        idAlerta = :idAlertaDinamica,
+				        dtUltimaAlteracao = SYSDATE,
+				        dtAtualizacao = SYSDATE
+			        WHERE
+				        idAtendimento = :idAtendimento;
+		    }
+	    }
+    }
+
+	EXEC SQL CLOSE ReadAtd;
+
+   	ULOG_END("WFGravaAtdAlerta()");
+
+    return true;
+}
+
+int WFValidaDocumentos( char *nrDocumentoPrm )
+{
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int DocFechados;
+        int DocExistente;
+
+        VARCHAR nrDocumento[256];
+
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( (char *)nrDocumento.arr,nrDocumentoPrm );
+    nrDocumento.len = strlen( nrDocumentoPrm );
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdFechDocTec( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	EXEC SQL   
+        SELECT DISTINCT
+	        COUNT (*)
+        INTO
+            :DocFechados
+        FROM	  
+	        Atendimento.DocumentoTecnico
+        WHERE
+		    UPPER(nrDocumento) = UPPER(:nrDocumento)
+		AND 
+            InEstadoTecnico = 1;
+
+	EXEC SQL   
+        SELECT DISTINCT
+	        COUNT (*)
+        INTO
+            :DocExistente
+        FROM	  
+	        Atendimento.DocumentoTecnico
+        WHERE
+    	    UPPER(nrDocumento) = UPPER(:nrDocumento)
+	    AND 
+            InEstadoTecnico != 1;
+
+
+    if ( DocFechados == 0 ) //  Documento nao existe na base
+    {
+        if ( DocExistente == 0 )
+            return 0;
+    }
+
+    if ( DocFechados > 0 )
+    {
+        if ( DocExistente == 0 ) //  Documento fechado na base
+        return 2;
+    }
+
+    return 1;
+}
+
+
+
+
+int BuscaDataAbertura( char *nrDocumentoPrm, char *dtAbertura )
+{
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR nrDocumento[256];
+        VARCHAR abertura[11];
+
+    EXEC SQL END DECLARE SECTION;
+
+    strcpy( (char *)nrDocumento.arr,nrDocumentoPrm );
+    nrDocumento.len = strlen( nrDocumentoPrm );
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdFechDocTec( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	EXEC SQL   
+        SELECT DISTINCT
+	        TO_CHAR(dtAbertura,'YYYYMMDD')
+        INTO
+            :abertura
+        FROM	  
+	        Atendimento.DocumentoTecnico
+        WHERE
+	        UPPER(nrDocumento) = UPPER(:nrDocumento)
+	    AND 
+            InEstadoTecnico != 1;
+
+    sprintf( dtAbertura,"%.*s",abertura.len, (char *)abertura.arr);
+
+    return 1;
+}
+
+
+
+
+void WFAtdFechDocTec(sqlca*sqlca)
+{
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOGE("WFAtdFechDocTec:sqlcode=%d,sqlerrmc=%.70s"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

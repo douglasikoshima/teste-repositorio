@@ -1,0 +1,87 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:34:20 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+#include "../include/cWFAtdLstComTTGr.h"
+
+void WFAtdLstComTTGr(sqlca*sqlca);
+
+void getListaNiveisCargo(int parametro, char* tag, XMLGen* saida)
+{
+
+    ULOG_START("getListaNiveisCargo()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+	int idCargo; 
+	VARCHAR nmCargo[256];
+
+	short i_idCargo;
+	short i_nmCargo;
+
+        int idParametro = parametro;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO WFAtdLstComTTGr(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	EXEC SQL DECLARE tsqlcursor1 CURSOR FOR
+	SELECT DISTINCT
+		NC.IDNIVELCARGO, 
+		C.NMCARGO
+	FROM
+		ORGANOGRAMA.NIVEL N,
+		ORGANOGRAMA.NIVELCARGO NC,
+		ACESSO.CARGO C
+	WHERE
+		N.IDNIVEL = NC.IDNIVEL
+		AND NC.IDCARGO = C.IDCARGO
+		AND N.IDNIVEL = (SELECT DSVALORPARAMETRO FROM APOIO.PARAMETRO WHERE IDPARAMETRO =:idParametro)
+	 ORDER BY 
+		UPPER(C.NMCARGO);
+
+	EXEC SQL OPEN tsqlcursor1;
+	
+    for(;;)
+    {
+		EXEC SQL FETCH tsqlcursor1 INTO :idCargo:i_idCargo, :nmCargo:i_nmCargo;
+
+		CONVIND(nmCargo, i_nmCargo);
+
+		saida->createTag(tag);
+		    saida->addItem("idCargo",idCargo);
+		    saida->addItem("nmCargo",(char*)nmCargo.arr);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE tsqlcursor1;
+
+    ULOG_END("getListaNiveisCargo()");
+
+}
+
+void WFAtdLstComTTGr(sqlca*sqlca)
+{
+
+    ULOGE("WFAtdLstComTTGr:sqlcode=%d,sqlerrmc=%.70s"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

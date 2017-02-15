@@ -1,0 +1,117 @@
+/**
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1.2.2 $
+ * @CVS     $Author: a5116174 $ - $Date: 2011/08/12 17:11:17 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include"../../../commons/queryMacro.h"
+#include"../../../commons/msgPadrao.h"
+
+#include "../include/cWFAndamentoProcessoFODPR.h"
+#include "../include/stWFAndamentoProcessoFODPR.h"
+
+void sql_error_WFAndamentoProcessoFODPR(sqlca*sqlca);
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+    #include "../include/stWFAndamentoProcessoFODPR.h"
+EXEC SQL END DECLARE SECTION;
+
+long proCIncluirWFAndamentoProcFODPR(st_AndamentoProcFODPR* dados, st_vlAndamentoProcFODPR* status,char *_idAtendimento)
+{
+    ULOG_START( "proCIncluirWFAndamentoProcFODPR()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AndamentoProcFODPR *oDados = dados;
+        struct st_vlAndamentoProcFODPR *oStatus = status;
+        int idAndamentoProcessoFODPR;
+        //int counter = 1; // Grava para o DPR por default
+        //int idContato = _idContato;
+        char *idAtendimento = _idAtendimento;
+        int i_idAtendimento =  _idAtendimento == 0 ? -1 : *_idAtendimento == 0 ? -1 : 1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAndamentoProcessoFODPR(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    // if ( idContato >= 0 )
+    // { // Verifica se o contato é técnico
+    //     EXEC SQL 
+    //         SELECT 
+    //             COUNT(1)
+    //         INTO
+    //             :counter
+    //         FROM
+    //             CONTATOADM.CONTATOFOLHA CF,
+    //             WORKFLOW.TIPOPROCESSO TP
+    //         WHERE
+    //             IDCONTATO = :idContato
+    //         AND
+    //             CF.IDTIPOPROCESSO = TP.IDTIPOPROCESSO
+    //         AND
+    //             TP.SGTIPOPROCESSO = 'T';
+    // }
+    //
+    // ULOG( "idContato %d é %s",idContato,counter?"TÉCNICO":"COMUM" );
+
+    //if ( counter )
+    //{
+    EXEC SQL 
+        SELECT 
+            TIBCO_OW.P_ANDAMENTOPROCESSOFOSQ.NEXTVAL
+        INTO
+            :idAndamentoProcessoFODPR
+        FROM
+            DUAL;
+
+    ULOG( "vai inserir idAndamentoProcessoFODPR=%d em TIBCO_OW.P_ANDAMENTOPROCESSOFO"
+        ,idAndamentoProcessoFODPR);
+
+    EXEC SQL 
+        INSERT INTO
+            TIBCO_OW.P_ANDAMENTOPROCESSOFO
+            (
+                IDANDAMENTOPROCESSOFO,
+                ADB_SEQUENCE,
+                XML,
+                ADB_L_DELIVERY_STATUS,
+                ADB_OPCODE,
+                IDUSUARIOALTERACAO,
+                DTULTIMAALTERACAO,
+                ADB_TIMESTAMP,
+                IDATENDIMENTO
+            )
+            VALUES
+            (
+                :idAndamentoProcessoFODPR,
+                :idAndamentoProcessoFODPR,
+                :oDados->xml,
+                'N',
+                1,
+                DECODE(:oStatus->idUsuarioAlteracao,-1,NULL,:oDados->idUsuarioAlteracao),
+                SYSDATE,
+                SYSDATE,
+                DECODE(:i_idAtendimento,-1,NULL,:idAtendimento)
+            );
+    //}
+
+    ULOG_END( "proCIncluirWFAndamentoProcFODPR()" );
+
+    return idAndamentoProcessoFODPR;
+}
+
+void sql_error_WFAndamentoProcessoFODPR(sqlca*sqlca)
+{
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

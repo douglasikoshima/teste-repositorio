@@ -1,0 +1,2367 @@
+/**
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:27 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include<ctype.h>
+
+#include "../include/cWFAtdInBox.h"
+#include "../../../commons/SmallString.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+void sql_error_WFAtdInBox(sqlca*sqlca);
+//bool proCConsultaTotalWFInboxUsuario(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida);
+//bool proCConsultaTotalWFInboxUsuarioDocumento(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida);
+//bool proCConsultaTotalWFInboxLinha(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida);
+//bool proCConsultaTotalWFInboxLinhaDocumento(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida);
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+    #include "../include/stWFAtdInBox.h"
+EXEC SQL END DECLARE SECTION;
+
+bool proCConsultaWFInboxUsuarioEnc(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFInboxUsuarioEnc()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            VARCHAR dtSolicitacaoCancelamento[32];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[2049];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            //VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+        } oDadosSaida;
+    
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short dtSolicitacaoCancelamento;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            //short dtFechamento;
+            short tipoPessoa;
+        } oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBox(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG( "idPessoaUsuarioCri = %d "
+          "AND idPessoaUsuarioBko = %d OR -1 = %d )"
+          "AND (idAtendimento = %d OR -1=%d) "
+          "AND (idAlerta = %d OR -1=%d) "
+          "AND (idContato = %d OR -1=%d) "
+          "AND (idEstado = %d OR -1=%d) "
+          "AND (idSubEstado = %d OR -1=%d) "
+          "AND (TRUNC(dtAbertura)>=TO_DATE(%s, 'DD/MM/YYYY' ) OR -1 = %d) "
+          "AND (TRUNC(dtAbertura)<=TO_DATE(%s,'DD/MM/YYYY') OR -1 = %d) "
+          "AND ( "
+          "(1=%d AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE))) "
+          "OR (2=%d AND dtFimPausaAtendimento > SYSDATE) OR (3=%d) ) "
+        ,oDados.idPessoaUsuario,oDados.idPessoaUsuarioBko,oStatus.idPessoaUsuarioBko,oDados.idAtendimento
+        ,oStatus.idAtendimento,oDados.idAlerta,oStatus.idAlerta,oDados.idContato
+        ,oStatus.idContato,oDados.idEstado,oStatus.idEstado,oDados.idSubEstado
+        ,oStatus.idSubEstado,oDados.dtAberturaInicio,oStatus.dtAberturaInicio
+        ,oDados.dtAberturaFim,oStatus.dtAberturaFim,oDados.tbPausa,oDados.tbPausa,oDados.tbPausa
+        );
+
+
+    EXEC SQL DECLARE proCConsultaWFInboxUsuarioEnc CURSOR FOR
+        SELECT 
+            idAtendimento, 
+            idAtendimentoProtocolo,
+            nmCor, 
+            idContato, 
+            TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+            qtInsistencia, 
+            TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+            TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+            idPessoaDePara, 
+            TO_CHAR(dtSolicitacaoCancelamento,'DD/MM/YYYY HH24:MI:SS'),
+            idEstado, 
+            dsEstado, 
+            idSubEstado, 
+            dsSubEstado, 
+            TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'), 
+            inCri, 
+            path,
+            nmRegional,
+            nrTelefone,
+            nmPessoaBko,
+            nmGrupoBko,
+            nmPessoaCri,
+            nmGrupoCri,
+            TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+            TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+            nmPessoa, 
+            nrDocumento, 
+            // (sem uso) '' as dtFechamento,
+            idTipoPessoa 
+         FROM 
+            Atendimento.AtdTratCriWFV02
+         WHERE 
+            idPessoaUsuarioCri = :oDados.idPessoaUsuario			
+            AND ( idPessoaUsuarioBko = :oDados.idPessoaUsuarioBko OR -1 = :oStatus.idPessoaUsuarioBko )
+            AND ( idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+            AND ( idAlerta = :oDados.idAlerta OR -1=:oStatus.idAlerta)
+            AND ( idContato = :oDados.idContato OR -1=:oStatus.idContato)
+            AND ( idEstado = :oDados.idEstado OR -1=:oStatus.idEstado)
+            AND ( idSubEstado = :oDados.idSubEstado OR -1=:oStatus.idSubEstado)
+            AND ( TRUNC(dtAbertura)>=TO_DATE(NVL(:oDados.dtAberturaInicio,NULL), 'DD/MM/YYYY' ) OR -1 = :oStatus.dtAberturaInicio)
+            AND ( TRUNC(dtAbertura)<=TO_DATE(NVL(:oDados.dtAberturaFim,NULL),'DD/MM/YYYY') OR -1 = :oStatus.dtAberturaFim)
+    ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN proCConsultaWFInboxUsuarioEnc;
+
+    memset(&oDadosSaida,0,sizeof(oDadosSaida));
+
+    while ( true )
+    {
+        memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+        EXEC SQL FETCH proCConsultaWFInboxUsuarioEnc INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+            CONVIND(oDadosSaida.idAtendimentoProtocolo, oStatusSaida.idAtendimentoProtocolo);
+            CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+            CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+            CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+            CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+            CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+            CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+            CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+            CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+            CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+            CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+            CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+            //CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+            CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+            CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+            CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+            CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+            CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+            CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+            CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+            CONVIND(oDadosSaida.dtSolicitacaoCancelamento, oStatusSaida.dtSolicitacaoCancelamento);
+
+            saida->createTag("RWFAtendimentoVO");
+				saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char *)oDadosSaida.idAtendimento.arr );
+                saida->addItem("nrProtocolo", (char *)oDadosSaida.idAtendimentoProtocolo.arr );
+                saida->addItem("dtAbertura", (char *)oDadosSaida.dtAbertura.arr );
+                saida->addItem("dtFechamento", (char *)oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtFimPausaAtendimento", (char *)oDadosSaida.dtFimPausa.arr );
+				saida->addItem("dtParaFechamento", (char *)oDadosSaida.dtPrazoFinalInterno.arr );
+				saida->addItem("dtFechamentoAnatel", (char *)oDadosSaida.dtPrazoFinalAnatel.arr );
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char *)oDadosSaida.nmCor.arr );
+                saida->addItem("dtSuspeito", "");
+				saida->addItem("idAtendimentoSuspeito", "");
+				saida->addItem("idAtendimentoBaixaHistorico", "");
+				saida->addItem("nmURLDados", "");
+				saida->addItem("dtSolicitacaoCancelamento", (char *)oDadosSaida.dtSolicitacaoCancelamento.arr );
+				saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char *)oDadosSaida.nrTelefone.arr );
+				saida->addItem("descricaoCompleta", (char *)oDadosSaida.arvore.arr );
+				saida->addItem("dsEstado", (char *)oDadosSaida.dsEstado.arr );
+				saida->addItem("dsSubEstado", (char *)oDadosSaida.dsSubEstado.arr );
+				saida->addItem("nmCliente", (char *)oDadosSaida.nmPessoa.arr );
+				saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+				saida->addItem("analistaBKO", (char *)oDadosSaida.nmPessoaBko.arr );
+				saida->addItem("grupoBKO", (char *)oDadosSaida.nmGrupoBko.arr );
+				saida->addItem("analistaCRI", (char *)oDadosSaida.nmPessoaCri.arr );
+				saida->addItem("grupoCRI", (char *)oDadosSaida.nmGrupoCri.arr );
+				saida->addItem("regional", (char *)oDadosSaida.nmRegional.arr );
+				saida->addItem("dtEncaminhamento", (char *)oDadosSaida.dtEntrada.arr );
+				saida->addItem("dtDevolucao", (char *)oDadosSaida.dtSaida.arr );
+				saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+				saida->addItem("documento", (char *)oDadosSaida.nrDocumento.arr );
+            saida->closeTag();
+        }
+    }
+
+    EXEC SQL CLOSE proCConsultaWFInboxUsuarioEnc;
+
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    ULOG( "totalRegistros=%d",totalRegistros );
+
+    ULOG( "numeroRegistros=%d",numeroRegistros );
+
+    ULOG_END( "proCConsultaWFInboxUsuarioEnc()" );
+
+    return true;
+}
+
+bool proCConsultaWFInboxUsuario(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFInboxUsuario()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[2049];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+            VARCHAR dtSolicitacaoCancelamento[64];
+        } oDadosSaida;
+    
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+            short dtSolicitacaoCancelamento;
+        } oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBox(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    ULOG(  "idPessoaUsuarioCri = %d "
+           "AND idPessoaUsuarioBko = %d OR -1 = %d )"
+           "AND (idAtendimento = %d OR -1=%d) "
+           "AND (idAlerta = %d OR -1=%d) "
+           "AND (idContato = %d OR -1=%d) "
+           "AND (idEstado = %d OR -1=%d) "
+           "AND (idSubEstado = %d OR -1=%d) "
+           "AND (TRUNC(dtAbertura)>=TO_DATE(%s, 'DD/MM/YYYY' ) OR -1 = %d) "
+           "AND (TRUNC(dtAbertura)<=TO_DATE(%s,'DD/MM/YYYY') OR -1 = %d) "
+           "AND ( "
+           "(1=%d AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE))) "
+           "OR (2=%d AND dtFimPausaAtendimento > SYSDATE) OR (3=%d) ) "
+        ,oDados.idPessoaUsuario,oDados.idPessoaUsuarioBko,oStatus.idPessoaUsuarioBko,oDados.idAtendimento
+        ,oStatus.idAtendimento,oDados.idAlerta,oStatus.idAlerta,oDados.idContato
+        ,oStatus.idContato,oDados.idEstado,oStatus.idEstado,oDados.idSubEstado
+        ,oStatus.idSubEstado,oDados.dtAberturaInicio,oStatus.dtAberturaInicio
+        ,oDados.dtAberturaFim,oStatus.dtAberturaFim,oDados.tbPausa,oDados.tbPausa,oDados.tbPausa
+        );
+
+
+    EXEC SQL DECLARE consultaWFInBoxUsuario CURSOR FOR
+        SELECT 
+            idAtendimento, 
+            idAtendimentoProtocolo,
+            nmCor, 
+            idContato, 
+            TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+            qtInsistencia, 
+            TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+            TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+            idPessoaDePara, 
+            idEstado, 
+            dsEstado, 
+            idSubEstado, 
+            dsSubEstado, 
+            TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'), 
+            inCri, 
+            path,
+            nmRegional,
+            nrTelefone,
+            nmPessoaBko,
+            nmGrupoBko,
+            nmPessoaCri,
+            nmGrupoCri,
+            TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+            TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+            nmPessoa, 
+            nrDocumento, 
+            '' dtFechamento,
+            idTipoPessoa,
+            TO_CHAR(dtSolicitacaoCancelamento,'DD/MM/YYYY  HH24:MI:SS')
+         FROM 
+            Atendimento.AtdTratCriWFV01
+         WHERE 
+            idPessoaUsuarioCri = :oDados.idPessoaUsuario
+            //AND ( idPessoaUsuarioBko = :oDados.idPessoaUsuarioBko OR -1 = :oStatus.idPessoaUsuarioBko )
+            AND ( idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+            AND ( idAlerta = :oDados.idAlerta OR -1=:oStatus.idAlerta)
+            AND ( idContato = :oDados.idContato OR -1=:oStatus.idContato)
+            AND ( idEstado = :oDados.idEstado OR -1=:oStatus.idEstado)
+            AND ( idSubEstado = :oDados.idSubEstado OR -1=:oStatus.idSubEstado)
+            AND ( TRUNC(dtAbertura)>=TO_DATE(NVL(:oDados.dtAberturaInicio,NULL), 'DD/MM/YYYY' ) OR -1 = :oStatus.dtAberturaInicio)
+            AND ( TRUNC(dtAbertura)<=TO_DATE(NVL(:oDados.dtAberturaFim,NULL),'DD/MM/YYYY') OR -1 = :oStatus.dtAberturaFim)
+        AND (
+			  (1=:oDados.tbPausa AND ((idSubEstado IN (3,6) AND dtFimPausaAtendimento IS NULL) OR (idSubEstado IN (3,5,6,7) AND dtFimPausaAtendimento <= SYSDATE)))
+		   OR (2=:oDados.tbPausa AND (idSubEstado IN (5,7) AND dtFimPausaAtendimento > SYSDATE))
+			)
+    ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN consultaWFInBoxUsuario;
+
+    while ( true )
+    {
+        memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+        EXEC SQL FETCH consultaWFInBoxUsuario INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+            CONVIND(oDadosSaida.idAtendimentoProtocolo, oStatusSaida.idAtendimentoProtocolo);
+            CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+            CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+            CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+            CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+            CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+            CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+            CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+            CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+            CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+            CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+            CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+            CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+            CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+            CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+            CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+            CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+            CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+            CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+            CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+            CONVIND(oDadosSaida.dtSolicitacaoCancelamento, oStatusSaida.dtSolicitacaoCancelamento);
+
+            saida->createTag("RWFAtendimentoVO");
+				saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char *)oDadosSaida.idAtendimento.arr );
+                saida->addItem("nrProtocolo", (char *)oDadosSaida.idAtendimentoProtocolo.arr );
+                saida->addItem("dtAbertura", (char *)oDadosSaida.dtAbertura.arr );
+                saida->addItem("dtFechamento", (char *)oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtFimPausaAtendimento", (char *)oDadosSaida.dtFimPausa.arr );
+				saida->addItem("dtParaFechamento", (char *)oDadosSaida.dtPrazoFinalInterno.arr );
+				saida->addItem("dtFechamentoAnatel", (char *)oDadosSaida.dtPrazoFinalAnatel.arr );
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char *)oDadosSaida.nmCor.arr );
+                saida->addItem("dtSuspeito", "");
+				saida->addItem("idAtendimentoSuspeito", "");
+				saida->addItem("idAtendimentoBaixaHistorico", "");
+				saida->addItem("nmURLDados", "");
+				saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char *)oDadosSaida.nrTelefone.arr );
+				saida->addItem("descricaoCompleta", (char *)oDadosSaida.arvore.arr );
+				saida->addItem("dsEstado", (char *)oDadosSaida.dsEstado.arr );
+				saida->addItem("dsSubEstado", (char *)oDadosSaida.dsSubEstado.arr );
+				saida->addItem("nmCliente", (char *)oDadosSaida.nmPessoa.arr );
+				saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+				saida->addItem("analistaBKO", (char *)oDadosSaida.nmPessoaBko.arr );
+				saida->addItem("grupoBKO", (char *)oDadosSaida.nmGrupoBko.arr );
+				saida->addItem("analistaCRI", (char *)oDadosSaida.nmPessoaCri.arr );
+				saida->addItem("grupoCRI", (char *)oDadosSaida.nmGrupoCri.arr );
+				saida->addItem("regional", (char *)oDadosSaida.nmRegional.arr );
+				saida->addItem("dtEncaminhamento", (char *)oDadosSaida.dtEntrada.arr );
+				saida->addItem("dtDevolucao", (char *)oDadosSaida.dtSaida.arr );
+				saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+				saida->addItem("documento", (char *)oDadosSaida.nrDocumento.arr );
+				saida->addItem("dtSolicitacaoCancelamento", (char*)oDadosSaida.dtSolicitacaoCancelamento.arr);
+            saida->closeTag();
+        }
+    }
+
+    EXEC SQL CLOSE consultaWFInBoxUsuario;
+
+    saida->addItem("totalRegistros", totalRegistros);
+
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    ULOG( "totalRegistros=%d",totalRegistros );
+
+    ULOG( "numeroRegistros=%d",numeroRegistros );
+
+    ULOG_END( "proCConsultaWFInboxUsuario()" );
+
+    return true;
+}
+
+bool proCConsultaWFInboxUsuarioDocumentoEnc(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFInboxUsuarioDocumentoEnc()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[2049];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+        } oDadosSaida;
+        
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+        } oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBox(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+    EXEC SQL DECLARE proCConsultaWFInboxUsuarioDocumentoEnc CURSOR FOR
+        SELECT 
+            idAtendimento, 
+            idAtendimentoProtocolo,
+            nmCor, 
+            idContato, 
+            TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+            qtInsistencia, 
+            TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+            TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+            idPessoaDePara, 
+            idEstado, 
+            dsEstado, 
+            idSubEstado, 
+            dsSubEstado, 
+            TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'), 
+            inCri, 
+            path,
+            nmRegional,
+            nrTelefone,
+            nmPessoaBko,
+            nmGrupoBko,
+            nmPessoaCri,
+            nmGrupoCri,
+            TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+            TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+            nmPessoa, 
+            nrDocumento, 
+            '' dtFechamento,
+            idTipoPessoa
+         FROM 
+            Atendimento.AtdTratCriWFV02 /* Atendimento.AtdTratCriWFV01 */
+         WHERE 
+            idPessoaUsuarioCri = :oDados.idPessoaUsuario
+            AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+            AND (idAlerta = :oDados.idAlerta OR -1=:oStatus.idAlerta)
+            AND (idContato = :oDados.idContato OR -1=:oStatus.idContato)
+            AND (idEstado = :oDados.idEstado OR -1=:oStatus.idEstado)
+            AND (idSubEstado = :oDados.idSubEstado OR -1=:oStatus.idSubEstado)
+            AND (TRUNC(dtAbertura)>=TO_DATE(NVL(:oDados.dtAberturaInicio,NULL), 'DD/MM/YYYY' ) OR -1 = :oStatus.dtAberturaInicio)
+            AND (TRUNC(dtAbertura)<=TO_DATE(NVL(:oDados.dtAberturaFim,NULL),'DD/MM/YYYY') OR -1 = :oStatus.dtAberturaFim)
+            AND 
+                idPessoaDePara 
+            IN
+                (
+                    SELECT 
+                        PDP.IDPESSOADEPARA
+                    FROM
+                        CUSTOMER.PESSOADEPARA PDP,
+                        CUSTOMER.PESSOADOCUMENTO PD,
+                        CUSTOMER.DOCUMENTO D,
+                        APOIO.TIPODOCUMENTO TD
+                    WHERE
+                        PDP.IDPESSOA = PD.IDPESSOA
+                        AND D.IDDOCUMENTO = PD.IDDOCUMENTO
+                        AND D.IDTIPODOCUMENTO = TD.IDTIPODOCUMENTO
+                        AND TD.SGCLASSIFICACAO = :oDados.tipoDocumento
+                        AND D.NRDOCUMENTO = :oDados.documento
+                )
+        AND (
+        (1=:oDados.tbPausa AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE)))
+        OR (2=:oDados.tbPausa AND dtFimPausaAtendimento > SYSDATE)
+        OR (3=:oDados.tbPausa)
+        )
+    ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN proCConsultaWFInboxUsuarioDocumentoEnc;
+
+    memset(&oDadosSaida,0,sizeof(oDadosSaida));
+
+    while (true)
+    {
+        memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+        EXEC SQL FETCH proCConsultaWFInboxUsuarioDocumentoEnc INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+            CONVIND(oDadosSaida.idAtendimentoProtocolo, oStatusSaida.idAtendimentoProtocolo);
+            CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+            CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+            CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+            CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+            CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+            CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+            CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+            CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+            CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+            CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+            CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+            CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+            CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+            CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+            CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+            CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+            CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+            CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+            CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+
+            saida->createTag("RWFAtendimentoVO");
+				saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char *)oDadosSaida.idAtendimento.arr );
+                saida->addItem("nrProtocolo", (char *)oDadosSaida.idAtendimentoProtocolo.arr );
+                saida->addItem("dtAbertura", (char *)oDadosSaida.dtAbertura.arr );
+                saida->addItem("dtFechamento", (char *)oDadosSaida.dtPrazoFinalInterno.arr );
+                saida->addItem("dtFimPausaAtendimento", (char *)oDadosSaida.dtFimPausa.arr );
+				saida->addItem("dtParaFechamento", (char *)oDadosSaida.dtPrazoFinalInterno.arr );
+				saida->addItem("dtFechamentoAnatel", (char *)oDadosSaida.dtPrazoFinalAnatel.arr );
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char *)oDadosSaida.nmCor.arr );
+                saida->addItem("dtSuspeito", "");
+				saida->addItem("idAtendimentoSuspeito", "");
+				saida->addItem("idAtendimentoBaixaHistorico", "");
+				saida->addItem("nmURLDados", "");
+				saida->addItem("dtSolicitacaoCancelamento", "");
+				saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char *)oDadosSaida.nrTelefone.arr );
+				saida->addItem("descricaoCompleta", (char *)oDadosSaida.arvore.arr );
+				saida->addItem("dsEstado", (char *)oDadosSaida.dsEstado.arr );
+				saida->addItem("dsSubEstado", (char *)oDadosSaida.dsSubEstado.arr );
+				saida->addItem("nmCliente", (char *)oDadosSaida.nmPessoa.arr );
+				saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+				saida->addItem("analistaBKO", (char *)oDadosSaida.nmPessoaBko.arr );
+				saida->addItem("grupoBKO", (char *)oDadosSaida.nmGrupoBko.arr );
+				saida->addItem("analistaCRI", (char *)oDadosSaida.nmPessoaCri.arr );
+				saida->addItem("grupoCRI", (char *)oDadosSaida.nmGrupoCri.arr );
+				saida->addItem("regional", (char *)oDadosSaida.nmRegional.arr );
+				saida->addItem("dtEncaminhamento", (char *)oDadosSaida.dtEntrada.arr );
+				saida->addItem("dtDevolucao", (char *)oDadosSaida.dtSaida.arr );
+				saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+				saida->addItem("documento", (char *)oDadosSaida.nrDocumento.arr );
+            saida->closeTag();
+        }
+    }
+
+    EXEC SQL CLOSE proCConsultaWFInboxUsuarioDocumentoEnc;
+
+    //if (numeroRegistros > 100)
+    //{
+    //    numeroRegistros = 100;
+    //    proCConsultaTotalWFInboxUsuarioDocumento(dados, status, saida);
+    //}
+    //else
+    //{
+    //    saida->addItem("totalRegistros", totalRegistros);
+    //}
+
+    saida->addItem("totalRegistros", totalRegistros);
+
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    ULOG( "totalRegistros=%d",totalRegistros );
+
+    ULOG( "numeroRegistros=%d",numeroRegistros );
+
+    ULOG_END( "proCConsultaWFInboxUsuarioDocumentoEnc()" );
+
+    return true;
+}
+
+bool proCConsultaWFInboxUsuarioDocumento(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFInboxUsuarioDocumento()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[2049];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+            VARCHAR dtSolicitacaoCancelamento[64];
+        } oDadosSaida;
+        
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+            short dtSolicitacaoCancelamento;
+        } oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    ULOG( "SELECT "
+               "idAtendimento, "
+               "nmCor, "
+               "idContato, "
+               "TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, "
+               "qtInsistencia, "
+               "TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, "
+               "TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, "
+               "idPessoaDePara, "
+               "idEstado, "
+               "dsEstado, "
+               "idSubEstado, "
+               "dsSubEstado, "
+               "TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'), "
+               "inCri, "
+               "path,"
+               "nmRegional,"
+               "nrTelefone,"
+               "nmPessoaBko,"
+               "nmGrupoBko,"
+               "nmPessoaCri,"
+               "nmGrupoCri,"
+               "TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), "
+               "TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), "
+               "nmPessoa, "
+               "nrDocumento, "
+               "'' dtFechamento,"
+               "idTipoPessoa "
+          "FROM "
+              "Atendimento.AtdTratCriWFV01 "
+          "WHERE "
+                "idPessoaUsuarioCri = %d "
+                // "AND idPessoaUsuarioBko = %d "
+                "AND (idAtendimento = %d OR -1=%d) "
+                "AND (idAlerta = %d OR -1=%d) "
+                "AND (idContato = %d OR -1=%d) "
+                "AND (idEstado = %d OR -1=%d) "
+                "AND (idSubEstado = %d OR -1=%d) "
+                "AND (TRUNC(dtAbertura)>=TO_DATE(%s, 'DD/MM/YYYY' ) OR -1 = %d) "
+                "AND (TRUNC(dtAbertura)<=TO_DATE(%s,'DD/MM/YYYY') OR -1 = %d) "
+                "AND "
+                "idPessoaDePara "
+          "IN "
+                "( "
+                    "SELECT "
+                        "PDP.IDPESSOADEPARA "
+                    "FROM "
+                        "CUSTOMER.PESSOADEPARA PDP,"
+                        "CUSTOMER.PESSOADOCUMENTO PD,"
+                        "CUSTOMER.DOCUMENTO D,"
+                        "APOIO.TIPODOCUMENTO TD "
+                    "WHERE "
+                        "PDP.IDPESSOA = PD.IDPESSOA "
+                        "AND D.IDDOCUMENTO = PD.IDDOCUMENTO "
+                        "AND D.IDTIPODOCUMENTO = TD.IDTIPODOCUMENTO "
+                        "AND TD.SGCLASSIFICACAO = %d "
+                        "AND D.NRDOCUMENTO = %d "
+                ") "
+         "AND ( "
+            "(1=%d AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE))) "
+            "OR (2=%d AND dtFimPausaAtendimento > SYSDATE) "
+            "OR (3=%d) "
+            ") "
+            "ORDER BY nrCriticidade DESC, idAtendimento;"
+           ,oDados.idPessoaUsuario
+           //,oDados.idPessoaUsuarioBko
+           ,oDados.idAtendimento,oStatus.idAtendimento
+           ,oDados.idAlerta,oStatus.idAlerta,oDados.idContato,oStatus.idContato,oDados.idEstado
+           ,oStatus.idEstado,oDados.idSubEstado,oStatus.idSubEstado,oDados.dtAberturaInicio
+           ,oStatus.dtAberturaInicio,oDados.dtAberturaFim,oStatus.dtAberturaFim,oDados.tipoDocumento
+           ,oDados.documento,oDados.tbPausa,oDados.tbPausa,oDados.tbPausa
+        );
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBox(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+    EXEC SQL DECLARE consultaWFInBoxUsuarioDocumento CURSOR FOR
+        SELECT 
+            idAtendimento, 
+            idAtendimentoProtocolo,
+            nmCor, 
+            idContato, 
+            TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+            qtInsistencia, 
+            TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+            TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+            idPessoaDePara, 
+            idEstado, 
+            dsEstado, 
+            idSubEstado, 
+            dsSubEstado, 
+            TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'), 
+            inCri, 
+            path,
+            nmRegional,
+            nrTelefone,
+            nmPessoaBko,
+            nmGrupoBko,
+            nmPessoaCri,
+            nmGrupoCri,
+            TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+            TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+            nmPessoa, 
+            nrDocumento, 
+            '' dtFechamento,
+            idTipoPessoa,
+            TO_CHAR(dtSolicitacaoCancelamento,'DD/MM/YYYY  HH24:MI:SS')
+         FROM 
+            Atendimento.AtdTratCriWFV01
+         WHERE 
+            idPessoaUsuarioCri = :oDados.idPessoaUsuario
+            /* AND idPessoaUsuarioBko = :oDados.idPessoaUsuarioBko */
+            AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+            AND (idAlerta = :oDados.idAlerta OR -1=:oStatus.idAlerta)
+            AND (idContato = :oDados.idContato OR -1=:oStatus.idContato)
+            AND (idEstado = :oDados.idEstado OR -1=:oStatus.idEstado)
+            AND (idSubEstado = :oDados.idSubEstado OR -1=:oStatus.idSubEstado)
+            AND (TRUNC(dtAbertura)>=TO_DATE(NVL(:oDados.dtAberturaInicio,NULL), 'DD/MM/YYYY' ) OR -1 = :oStatus.dtAberturaInicio)
+            AND (TRUNC(dtAbertura)<=TO_DATE(NVL(:oDados.dtAberturaFim,NULL),'DD/MM/YYYY') OR -1 = :oStatus.dtAberturaFim)
+            AND 
+                idPessoaDePara 
+            IN
+                (
+                    SELECT 
+                        PDP.IDPESSOADEPARA
+                    FROM
+                        CUSTOMER.PESSOADEPARA PDP,
+                        CUSTOMER.PESSOADOCUMENTO PD,
+                        CUSTOMER.DOCUMENTO D,
+                        APOIO.TIPODOCUMENTO TD
+                    WHERE
+                        PDP.IDPESSOA = PD.IDPESSOA
+                        AND D.IDDOCUMENTO = PD.IDDOCUMENTO
+                        AND D.IDTIPODOCUMENTO = TD.IDTIPODOCUMENTO
+                        AND TD.SGCLASSIFICACAO = :oDados.tipoDocumento
+                        AND D.NRDOCUMENTO = :oDados.documento
+                )
+        AND (
+        (1=:oDados.tbPausa AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE)))
+        OR (2=:oDados.tbPausa AND dtFimPausaAtendimento > SYSDATE)
+        OR (3=:oDados.tbPausa)
+        )
+    ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN consultaWFInBoxUsuarioDocumento;
+
+    memset(&oDadosSaida,0,sizeof(oDadosSaida));
+
+    while (true)
+    {
+        memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+        EXEC SQL FETCH consultaWFInBoxUsuarioDocumento INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+            CONVIND(oDadosSaida.idAtendimentoProtocolo, oStatusSaida.idAtendimentoProtocolo);
+            CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+            CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+            CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+            CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+            CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+            CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+            CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+            CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+            CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+            CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+            CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+            CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+            CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+            CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+            CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+            CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+            CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+            CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+            CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+            CONVIND(oDadosSaida.dtSolicitacaoCancelamento, oStatusSaida.dtSolicitacaoCancelamento);
+
+            saida->createTag("RWFAtendimentoVO");
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char*)oDadosSaida.idAtendimento.arr);
+                saida->addItem("nrProtocolo", (char*)oDadosSaida.idAtendimentoProtocolo.arr);
+                saida->addItem("dtAbertura", (char*)oDadosSaida.dtAbertura.arr);
+                //saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)oDadosSaida.dtFimPausa.arr);
+                saida->addItem("dtParaFechamento", (char*)oDadosSaida.dtPrazoFinalInterno.arr);
+                saida->addItem("dtFechamentoAnatel", (char*)oDadosSaida.dtPrazoFinalAnatel.arr);
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char*)oDadosSaida.nmCor.arr);
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char*)oDadosSaida.nrTelefone.arr);
+                saida->addItem("descricaoCompleta", (char*)oDadosSaida.arvore.arr);
+                saida->addItem("dsEstado", (char*)oDadosSaida.dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)oDadosSaida.dsSubEstado.arr);
+                saida->addItem("nmCliente", (char*)oDadosSaida.nmPessoa.arr);
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+                saida->addItem("analistaBKO", (char*)oDadosSaida.nmPessoaBko.arr);
+                saida->addItem("grupoBKO", (char*)oDadosSaida.nmGrupoBko.arr);
+                saida->addItem("analistaCRI", (char*)oDadosSaida.nmPessoaCri.arr);
+                saida->addItem("grupoCRI", (char*)oDadosSaida.nmGrupoCri.arr);
+                saida->addItem("regional", (char*)oDadosSaida.nmRegional.arr);
+                saida->addItem("dtEncaminhamento", (char*)oDadosSaida.dtEntrada.arr);
+                saida->addItem("dtDevolucao", (char*)oDadosSaida.dtSaida.arr);
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+                saida->addItem("documento", (char*)oDadosSaida.nrDocumento.arr);
+                saida->addItem("dtSolicitacaoCancelamento", (char*)oDadosSaida.dtSolicitacaoCancelamento.arr);
+            saida->closeTag();
+        }
+    }
+
+    EXEC SQL CLOSE consultaWFInBoxUsuarioDocumento;
+
+    //if (numeroRegistros > 100)
+    //{
+    //    numeroRegistros = 100;
+    //    proCConsultaTotalWFInboxUsuarioDocumento(dados, status, saida);
+    //}
+    //else
+    //{
+    //    saida->addItem("totalRegistros", totalRegistros);
+    //}
+
+    saida->addItem("totalRegistros", totalRegistros);
+
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    ULOG( "totalRegistros=%d",totalRegistros );
+
+    ULOG( "numeroRegistros=%d",numeroRegistros );
+
+    ULOG_END( "proCConsultaWFInboxUsuarioDocumento()" );
+
+    return true;
+}
+
+bool proCConsultaWFInboxLinha(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFInboxLinha()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->nrLinha[0]=='0' ) 
+    {
+        strncpy(cConv,dados->nrLinha+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->nrLinha,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   oprefixo         = prefixo;
+        int   otelefone        = numero;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[2049];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+            VARCHAR dtSolicitacaoCancelamento[64];
+        } oDadosSaida;
+    
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+            short dtSolicitacaoCancelamento;
+        } oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    ULOG( "SELECT  "
+                "idAtendimento,  "
+                "nmCor,  "
+                "idContato,  "
+                "TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura,  "
+                "qtInsistencia,  "
+                "TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno,  "
+                "TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel,  "
+                "idPessoaDePara,  "
+                "idEstado,  "
+                "dsEstado,  "
+                "idSubEstado,  "
+                "dsSubEstado,  "
+                "TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'),  "
+                "inCri,  "
+                "path, "
+                "nmRegional, "
+                "nrTelefone, "
+                "nmPessoaBko, "
+                "nmGrupoBko, "
+                "nmPessoaCri, "
+                "nmGrupoCri, "
+                "TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'),  "
+                "TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'),  "
+                "nmPessoa,  "
+                "nrDocumento,  "
+                "'' dtFechamento, "
+                "idTipoPessoa  "
+         "FROM  "
+                "Atendimento.AtdTratLinhaCriWFV01 "
+         "WHERE  "
+              "idPessoaUsuarioCri = %d "
+         "AND idPessoaUsuarioBko = %d "
+         "AND cdAreaRegistro = %d "
+         "AND nrLinha = %d "
+         "AND (idAtendimento = %d OR -1=%d) "
+         "AND (idAlerta = %d OR -1=%d) "
+         "AND (idContato = %d OR -1=%d) "
+         "AND (idEstado = %d OR -1=%d) "
+         "AND (idSubEstado = %d OR -1=%d) "
+         "AND (TRUNC(dtAbertura)>=TO_DATE('%s', 'DD/MM/YYYY' ) OR -1 = %d) "
+         "AND (TRUNC(dtAbertura)<=TO_DATE('%s','DD/MM/YYYY') OR -1 = %d) "
+         "AND ( "
+                "(1=%d AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE))) "
+                "OR (2=%d AND dtFimPausaAtendimento > SYSDATE) "
+                "OR (3=%d) "
+             ") "
+            "ORDER BY nrCriticidade DESC, idAtendimento; "
+            ,oDados.idPessoaUsuario
+            ,oDados.idPessoaUsuarioBko
+            ,oprefixo
+            ,otelefone
+            ,oDados.idAtendimento,oStatus.idAtendimento
+            ,oDados.idAlerta,oStatus.idAlerta
+            ,oDados.idContato,oStatus.idContato
+            ,oDados.idEstado,oStatus.idEstado
+            ,oDados.idSubEstado,oStatus.idSubEstado
+            ,oDados.dtAberturaInicio,oStatus.dtAberturaInicio
+            ,oDados.dtAberturaFim,oStatus.dtAberturaFim
+            ,oDados.tbPausa,oDados.tbPausa,oDados.tbPausa
+           );
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBox(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE proCConsultaWFInboxLinha CURSOR FOR
+        SELECT 
+            idAtendimento, 
+            idAtendimentoProtocolo,
+            nmCor, 
+            idContato, 
+            TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+            qtInsistencia, 
+            TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+            TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+            idPessoaDePara, 
+            idEstado, 
+            dsEstado, 
+            idSubEstado, 
+            dsSubEstado, 
+            TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'), 
+            inCri, 
+            path,
+            nmRegional,
+            nrTelefone,
+            nmPessoaBko,
+            nmGrupoBko,
+            nmPessoaCri,
+            nmGrupoCri,
+            TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+            TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+            nmPessoa, 
+            nrDocumento, 
+            '' dtFechamento,
+            idTipoPessoa,
+            TO_CHAR(dtSolicitacaoCancelamento,'DD/MM/YYYY  HH24:MI:SS')
+         FROM 
+            Atendimento.AtdTratCriWFV01 /* Atendimento.AtdTratLinhaCriWFV01 */
+         WHERE 
+            idPessoaUsuarioCri = :oDados.idPessoaUsuario
+            //AND idPessoaUsuarioBko = :oDados.idPessoaUsuarioBko
+            AND cdAreaRegistro = :oprefixo
+            AND nrLinha = :otelefone
+            AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+            AND (idAlerta = :oDados.idAlerta OR -1=:oStatus.idAlerta)
+            AND (idContato = :oDados.idContato OR -1=:oStatus.idContato)
+            AND (idEstado = :oDados.idEstado OR -1=:oStatus.idEstado)
+            AND (idSubEstado = :oDados.idSubEstado OR -1=:oStatus.idSubEstado)
+            AND (TRUNC(dtAbertura)>=TO_DATE(NVL(:oDados.dtAberturaInicio,NULL), 'DD/MM/YYYY' ) OR -1 = :oStatus.dtAberturaInicio)
+            AND (TRUNC(dtAbertura)<=TO_DATE(NVL(:oDados.dtAberturaFim,NULL),'DD/MM/YYYY') OR -1 = :oStatus.dtAberturaFim)
+        AND (
+        (1=:oDados.tbPausa AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE)))
+        OR (2=:oDados.tbPausa AND dtFimPausaAtendimento > SYSDATE)
+        OR (3=:oDados.tbPausa)
+        )
+    ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN proCConsultaWFInboxLinha;
+
+    memset(&oDadosSaida,0,sizeof(oDadosSaida));
+
+    while (true)
+    {
+        memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+        EXEC SQL FETCH proCConsultaWFInboxLinha INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+            CONVIND(oDadosSaida.idAtendimentoProtocolo, oStatusSaida.idAtendimentoProtocolo);
+            CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+            CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+            CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+            CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+            CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+            CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+            CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+            CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+            CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+            CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+            CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+            CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+            CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+            CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+            CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+            CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+            CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+            CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+            CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+            CONVIND(oDadosSaida.dtSolicitacaoCancelamento, oStatusSaida.dtSolicitacaoCancelamento);
+
+            saida->createTag("RWFAtendimentoVO");
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char*)oDadosSaida.idAtendimento.arr);
+                saida->addItem("nrProtocolo", (char*)oDadosSaida.idAtendimentoProtocolo.arr);
+                saida->addItem("dtAbertura", (char*)oDadosSaida.dtAbertura.arr);
+                //saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)oDadosSaida.dtFimPausa.arr);
+                saida->addItem("dtParaFechamento", (char*)oDadosSaida.dtPrazoFinalInterno.arr);
+                saida->addItem("dtFechamentoAnatel", (char*)oDadosSaida.dtPrazoFinalAnatel.arr);
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char*)oDadosSaida.nmCor.arr);
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char*)oDadosSaida.nrTelefone.arr);
+                saida->addItem("descricaoCompleta", (char*)oDadosSaida.arvore.arr);
+                saida->addItem("dsEstado", (char*)oDadosSaida.dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)oDadosSaida.dsSubEstado.arr);
+                saida->addItem("nmCliente", (char*)oDadosSaida.nmPessoa.arr);
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+                saida->addItem("analistaBKO", (char*)oDadosSaida.nmPessoaBko.arr);
+                saida->addItem("grupoBKO", (char*)oDadosSaida.nmGrupoBko.arr);
+                saida->addItem("analistaCRI", (char*)oDadosSaida.nmPessoaCri.arr);
+                saida->addItem("grupoCRI", (char*)oDadosSaida.nmGrupoCri.arr);
+                saida->addItem("regional", (char*)oDadosSaida.nmRegional.arr);
+                saida->addItem("dtEncaminhamento", (char*)oDadosSaida.dtEntrada.arr);
+                saida->addItem("dtDevolucao", (char*)oDadosSaida.dtSaida.arr);
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+                saida->addItem("documento", (char*)oDadosSaida.nrDocumento.arr);
+                saida->addItem("dtSolicitacaoCancelamento", (char*)oDadosSaida.dtSolicitacaoCancelamento.arr);
+            saida->closeTag();
+        }
+    }
+
+    EXEC SQL CLOSE proCConsultaWFInboxLinha;
+
+    //if (numeroRegistros > 100)
+    //{
+    //    numeroRegistros = 100;
+    //    proCConsultaTotalWFInboxLinha(dados, status, saida);
+    //}
+    //else
+    //    saida->addItem("totalRegistros", totalRegistros);
+
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    ULOG( "totalRegistros=%d",totalRegistros );
+
+    ULOG( "numeroRegistros=%d",numeroRegistros );
+
+    ULOG_END( "proCConsultaWFInboxLinha()" );
+
+    return true;
+}
+
+bool proCConsultaWFInboxLinhaEnc(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFInboxLinhaEnc()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->nrLinha[0]=='0' ) 
+    {
+        strncpy(cConv,dados->nrLinha+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->nrLinha,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   oprefixo         = prefixo;
+        int   otelefone        = numero;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[2049];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+        } oDadosSaida;
+    
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+        } oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+   
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBox(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE proCConsultaWFInboxLinhaEnc CURSOR FOR
+        SELECT 
+            idAtendimento, 
+            idAtendimentoProtocolo,
+            nmCor, 
+            idContato, 
+            TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+            qtInsistencia, 
+            TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+            TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+            idPessoaDePara, 
+            idEstado, 
+            dsEstado, 
+            idSubEstado, 
+            dsSubEstado, 
+            TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'), 
+            inCri, 
+            path,
+            nmRegional,
+            nrTelefone,
+            nmPessoaBko,
+            nmGrupoBko,
+            nmPessoaCri,
+            nmGrupoCri,
+            TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+            TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+            nmPessoa, 
+            nrDocumento, 
+            '' dtFechamento,
+            idTipoPessoa 
+         FROM 
+            Atendimento.AtdTratCriWFV02 /* Atendimento.AtdTratLinhaCriWFV01 */
+         WHERE 
+            idPessoaUsuarioCri = :oDados.idPessoaUsuario
+            AND ( idPessoaUsuarioBko = :oDados.idPessoaUsuarioBko OR -1 = :oStatus.idPessoaUsuarioBko )
+            //AND idPessoaUsuarioBko = :oDados.idPessoaUsuarioBko
+            AND cdAreaRegistro = :oprefixo
+            AND nrLinha = :otelefone
+            AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+            AND (idAlerta = :oDados.idAlerta OR -1=:oStatus.idAlerta)
+            AND (idContato = :oDados.idContato OR -1=:oStatus.idContato)
+            AND (idEstado = :oDados.idEstado OR -1=:oStatus.idEstado)
+            AND (idSubEstado = :oDados.idSubEstado OR -1=:oStatus.idSubEstado)
+            AND (TRUNC(dtAbertura)>=TO_DATE(NVL(:oDados.dtAberturaInicio,NULL), 'DD/MM/YYYY' ) OR -1 = :oStatus.dtAberturaInicio)
+            AND (TRUNC(dtAbertura)<=TO_DATE(NVL(:oDados.dtAberturaFim,NULL),'DD/MM/YYYY') OR -1 = :oStatus.dtAberturaFim)
+        AND (
+        (1=:oDados.tbPausa AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE)))
+        OR (2=:oDados.tbPausa AND dtFimPausaAtendimento > SYSDATE)
+        OR (3=:oDados.tbPausa)
+        )
+    ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN proCConsultaWFInboxLinhaEnc;
+
+    memset(&oDadosSaida,0,sizeof(oDadosSaida));
+
+    while (true)
+    {
+        memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+        EXEC SQL FETCH proCConsultaWFInboxLinhaEnc INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+            CONVIND(oDadosSaida.idAtendimentoProtocolo, oStatusSaida.idAtendimentoProtocolo);
+            CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+            CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+            CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+            CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+            CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+            CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+            CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+            CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+            CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+            CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+            CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+            CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+            CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+            CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+            CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+            CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+            CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+            CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+            CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+
+            saida->createTag("RWFAtendimentoVO");
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char*)oDadosSaida.idAtendimento.arr);
+                saida->addItem("nrProtocolo", (char*)oDadosSaida.idAtendimentoProtocolo.arr);
+                saida->addItem("dtAbertura", (char*)oDadosSaida.dtAbertura.arr);
+                //saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)oDadosSaida.dtFimPausa.arr);
+                saida->addItem("dtParaFechamento", (char*)oDadosSaida.dtPrazoFinalInterno.arr);
+                saida->addItem("dtFechamentoAnatel", (char*)oDadosSaida.dtPrazoFinalAnatel.arr);
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char*)oDadosSaida.nmCor.arr);
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char*)oDadosSaida.nrTelefone.arr);
+                saida->addItem("descricaoCompleta", (char*)oDadosSaida.arvore.arr);
+                saida->addItem("dsEstado", (char*)oDadosSaida.dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)oDadosSaida.dsSubEstado.arr);
+                saida->addItem("nmCliente", (char*)oDadosSaida.nmPessoa.arr);
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+                saida->addItem("analistaBKO", (char*)oDadosSaida.nmPessoaBko.arr);
+                saida->addItem("grupoBKO", (char*)oDadosSaida.nmGrupoBko.arr);
+                saida->addItem("analistaCRI", (char*)oDadosSaida.nmPessoaCri.arr);
+                saida->addItem("grupoCRI", (char*)oDadosSaida.nmGrupoCri.arr);
+                saida->addItem("regional", (char*)oDadosSaida.nmRegional.arr);
+                saida->addItem("dtEncaminhamento", (char*)oDadosSaida.dtEntrada.arr);
+                saida->addItem("dtDevolucao", (char*)oDadosSaida.dtSaida.arr);
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+                saida->addItem("documento", (char*)oDadosSaida.nrDocumento.arr);
+            saida->closeTag();
+        }
+    }
+
+    EXEC SQL CLOSE proCConsultaWFInboxLinhaEnc;
+
+    //if (numeroRegistros > 100)
+    //{
+    //    numeroRegistros = 100;
+    //    proCConsultaTotalWFInboxLinha(dados, status, saida);
+    //}
+    //else
+    //    saida->addItem("totalRegistros", totalRegistros);
+
+    saida->addItem("totalRegistros", totalRegistros);
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    ULOG( "totalRegistros=%d",totalRegistros );
+
+    ULOG( "numeroRegistros=%d",numeroRegistros );
+
+    ULOG_END( "proCConsultaWFInboxLinhaEnc()" );
+
+    return true;
+}
+
+bool proCConsultaWFInboxLinhaDocumentoEnc(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFInboxLinhaDocumentoEnc()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->nrLinha[0]=='0' ) 
+    {
+        strncpy(cConv,dados->nrLinha+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->nrLinha,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   oprefixo         = prefixo;
+        int   otelefone        = numero;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[2049];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+        } oDadosSaida;
+    
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+        } oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+           ULOG(   "SELECT "
+                        "idAtendimento, "
+                        "nmCor, "
+                        "idContato, "
+                        "TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura,"
+                        "qtInsistencia, "
+                        "TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno,  "
+                        "TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel,  "
+                        "idPessoaDePara, "
+                        "idEstado, "
+                        "dsEstado, "
+                        "idSubEstado, "
+                        "dsSubEstado, "
+                        "TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'), "
+                        "inCri, "
+                        "path, "
+                        "nmRegional, "
+                        "nrTelefone, "
+                        "nmPessoaBko, "
+                        "nmGrupoBko, "
+                        "nmPessoaCri, "
+                        "nmGrupoCri, "
+                        "TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), "
+                        "TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), "
+                        "nmPessoa, "
+                        "nrDocumento, "
+                        "'' dtFechamento, "
+                        "idTipoPessoa "
+                     "FROM  "
+                        "Atendimento.AtdTratLinhaCriWFV01 "
+                     "WHERE  "
+                        "idPessoaUsuarioCri = %d "
+                        //"AND idPessoaUsuarioBko = %d "
+                        "AND cdAreaRegistro = %d "
+                        "AND nrLinha = %d "
+                        "AND (idAtendimento = %d OR -1=%d) "
+                        "AND (idAlerta = %d OR -1=%d) "
+                        "AND (idContato = %d OR -1=%d) "
+                        "AND (idEstado = %d OR -1=%d) "
+                        "AND (idSubEstado = %d OR -1=%d) "
+                        "AND (TRUNC(dtAbertura)>=TO_DATE(%s, 'DD/MM/YYYY' ) OR -1 = %d) "
+                        "AND (TRUNC(dtAbertura)<=TO_DATE(%s,'DD/MM/YYYY') OR -1 = %d) "
+                        "AND idPessoaDePara IN "
+                                "(SELECT "
+                                    "PDP.IDPESSOADEPARA "
+                                "FROM "
+                                    "CUSTOMER.PESSOADEPARA PDP, "
+                                    "CUSTOMER.PESSOADOCUMENTO PD, "
+                                    "CUSTOMER.DOCUMENTO D, "
+                                    "APOIO.TIPODOCUMENTO TD "
+                                "WHERE "
+                                    "PDP.IDPESSOA = PD.IDPESSOA "
+                                    "AND D.IDDOCUMENTO = PD.IDDOCUMENTO "
+                                    "AND D.IDTIPODOCUMENTO = TD.IDTIPODOCUMENTO "
+                                    "AND TD.SGCLASSIFICACAO = %d "
+                                    "AND D.NRDOCUMENTO = %d) "
+                    "AND ( "
+                    "(1=:oDados.tbPausa AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE))) "
+                    "OR (2=:oDados.tbPausa AND dtFimPausaAtendimento > SYSDATE) "
+                    "OR (3=:oDados.tbPausa) "
+                    ") "
+                "ORDER BY nrCriticidade DESC, idAtendimento; "
+                ,oDados.idPessoaUsuario
+                //,oDados.idPessoaUsuarioBko
+                ,oprefixo,otelefone
+                ,oDados.idAtendimento,oStatus.idAtendimento,oDados.idAlerta,oStatus.idAlerta
+                ,oDados.idContato,oStatus.idContato,oDados.idEstado,oStatus.idEstado
+                ,oDados.idSubEstado,oStatus.idSubEstado,oDados.dtAberturaInicio
+                ,oStatus.dtAberturaInicio,oDados.dtAberturaFim,oStatus.dtAberturaFim
+                ,oDados.tipoDocumento,oDados.documento
+                ,oDados.tbPausa,oDados.tbPausa,oDados.tbPausa);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBox(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE proCConsultaWFInboxLinhaDocumentoEnc CURSOR FOR
+        SELECT 
+            idAtendimento, 
+            idAtendimentoProtocolo,
+            nmCor, 
+            idContato, 
+            TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+            qtInsistencia, 
+            TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+            TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+            idPessoaDePara, 
+            idEstado, 
+            dsEstado, 
+            idSubEstado, 
+            dsSubEstado, 
+            TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'), 
+            inCri, 
+            path,
+            nmRegional,
+            nrTelefone,
+            nmPessoaBko,
+            nmGrupoBko,
+            nmPessoaCri,
+            nmGrupoCri,
+            TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+            TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+            nmPessoa, 
+            nrDocumento, 
+            '' dtFechamento,
+            idTipoPessoa 
+         FROM 
+            Atendimento.AtdTratLinhaCriWFV01
+         WHERE 
+            idPessoaUsuarioCri = :oDados.idPessoaUsuario
+            //AND idPessoaUsuarioBko = :oDados.idPessoaUsuarioBko
+            AND cdAreaRegistro = :oprefixo
+            AND nrLinha = :otelefone
+            AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+            AND (idAlerta = :oDados.idAlerta OR -1=:oStatus.idAlerta)
+            AND (idContato = :oDados.idContato OR -1=:oStatus.idContato)
+            AND (idEstado = :oDados.idEstado OR -1=:oStatus.idEstado)
+            AND (idSubEstado = :oDados.idSubEstado OR -1=:oStatus.idSubEstado)
+            AND (TRUNC(dtAbertura)>=TO_DATE(NVL(:oDados.dtAberturaInicio,NULL), 'DD/MM/YYYY' ) OR -1 = :oStatus.dtAberturaInicio)
+            AND (TRUNC(dtAbertura)<=TO_DATE(NVL(:oDados.dtAberturaFim,NULL),'DD/MM/YYYY') OR -1 = :oStatus.dtAberturaFim)
+            AND idPessoaDePara IN
+                    (SELECT 
+                        PDP.IDPESSOADEPARA
+                    FROM
+                        CUSTOMER.PESSOADEPARA PDP,
+                        CUSTOMER.PESSOADOCUMENTO PD,
+                        CUSTOMER.DOCUMENTO D,
+                        APOIO.TIPODOCUMENTO TD
+                    WHERE
+                        PDP.IDPESSOA = PD.IDPESSOA
+                        AND D.IDDOCUMENTO = PD.IDDOCUMENTO
+                        AND D.IDTIPODOCUMENTO = TD.IDTIPODOCUMENTO
+                        AND TD.SGCLASSIFICACAO = :oDados.tipoDocumento
+                        AND D.NRDOCUMENTO = :oDados.documento)
+        AND (
+        (1=:oDados.tbPausa AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE)))
+        OR (2=:oDados.tbPausa AND dtFimPausaAtendimento > SYSDATE)
+        OR (3=:oDados.tbPausa)
+        )
+    ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN proCConsultaWFInboxLinhaDocumentoEnc;
+
+    memset(&oDadosSaida,0,sizeof(oDadosSaida));
+
+    while (true)
+    {
+        memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+        EXEC SQL FETCH proCConsultaWFInboxLinhaDocumentoEnc INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+            CONVIND(oDadosSaida.idAtendimentoProtocolo, oStatusSaida.idAtendimentoProtocolo);
+            CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+            CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+            CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+            CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+            CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+            CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+            CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+            CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+            CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+            CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+            CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+            CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+            CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+            CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+            CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+            CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+            CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+            CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+            CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+
+            saida->createTag("RWFAtendimentoVO");
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char*)oDadosSaida.idAtendimento.arr);
+                saida->addItem("nrProtocolo", (char*)oDadosSaida.idAtendimentoProtocolo.arr);
+                saida->addItem("dtAbertura", (char*)oDadosSaida.dtAbertura.arr);
+                //saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)oDadosSaida.dtFimPausa.arr);
+                saida->addItem("dtParaFechamento", (char*)oDadosSaida.dtPrazoFinalInterno.arr);
+                saida->addItem("dtFechamentoAnatel", (char*)oDadosSaida.dtPrazoFinalAnatel.arr);
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char*)oDadosSaida.nmCor.arr);
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char*)oDadosSaida.nrTelefone.arr);
+                saida->addItem("descricaoCompleta", (char*)oDadosSaida.arvore.arr);
+                saida->addItem("dsEstado", (char*)oDadosSaida.dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)oDadosSaida.dsSubEstado.arr);
+                saida->addItem("nmCliente", (char*)oDadosSaida.nmPessoa.arr);
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+                saida->addItem("analistaBKO", (char*)oDadosSaida.nmPessoaBko.arr);
+                saida->addItem("grupoBKO", (char*)oDadosSaida.nmGrupoBko.arr);
+                saida->addItem("analistaCRI", (char*)oDadosSaida.nmPessoaCri.arr);
+                saida->addItem("grupoCRI", (char*)oDadosSaida.nmGrupoCri.arr);
+                saida->addItem("regional", (char*)oDadosSaida.nmRegional.arr);
+                saida->addItem("dtEncaminhamento", (char*)oDadosSaida.dtEntrada.arr);
+                saida->addItem("dtDevolucao", (char*)oDadosSaida.dtSaida.arr);
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+                saida->addItem("documento", (char*)oDadosSaida.nrDocumento.arr);
+            saida->closeTag();
+        }
+    }
+
+    EXEC SQL CLOSE proCConsultaWFInboxLinhaDocumentoEnc;
+
+    //if (numeroRegistros > 100)
+    //{
+    //    numeroRegistros = 100;
+    //    proCConsultaTotalWFInboxLinhaDocumento(dados, status, saida);
+    //}
+    //else
+    //    saida->addItem("totalRegistros", totalRegistros);
+
+    saida->addItem("totalRegistros", totalRegistros);
+
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    ULOG( "totalRegistros=%d",totalRegistros );
+
+    ULOG( "numeroRegistros=%d",numeroRegistros );
+
+    ULOG_END( "proCConsultaWFInboxLinhaDocumentoEnc()" );
+
+    return true;
+}
+
+bool proCConsultaWFInboxLinhaDocumento(st_AtdInBox* dados, st_vlAtdInBox* status, XMLGen* saida)
+{
+    ULOG_START( "proCConsultaWFInboxLinhaDocumento()" );
+
+    struct sqlca sqlca;
+
+    int numeroRegistros = 0;
+    int totalRegistros = 0;
+
+    int prefixo = 0;
+    int numero  = 0;
+    char cConv[3];
+
+    if ( dados->nrLinha[0]=='0' ) 
+    {
+        strncpy(cConv,dados->nrLinha+1,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+3);
+    }
+    else
+    {
+        strncpy(cConv,dados->nrLinha,2);cConv[2]=0;
+        prefixo = atoi(cConv);
+        numero  = atoi(dados->nrLinha+2);
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int   oprefixo         = prefixo;
+        int   otelefone        = numero;
+
+        struct st_SaidaAtdInBox
+        {
+            VARCHAR  idAtendimento[21];
+            VARCHAR idAtendimentoProtocolo[39];
+            VARCHAR nmCor[256];
+            int  idContato;
+            VARCHAR dtAbertura[22];
+            int qtInsistencia;
+            VARCHAR dtPrazoFinalInterno[21];    
+            VARCHAR dtPrazoFinalAnatel[21]; 
+            VARCHAR  idPessoaDePara[21];
+            int  idEstado;
+            VARCHAR dsEstado[256];
+            int  idSubEstado;
+            VARCHAR dsSubEstado[256];
+            VARCHAR dtFimPausa[256];
+            int  inCri;
+            VARCHAR arvore[2049];
+            VARCHAR nmRegional[256];
+            VARCHAR nrTelefone[256];
+            VARCHAR nmPessoaBko[256];
+            VARCHAR nmGrupoBko[256];
+            VARCHAR nmPessoaCri[256];
+            VARCHAR nmGrupoCri[256];
+            VARCHAR dtEntrada[22];
+            VARCHAR dtSaida[22];
+            VARCHAR nmPessoa[256];
+            VARCHAR nrDocumento[256];
+            VARCHAR dtFechamento[21];
+            int tipoPessoa; 
+        } oDadosSaida;
+    
+        struct st_vlSaidaAtdInBox
+        {
+            short idAtendimento;
+            short idAtendimentoProtocolo;
+            short nmCor;
+            short idContato;
+            short dtAbertura;
+            short qtInsistencia;
+            short dtPrazoFinalInterno;  
+            short dtPrazoFinalAnatel;   
+            short idPessoaDePara;
+            short idEstado;
+            short dsEstado;
+            short idSubEstado;
+            short dsSubEstado;
+            short dtFimPausa;
+            short inCri;
+            short arvore;
+            short nmRegional;
+            short nrTelefone;
+            short nmPessoaBko;
+            short nmGrupoBko;
+            short nmPessoaCri;
+            short nmGrupoCri;
+            short dtEntrada;
+            short dtSaida;
+            short nmPessoa;
+            short nrDocumento;
+            short dtFechamento;
+            short tipoPessoa;
+        } oStatusSaida;
+
+        struct st_AtdInBox oDados;
+        struct st_vlAtdInBox oStatus;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados, dados, sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+            ULOG(  "SELECT "
+                        "idAtendimento, "
+                        "nmCor, "
+                        "idContato, "
+                        "TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura,"
+                        "qtInsistencia, "
+                        "TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno,  "
+                        "TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel,  "
+                        "idPessoaDePara, "
+                        "idEstado, "
+                        "dsEstado, "
+                        "idSubEstado, "
+                        "dsSubEstado, "
+                        "TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'), "
+                        "inCri, "
+                        "path, "
+                        "nmRegional, "
+                        "nrTelefone, "
+                        "nmPessoaBko, "
+                        "nmGrupoBko, "
+                        "nmPessoaCri, "
+                        "nmGrupoCri, "
+                        "TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), "
+                        "TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), "
+                        "nmPessoa, "
+                        "nrDocumento, "
+                        "'' dtFechamento, "
+                        "idTipoPessoa "
+                     "FROM  "
+                        "Atendimento.AtdTratLinhaCriWFV01 "
+                     "WHERE  "
+                        "idPessoaUsuarioCri = %d "
+                        //"AND idPessoaUsuarioBko = %d "
+                        "AND cdAreaRegistro = %d "
+                        "AND nrLinha = %d "
+                        "AND (idAtendimento = %d OR -1=%d) "
+                        "AND (idAlerta = %d OR -1=%d) "
+                        "AND (idContato = %d OR -1=%d) "
+                        "AND (idEstado = %d OR -1=%d) "
+                        "AND (idSubEstado = %d OR -1=%d) "
+                        "AND (TRUNC(dtAbertura)>=TO_DATE(%s, 'DD/MM/YYYY' ) OR -1 = %d) "
+                        "AND (TRUNC(dtAbertura)<=TO_DATE(%s,'DD/MM/YYYY') OR -1 = %d) "
+                        "AND idPessoaDePara IN "
+                                "(SELECT "
+                                    "PDP.IDPESSOADEPARA "
+                                "FROM "
+                                    "CUSTOMER.PESSOADEPARA PDP, "
+                                    "CUSTOMER.PESSOADOCUMENTO PD, "
+                                    "CUSTOMER.DOCUMENTO D, "
+                                    "APOIO.TIPODOCUMENTO TD "
+                                "WHERE "
+                                    "PDP.IDPESSOA = PD.IDPESSOA "
+                                    "AND D.IDDOCUMENTO = PD.IDDOCUMENTO "
+                                    "AND D.IDTIPODOCUMENTO = TD.IDTIPODOCUMENTO "
+                                    "AND TD.SGCLASSIFICACAO = %d "
+                                    "AND D.NRDOCUMENTO = %d) "
+                    "AND ( "
+                    "(1=:oDados.tbPausa AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE))) "
+                    "OR (2=:oDados.tbPausa AND dtFimPausaAtendimento > SYSDATE) "
+                    "OR (3=:oDados.tbPausa) "
+                    ") "
+                "ORDER BY nrCriticidade DESC, idAtendimento; "
+                ,oDados.idPessoaUsuario
+                //,oDados.idPessoaUsuarioBko
+                ,oprefixo,otelefone
+                ,oDados.idAtendimento,oStatus.idAtendimento,oDados.idAlerta,oStatus.idAlerta
+                ,oDados.idContato,oStatus.idContato,oDados.idEstado,oStatus.idEstado
+                ,oDados.idSubEstado,oStatus.idSubEstado,oDados.dtAberturaInicio
+                ,oStatus.dtAberturaInicio,oDados.dtAberturaFim,oStatus.dtAberturaFim
+                ,oDados.tipoDocumento,oDados.documento
+                ,oDados.tbPausa,oDados.tbPausa,oDados.tbPausa);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtdInBox(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE consultaWFInBoxLinhaDocumento CURSOR FOR
+        SELECT 
+            idAtendimento, 
+            idAtendimentoProtocolo,
+            nmCor, 
+            idContato, 
+            TO_CHAR(dtAbertura,'DD/MM/YYYY HH24:MI:SS') dtAbertura, 
+            qtInsistencia, 
+            TO_CHAR(dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalInterno, 
+            TO_CHAR(dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS') dtPrazoFinalAnatel, 
+            idPessoaDePara, 
+            idEstado, 
+            dsEstado, 
+            idSubEstado, 
+            dsSubEstado, 
+            TO_CHAR(dtFimPausaAtendimento,'DD/MM/YYYY HH24:MI:SS'), 
+            inCri, 
+            path,
+            nmRegional,
+            nrTelefone,
+            nmPessoaBko,
+            nmGrupoBko,
+            nmPessoaCri,
+            nmGrupoCri,
+            TO_CHAR(dtEntrada,'DD/MM/YYYY  HH24:MI:SS'), 
+            TO_CHAR(dtSaida,'DD/MM/YYYY  HH24:MI:SS'), 
+            nmPessoa, 
+            nrDocumento, 
+            '' dtFechamento,
+            idTipoPessoa 
+         FROM 
+            Atendimento.AtdTratLinhaCriWFV01
+         WHERE 
+            idPessoaUsuarioCri = :oDados.idPessoaUsuario
+            //AND idPessoaUsuarioBko = :oDados.idPessoaUsuarioBko
+            AND cdAreaRegistro = :oprefixo
+            AND nrLinha = :otelefone
+            AND (idAtendimento = :oDados.idAtendimento OR -1=:oStatus.idAtendimento)
+            AND (idAlerta = :oDados.idAlerta OR -1=:oStatus.idAlerta)
+            AND (idContato = :oDados.idContato OR -1=:oStatus.idContato)
+            AND (idEstado = :oDados.idEstado OR -1=:oStatus.idEstado)
+            AND (idSubEstado = :oDados.idSubEstado OR -1=:oStatus.idSubEstado)
+            AND (TRUNC(dtAbertura)>=TO_DATE(NVL(:oDados.dtAberturaInicio,NULL), 'DD/MM/YYYY' ) OR -1 = :oStatus.dtAberturaInicio)
+            AND (TRUNC(dtAbertura)<=TO_DATE(NVL(:oDados.dtAberturaFim,NULL),'DD/MM/YYYY') OR -1 = :oStatus.dtAberturaFim)
+            AND idPessoaDePara IN
+                    (SELECT 
+                        PDP.IDPESSOADEPARA
+                    FROM
+                        CUSTOMER.PESSOADEPARA PDP,
+                        CUSTOMER.PESSOADOCUMENTO PD,
+                        CUSTOMER.DOCUMENTO D,
+                        APOIO.TIPODOCUMENTO TD
+                    WHERE
+                        PDP.IDPESSOA = PD.IDPESSOA
+                        AND D.IDDOCUMENTO = PD.IDDOCUMENTO
+                        AND D.IDTIPODOCUMENTO = TD.IDTIPODOCUMENTO
+                        AND TD.SGCLASSIFICACAO = :oDados.tipoDocumento
+                        AND D.NRDOCUMENTO = :oDados.documento)
+        AND (
+        (1=:oDados.tbPausa AND ((dtFimPausaAtendimento IS NULL) OR (dtFimPausaAtendimento <= SYSDATE)))
+        OR (2=:oDados.tbPausa AND dtFimPausaAtendimento > SYSDATE)
+        OR (3=:oDados.tbPausa)
+        )
+    ORDER BY nrCriticidade DESC, idAtendimento;
+
+    EXEC SQL OPEN consultaWFInBoxLinhaDocumento;
+
+    memset(&oDadosSaida,0,sizeof(oDadosSaida));
+
+    while (true)
+    {
+        memset(&oStatusSaida,-1,sizeof(oStatusSaida));
+
+        EXEC SQL FETCH consultaWFInBoxLinhaDocumento INTO :oDadosSaida INDICATOR :oStatusSaida;
+
+        totalRegistros++;
+
+        if (numeroRegistros < 100)
+        {
+            numeroRegistros++;
+
+            CONVIND(oDadosSaida.idAtendimento, oStatusSaida.idAtendimento);
+            CONVIND(oDadosSaida.idAtendimentoProtocolo, oStatusSaida.idAtendimentoProtocolo);
+            CONVIND(oDadosSaida.dsEstado, oStatusSaida.dsEstado);
+            CONVIND(oDadosSaida.dsSubEstado, oStatusSaida.dsSubEstado);
+            CONVIND(oDadosSaida.nmPessoa, oStatusSaida.nmPessoa);
+            CONVIND(oDadosSaida.nmPessoaBko, oStatusSaida.nmPessoaBko);
+            CONVIND(oDadosSaida.nmGrupoBko, oStatusSaida.nmGrupoBko);
+            CONVIND(oDadosSaida.nmPessoaCri, oStatusSaida.nmPessoaCri);
+            CONVIND(oDadosSaida.nmGrupoCri, oStatusSaida.nmGrupoCri);
+            CONVIND(oDadosSaida.nmRegional, oStatusSaida.nmRegional);
+            CONVIND(oDadosSaida.dtEntrada, oStatusSaida.dtEntrada);
+            CONVIND(oDadosSaida.dtSaida, oStatusSaida.dtSaida);
+            CONVIND(oDadosSaida.dtAbertura, oStatusSaida.dtAbertura);
+            CONVIND(oDadosSaida.dtFechamento, oStatusSaida.dtFechamento);
+            CONVIND(oDadosSaida.nmCor, oStatusSaida.nmCor);
+            CONVIND(oDadosSaida.arvore, oStatusSaida.arvore);
+            CONVIND(oDadosSaida.nrTelefone, oStatusSaida.nrTelefone);
+            CONVIND(oDadosSaida.nrDocumento, oStatusSaida.nrDocumento);
+            CONVIND(oDadosSaida.dtFimPausa, oStatusSaida.dtFimPausa);
+            CONVIND(oDadosSaida.dtPrazoFinalInterno, oStatusSaida.dtPrazoFinalInterno);
+            CONVIND(oDadosSaida.dtPrazoFinalAnatel, oStatusSaida.dtPrazoFinalAnatel);
+
+            saida->createTag("RWFAtendimentoVO");
+                saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+                saida->addItem("idAtendimento", (char*)oDadosSaida.idAtendimento.arr);
+                saida->addItem("nrProtocolo", (char*)oDadosSaida.idAtendimentoProtocolo.arr);
+                saida->addItem("dtAbertura", (char*)oDadosSaida.dtAbertura.arr);
+                //saida->addItem("dtFechamento", (char*)oDadosSaida.dtFechamento.arr);
+                saida->addItem("dtFimPausaAtendimento", (char*)oDadosSaida.dtFimPausa.arr);
+                saida->addItem("dtParaFechamento", (char*)oDadosSaida.dtPrazoFinalInterno.arr);
+                saida->addItem("dtFechamentoAnatel", (char*)oDadosSaida.dtPrazoFinalAnatel.arr);
+                saida->addItem("tpOperacao", "");
+                saida->addItem("nmCor", (char*)oDadosSaida.nmCor.arr);
+                saida->addItem("dtSuspeito", "");
+                saida->addItem("idAtendimentoSuspeito", "");
+                saida->addItem("idAtendimentoBaixaHistorico", "");
+                saida->addItem("nmURLDados", "");
+                saida->addItem("dtSolicitacaoCancelamento", "");
+                saida->addItem("idAtendimentoOrigem", "");
+                saida->addItem("nrTelefone", (char*)oDadosSaida.nrTelefone.arr);
+                saida->addItem("descricaoCompleta", (char*)oDadosSaida.arvore.arr);
+                saida->addItem("dsEstado", (char*)oDadosSaida.dsEstado.arr);
+                saida->addItem("dsSubEstado", (char*)oDadosSaida.dsSubEstado.arr);
+                saida->addItem("nmCliente", (char*)oDadosSaida.nmPessoa.arr);
+                saida->addItem("qtInsistencia", oDadosSaida.qtInsistencia);
+                saida->addItem("analistaBKO", (char*)oDadosSaida.nmPessoaBko.arr);
+                saida->addItem("grupoBKO", (char*)oDadosSaida.nmGrupoBko.arr);
+                saida->addItem("analistaCRI", (char*)oDadosSaida.nmPessoaCri.arr);
+                saida->addItem("grupoCRI", (char*)oDadosSaida.nmGrupoCri.arr);
+                saida->addItem("regional", (char*)oDadosSaida.nmRegional.arr);
+                saida->addItem("dtEncaminhamento", (char*)oDadosSaida.dtEntrada.arr);
+                saida->addItem("dtDevolucao", (char*)oDadosSaida.dtSaida.arr);
+                saida->addItem("tipoDocumento", oDadosSaida.tipoPessoa);
+                saida->addItem("documento", (char*)oDadosSaida.nrDocumento.arr);
+            saida->closeTag();
+        }
+    }
+
+    EXEC SQL CLOSE consultaWFInBoxLinhaDocumento;
+
+    //if (numeroRegistros > 100)
+    //{
+    //    numeroRegistros = 100;
+    //    proCConsultaTotalWFInboxLinhaDocumento(dados, status, saida);
+    //}
+    //else
+    //    saida->addItem("totalRegistros", totalRegistros);
+
+    saida->addItem("totalRegistros", totalRegistros);
+
+    saida->addItem("nrRegistros", numeroRegistros);
+
+    ULOG( "totalRegistros=%d",totalRegistros );
+
+    ULOG( "numeroRegistros=%d",numeroRegistros );
+
+    ULOG_END( "proCConsultaWFInboxLinhaDocumento()" );
+
+    return true;
+}
+
+
+
+void sql_error_WFAtdInBox( sqlca * sqlca )
+{
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOGE( 
+            "sql_error_WFAtdInBox:sqlcode=%d,sqlerrmc=%.70s"
+            ,sqlca->sqlcode
+            ,sqlca->sqlerrm.sqlerrmc
+         );
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}
+

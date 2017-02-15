@@ -1,0 +1,679 @@
+#include "ComunicacaoUsuario.h"
+#include "PlugInBE.h"
+#include "Parametro.h"
+#include "SMSSend.h"
+#include "SMTPSend.h"
+#include "Util.h"
+
+#include <tuxfw.h>
+
+
+#include <cstring>
+#include <cstdlib>
+#include <cstdio>
+
+using namespace std;
+
+
+
+CComunicacaoUsuario::CComunicacaoUsuario(void)
+{
+	memset(mvc_cdAreaRegistro, '\0', sizeof(mvc_cdAreaRegistro));
+	memset(mvc_nrLinha, '\0', sizeof(mvc_nrLinha));
+	memset(mvc_idTipoRelacionamento, '\0', sizeof(mvc_idTipoRelacionamento));
+	memset(mvc_cdMsg, '\0', sizeof(mvc_cdMsg));
+
+	memset(mvc_idPessoa, '\0', sizeof(mvc_idPessoa));
+	memset(mvc_dsContato, '\0', sizeof(mvc_dsContato));
+
+	mi_tipoDispCom = 0;
+}
+
+CComunicacaoUsuario::CComunicacaoUsuario(DOMNode* dnode)
+{
+	CComunicacaoUsuario();
+
+	TuxHelper* tuxhp;
+
+	tuxhp = new TuxHelper();
+
+	try
+	{
+
+		char* pc_inComunicarUsuario   = tuxhp->walkTree(dnode, TAG_XML_IN_INCOMUNICAR_USUARIO, 0);
+
+		if ((pc_inComunicarUsuario != NULL) && (*pc_inComunicarUsuario != '\0') && Util::isNum(pc_inComunicarUsuario) && (atoi(pc_inComunicarUsuario) == 1))
+		{
+			char* pc_cdAreaRegistro       = tuxhp->walkTree(dnode, TAG_XML_IN_CD_AREA_REGISTRO, 0);
+			char* pc_nrLinha              = tuxhp->walkTree(dnode, TAG_XML_IN_NR_LINHA, 0);
+			char* pc_idTipoRelacionamento = tuxhp->walkTree(dnode, TAG_XML_IN_ID_TIPO_RELACIONAMENTO, 0);
+			char* pc_cdMsg                = tuxhp->walkTree(dnode, TAG_XML_IN_CD_MSG, 0);
+
+			try
+			{
+				this->setCdAreaRegistro(pc_cdAreaRegistro);
+				this->setNrLinha(pc_nrLinha);
+				this->setIdTipoRelacionamento(pc_idTipoRelacionamento);
+				this->setCdMsg(pc_cdMsg);				
+			}
+			catch(...)
+			{
+				tuxfw_getlogger()->debug("CComunicacaoUsuario::CComunicacaoUsuario(DOMNode* dnode) - Try catch setAtributos");
+			}
+
+			if (pc_inComunicarUsuario != NULL)   XMLString::release(&pc_inComunicarUsuario);
+			if (pc_cdAreaRegistro != NULL)       XMLString::release(&pc_cdAreaRegistro);
+			if (pc_nrLinha != NULL)              XMLString::release(&pc_nrLinha);
+			if (pc_idTipoRelacionamento != NULL) XMLString::release(&pc_idTipoRelacionamento);
+			if (pc_cdMsg != NULL)                XMLString::release(&pc_cdMsg);
+			
+		}
+		else
+		{
+			if (pc_inComunicarUsuario != NULL)   XMLString::release(&pc_inComunicarUsuario);
+			tuxfw_getlogger()->debug("CComunicacaoUsuario::CComunicacaoUsuario(DOMNode* dnode) Comunicação nao necessaria");
+		}
+
+	}
+	catch(...)
+	{
+		tuxfw_getlogger()->debug("CComunicacaoUsuario::CComunicacaoUsuario(DOMNode* dnode) - Try catch principal");
+	}
+
+	delete tuxhp;
+}
+
+/*
+** Metodos SEND
+*/
+
+
+// setCdAreaRegistro
+void CComunicacaoUsuario::setCdAreaRegistro(char* cdAreaRegistro)
+{
+	unsigned int bufferSize = sizeof(mvc_cdAreaRegistro);
+
+
+	if (cdAreaRegistro != NULL)
+	{
+		if (strlen(cdAreaRegistro) < bufferSize)
+			strcpy(mvc_cdAreaRegistro, cdAreaRegistro);
+		else
+		{
+			strncpy(mvc_cdAreaRegistro, cdAreaRegistro, (bufferSize - 1));
+			
+			mvc_cdAreaRegistro[bufferSize] = '\0';
+		}
+	}
+	else
+		memset(mvc_cdAreaRegistro, '\0', bufferSize);
+}
+
+// setNrLinha
+void CComunicacaoUsuario::setNrLinha(char* nrLinha)
+{
+	unsigned int bufferSize = sizeof(mvc_nrLinha);
+
+
+	if (nrLinha != NULL)
+	{
+		if (strlen(nrLinha) < bufferSize)
+			strcpy(mvc_nrLinha, nrLinha);
+		else
+		{
+			strncpy(mvc_nrLinha, nrLinha, (bufferSize - 1));
+			
+			mvc_nrLinha[bufferSize] = '\0';
+		}
+	}
+	else
+		memset(mvc_nrLinha, '\0', bufferSize);
+}
+
+
+// setIdTipoRelacionamento
+void CComunicacaoUsuario::setIdTipoRelacionamento(char* idTipoRelacionamento)
+{
+	unsigned int bufferSize = sizeof(mvc_idTipoRelacionamento);
+
+
+	if (idTipoRelacionamento != NULL)
+	{
+		if (strlen(idTipoRelacionamento) < bufferSize)
+			strcpy(mvc_idTipoRelacionamento, idTipoRelacionamento);
+		else
+		{
+			strncpy(mvc_idTipoRelacionamento, idTipoRelacionamento, (bufferSize - 1));
+			
+			mvc_idTipoRelacionamento[bufferSize] = '\0';
+		}
+	}
+	else
+		memset(mvc_idTipoRelacionamento, '\0', bufferSize);
+}
+
+// setCdMsg
+void CComunicacaoUsuario::setCdMsg(char* cdMsg)
+{
+	unsigned int bufferSize = sizeof(mvc_cdMsg);
+
+
+	if (cdMsg != NULL)
+	{
+		if (strlen(cdMsg) < bufferSize)
+			strcpy(mvc_cdMsg, cdMsg);
+		else
+		{
+			strncpy(mvc_cdMsg, cdMsg, (bufferSize - 1));
+			
+			mvc_cdMsg[bufferSize] = '\0';
+		}
+	}
+	else
+		memset(mvc_cdMsg, '\0', bufferSize);
+}
+
+// setIdPessoa (char*)
+void CComunicacaoUsuario::setIdPessoa(char* idPessoa)
+{
+	unsigned int bufferSize = sizeof(mvc_idPessoa);
+
+
+	if (idPessoa != NULL)
+	{
+		if (strlen(idPessoa) < bufferSize)
+			strcpy(mvc_idPessoa, idPessoa);
+		else
+		{
+			strncpy(mvc_idPessoa, idPessoa, (bufferSize - 1));
+			
+			mvc_idPessoa[bufferSize] = '\0';
+		}
+	}
+	else
+		memset(mvc_idPessoa, '\0', bufferSize);
+}
+
+// setIdPessoa (int)
+void CComunicacaoUsuario::setIdPessoa(int idPessoa)
+{
+	unsigned int bufferSize = sizeof(mvc_idPessoa);
+
+	if (idPessoa > 0)
+	{
+		try
+		{
+			sprintf(mvc_idPessoa, "%d", idPessoa);
+		}
+		catch(...)
+		{
+			memset(mvc_idPessoa, '\0', bufferSize);
+		}
+	}
+	else
+		memset(mvc_idPessoa, '\0', bufferSize);
+}
+
+// setTipoDispCom
+void CComunicacaoUsuario::setTipoDispCom(int tipoDispCom)
+{
+	mi_tipoDispCom = tipoDispCom;
+}
+
+// setDsContato
+void CComunicacaoUsuario::setDsContato(char* dsContato)
+{
+	unsigned int bufferSize = sizeof(mvc_dsContato);
+
+
+	if (dsContato != NULL)
+	{
+		if (strlen(dsContato) < bufferSize)
+			strcpy(mvc_dsContato, dsContato);
+		else
+		{
+			strncpy(mvc_dsContato, dsContato, (bufferSize - 1));
+			
+			mvc_dsContato[bufferSize] = '\0';
+		}
+	}
+	else
+		memset(mvc_dsContato, '\0', bufferSize);
+}
+
+
+
+/*
+** Metodos GET
+*/
+
+// getCdAreaRegistro
+char* CComunicacaoUsuario::getCdAreaRegistro(void)
+{
+	return mvc_cdAreaRegistro;
+}
+
+// getNrLinha
+char* CComunicacaoUsuario::getNrLinha(void)
+{
+	return mvc_nrLinha;
+}
+
+// getIdTipoRelacionamento
+char* CComunicacaoUsuario::getIdTipoRelacionamento(void)
+{
+	return mvc_idTipoRelacionamento;
+}
+
+// getCdMsg
+char* CComunicacaoUsuario::getCdMsg(void)
+{
+	return mvc_cdMsg;
+}
+
+// getIdPessoa
+char* CComunicacaoUsuario::getIdPessoa(void)
+{
+	return mvc_idPessoa;
+}
+
+// getTipoDispCom
+int CComunicacaoUsuario::getTipoDispCom(void)
+{
+	return mi_tipoDispCom;
+}
+
+// getDsContato
+char* CComunicacaoUsuario::getDsContato(void)
+{
+	return mvc_dsContato;
+}
+
+
+
+
+
+int CComunicacaoUsuario::comunicarUsuario(void)
+{	
+
+	tuxfw_getlogger()->debug("CComunicacaoUsuario::Iniciando");
+
+	try
+	{
+		if (this->consultarIdPessoa() == -1)
+		{
+			tuxfw_getlogger()->debug("CComunicacaoUsuario::comunicarUsuario:consultarIdPessoa - idPessoa não encontrado");
+
+			return -1;
+		}
+
+		if (this->consultarDispComunicacao() == -1)
+		{
+			tuxfw_getlogger()->debug("CComunicacaoUsuario::comunicarUsuario:consultarDispComunicacao - Nenhum dispositivo de comunicacao encontrado");
+			
+			return -1;
+		}
+	}
+	catch(...)
+	{
+		tuxfw_getlogger()->debug("CComunicacaoUsuario::comunicarUsuario - ERRO: Não foi possivel obter os dados do BD");
+
+		return -1;
+	}
+
+	char* pc_cdAreaRegistro = NULL;
+	char* pc_nrLinha        = NULL;
+	char* pc_Msg            = NULL;
+	char  vc_phone[11];
+	char  vc_Msg[256];
+	
+	CParametro o_Parametro;
+
+	CSMSSend o_SMS;
+	CSMTPSend o_SMTP;
+
+
+	pc_cdAreaRegistro = this->getCdAreaRegistro();
+	pc_nrLinha        = this->getNrLinha();
+
+
+	try
+	{
+		o_Parametro.setChave(this->getCdMsg());
+
+		o_Parametro.consultar();
+
+		pc_Msg = o_Parametro.getConsulta();
+	}
+	catch(...)
+	{
+		tuxfw_getlogger()->debug("CComunicacaoUsuario::comunicarUsuario - Não foi possivel obter traducao de cdMsg");
+
+		return -1;
+	}
+
+	
+	memset(vc_phone, '\0', sizeof(vc_phone));
+
+	sprintf(vc_phone, "%s%s", pc_cdAreaRegistro, pc_nrLinha);
+
+
+	switch(this->getTipoDispCom())
+	{
+		// SMS
+		case TXPB_COMUSER_IDTPCOM_SMS:
+			try
+			{
+				o_SMS.setPhone(vc_phone);
+
+				sprintf(vc_Msg, "%s: %s", TXPB_COMUSER_SMTPSEND_SUBJECT, pc_Msg);
+
+				o_SMS.setMessage(vc_Msg);
+				
+				if(o_SMS.Send())
+				{
+					tuxfw_getlogger()->debug("CComunicacaoUsuario::comunicarUsuario:SMSSend - Não foi possivel enviar o SMS");
+
+					return -1;
+				}
+			}
+			catch(...)
+			{
+				tuxfw_getlogger()->debug("CComunicacaoUsuario::comunicarUsuario:SMSSend - ERRO: Não foi possivel enviar o SMS");
+
+				return -1;
+			}
+
+			break;
+
+
+		// SMTP
+		case TXPB_COMUSER_IDTPCOM_EMAIL:
+			try
+			{
+				if (this->consultarEmail() == -1)
+				{
+					tuxfw_getlogger()->debug("CComunicacaoUsuario::comunicarUsuario:consultarEmail - dsContato não encontrado");
+
+					return -1;
+				}
+			}
+			catch(...)
+			{
+				tuxfw_getlogger()->debug("CComunicacaoUsuario::comunicarUsuario:consultarEmail - ERRO: Não foi possivel obter os dados do BD");
+
+				return -1;
+			}
+
+			try
+			{
+				o_SMTP.setTo(this->getDsContato());
+				o_SMTP.setSubject(TXPB_COMUSER_SMTPSEND_SUBJECT);
+				o_SMTP.setData(pc_Msg);
+				
+				if(o_SMTP.Send())
+				{
+					tuxfw_getlogger()->debug("CComunicacaoUsuario::comunicarUsuario:SMTPSend - Não foi possivel enviar o Email");
+					
+					return -1;
+				}
+			}
+			catch(...)
+			{
+				tuxfw_getlogger()->debug("CComunicacaoUsuario::comunicarUsuario:SMTPSend - ERRO: Não foi possivel enviar o Email");
+
+				return -1;
+			}
+
+
+			break;
+
+
+		default:
+			return -1;
+	}
+
+
+	return 0;
+}
+
+#include <sqlca.h>
+
+int CComunicacaoUsuario::consultarDispComunicacao(void)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int  iIdPessoa;
+		int  iEnvioSMS;
+		int  iEnvioEmail;
+		char vcSgTipoComunicacao[256];
+	EXEC SQL END DECLARE SECTION;
+
+	iIdPessoa = 0;
+	iEnvioSMS = 0;
+	iEnvioEmail = 0;
+
+	memset(vcSgTipoComunicacao, '\0', sizeof(vcSgTipoComunicacao));
+
+	try
+	{
+		iIdPessoa = atoi(this->getIdPessoa());
+
+		//snprintf(vcSgTipoComunicacao, 10, "%s%s", this->getCdAreaRegistro(), this->getNrLinha());
+		strcpy(vcSgTipoComunicacao, TAG_XML_IN_SG_TP_COM_SMS);
+	}
+	catch(...)
+	{
+		return -1;
+	}
+
+	tuxfw_getlogger()->debug("CComunicacaoUsuario::Validando Envio SMS");
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+
+	// Query p/ verificar SMS
+	EXEC SQL 
+		SELECT 
+			NVL(inEnvioSMS, 0)
+		INTO
+			:iEnvioSMS
+		FROM
+			customer.pessoaComunicacao   a,
+			apoio.TipoComunicacao        b,
+			contatoADM.FormaRetorno      c  
+		WHERE
+			a.idTipoComunicacao = b.idTipoComunicacao 
+		AND
+			b.idFormaRetorno = c.idFormaRetorno  
+		AND
+			b.sgTipoComunicacao = :vcSgTipoComunicacao  
+		AND
+			a.idPessoa = :iIdPessoa
+		AND
+			ROWNUM = 1;
+
+
+	if (iEnvioSMS > 0)
+	{
+		tuxfw_getlogger()->debug("CComunicacaoUsuario::Envio por SMS");
+
+		this->setTipoDispCom(TXPB_COMUSER_IDTPCOM_SMS);
+		
+		return 0;
+	}
+
+	tuxfw_getlogger()->debug("CComunicacaoUsuario::Validando Envio EMAIL");
+
+	strcpy(vcSgTipoComunicacao, TAG_XML_IN_SG_TP_COM_EMAIL);
+
+	// Query p/ verificar EMAIL
+	EXEC SQL 
+		SELECT 
+			NVL(inEnvioEMAIL, 0)
+		INTO
+			:iEnvioEmail
+		FROm
+			customer.pessoaComunicacao   a,
+			apoio.TipoComunicacao        b, 
+			contatoADM.FormaRetorno      c  
+		WHERE
+			a.idTipoComunicacao = b.idTipoComunicacao
+		AND
+			b.idFormaRetorno = c.idFormaRetorno  
+		AND
+			b.sgTipoComunicacao = :vcSgTipoComunicacao 
+		AND
+			a.idPessoa = :iIdPessoa
+		AND
+			ROWNUM = 1;
+
+
+	if (iEnvioEmail > 0)
+	{
+		tuxfw_getlogger()->debug("CComunicacaoUsuario::Envio por EMAIL");
+
+		this->setTipoDispCom(TXPB_COMUSER_IDTPCOM_EMAIL);
+		
+		return 0;
+	}
+
+
+	return -1;
+
+	sqlNotFound:
+		return -1;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CComunicacaoUsuario::consultarIdPessoa(void)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iCodArea;
+		int iNroLinha;
+		int iIdTipoRelacionamento;
+		int iIdPessoa;
+ 	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		iCodArea = atoi(this->getCdAreaRegistro());
+		iNroLinha = atoi(this->getNrLinha());
+		iIdTipoRelacionamento = atoi(this->getIdTipoRelacionamento());
+	}
+	catch(...)
+	{
+		return -1;
+	}
+
+	EXEC SQL WHENEVER NOT FOUND GOTO sqlNotFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+     
+	EXEC SQL 
+	SELECT
+		idPessoa
+	INTO
+		:iIdPessoa
+	FROM
+		apoio.arearegistro AreaRegistro,
+		linha.linhaBase LinhaBase,
+		linha.linhaTelefonica LinhaTelefonica,		
+		customer.pessoalinha PessoaLinha,
+		customer.pessoadepara PessoaDePara	
+	WHERE
+		LinhaBase.NRLINHA = :iNroLinha  AND
+		LinhaBase.IDAREAREGISTRO = AreaRegistro.IDAREAREGISTRO AND
+		AreaRegistro.CDAREAREGISTRO =   :iCodArea   AND
+		LinhaBase.idlinhabase = LinhaTelefonica.IDLINHABASE AND
+		LinhaTelefonica.IDLINHATELEFONICA = PessoaLinha.IDLINHATELEFONICA AND
+		PessoaLinha.IDPESSOADEPARA = PessoaDePara.IDPESSOADEPARA AND
+		PessoaLinha.idtiporelacionamento =  :iIdTipoRelacionamento;
+
+
+	try
+	{
+		this->setIdPessoa(iIdPessoa);
+	}
+	catch(...)
+	{
+		return -1;
+	}
+
+	return 0;
+
+	sqlNotFound:
+		return -1;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+int CComunicacaoUsuario::consultarEmail(void)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+ 		int  iIdPessoa;
+		char cDsContato[256];
+		int  iIdTipoComunicacao;
+ 	EXEC SQL END DECLARE SECTION;
+
+
+	iIdPessoa = 0;
+
+	memset(cDsContato, '\0', sizeof(cDsContato));
+
+	try
+	{
+		iIdPessoa = atoi(this->getIdPessoa());
+	}
+	catch(...)
+	{
+		return -1;
+	}
+
+	iIdTipoComunicacao = TXPB_COMUSER_IDTPCOM;
+
+	EXEC SQL WHENEVER NOT FOUND GOTO sqlNotFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+     
+	EXEC SQL SELECT
+		NVL(dsContato, ' ')
+	INTO
+		:cDsContato
+	FROM
+		customer.PessoaComunicacao
+	WHERE
+		idPessoa = :iIdPessoa
+	AND
+		idTipoComunicacao = :iIdTipoComunicacao
+	AND
+		ROWNUM = 1;
+
+	try
+	{
+		this->setDsContato(Util::trim(cDsContato));
+	}
+	catch(...)
+	{
+		return -1;
+	}
+
+
+	return 0;
+
+	sqlNotFound:
+		return -1;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

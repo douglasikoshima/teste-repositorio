@@ -1,0 +1,697 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/SmallString.h"
+
+void sql_error_WFCnsPriorizacao(sqlca*sqlca);
+int proCGetTotalRegistros(SmallString montagemQuery);
+
+void proCConsultaSegmentacao(XMLGen* saida)
+{
+   ULOG_START("proCConsultaSegmentacao()");
+	struct sqlca sqlca;
+
+    ULOG("proCConsultaSegmentacao - init");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idSegmentacao; 
+        VARCHAR sgSegmentacao[256];
+        VARCHAR dsSegmentacao[256];
+
+        short i_idSegmentacao;
+        short i_sgSegmentacao;
+        short i_dsSegmentacao;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCnsPriorizacao(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE tsqlcursor1 CURSOR FOR
+    SELECT 
+        idSegmentacao, 
+        sgSegmentacao,
+	dsSegmentacao
+    FROM 
+        apoio.Segmentacao
+    ORDER BY 
+        UPPER(dsSegmentacao);
+
+    EXEC SQL OPEN tsqlcursor1;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH tsqlcursor1 INTO :idSegmentacao:i_idSegmentacao, 
+					:sgSegmentacao:i_sgSegmentacao,
+					:dsSegmentacao:i_dsSegmentacao;
+
+        CONVIND(sgSegmentacao, i_sgSegmentacao);
+        CONVIND(dsSegmentacao, i_dsSegmentacao);
+
+        saida->createTag("AdmTipoSegmentacaoVO");
+	        saida->addItem("idSegmentacao",idSegmentacao);
+		saida->addItem("sgSegmentacao",(char*)sgSegmentacao.arr);
+		saida->addItem("dsSegmentacao",(char*)dsSegmentacao.arr);
+        saida->closeTag();
+    }
+    EXEC SQL CLOSE tsqlcursor1;
+
+    ULOG_END("proCConsultaSegmentacao()");
+
+    return;
+}
+
+void proCConsultaCarteira(XMLGen* saida)
+{
+   
+    ULOG_START("proCConsultaCarteira()");
+	 struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idTipoCarteira; 
+        VARCHAR sgTipoCarteira[256];
+        VARCHAR dsTipoCarteira[256];
+
+        short i_idTipoCarteira;
+        short i_sgTipoCarteira;
+        short i_dsTipoCarteira;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCnsPriorizacao(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE tsqlcursor2 CURSOR FOR
+    SELECT 
+        idTipoCarteira, 
+        sgTipoCarteira,
+	dsTipoCarteira
+    FROM 
+        apoio.TipoCarteira
+    ORDER BY 
+        UPPER(dsTipoCarteira);
+
+    EXEC SQL OPEN tsqlcursor2;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH tsqlcursor2 INTO :idTipoCarteira:i_idTipoCarteira, 
+					:sgTipoCarteira:i_sgTipoCarteira,
+					:dsTipoCarteira:i_dsTipoCarteira;
+
+        CONVIND(sgTipoCarteira, i_sgTipoCarteira);
+        CONVIND(dsTipoCarteira, i_dsTipoCarteira);
+
+        saida->createTag("AdmTipoCarteiraSimplVO");
+	        saida->addItem("idTipoCarteira",idTipoCarteira);
+		saida->addItem("sgTipoCarteira",(char*)sgTipoCarteira.arr);
+		saida->addItem("dsTipoCarteira",(char*)dsTipoCarteira.arr);
+        saida->closeTag();
+    }
+    EXEC SQL CLOSE tsqlcursor2;
+
+    ULOG_END("proCConsultaCarteira()");
+
+    return;
+
+}
+
+void proCConsultaProcedencia(XMLGen* saida)
+{
+    ULOG_START("proCConsultaProcedencia()");
+	 struct sqlca sqlca;
+
+    
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int idProcedencia; 
+        VARCHAR nmProcedencia[256];
+
+        short i_idProcedencia;
+        short i_nmProcedencia;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCnsPriorizacao(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE tsqlcursor3 CURSOR FOR
+    SELECT 
+        idProcedencia, 
+        dsProcedencia
+    FROM 
+        apoio.Procedencia
+    ORDER BY 
+        UPPER(dsProcedencia);
+
+    EXEC SQL OPEN tsqlcursor3;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH tsqlcursor3 INTO :idProcedencia:i_idProcedencia, 
+					:nmProcedencia:i_nmProcedencia;
+
+        CONVIND(nmProcedencia, i_nmProcedencia);
+
+        saida->createTag("AdmProcedenciaVO");
+	        saida->addItem("idProcedencia",idProcedencia);
+		saida->addItem("nmProcedencia",(char*)nmProcedencia.arr);
+        saida->closeTag();
+    }
+    EXEC SQL CLOSE tsqlcursor3;
+
+    ULOG_END("proCConsultaProcedencia()");
+
+    return;
+
+
+}
+
+void proCConsultaPriorizacao(DOMNode *dom, XMLGen* saida)
+{
+    ULOG_START("proCConsultaPriorizacao()");
+	 struct sqlca sqlca;
+
+    SmallString arrayContato;
+    SmallString arraySegmentacao;
+    SmallString arrayTipoCarteira;
+    SmallString arrayProcedencia;
+ 
+    SmallString queryTotal;
+
+    int numRegistros = 0;
+    int numTotalRegistros = 0;
+    int registrosRecuperados = 50;
+    int totalPesquisa = 0;
+
+    SmallString montagemQuery = 
+                            "SELECT "
+	                            "idContato, "
+	                            "nmPath, "
+	                            "notaContato, "
+	                            "pesoContato, "
+	                            "idTipoCarteira, "
+	                            "sgTipoCarteira, "
+	                            "dsTipoCarteira, "
+	                            "notaCarteira, "
+	                            "pesoCarteira, "
+	                            "idProcedencia, "
+	                            "dsProcedencia, "
+	                            "notaProcedencia, "
+	                            "pesoProcedencia, "	
+	                            "idSegmentacao, "
+	                            "sgSegmentacao, "
+	                            "dsSegmentacao, "
+	                            "notaSegmentacao, "
+	                            "pesoSegmentacao, "
+	                            "pesoEstatico "
+                            "FROM "
+	                            "("
+					"select "
+						   "rownum as registro, "
+						   "b.idContato, "
+						   "b.nmPath, "
+						   "a.ntContato notaContato, "
+						   "b.vlPesoContato pesoContato, "
+						   "b.idTipoCarteira, "
+						   "b.sgTipoCarteira, "
+						   "b.dsTipoCarteira, "
+						   "a.ntCarteira notaCarteira, "
+						   "b.vlPesoCarteira pesoCarteira, "
+						   "b.idProcedencia, "
+						   "b.dsProcedencia, "
+						   "a.ntProcedencia notaProcedencia, "
+						   "b.vlPesoProcedencia pesoProcedencia, "
+						   "b.idSegmentacao, "
+						   "b.sgSegmentacao, "
+						   "b.dsSegmentacao, "
+						   "a.ntSegmentacao notaSegmentacao, "
+						   "b.vlPesoSegmentacao pesoSegmentacao, "
+						   "(     ( POWER(a.ntContato, b.vlPesoContato) ) * "
+							 "( POWER(a.ntProcedencia, b.vlPesoProcedencia) ) * "
+							 "( POWER(a.ntCarteira, b.vlPesoCarteira) ) * "
+							 "( POWER(a.ntSegmentacao, b.vlPesoSegmentacao) ) "
+						   ") pesoEstatico "
+					"FROM "
+						"("
+							"select "
+								   "a.ntContato, "
+								   "b.ntProcedencia, "
+								   "c.ntCarteira, "
+								   "d.ntSegmentacao "
+							"from "
+								"("
+									"select "
+										   "dsValorParametro ntContato "
+									"from "
+										   "apoio.Parametro "
+									"where "
+										   "cdParametro = 'ntContato' "
+								") a, "
+								"( "
+									"select "
+										   "dsValorParametro ntProcedencia "
+									"from "
+										   "apoio.Parametro "
+									"where "
+										   "cdParametro = 'ntProcedencia' "
+							    ") b, "
+								"("
+									"select "
+										   "dsValorParametro ntCarteira "
+									"from "
+										   "apoio.Parametro "
+									"where "
+										   "cdParametro = 'ntCarteira' "
+							    ") c, "
+								"("
+									"select "
+										   "dsValorParametro ntSegmentacao "
+									"from "
+										   "apoio.Parametro "
+									"where "
+										   "cdParametro = 'ntSegmentacao' "
+								") d "
+						") a, "
+						"("
+							"select "
+								   "cf.idContato, "
+								   "c.nmPath, "
+								   "cf.vlPesoContato, "
+								   "tc.idTipoCarteira, "
+								   "tc.sgTipoCarteira, "
+								   "tc.dsTipoCarteira, "
+								   "tc.vlPeso vlPesoCarteira, "
+								   "p.idProcedencia, "
+								   "p.dsProcedencia, "
+								   "p.vlPeso vlPesoProcedencia, "
+								   "s.idSegmentacao, "
+								   "s.sgSegmentacao, "
+								   "s.dsSegmentacao, "
+								   "s.vlPeso vlPesoSegmentacao "
+							"from "
+								"contatoadm.contato c, "
+								"contatoadm.contatofolha cf, "
+								"apoio.tipocarteira tc, "
+								"apoio.procedencia p, "
+								"apoio.segmentacao s "
+							"where "
+								 "c.idContato = cf.idContato "
+						") b ";
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char* query;
+
+		int inicioPesquisa;
+		int finPesquisa;
+
+		int		idContato;
+		VARCHAR nmPath[512];
+		int		notaContato;
+		int		pesoContato;
+		int		idTipoCarteira;
+		VARCHAR	sgTipoCarteira[256];
+		VARCHAR	dsTipoCarteira[256];
+		int		notaCarteira;
+		int		pesoCarteira;
+		int		idProcedencia;
+		VARCHAR	sgProcedencia[256];
+		int		notaProcedencia;
+		int		pesoProcedencia;
+		int		idSegmentacao;
+		VARCHAR sgSegmentacao[256];
+		VARCHAR dsSegmentacao[256];
+		int		notaSegmentacao;
+		int		pesoSegmentacao;
+		VARCHAR	pesoEstatico[20];
+
+		short	i_nmPath;
+		short	i_sgTipoCarteira;
+		short	i_dsTipoCarteira;
+		short	i_sgProcedencia;
+		short	i_sgSegmentacao;
+		short	i_dsSegmentacao;
+		short	i_pesoEstatico;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    char* p;
+
+	TuxHelper tx;
+
+    // Indicamos inicio da pesquisa.
+    if ( p=tx.walkTree( dom, "totalPesquisa", 0 ),p ) 
+    {
+          totalPesquisa = atoi(p);
+          XMLString::release(&p);
+    }
+
+    inicioPesquisa = (registrosRecuperados * totalPesquisa) + 1;
+    finPesquisa = registrosRecuperados + inicioPesquisa;  
+	
+    // Monta o array de valores de contato.
+    for (int cnt = 0; ; cnt++)
+    {
+        p = tx.walkTree( dom, "idContatoArray", cnt );
+
+	if (strlen(p) > 0)
+	{
+		if (cnt == 0 && p)
+		    arrayContato = "( ";
+
+		if (!p)
+		    break;
+
+
+		if (cnt > 0)
+		    arrayContato += ", ";
+
+		arrayContato += p;
+	}
+	else
+		break;
+
+        XMLString::release(&p);
+    }
+
+    if (arrayContato.Size() > 0)
+        arrayContato += ") ";
+
+    // Monta o array de valores de segmentacao.
+    for (int seg = 0; ; seg++)
+    {
+        p = tx.walkTree( dom, "idSegmentacaoArray", seg );
+
+
+        if (seg == 0 && p)
+            arraySegmentacao = "( ";
+
+        if (!p)
+            break;
+
+
+        if (seg > 0)
+            arraySegmentacao += ", ";
+
+        arraySegmentacao += p;
+
+        XMLString::release(&p);
+    }
+
+    if (arraySegmentacao.Size() > 0)
+        arraySegmentacao += ") ";
+
+
+    // Monta o array de valores de tipo carteira.
+    for (int tc = 0; ; tc++)
+    {
+        p = tx.walkTree( dom, "idTipoCarteiraArray", tc );
+
+
+        if (tc == 0 && p)
+            arrayTipoCarteira = "( ";
+
+        if (!p)
+            break;
+
+
+        if (tc > 0)
+            arrayTipoCarteira += ", ";
+
+        arrayTipoCarteira += p;
+
+        XMLString::release(&p);
+    }
+
+    if (arrayTipoCarteira.Size() > 0)
+        arrayTipoCarteira += ") ";
+
+    // Monta o array de valores de procedencia.
+    for (int pro = 0; ; pro++)
+    {
+        p = tx.walkTree( dom, "idProcedenciaArray", pro );
+
+
+        if (pro == 0 && p)
+            arrayProcedencia = "( ";
+
+        if (!p)
+            break;
+
+
+        if (pro > 0)
+            arrayProcedencia += ", ";
+
+        arrayProcedencia += p;
+
+        XMLString::release(&p);
+    }
+
+    if (arrayProcedencia.Size() > 0)
+        arrayProcedencia += ") ";
+
+	bool separa = false;
+
+    if (arrayContato.Size() > 0 || arraySegmentacao.Size() > 0 || 
+        arrayTipoCarteira.Size() > 0 || arrayProcedencia.Size() > 0)
+    {
+        montagemQuery += "WHERE ";
+    }
+    
+    if (arrayContato.Size() > 0)
+    {
+        montagemQuery += " idContato IN ";
+        montagemQuery += arrayContato;
+        separa = true;
+    }
+
+    if (arraySegmentacao.Size() > 0)
+    {
+		if (separa) montagemQuery += " AND ";
+		
+        montagemQuery += " idSegmentacao  IN ";
+        montagemQuery += arraySegmentacao;
+        separa = true;
+    }
+
+    if (arrayTipoCarteira.Size() > 0)
+    {
+		if (separa) montagemQuery += " AND ";
+		
+        montagemQuery += " idTipoCarteira IN ";
+        montagemQuery += arrayTipoCarteira;
+        separa = true;
+    }
+
+    if (arrayProcedencia.Size() > 0)
+    {
+		if (separa) montagemQuery += " AND ";
+		
+        montagemQuery += " idProcedencia IN ";
+        montagemQuery += arrayProcedencia;
+        separa = true;
+    }
+
+    montagemQuery +=  ")";
+    saida->createTag("AdmArvoreParametroVO");
+	saida->addProp("xmlns", "admsistemas.fo.vivo.com.br/vo");
+    if (totalPesquisa == 0)
+    {
+	queryTotal = montagemQuery;
+	numTotalRegistros = proCGetTotalRegistros(queryTotal);
+	saida->addItem("numTotalRegistros", numTotalRegistros);
+    }
+
+    montagemQuery += "WHERE (registro >= :v1 AND registro < :v2) ";
+
+	query = montagemQuery;
+
+	ULOG("proCConsultaPriorizacao - Query que sera executada: [%s]", query);
+	ULOG("proCConsultaPriorizacao - Valores de Filtro: [%d - %d]", inicioPesquisa, finPesquisa);
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFCnsPriorizacao(&sqlca);
+
+	EXEC SQL PREPARE consultaPriorizacao FROM :query;
+	EXEC SQL DECLARE cursorPriorizacao CURSOR FOR consultaPriorizacao;
+
+	EXEC SQL OPEN cursorPriorizacao USING :inicioPesquisa, :finPesquisa;
+
+		
+
+	while (true)
+	{
+		EXEC SQL FETCH cursorPriorizacao INTO 
+												:idContato, 
+												:nmPath:i_nmPath, 
+												:notaContato, 
+												:pesoContato, 
+												:idTipoCarteira, 
+												:sgTipoCarteira:i_sgTipoCarteira, 
+												:dsTipoCarteira:i_dsTipoCarteira, 
+												:notaCarteira, 
+												:pesoCarteira, 
+												:idProcedencia, 
+												:sgProcedencia:i_sgProcedencia, 
+												:notaProcedencia, 
+												:pesoProcedencia, 
+												:idSegmentacao, 
+												:sgSegmentacao:i_sgSegmentacao, 
+												:dsSegmentacao:i_dsSegmentacao, 
+												:notaSegmentacao, 
+												:pesoSegmentacao, 
+												:pesoEstatico:i_pesoEstatico;
+
+		CONVIND(nmPath,i_nmPath);
+		CONVIND(dsTipoCarteira,i_dsTipoCarteira);
+		CONVIND(sgTipoCarteira,i_sgTipoCarteira);
+		CONVIND(sgProcedencia,i_sgProcedencia);
+		CONVIND(dsSegmentacao,i_dsSegmentacao);
+		CONVIND(sgSegmentacao,i_sgSegmentacao);
+		CONVIND(pesoEstatico,i_pesoEstatico);
+
+		if (numRegistros == 0)
+		{
+			saida->createTag("dadosRetornoVO");
+
+			saida->createTag("AdmTipoSegmentacaoVO");
+				saida->addItem("nota", notaSegmentacao);
+				saida->addItem("total", pesoSegmentacao);
+				saida->addItem("idSegmentacao", idSegmentacao);
+				saida->addItem("sgSegmentacao", (char*) sgSegmentacao.arr);
+				saida->addItem("dsSegmentacao", (char*) dsSegmentacao.arr);
+			saida->closeTag();
+
+			saida->createTag("AdmProcedenciaVO");
+				saida->addItem("nota", notaProcedencia);
+				saida->addItem("total", pesoProcedencia);
+				saida->addItem("idProcedencia", idProcedencia);
+				saida->addItem("nmProcedencia", (char*) sgProcedencia.arr);
+			saida->closeTag();
+			
+			saida->createTag("AdmTipoCarteiraSimplVO");
+				saida->addItem("nota", notaCarteira);
+				saida->addItem("total", pesoCarteira);
+				saida->addItem("idTipoCarteira", idTipoCarteira);
+				saida->addItem("sgTipoCarteira", (char*) sgTipoCarteira.arr);
+				saida->addItem("dsTipoCarteira", (char*) dsTipoCarteira.arr);
+			saida->closeTag();
+			
+			saida->createTag("AdmContatoVO");
+				saida->addItem("nota", notaContato);
+				saida->addItem("total", pesoContato);
+				saida->addItem("idContato", idContato);
+				saida->addItem("nmContato", (char*) nmPath.arr);
+			saida->closeTag();
+
+			saida->addItem("total", (char*) pesoEstatico.arr);
+
+			saida->closeTag();
+		}
+		numRegistros++;
+
+		saida->createTag("dadosRetornoVO");
+
+		saida->createTag("AdmTipoSegmentacaoVO");
+			saida->addItem("nota", notaSegmentacao);
+			saida->addItem("total", pesoSegmentacao);
+			saida->addItem("idSegmentacao", idSegmentacao);
+			saida->addItem("sgSegmentacao", (char*) sgSegmentacao.arr);
+			saida->addItem("dsSegmentacao", (char*) dsSegmentacao.arr);
+		saida->closeTag();
+
+		saida->createTag("AdmProcedenciaVO");
+			saida->addItem("nota", notaProcedencia);
+			saida->addItem("total", pesoProcedencia);
+			saida->addItem("idProcedencia", idProcedencia);
+			saida->addItem("nmProcedencia", (char*) sgProcedencia.arr);
+		saida->closeTag();
+		
+		saida->createTag("AdmTipoCarteiraSimplVO");
+			saida->addItem("nota", notaCarteira);
+			saida->addItem("total", pesoCarteira);
+			saida->addItem("idTipoCarteira", idTipoCarteira);
+			saida->addItem("sgTipoCarteira", (char*) dsTipoCarteira.arr);
+			saida->addItem("dsTipoCarteira", (char*) dsTipoCarteira.arr);
+		saida->closeTag();
+		
+		saida->createTag("AdmContatoVO");
+			saida->addItem("nota", notaContato);
+			saida->addItem("total", pesoContato);
+			saida->addItem("idContato", idContato);
+			saida->addItem("nmContato", (char*) nmPath.arr);
+		saida->closeTag();
+
+		saida->addItem("total", (char*) pesoEstatico.arr);
+
+		saida->closeTag();
+	}
+
+	saida->closeTag();
+
+	EXEC SQL CLOSE cursorPriorizacao;
+	
+	ULOG_END("proCConsultaPriorizacao()");
+
+}
+
+int proCGetTotalRegistros(SmallString montagemQuery)
+{
+    ULOG_START("proCGetTotalRegistros()");
+	 struct sqlca sqlca;
+
+    SmallString queryTotal;
+    int totalRegistros = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char* query;
+
+        int total; 
+
+    EXEC SQL END DECLARE SECTION;
+
+    queryTotal = "SELECT COUNT(1) "
+		"FROM (";
+    queryTotal +=  montagemQuery;
+    queryTotal +=  ")";
+
+    query = queryTotal;
+
+    ULOG("proCConsultaPriorizacao - Query que sera executada: [%s]", query);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFCnsPriorizacao(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL PREPARE consultaTotalRegistros FROM :query;
+    EXEC SQL DECLARE cursorTotalRegistros CURSOR FOR consultaTotalRegistros;
+
+    EXEC SQL OPEN cursorTotalRegistros;
+    
+    for(;;)
+    {
+        EXEC SQL FETCH cursorTotalRegistros INTO :total;
+
+	totalRegistros = total;
+    }
+
+    ULOG_END("proCGetTotalRegistros()");
+    
+    return totalRegistros;
+
+}
+
+void sql_error_WFCnsPriorizacao(sqlca*sqlca)
+{
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

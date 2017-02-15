@@ -1,0 +1,321 @@
+/**
+ * @version $Revision: 1.1.2.1 $
+ * @CVS     $Author: a5116174 $ - $Date: 2011/08/12 17:11:32 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../../../commons/msgPadrao.h"
+
+#include "../../../commons/queryMacro.h"
+#include "../include/cWFAtendPesquisaSatisfa.h"
+#include "../include/stWFAtendPesquisaSatisfa.h"
+
+void sql_error_WFAtendimentoPesquisaSatisfa(sqlca*sqlca);
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+    #include "../include/stWFAtendPesquisaSatisfa.h"
+EXEC SQL END DECLARE SECTION;
+
+bool proCIncluirWFAtendimentoPesquisaSatisfa(st_AtendimentoPesquisaSatisfa* dados, st_vlAtendimentoPesquisaSatisfa* status, XMLGen* saida)
+{
+    ULOG_START("proCIncluirWFAtendimentoPesquisaSatisfa");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct st_AtendimentoPesquisaSatisfa *oDados = dados;
+        struct st_vlAtendimentoPesquisaSatisfa *oStatus = status;
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG("idAtendimento=%d",oDados->idAtendimento);
+    ULOG("dtPesquisa='%s'",oStatus->dtPesquisa==-1?"SYSDATE":oDados->dtPesquisa);
+    ULOG("idPessoaUsuario=%d",oDados->idPessoaUsuario);
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoPesquisaSatisfa(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    oStatus->idAtendimentoPesquisaSatisfa = -1;
+
+    ULOG("vai pesquisar em ATENDIMENTO.PESQUISASATISFAATUAL ...");
+
+    EXEC SQL
+        SELECT
+            IDATENDIMENTOPESQUISASATISFA
+        INTO
+            :oDados->idAtendimentoPesquisaSatisfa:oStatus->idAtendimentoPesquisaSatisfa
+        FROM
+            ATENDIMENTO.PESQUISASATISFAATUAL
+        WHERE
+            IDATENDIMENTO = :oDados->idAtendimento
+        AND DTPESQUISA = DECODE(:oStatus->dtPesquisa,-1,SYSDATE
+                               ,TO_DATE(:oDados->dtPesquisa,'DD/MM/YYYY HH24:MI:SS'))
+        AND IDPESSOAUSUARIO = :oDados->idPessoaUsuario;
+
+    if ( 0 == sqlca.sqlcode )
+    {
+        ULOGW("ATENDIMENTOPESQUISASATISFAAK1 existe.");
+        ULOG("idAtendimentoPesquisaSatisfa=%d",oDados->idAtendimentoPesquisaSatisfa);
+    }
+    else
+    {
+        ULOG("Obtendo sequence ...");
+
+        EXEC SQL
+            SELECT atendimento.AtendimentoPesquisaSatisfaSQ.NEXTVAL 
+            INTO :oDados->idAtendimentoPesquisaSatisfa FROM DUAL;
+
+        ULOG("vai inserir em ATENDIMENTO.PESQUISASATISFAATUAL ...");
+        ULOG("idAtendimentoPesquisaSatisfa=%d",oDados->idAtendimentoPesquisaSatisfa);
+
+        EXEC SQL
+            INSERT INTO
+                ATENDIMENTO.PESQUISASATISFAATUAL
+                (
+                    IDATENDIMENTOPESQUISASATISFA,
+                    IDATENDIMENTO,
+                    DTPESQUISA,
+                    IDPESSOAUSUARIO,
+                    DSCOMENTARIO,
+                    VLNOTA,
+                    IDUSUARIOALTERACAO,
+                    DTULTIMAALTERACAO
+                )
+            VALUES
+                (
+                    :oDados->idAtendimentoPesquisaSatisfa,
+                    :oDados->idAtendimento,
+                     DECODE(:oStatus->dtPesquisa,-1,SYSDATE
+                                ,TO_DATE(:oDados->dtPesquisa,'DD/MM/YYYY HH24:MI:SS')),
+                    :oDados->idPessoaUsuario,
+                     SUBSTR(TRIM(:oDados->observacao),1,4000),
+                    :oDados->vlNota,
+                    :oDados->idPessoaUsuario,
+                    SYSDATE
+                );
+    }
+
+    if ( saida )
+    {
+        saida->createTag("Registro");
+            saida->addItem("idAtendimentoPesquisaSatisfa", oDados->idAtendimentoPesquisaSatisfa);
+        saida->closeTag();
+    }
+
+    ULOG_END("proCIncluirWFAtendimentoPesquisaSatisfa");
+
+    return true;
+}
+
+bool proCAlterarWFAtendimentoPesquisaSatisfa(st_AtendimentoPesquisaSatisfa* dados, st_vlAtendimentoPesquisaSatisfa* status, XMLGen* saida)
+{
+    ULOG_START("proCAlterarWFAtendimentoPesquisaSatisfa");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtendimentoPesquisaSatisfa *oDados = dados;
+        struct st_vlAtendimentoPesquisaSatisfa *oStatus = status;
+
+        char query[999] = "UPDATE ATENDIMENTO.PESQUISASATISFAATUAL SET ";
+
+    EXEC SQL END DECLARE SECTION;
+
+    bool separa = false;
+
+    if (status->idAtendimento != -1) 
+        montaUpdate("IDATENDIMENTO", oDados->idAtendimento, 1);
+
+    if (status->dtPesquisa != -1)
+        montaUpdate("DTPESQUISA", oDados->dtPesquisa, 4);
+
+    if (status->idPessoaUsuario != -1) 
+        montaUpdate("IDPESSOAUSUARIO", oDados->idPessoaUsuario, 1);
+
+    if (status->idAtendimento != -1) 
+        montaUpdate("DSCOMENTARIO", oDados->observacao, 1);
+
+    if (status->idAtendimento != -1) 
+        montaUpdate("VLNOTA", oDados->vlNota, 1);
+
+    sprintf(query,"%s WHERE IDATENDIMENTOPESQUISASATISFA = %i",query,dados->idAtendimentoPesquisaSatisfa);
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoPesquisaSatisfa(&sqlca);
+
+    EXEC SQL EXECUTE IMMEDIATE :query;
+
+    ULOG_END("proCAlterarWFAtendimentoPesquisaSatisfa");
+
+    return true;
+}
+
+bool proCExcluirWFAtendimentoPesquisaSatisfa(st_AtendimentoPesquisaSatisfa* dados, st_vlAtendimentoPesquisaSatisfa* status, XMLGen* saida)
+{
+    ULOG_START("proCExcluirWFAtendimentoPesquisaSatisfa");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long idAtendimentoPesquisaSatisfa = dados->idAtendimentoPesquisaSatisfa;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoPesquisaSatisfa(&sqlca);
+
+    EXEC SQL 
+        DELETE
+            ATENDIMENTO.PESQUISASATISFAATUAL
+        WHERE
+            IDATENDIMENTOPESQUISASATISFA = :idAtendimentoPesquisaSatisfa;
+
+    ULOG_END("proCExcluirWFAtendimentoPesquisaSatisfa");
+
+    return true;
+}
+
+bool proCConsultaWFAtendimentoPesquisaSatisfa(st_AtendimentoPesquisaSatisfa* dados, st_vlAtendimentoPesquisaSatisfa* status, char* order, XMLGen* saida)
+{
+    ULOG_START("proCConsultaWFAtendimentoPesquisaSatisfa");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimentoPesquisaSatisfa;
+        long idAtendimento;
+        int idPessoaUsuario;
+        VARCHAR dtPesquisa[64];
+        short i_dtPesquisa;
+
+        char query[999] = "SELECT IDATENDIMENTOPESQUISASATISFA,"
+                                 "IDATENDIMENTO,"
+                                 "TO_CHAR(DTPESQUISA,'dd/mm/yyyy hh24:mi'),"
+                                 "IDPESSOAUSUARIO "
+                            "FROM ATENDIMENTO.PESQUISASATISFAATUAL ";
+
+    EXEC SQL END DECLARE SECTION;
+
+    bool separa = false;
+
+    if (status->idAtendimentoPesquisaSatisfa != -1) 
+        montaWhere("IDATENDIMENTOPESQUISASATISFA", dados->idAtendimentoPesquisaSatisfa, 1);
+
+    if (status->idAtendimento != -1)
+        montaWhere("IDATENDIMENTO", dados->idAtendimento, 1);
+
+    if (status->dtPesquisa != -1) 
+        montaWhere("DTPESQUISA", dados->dtPesquisa, 4);
+
+    if (status->idPessoaUsuario != -1)
+        montaWhere("IDPESSOAUSUARIO", dados->idPessoaUsuario, 1);
+
+    if (strlen(order) > 0) 
+        sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoPesquisaSatisfa(&sqlca);
+
+    EXEC SQL PREPARE consultaAtendimentoPesquisaSatisfa FROM :query;
+    EXEC SQL DECLARE consulta CURSOR FOR consultaAtendimentoPesquisaSatisfa;
+
+    EXEC SQL OPEN consulta;
+
+    while (true)
+    {
+        i_dtPesquisa = -1;
+
+        EXEC SQL 
+           FETCH consulta 
+            INTO :idAtendimentoPesquisaSatisfa,
+                 :idAtendimento,
+                 :dtPesquisa:i_dtPesquisa,
+                 :idPessoaUsuario;
+
+        CONV(dtPesquisa);
+
+        saida->createTag("WFAtendimentoPesquisaSatisfaVO");
+            saida->addItem("idAtendimentoPesquisaSatisfa", idAtendimentoPesquisaSatisfa);
+            saida->addItem("idAtendimento", idAtendimento);
+            saida->addItem("dtPesquisa", (char *)dtPesquisa.arr);
+            saida->addItem("idPessoaUsuario", idPessoaUsuario);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE consulta;
+
+    ULOG_END("proCConsultaWFAtendimentoPesquisaSatisfa");
+
+    return true;
+}
+
+bool proCExisteWFAtendimentoPesquisaSatisfa(st_AtendimentoPesquisaSatisfa* dados, st_vlAtendimentoPesquisaSatisfa* status, XMLGen* saida)
+{
+    ULOG_START("proCExisteWFAtendimentoPesquisaSatisfa");
+
+    bool separa = false;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idAtPesqSatisfa;
+        long idAtendimento;
+        char *dtPesquisa;
+        int idPessoaUsuario;
+    EXEC SQL END DECLARE SECTION;
+
+    idAtPesqSatisfa = -1;
+
+    if ( -1 == status->idAtendimento )
+    {
+        char *p = "valor de 'idAtendimento' nao informado";
+        ULOGE("%s",mensagemSimples(p));
+        throw new TuxBasicSvcException("04E9999",mensagemSimples(p));
+    }
+
+    if ( -1 == status->dtPesquisa ) 
+    {
+        char *p = "valor de 'dtPesquisa' nao informado";
+        ULOGE("%s",mensagemSimples(p));
+        throw new TuxBasicSvcException("04E9999",mensagemSimples(p));
+    }
+
+    if ( -1 == status->idPessoaUsuario )
+    {
+        char *p = "valor de 'idPessoaUsuario' nao informado";
+        ULOGE("%s",mensagemSimples(p));
+        throw new TuxBasicSvcException("04E9999",mensagemSimples(p));
+    }
+
+    idAtendimento = dados->idAtendimento;
+    dtPesquisa = dados->dtPesquisa;
+    idPessoaUsuario = dados->idPessoaUsuario;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoPesquisaSatisfa(&sqlca);
+
+    EXEC SQL SELECT IDATENDIMENTOPESQUISASATISFA 
+               INTO :idAtPesqSatisfa
+               FROM ATENDIMENTO.PESQUISASATISFAATUAL
+              WHERE IDATENDIMENTO = :idAtendimento
+                AND DTPESQUISA = TO_DATE(:dtPesquisa,'DD/MM/YYYY HH24:MI:SS')  
+                AND IDPESSOAUSUARIO = :idPessoaUsuario;
+
+    ULOG("sqlca.sqlcode=%d",sqlca.sqlcode);
+
+    ULOG_END("proCExisteWFAtendimentoPesquisaSatisfa");
+
+    return sqlca.sqlcode ? false : true;
+}
+
+void sql_error_WFAtendimentoPesquisaSatisfa(sqlca*sqlca)
+{
+    ULOGE("Erro Oracle %d:%s",sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

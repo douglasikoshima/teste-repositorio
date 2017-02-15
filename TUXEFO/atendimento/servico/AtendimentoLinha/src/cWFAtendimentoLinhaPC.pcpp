@@ -1,0 +1,514 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Renato Teixeira
+ * @version $Revision: 1.1.2.2.6.2 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/06 12:36:43 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+
+#include "../include/cWFAtendimentoLinha.h"
+#include "../include/stWFAtendimentoLinha.h"
+
+void sql_error_WFAtendimentoLinha(sqlca*sqlca);
+
+    // Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+        #include "../include/stWFAtendimentoLinha.h"
+    EXEC SQL END DECLARE SECTION;
+
+long proCIncluirWFAtendimentoLinha(st_AtendimentoLinha* dados, st_vlAtendimentoLinha* status, XMLDPR *xmlDpr)
+{
+
+    // struct sqlca sqlca;
+
+    // EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtendimentoLinha   oDados;
+        struct st_vlAtendimentoLinha oStatus;
+
+    // EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    //
+    // Esta tabela não é mais usada no modelo novo, mas o DPR continua monitorando linhas de atendimento
+    // Maio/2007 - Cassio.
+    //
+    // EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoLinha(&sqlca);
+    // EXEC SQL 
+    //     INSERT INTO
+    //         atendimento.AtendimentoLinha
+    //         (
+    //             idAtendimento,
+    //             idPessoaLinhaHistorico,
+    //             idEstadoLinha,
+    //             idUsuarioAlteracao,
+    //             dtUltimaAlteracao
+    //         )
+    //         VALUES
+    //         (
+    //             :oDados.idAtendimento,
+    //             :oDados.idPessoaLinhaHistorico,
+    //             :oDados.idEstadoLinha,
+    //             DECODE(:oStatus.idUsuarioAlteracao, -1, NULL, :oDados.idUsuarioAlteracao),
+    //             TO_DATE(DECODE(:oStatus.dtUltimaAlteracao, -1, NULL, :oDados.dtUltimaAlteracao),'DD/MM/YYYY HH24:MI:SS')
+    //         );
+
+    // ==> SM324--DPR--DEZ/2006--Cassio
+    if ( xmlDpr )
+    {
+        AtendimentoLinhaDPR atendimentolinhadpr;
+
+        atendimentolinhadpr.setIdAtendimento(oDados.idAtendimento);
+        atendimentolinhadpr.setIdEstadoLinha(oDados.idEstadoLinha);
+        atendimentolinhadpr.setIdPessoaLinhaHistorico(oDados.idPessoaLinhaHistorico);
+        atendimentolinhadpr.setOpCode(OPCODE_INSERT);
+
+        xmlDpr->atendimentolinhavo.inserir(&atendimentolinhadpr);
+    }
+    // <== SM324--DPR--DEZ/2006--Cassio
+
+    return oDados.idAtendimento;
+}
+
+bool proCAlterarWFAtendimentoLinha(st_AtendimentoLinha* dados, st_vlAtendimentoLinha* status, XMLGen* saida)
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtendimentoLinha   oDados;
+        struct st_vlAtendimentoLinha oStatus;
+
+        char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoLinha(&sqlca);
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    sprintf(query,"%s", "UPDATE atendimento.AtendimentoLinha SET ");
+
+    bool separa = false;
+
+    if (status->idPessoaLinhaHistorico != -1) 
+        montaUpdate("idPessoaLinhaHistorico", oDados.idPessoaLinhaHistorico, 1);
+
+    if (status->idUsuarioAlteracao != -1) 
+        montaUpdate("idUsuarioAlteracao", oDados.idUsuarioAlteracao, TIPO_INT);
+
+    if (status->dtUltimaAlteracao != -1) 
+        montaUpdate("dtUltimaAlteracao", oDados.dtUltimaAlteracao, TIPO_DATAHORA);
+
+    sprintf(query, "%s WHERE idAtendimento = %ld", query, dados->idAtendimento);
+
+    EXEC SQL EXECUTE IMMEDIATE :query;
+
+    return true;
+}
+
+bool proCExcluirWFAtendimentoLinha(st_AtendimentoLinha* dados, st_vlAtendimentoLinha* status, XMLGen* saida)
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = dados->idAtendimento;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoLinha(&sqlca);
+
+    EXEC SQL 
+        DELETE
+            atendimento.AtendimentoLinha
+        WHERE
+            idAtendimento = :idAtendimento;
+
+    return true;
+}
+
+bool proCObtemWFDadosLinhaAtendimentoCri(long sIdPessoaLinhaHistorico, XMLGen* saida)
+{
+    ULOG_START( "proCObtemWFDadosLinhaAtendimentoCri()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long  idPessoaLinhaHistorico = sIdPessoaLinhaHistorico;
+        int  idTipoLinha;
+        
+        short i_idTipoLinha = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoLinha(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND GO TO saidaObterDadosLinhaCri;
+
+
+    ULOG( "Id Pessoa Linha Historico = [%d]", idPessoaLinhaHistorico );
+    EXEC SQL 
+        SELECT 
+            LT.IDTIPOLINHA
+        INTO
+            :idTipoLinha:i_idTipoLinha
+        FROM
+            CUSTOMER.PESSOALINHAHISTORICO PLH,
+            LINHA.LINHATELEFONICA LT
+        WHERE
+            PLH.IDLINHATELEFONICA = LT.IDLINHATELEFONICA 
+            AND PLH.IDPESSOALINHAHISTORICO = :idPessoaLinhaHistorico
+            AND ROWNUM <= 1;
+    
+    saida->createTag("LinhaVO");
+        saida->addItem("idPessoaLinhaHistorico", idPessoaLinhaHistorico);
+        saida->addItem("idTipoLinha", idTipoLinha);
+    saida->closeTag();
+
+    ULOG( "Tipo Linha [%d]",idTipoLinha );
+
+    ULOG_END( "proCObtemWFDadosLinhaAtendimentoCri()" );
+    return true;
+
+saidaObterDadosLinhaCri:
+    ULOG_END( "proCObtemWFDadosLinhaAtendimentoCri()" );
+    return true;
+
+}
+
+bool proCObtemWFDadosLinhaAtendimento(long sIdAtendimento, XMLGen* saida,int *_idTipoLinha)
+{
+    ULOG_START( "proCObtemWFDadosLinhaAtendimento()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = sIdAtendimento;
+        long  idPessoaLinhaHistorico;
+        int  nrLinha;
+        int  cdAreaRegistro;
+        int  idTipoLinha;
+        int  idLinhaTelefonica;
+        int  idAreaRegistro;
+        int  idUfOperadora;
+        
+        short i_idPessoaLinhaHistorico;
+        short i_nrLinha;
+        short i_cdAreaRegistro;
+        short i_idTipoLinha;
+        short i_idLinhaTelefonica;
+        short i_idAreaRegistro;
+        short i_idUfOperadora;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoLinha(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND GO TO saidaObterDadosLinha;
+
+    ULOG("idAtendimento=%d", idAtendimento);
+
+    EXEC SQL 
+        SELECT
+            IDPESSOALINHAHISTORICO, 
+            NRLINHA, 
+            CDAREAREGISTRO, 
+            IDTIPOLINHA,
+            IDLINHATELEFONICA,
+            IDAREAREGISTRO,
+            IDUFOPERADORA
+        INTO
+            :idPessoaLinhaHistorico:i_idPessoaLinhaHistorico,
+            :nrLinha:i_nrLinha,
+            :cdAreaRegistro:i_cdAreaRegistro,
+            :idTipoLinha:i_idTipoLinha,
+            :idLinhaTelefonica:i_idLinhaTelefonica,
+            :idAreaRegistro:i_idAreaRegistro,
+            :idUfOperadora:i_idUfOperadora
+        FROM
+            ATENDIMENTO.ATDDADOSDETALHELINHA
+        WHERE
+            IDATENDIMENTO = :idAtendimento
+        AND
+            ROWNUM <= 1;
+    
+    if ( saida )
+    {
+        saida->createTag("LinhaVO");
+            saida->addItem("idPessoaLinhaHistorico", idPessoaLinhaHistorico);
+            saida->addItem("nrLinha", nrLinha);
+            saida->addItem("cdAreaRegistro", cdAreaRegistro);
+            saida->addItem("idTipoLinha", idTipoLinha);
+            saida->addItem("idLinhaTelefonica", idLinhaTelefonica);
+            saida->addItem("idAreaRegistro", idAreaRegistro);
+            saida->addItem("idUfOperadora", idUfOperadora);
+        saida->closeTag();
+    }
+
+    ULOG("idTipoLinha=%d", idTipoLinha);
+
+    if ( _idTipoLinha )
+    {
+        *_idTipoLinha = idTipoLinha;
+    }
+
+    ULOG_END( "proCObtemWFDadosLinhaAtendimento()" );
+    return true;
+
+saidaObterDadosLinha:
+    ULOG( "linha não encontrada" );
+    ULOG_END( "proCObtemWFDadosLinhaAtendimento()" );
+    return false;
+}
+
+bool proCConsultaWFAtendimentoLinha(st_AtendimentoLinha* dados, st_vlAtendimentoLinha* status, char* order, XMLGen* saida)
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento;
+        int idPessoaLinhaHistorico;
+        int idUsuarioAlteracao;
+        VARCHAR dtUltimaAlteracao[256];
+
+        short i_idUsuarioAlteracao;
+        short i_dtUltimaAlteracao;
+
+        char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    sprintf(query,"SELECT idAtendimento, idPessoaLinhaHistorico,idUsuarioAlteracao, TO_CHAR( dtUltimaAlteracao, 'DD/MM/YYYY' ) FROM atendimento.AtendimentoLinha ");
+
+    bool separa = false;
+
+    if (status->idAtendimento != -1) 
+        montaWhere("idAtendimento", dados->idAtendimento, 1);
+
+    if (status->idPessoaLinhaHistorico != -1)
+        montaWhere("idPessoaLinhaHistorico", dados->idPessoaLinhaHistorico, 1);
+
+    if (status->idUsuarioAlteracao != -1) 
+        montaWhere("idUsuarioAlteracao", dados->idUsuarioAlteracao, TIPO_INT);
+
+    if (status->dtUltimaAlteracao != -1) 
+        montaWhere("dtUltimaAlteracao", dados->dtUltimaAlteracao, TIPO_DATAHORA);
+
+    if (strlen(order) > 0) 
+        sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoLinha(&sqlca);
+
+    EXEC SQL PREPARE consultaAtendimentoLinha FROM :query;
+    EXEC SQL DECLARE consulta CURSOR FOR consultaAtendimentoLinha;
+
+    EXEC SQL OPEN consulta;
+
+    while (true)
+    {
+        EXEC SQL FETCH consulta INTO 
+                                    :idAtendimento, 
+                                    :idPessoaLinhaHistorico,
+                                    :idUsuarioAlteracao:i_idUsuarioAlteracao,
+                                    :dtUltimaAlteracao:i_dtUltimaAlteracao;
+
+        CONVIND(dtUltimaAlteracao, i_dtUltimaAlteracao);
+
+        saida->createTag("WFAtendimentoLinhaVO");
+            saida->addItem("idAtendimento", idAtendimento);
+            saida->addItem("idPessoaLinhaHistorico", idPessoaLinhaHistorico);
+            saida->addItem("idUsuarioAlteracao", idUsuarioAlteracao);
+            saida->addItem("dtUltimaAlteracao", (char*)dtUltimaAlteracao.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE consulta;
+
+    return true;
+
+}
+
+bool proCObtemWFLinhaAtendimento(long sIdAtendimento, XMLGen* saida,struct LinhaAtendimento *linhaatendimento)
+{
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = sIdAtendimento;
+        VARCHAR idPessoaLinhaHistorico[256];
+        VARCHAR nrLinha[256];
+        VARCHAR cdAreaRegistro[256];
+        
+        short i_idPessoaLinhaHistorico=-1;
+        short i_nrLinha=-1;
+        short i_cdAreaRegistro=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoLinha(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    // Incidência 3288 Hom.Vivo Nov/2005
+    // Processos abertos por conta (idTipoAbertura=1) não devem exibir numero de linha
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL
+    // SELECT 
+    //     PL.IDPESSOALINHAHISTORICO,
+    //     DECODE(ATD.IDTIPOABERTURA,1,NULL,PL.CDAREAREGISTRO) AS CDAREAREGISTRO,
+    //     DECODE(ATD.IDTIPOABERTURA,1,NULL,PL.NRLINHA) AS NRLINHA
+    // INTO
+    //     :idPessoaLinhaHistorico:i_idPessoaLinhaHistorico,
+    //     :cdAreaRegistro:i_cdAreaRegistro,
+    //     :nrLinha:i_nrLinha
+    // FROM 
+    //     ATENDIMENTO.ATENDIMENTO ATD,
+    //     ATENDIMENTO.ATENDIMENTOLINHA AL,
+    //     CUSTOMER.PESSOALINHAHISTORICO PL
+    // WHERE 
+    //     AL.IDPESSOALINHAHISTORICO = PL.IDPESSOALINHAHISTORICO
+    // AND AL.IDATENDIMENTO = :idAtendimento
+    // AND AL.IDATENDIMENTO = ATD.IDATENDIMENTO;
+
+    EXEC SQL
+        SELECT
+            PL.IDPESSOALINHAHISTORICO,
+            DECODE(ATD.IDTIPOABERTURA,1,NULL,PL.CDAREAREGISTRO) AS CDAREAREGISTRO,
+            DECODE(ATD.IDTIPOABERTURA,1,NULL,PL.NRLINHA) AS NRLINHA
+        INTO
+            :idPessoaLinhaHistorico:i_idPessoaLinhaHistorico,
+            :cdAreaRegistro:i_cdAreaRegistro,
+            :nrLinha:i_nrLinha
+        FROM
+            ATENDIMENTO.ATENDIMENTO ATD,
+            CUSTOMER.PESSOALINHAHISTORICO PL
+        WHERE
+            ATD.IDPESSOALINHAHISTORICO = PL.IDPESSOALINHAHISTORICO
+        AND ATD.IDATENDIMENTO = :idAtendimento
+        AND ATD.IDATENDIMENTO = ATD.IDATENDIMENTO;
+
+    if ( linhaatendimento )
+    {
+        memset(linhaatendimento,0,sizeof(LinhaAtendimento));
+    }
+
+    if ( sqlca.sqlcode == 0 )
+    {
+        CONVIND(idPessoaLinhaHistorico,i_idPessoaLinhaHistorico);
+        CONVIND(nrLinha,i_nrLinha);
+        CONVIND(cdAreaRegistro,i_cdAreaRegistro);
+
+        if ( saida )
+        {
+            saida->createTag("LinhaVO");
+                saida->addItem("idPessoaLinhaHistorico", (char*)idPessoaLinhaHistorico.arr);
+                saida->addItem("nrLinha", (char*)nrLinha.arr);
+                saida->addItem("cdAreaRegistro", (char*)cdAreaRegistro.arr);
+            saida->closeTag();
+        }
+
+        if ( linhaatendimento )
+        {
+            strncpy(linhaatendimento->idPessoaLinhaHistorico,(char*)idPessoaLinhaHistorico.arr,sizeof(linhaatendimento->idPessoaLinhaHistorico)-1);
+            strncpy(linhaatendimento->nrLinha,(char*)nrLinha.arr,sizeof(linhaatendimento->nrLinha)-1);
+            strncpy(linhaatendimento->cdAreaRegistro,(char*)cdAreaRegistro.arr,sizeof(linhaatendimento->cdAreaRegistro)-1);
+        }
+    }
+
+    return sqlca.sqlcode ? false : true;
+}
+
+
+
+bool proCObtemWFLinhaAtendimentoEx(long sIdAtendimento, XMLGen* saida,struct LinhaAtendimento *linhaatendimento)
+{
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimento = sIdAtendimento;
+        VARCHAR idPessoaLinhaHistorico[256];
+        VARCHAR nrLinha[256];
+        VARCHAR cdAreaRegistro[256];
+        
+        short i_idPessoaLinhaHistorico=-1;
+        short i_nrLinha=-1;
+        short i_cdAreaRegistro=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoLinha(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            PL.IDPESSOALINHAHISTORICO,
+            DECODE(ATD.IDTIPOABERTURA,1,NULL,PL.CDAREAREGISTRO) AS CDAREAREGISTRO,
+            DECODE(ATD.IDTIPOABERTURA,1,NULL,PL.NRLINHA) AS NRLINHA
+        INTO
+            :idPessoaLinhaHistorico:i_idPessoaLinhaHistorico,
+            :cdAreaRegistro:i_cdAreaRegistro,
+            :nrLinha:i_nrLinha
+        FROM
+            FOHIST_OW.ATENDIMENTO ATD,
+            CUSTOMER.PESSOALINHAHISTORICO PL
+        WHERE
+            ATD.IDPESSOALINHAHISTORICO = PL.IDPESSOALINHAHISTORICO
+        AND ATD.IDATENDIMENTO = :idAtendimento
+        AND ATD.IDATENDIMENTO = ATD.IDATENDIMENTO;
+
+    if ( linhaatendimento )
+    {
+        memset(linhaatendimento,0,sizeof(LinhaAtendimento));
+    }
+
+    if ( sqlca.sqlcode == 0 )
+    {
+        CONVIND(idPessoaLinhaHistorico,i_idPessoaLinhaHistorico);
+        CONVIND(nrLinha,i_nrLinha);
+        CONVIND(cdAreaRegistro,i_cdAreaRegistro);
+
+        if ( saida )
+        {
+            saida->createTag("LinhaVO");
+                saida->addItem("idPessoaLinhaHistorico", (char*)idPessoaLinhaHistorico.arr);
+                saida->addItem("nrLinha", (char*)nrLinha.arr);
+                saida->addItem("cdAreaRegistro", (char*)cdAreaRegistro.arr);
+            saida->closeTag();
+        }
+
+        if ( linhaatendimento )
+        {
+            strncpy(linhaatendimento->idPessoaLinhaHistorico,(char*)idPessoaLinhaHistorico.arr,sizeof(linhaatendimento->idPessoaLinhaHistorico)-1);
+            strncpy(linhaatendimento->nrLinha,(char*)nrLinha.arr,sizeof(linhaatendimento->nrLinha)-1);
+            strncpy(linhaatendimento->cdAreaRegistro,(char*)cdAreaRegistro.arr,sizeof(linhaatendimento->cdAreaRegistro)-1);
+        }
+    }
+
+    return sqlca.sqlcode ? false : true;
+}
+
+
+
+void sql_error_WFAtendimentoLinha(sqlca*sqlca)
+{
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

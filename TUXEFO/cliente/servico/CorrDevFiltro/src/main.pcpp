@@ -1,0 +1,85 @@
+/*
+ * Serviço de Correspondencia devolvida - Filtro para busca de correspondencia para manutencao
+ * Versão inicial, 28/05/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../include/CorrDevFiltro.h"
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/TipoCorrespondencia.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/StatusCorrespondencia.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/MotivoDevolucao.h";
+
+DECLARE_TUXEDO_SERVICE(CorrDevFiltro);
+
+void implCorrDevFiltro::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+	int iNroReg = 0;
+	int iAux = 0;
+
+	CTipoCorrespondencia* poTpoCorr;
+	CMotivoDevolucao* poMotDev;
+	CStatusCorrespondencia* poStatCorr;
+
+    ULOG_START( "implCorrDevFiltro::Execute()" );
+    
+    try{
+         xml_g->createTag(XML_OUT_ROOT);
+         xml_g->addProp(XML_OUT_PROP_XMLNS,XML_OUT_PROP_XMLNS_VALUE);
+
+         // Traz todos os tipos de correspondência
+         poTpoCorr = CTipoCorrespondencia::lista(&iNroReg);
+         for (iAux = 0; iAux < iNroReg; iAux++) {
+			if (poTpoCorr[iAux].getInDisponibilidade()) {
+				xml_g->createTag(XML_OUT_TIPO_CORRESP);
+				xml_g->addItem(XML_OUT_TIPO_CORR_ID, poTpoCorr[iAux].getIdTipoCorrespondencia());
+				xml_g->addItem(XML_OUT_TIPO_CORR_SG, rtrim(poTpoCorr[iAux].getSgTipoCorrespondencia()));
+				xml_g->addItem(XML_OUT_TIPO_CORR_DS, rtrim(poTpoCorr[iAux].getDsTipoCorrespondencia()));
+				xml_g->closeTag();
+			}
+         }
+
+         // Traz todos os motivos de devolução
+         poMotDev = CMotivoDevolucao::lista(&iNroReg);
+         for (iAux = 0; iAux < iNroReg; iAux++) {
+			if (poMotDev[iAux].getInDisponibilidade()) {
+				xml_g->createTag(XML_OUT_MOTIVO_DEVOLUCAO);
+				xml_g->addItem(XML_OUT_MOT_DEV_ID, poMotDev[iAux].getIdMotivoDevolucao());
+				xml_g->addItem(XML_OUT_MOT_DEV_SG, rtrim(poMotDev[iAux].getSgMotivoDevolucao()));
+				xml_g->addItem(XML_OUT_MOT_DEV_DS, rtrim(poMotDev[iAux].getDsMotivoDevolucao()));
+				xml_g->closeTag();
+			}
+         }
+
+         // Monta lista de status de correspondencia
+         poStatCorr = CStatusCorrespondencia::listaPorTipoUnidade(&iNroReg, "CORRTRATAR");
+         for (iAux = 0; iAux < iNroReg && poStatCorr[iAux].getInDisponibilidade(); iAux++) {
+			if (poStatCorr[iAux].getInDisponibilidade()) {
+				xml_g->createTag(XML_OUT_STATUS_CORRESP);
+				xml_g->addItem(XML_OUT_STATUS_ID, poStatCorr[iAux].getIdStatusCorrespondencia());
+				xml_g->addItem(XML_OUT_STATUS_DS, rtrim(poStatCorr[iAux].getDsStatus()));
+				xml_g->closeTag();
+			}
+         }
+
+         xml_g->closeTag();
+
+         //Lberando memoria
+        if (poTpoCorr) free(poTpoCorr);
+        if (poMotDev) free(poMotDev);
+        if (poStatCorr) free(poStatCorr);
+    }catch(...){
+        throw;
+    }
+
+	// Execução OK.
+	INFORMATION(NRO_OK);
+
+    ULOG_END( "implCorrDevFiltro::Execute()" );
+	setStatusCode(sNrMsg, MSG_OK);
+}

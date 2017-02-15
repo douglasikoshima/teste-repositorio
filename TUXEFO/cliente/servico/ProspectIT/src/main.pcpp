@@ -1,0 +1,107 @@
+/*
+ * Serviço para consultar usuário prospect na tela inicial
+ * Versão inicial, 09/09/2004
+ */
+
+/*
+ * Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/Prospect.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/TipoDocumento.h";
+
+#include "../include/ProspectIT.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+
+DECLARE_TUXEDO_SERVICE(PROSPECTIT);
+
+void implPROSPECTIT::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+    char* pcIdPessoa=0;
+    long iIdPessoa;
+
+    ULOG_START( "implPROSPECTIT::Execute()" );
+
+    ULOG("local1");
+
+    try{
+         // Recupera os campos obrigatórios
+         pcIdPessoa = walkTree(dnode, XML_IN_ID_PESSOA, 0);
+         if (pcIdPessoa == NULL) {
+             ERROR(NRO_ID_PESSOA_NE);
+             TAG_INEXISTENTE(XML_IN_ID_PESSOA);
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if (!*pcIdPessoa) {
+             ERROR(NRO_ID_PESSOA_VV);
+             TAG_VALOR_VAZIO(XML_IN_ID_PESSOA);
+             XMLString::release(&pcIdPessoa);
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         if ((iIdPessoa = atol(pcIdPessoa)) <= 0) {
+             ERROR(NRO_ID_PESSOA_VI);
+             TAG_VALOR_INVALIDO(XML_IN_ID_PESSOA);
+             XMLString::release(&pcIdPessoa);
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+
+        ULOG("iIdPessoa(%ld)", iIdPessoa);
+
+         // Cria objeto Prospect para consulta.
+         CProspect oProsp(iIdPessoa);
+
+         if (oProsp.getIdProspect() == -1) {
+             ERROR(NRO_ID_PESSOA_VI);
+             sprintf(sMsg, "Prospect não encontrado");
+             throw new TuxBasicSvcException(sNrMsg, sMsg);
+         }
+         
+        CTipoDocumento cTipoDocumento(oProsp.getIdTpDocto());
+
+        ULOG("Local2");
+
+         // Gera XML de saída
+         xml_g->createTag("TelaInicialVO");
+         xml_g->addProp("xmlns","cliente.fo.vivo.com.br/vo");
+             xml_g->createTag("TICliente");
+                 xml_g->addItem("idPessoa", iIdPessoa);
+                 xml_g->addItem("idPessoaDePara", oProsp.getIdProspectDePara());
+                 xml_g->addItem("nmNome", rtrim(oProsp.getNmProspect()));
+                 xml_g->addItem("nrTelefone", oProsp.buscaFoneContato());
+                 xml_g->addItem("inTipoPessoa", rtrim(oProsp.getSgTpPessoa()));
+                 xml_g->addItem("dsChurn","");
+                 xml_g->addItem("CarteirizacaoVO","");
+                 xml_g->addItem("SegmentacaoVO","");
+             xml_g->closeTag();
+             xml_g->createTag("TILinha");
+             xml_g->closeTag();
+             xml_g->createTag("TIFaturamento");
+             xml_g->closeTag();
+             xml_g->createTag("EnderecoBaseVO");
+             xml_g->closeTag();
+             xml_g->createTag("TIDocumento");
+                 xml_g->addItem("idDocumento", oProsp.getIdDocto());
+                 xml_g->addItem("dsTipoDocumento", rtrim(cTipoDocumento.getSgTipoDocumento()));
+                 xml_g->addItem("nrDocumento", rtrim(oProsp.getDocto()));
+             xml_g->closeTag();
+         xml_g->closeTag();
+
+        ULOG("Local3");
+
+        XMLString::release(&pcIdPessoa);
+
+    }catch(...){
+        if ( pcIdPessoa ) XMLString::release(&pcIdPessoa);
+        throw;
+    }
+    
+    ULOG_END( "implPROSPECTIT::Execute()" );
+
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}
+

@@ -1,0 +1,102 @@
+//
+// $Id: get_listaassoc.pcpp,v 1.1 2009/07/31 15:34:22 a5110702 Exp $
+//
+
+#include "../../negocio/cmputil/include/campanha.hpp"
+
+int get_listaassoc( int usuario, DOMNode*dnode,XMLGen*xml)
+{
+	char parm[256]; 
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int     idCanalCampanha;
+	int     idLista;
+	VARCHAR nmLista[20];
+	int     inNegative;
+	EXEC SQL END DECLARE SECTION;
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	try
+	{
+		//  Obtendo dados do xml
+		get_tag(parm, dnode, "idCanalCampanha", 0, 0);
+		idCanalCampanha = atoi(parm);
+
+		//  Obtendo dados do xml
+		get_tag(parm, dnode, "inNegative", 0, -1);
+		inNegative = atoi(parm);
+
+		if(inNegative > 0)
+		{
+			// Definicao dos cursores
+			EXEC SQL DECLARE crsListHist1 CURSOR FOR
+			SELECT DISTINCT LISTA.idlista,
+				LISTA.nmlista
+				FROM   campanha.lista LISTA
+				WHERE  LISTA.idlista NOT IN( SELECT LISTACANALCAMPANHA.idlista 
+				FROM campanha.listaCanalCampanha LISTACANALCAMPANHA
+				WHERE LISTACANALCAMPANHA.idcanalcampanha = :idCanalCampanha
+				AND    inativo = 1)
+				AND LISTA.instatuscarga = 1 
+				AND LISTA.idlista>0;
+
+			EXEC SQL OPEN crsListHist1;
+
+			//xml->addItem("nome","LISTAS ASSOCIADAS");
+			xml->addItem("idCanalCampanha",idCanalCampanha);
+			for(;;) 
+			{
+				EXEC SQL FETCH crsListHist1 INTO :idLista, :nmLista;
+
+				endOraStr(nmLista);
+				ULOG_INT(idLista);
+				ULOG_VAR(nmLista);
+
+				xml->createTag("tns:ListaApoioVO");
+				xml->addItem("codigo",idLista);
+				xml->addItem("sigla",(char *)nmLista.arr);
+				xml->addItem("descricao",(char *)nmLista.arr);
+				xml->closeTag();
+			}
+		    EXEC SQL CLOSE crsListHist1;
+		}
+		else if(inNegative <= 0)
+		{
+			// Definicao dos cursores
+			EXEC SQL DECLARE crsListHist2 CURSOR FOR
+			SELECT DISTINCT LISTA.idlista, 
+				LISTA.nmlista
+				FROM   campanha.listaCanalCampanha LISTACANALCAMPANHA,
+				campanha.lista LISTA
+				WHERE  LISTACANALCAMPANHA.idcanalcampanha = :idCanalCampanha
+				AND    LISTA.idlista = LISTACANALCAMPANHA.idlista
+				AND LISTA.instatuscarga = 1 
+				AND    inativo = 1;       
+			EXEC SQL OPEN crsListHist2;
+    
+			//xml->addItem("nome","LISTAS ASSOCIADAS");
+			xml->addItem("idCanalCampanha",idCanalCampanha);
+			for(;;) 
+			{
+				EXEC SQL FETCH crsListHist2 INTO :idLista, :nmLista;
+
+				endOraStr(nmLista);
+				// ulog_int(idLista);
+				// ulog_var(nmLista);
+
+				xml->createTag("tns:ListaApoioVO");
+				xml->addItem("codigo",idLista);
+				xml->addItem("sigla",(char *)nmLista.arr);
+				xml->addItem("descricao",(char *)nmLista.arr);
+				xml->closeTag();
+			}
+		    EXEC SQL CLOSE crsListHist2;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	return 1;
+}

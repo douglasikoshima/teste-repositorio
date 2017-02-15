@@ -1,0 +1,619 @@
+/**
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @remark  Rotinas de acesso a base 
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1.2.3.6.2 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/06 12:36:43 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include<ctype.h>
+
+#include "../include/cWFPPRelatorios.h"
+#include "../../../commons/msgPadrao.h"
+#include "../../../commons/queryMacro.h"
+
+// Declarações das estruturas usadas.
+#include "../../Atendimento/include/stWFAtendimento.h"
+#include "../../AtendimentoPessoa/include/stWFAtendimentoPessoa.h"
+
+
+void sql_error_WFPPRelatorios(sqlca*sqlca);
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR dtAbertura[32];
+
+    #include "../include/stWFPPRelatorios.h"
+EXEC SQL END DECLARE SECTION;
+
+//========================================================
+// Obtém dados comuns
+//========================================================
+//
+int proCObterIdGrupoAtual(long _idAtendimento)
+{
+    ULOG_START("proCObterIdGrupoAtual()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idGrupoAtual;
+        long idAtendimento = _idAtendimento;
+
+        short i_idGrupoAtual = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFPPRelatorios(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT 
+            IDGRUPO
+        INTO
+            :idGrupoAtual:i_idGrupoAtual
+        FROM 
+            ATENDIMENTO.ATENDIMENTOGRUPOATUAL
+        WHERE
+            IDATENDIMENTO = :idAtendimento;
+
+    if ( sqlca.sqlcode == 1403 )
+    {
+        char msgErro[1024];
+
+        sprintf(msgErro,"IDGRUPO (atual) nao encontrado para o processo %ld",idAtendimento);
+        ULOGE(msgErro);
+
+        ULOG_END("proCObterIdGrupoAtual()");
+
+        throw msgErro;
+    }
+
+    ULOG_END("proCObterIdGrupoAtual()");
+
+    return idGrupoAtual;
+}
+
+void proCObterDadosComuns(long _idAtendimento,struct DadosComuns *dadosComuns)
+{
+    ULOG_START("proCObterDadosComuns()");
+
+    struct sqlca sqlca;
+    struct
+    {
+        char dia[2];
+        char barra1;
+        char mes[2];
+        char barra2;
+        char ano[5];
+    } data;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct DadosComuns *pDadosComuns = dadosComuns;
+        VARCHAR dtAbertura[32];
+        // int cdAreaRegistro;
+        // int idGrupoOperadora;
+        // int idUFOperadora;
+        ///int idGrupoAtual;
+        long idAtendimento = _idAtendimento;
+
+        short i_dtAbertura = -1;
+        short i_cdAreaRegistro = -1;
+        short i_idGrupoOperadora = -1;
+        short i_idUFOperadora = -1;
+        //short i_idGrupoAtual = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFPPRelatorios(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            GRUPOOPERADORA.IDGRUPOOPERADORA,
+            ATENDIMENTO.IDUFOPERADORA,
+            ATENDIMENTO.CDAREAREGISTRO,
+            TO_CHAR(ATENDIMENTO.DTABERTURA,'DD/MM/YYYY') AS DTABERTURA
+        INTO
+            :pDadosComuns->idGrupoOperadora:i_idGrupoOperadora,
+            :pDadosComuns->idUFOperadora:i_idUFOperadora,
+            :pDadosComuns->cdAreaRegistro:i_cdAreaRegistro,
+            :dtAbertura:i_dtAbertura
+        FROM 
+            ATENDIMENTO.ATENDIMENTO ATENDIMENTO
+           ,CUSTOMER.GRUPOOPERADORA GRUPOOPERADORA
+           ,CUSTOMER.OPERADORA OPERADORA
+           ,CUSTOMER.UFOPERADORA UFOPERADORA
+        WHERE
+            ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+        AND
+            ATENDIMENTO.IDUFOPERADORA = UFOPERADORA.IDUFOPERADORA
+        AND
+            UFOPERADORA.IDPESSOADEPARAOPERADORA = OPERADORA.IDPESSOADEPARAOPERADORA
+        AND
+            OPERADORA.IDGRUPOOPERADORA = GRUPOOPERADORA.IDGRUPOOPERADORA;
+        
+        // ==> Remodelagem de ATENDIMENTO.ATENDIMENTO - Fev/2007 - Cassio
+        // SELECT
+        //     GRUPOOPERADORA.IDGRUPOOPERADORA,
+        //     UFOPERADORA.IDUFOPERADORA,
+        //     ATENDIMENTOCONTATO.CDAREAREGISTRO,
+        //     TO_CHAR(ATENDIMENTO.DTABERTURA,'DD/MM/YYYY') AS DTABERTURA
+        // INTO
+        //     :pDadosComuns->idGrupoOperadora:i_idGrupoOperadora,
+        //     :pDadosComuns->idUFOperadora:i_idUFOperadora,
+        //     :pDadosComuns->cdAreaRegistro:i_cdAreaRegistro,
+        //     :dtAbertura:i_dtAbertura
+        // FROM 
+        //     ATENDIMENTO.ATENDIMENTOCONTATO ATENDIMENTOCONTATO
+        //    ,ATENDIMENTO.ATENDIMENTO ATENDIMENTO
+        //    ,APOIO.AREAREGISTRO AREAREGISTRO
+        //    ,CUSTOMER.GRUPOOPERADORA GRUPOOPERADORA
+        //    ,CUSTOMER.OPERADORA OPERADORA
+        //    ,CUSTOMER.UFOPERADORA UFOPERADORA
+        // WHERE
+        //     ATENDIMENTOCONTATO.IDATENDIMENTO = :idAtendimento
+        // AND
+        //     ATENDIMENTOCONTATO.IDATENDIMENTO = ATENDIMENTO.IDATENDIMENTO
+        // AND
+        //     ATENDIMENTOCONTATO.CDAREAREGISTRO = AREAREGISTRO.CDAREAREGISTRO
+        // AND
+        //     AREAREGISTRO.IDUFOPERADORA = UFOPERADORA.IDUFOPERADORA
+        // AND
+        //     UFOPERADORA.IDPESSOADEPARAOPERADORA = OPERADORA.IDPESSOADEPARAOPERADORA
+        // AND
+        //     OPERADORA.IDGRUPOOPERADORA = GRUPOOPERADORA.IDGRUPOOPERADORA;
+        // <== Remodelagem de ATENDIMENTO.ATENDIMENTO - Fev/2007 - Cassio
+
+    // Tive de implementar isso pois em alguns ambientes Oracle o TO_DATE acima
+    // estava retornando o campo ano com apenas 3 dígitos apesar da instrução
+    // explícitamente estar definindo 'YYYY'.
+    CONVIND(dtAbertura,i_dtAbertura);
+    memset((char*)&data,0,sizeof(data));
+    memcpy((char*)&data,(char*)dtAbertura.arr,strlen((char*)dtAbertura.arr));
+
+    if ( strlen(data.ano) != 4)
+    {
+        sprintf((char*)dtAbertura.arr,"%.2s%c%.2s%c20%s"
+            ,data.dia,data.barra1,data.mes,data.barra2,data.ano);
+    }
+
+    strcpy(dadosComuns->dtAbertura,(char*)dtAbertura.arr);
+
+    ULOG_END("proCObterDadosComuns()");
+}
+
+//========================================================
+// Atualiza a tabela de pré-processamento do relatório de
+// PRODUTIVIDADE POR REPRESENTANTE
+//========================================================
+//
+void proCAtualizarProdRepresentante(st_PPRelatorios* _dados, st_vlPPRelatorios* _status)
+{
+    ULOG_START("proCAtualizarProdRepresentante()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct st_PPRelatorios *dados = _dados;
+        struct st_vlPPRelatorios *status = _status;
+
+        int qtFechados;
+        int qtRetorno;
+        int qtTratamento;
+        int qtEncerrados;
+
+        short i_qtFechados = -1;
+        short i_qtRetorno = -1;
+        short i_qtTratamento = -1;
+        short i_qtEncerrados = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    if ( dados->idGrupoAtual>0 && dados->idPessoaUsuario>0 && dados->idUFOperadora>0 )
+    {
+        ULOG("SELECT "
+                 "QTFECHADOS,QTRETORNO,QTTRATAMENTO,QTENCERRADOS "
+             "FROM "
+                 "ATENDIMENTO.AUXATDPRODREPR "
+             " WHERE "
+                 "DTABERTURA = TO_DATE('%s','DD/MM/YYYY') "
+             "AND "
+                 "IDGRUPO = %d "
+             "AND "
+                 "IDPESSOAUSUARIO = %d "
+             "AND "
+                 "IDUFOPERADORA = %d"
+                 ,dados->dtAbertura
+                 ,dados->idGrupoAtual
+                 ,dados->idPessoaUsuario
+                 ,dados->idUFOperadora);
+
+        EXEC SQL WHENEVER SQLERROR DO sql_error_WFPPRelatorios(&sqlca);
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+        EXEC SQL
+            SELECT
+                QTFECHADOS,QTRETORNO,QTTRATAMENTO,QTENCERRADOS
+            INTO
+                :qtFechados:i_qtFechados
+               ,:qtRetorno:i_qtRetorno
+               ,:qtTratamento:i_qtTratamento
+               ,:qtEncerrados:i_qtEncerrados
+            FROM
+                ATENDIMENTO.AUXATDPRODREPR
+            WHERE
+                DTABERTURA = TO_DATE(:dados->dtAbertura,'DD/MM/YYYY')
+            AND
+                IDGRUPO = :dados->idGrupoAtual
+            AND
+                IDPESSOAUSUARIO = :dados->idPessoaUsuario
+            AND
+                IDUFOPERADORA = :dados->idUFOperadora;
+
+	    if( sqlca.sqlcode == -1403 )
+        {
+            ULOG("Vai inserir em ATENDIMENTO.AUXATDPRODREPR");
+            ULOG("      DTABERTURA=%s",dados->dtAbertura);
+            ULOG("         IDGRUPO=%d",dados->idGrupoAtual);
+            ULOG("IDGRUPOOPERADORA=%d",dados->idGrupoOperadora);
+            ULOG("      QTFECHADOS=%d",dados->qtFechados);
+            ULOG("       QTRETORNO=%d",dados->qtRetorno);
+            ULOG("    QTTRATAMENTO=%d",dados->qtTratamento);
+            ULOG("    QTENCERRADOS=%d",dados->qtEncerrados);
+            ULOG(" IDPESSOAUSUARIO=%d",dados->idPessoaUsuario);
+            ULOG("   IDUFOPERADORA=%d",dados->idUFOperadora);
+
+            // Insere o processo na tabela de pré-processamento
+            EXEC SQL
+                INSERT INTO ATENDIMENTO.AUXATDPRODREPR(DTABERTURA,IDPESSOAUSUARIO,IDGRUPO
+                                                         ,IDGRUPOOPERADORA,IDUFOPERADORA
+                                                         ,QTFECHADOS,QTRETORNO,QTTRATAMENTO,QTENCERRADOS
+                                                         ,IDUSUARIOALTERACAO,DTULTIMAALTERACAO)
+                VALUES
+                    (TO_DATE(:dados->dtAbertura,'DD/MM/YYYY')
+                    ,:dados->idPessoaUsuario
+                    ,:dados->idGrupoAtual
+                    ,:dados->idGrupoOperadora
+                    ,:dados->idUFOperadora
+                    ,:dados->qtFechados
+                    ,:dados->qtRetorno
+                    ,:dados->qtTratamento
+                    ,:dados->qtEncerrados
+                    ,:dados->idPessoaUsuario
+                    ,SYSDATE
+                    );
+        }
+        else
+        {
+            // Incrementa o processo na tabela de pré-processamento
+            qtFechados = dados->qtFechados;
+            qtRetorno = dados->qtRetorno;
+            qtTratamento = dados->qtTratamento;
+            qtEncerrados = dados->qtEncerrados;
+
+            ULOG("Vai atualizar ATENDIMENTO.AUXATDPRODREPR");
+            ULOG("     DTABERTURA=%s",dados->dtAbertura);
+            ULOG("        IDGRUPO=%d",dados->idGrupoAtual);
+            ULOG("     QTFECHADOS=%d",qtFechados);
+            ULOG("      QTRETORNO=%d",qtRetorno);
+            ULOG("   QTTRATAMENTO=%d",qtTratamento);
+            ULOG("   QTENCERRADOS=%d",qtEncerrados);
+            ULOG("IDPESSOAUSUARIO=%d",dados->idPessoaUsuario);
+            ULOG("  IDUFOPERADORA=%d",dados->idUFOperadora);
+
+            EXEC SQL
+                UPDATE ATENDIMENTO.AUXATDPRODREPR
+                SET QTFECHADOS = QTFECHADOS + :qtFechados
+                   ,QTRETORNO = QTRETORNO + :qtRetorno
+                   ,QTTRATAMENTO = QTTRATAMENTO + :qtTratamento
+                   ,QTENCERRADOS = QTENCERRADOS + :qtEncerrados
+                   ,IDUSUARIOALTERACAO = :dados->idPessoaUsuario
+                   ,DTULTIMAALTERACAO = SYSDATE
+                WHERE
+                    DTABERTURA = TO_DATE(:dados->dtAbertura,'DD/MM/YYYY')
+                AND
+                    IDGRUPO = :dados->idGrupoAtual
+                AND
+                    IDPESSOAUSUARIO = :dados->idPessoaUsuario
+                AND
+                    IDUFOPERADORA = :dados->idUFOperadora;
+        }
+    }
+    else
+    {
+        ULOG("        IDGRUPO = %d\n"
+             "IDPESSOAUSUARIO = %d\n"
+             "  IDUFOPERADORA = %d",
+                dados->idGrupoAtual,dados->idPessoaUsuario,dados->idUFOperadora);
+
+        ULOGW("Dados incompletos!");
+    }
+
+    ULOG_END("proCAtualizarProdRepresentante()");
+}
+
+//=====================================================================
+// Insere em ATENDIMENTO.ATDRELQTMOTREPREBKO
+// Esta tabela consolida dados para o relatório 4
+// Qtde/Motivos por Representante BKO
+//=====================================================================
+void proCAtualizarQtMotRepreBKO(st_PPRelatorios *dados, st_vlPPRelatorios *status)
+{
+    ULOG_START( "proCAtualizarQtMotRepreBKO()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct st_PPRelatorios *oDados = dados;
+        struct st_vlPPRelatorios *oStatus = status;
+        int qtFechados = 0;
+        short i_qtFechados = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFPPRelatorios(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG("     DTABERTURA='%s'",oDados->dtAbertura);
+    ULOG(" CDAREAREGISTRO=%d",oDados->cdAreaRegistro);
+    ULOG("  IDUFOPERADORA=%d",oDados->idUFOperadora);
+    ULOG("        IDGRUPO=%d",oDados->idGrupoAtual);
+    ULOG("IDPESSOAUSUARIO=%d",oDados->idPessoaUsuario);
+    ULOG("       IDMOTIVO=%d",oDados->idMotivo);
+
+
+    if ( oDados->cdAreaRegistro>0 
+       && oDados->idUFOperadora>0
+       && oDados->idGrupoAtual>0
+       && oDados->idPessoaUsuario>0
+       && oDados->idMotivo>0 )
+    {
+        EXEC SQL 
+            SELECT 
+                QTFECHADOS
+            INTO
+                :qtFechados:i_qtFechados
+            FROM
+                ATENDIMENTO.ATDRELQTMOTREPREBKO
+            WHERE
+                DTABERTURA      = TO_DATE(:oDados->dtAbertura,'DD/MM/YYYY')
+            AND CDAREAREGISTRO  = :oDados->cdAreaRegistro
+            AND IDUFOPERADORA   = :oDados->idUFOperadora
+            AND IDGRUPO         = :oDados->idGrupoAtual
+            AND IDPESSOAUSUARIO = :oDados->idPessoaUsuario
+            AND IDMOTIVO        = :oDados->idMotivo;
+
+        ULOG("     QTFECHADOS=%d",qtFechados);
+
+        if ( -1 == i_qtFechados )
+        {
+            ULOG( "INSERT ATENDIMENTO.ATDRELQTMOTREPREBKO..." );
+
+            EXEC SQL
+                INSERT INTO
+                    ATENDIMENTO.ATDRELQTMOTREPREBKO
+                    (
+                        DTABERTURA,
+                        CDAREAREGISTRO,
+                        IDUFOPERADORA,
+                        IDGRUPO,
+                        IDPESSOAUSUARIO,
+                        IDMOTIVO,
+                        QTFECHADOS,
+                        DTULTIMAALTERACAO
+                    )
+                    VALUES
+                    (
+                        TO_DATE(:oDados->dtAbertura,'DD/MM/YYYY'),
+                        :oDados->cdAreaRegistro,
+                        :oDados->idUFOperadora,
+                        :oDados->idGrupoAtual,
+                        :oDados->idPessoaUsuario,
+                        :oDados->idMotivo,
+                        1,
+                        SYSDATE
+                    );
+        }
+        else
+        {
+            ULOG( "UPDATE ATENDIMENTO.ATDRELQTMOTREPREBKO..." );
+
+            EXEC SQL
+                UPDATE
+                    ATENDIMENTO.ATDRELQTMOTREPREBKO
+                SET 
+                    QTFECHADOS = QTFECHADOS + 1
+                WHERE
+                    DTABERTURA      = TO_DATE(:oDados->dtAbertura,'DD/MM/YYYY')
+                AND CDAREAREGISTRO  = :oDados->cdAreaRegistro
+                AND IDUFOPERADORA   = :oDados->idUFOperadora
+                AND IDGRUPO         = :oDados->idGrupoAtual
+                AND IDPESSOAUSUARIO = :oDados->idPessoaUsuario
+                AND IDMOTIVO        = :oDados->idMotivo;
+        }
+    }
+    else
+    {
+        ULOG( "DADOS INCOMPLETOS PARA INSERT EM ATENDIMENTO.ATDRELQTMOTREPREBKO..." );
+    }
+
+    ULOG_END( "proCAtualizarQtMotRepreBKO()" );
+}
+
+//========================================================
+// Atualiza a tabela de pré-processamento do relatório de
+// PALITAGEM
+//========================================================
+//
+void proCAtualizarAtdPalitagem( int _idUFOperadora
+                               ,int _idContato
+                               ,short _idContatoFlag
+                               ,long _idPessoaUsuarioAbertura
+                               ,short _idPessoaUsuarioAberturaFlag
+                               ,int _idGrupoAbertura
+                               ,short _idGrupoAberturaFlag
+                               ,int _idUsuarioAlteracao
+                               ,short _idUsuarioAlteracaoFlag)
+{
+    ULOG_START("proCAtualizarAtdPalitagem()");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct
+        {
+            char dtAbertura[256];
+            int qtPalitagem;
+            int idContato;
+            long idPessoaUsuarioAbertura;
+            int idGrupoAbertura;
+            int idUFOperadora;
+            int idUF;
+            int idUsuarioAlteracao;
+        } oDados;
+
+        struct
+        {
+            short dtAbertura;
+            short qtPalitagem;
+            short idContato;
+            short idPessoaUsuarioAbertura;
+            short idGrupoAbertura;
+            short idUFOperadora;
+            short idUF;
+            short idUsuarioAlteracao;
+        } oStatus;
+
+        int iRegistroExiste = 0;
+    EXEC SQL END DECLARE SECTION;
+
+    memset(&oDados,  0,  sizeof(oDados));
+    memset(&oStatus, -1, sizeof(oStatus));
+
+    // Pega a data e hora formatando em 30/30min
+    EXEC SQL 
+        SELECT 
+            TO_CHAR(SYSDATE, 'DD/MM/YYYY')||
+            TO_CHAR(TO_NUMBER(TO_CHAR(SYSDATE, 'hh24')),'09')||':'||
+            RTRIM(LTRIM(TO_CHAR(DECODE(
+                SIGN((TO_NUMBER(TO_CHAR(SYSDATE, 'MI') - 29))),1, 30,00),'09')))
+        INTO 
+            :oDados.dtAbertura
+        FROM 
+            DUAL;
+    oStatus.dtAbertura = 1;
+
+    // Como padrão a quantidade de palitagem inicia em 1
+    oDados.qtPalitagem = 1;
+    oStatus.qtPalitagem = 1;
+
+    oDados.idContato = _idContato;
+    oStatus.idContato = _idContatoFlag;
+
+    oDados.idPessoaUsuarioAbertura = _idPessoaUsuarioAbertura;
+    oStatus.idPessoaUsuarioAbertura = _idPessoaUsuarioAberturaFlag;
+
+    oDados.idGrupoAbertura = _idGrupoAbertura;
+    oStatus.idGrupoAbertura = _idGrupoAberturaFlag;
+
+    oDados.idUFOperadora = _idUFOperadora;
+    oStatus.idUFOperadora = 1;
+
+    // Pega a informação de UF
+    EXEC SQL 
+        SELECT 
+            IDUF
+        INTO
+            :oDados.idUF
+        FROM 
+            CUSTOMER.UFOPERADORA 
+        WHERE 
+            IDUFOPERADORA = :oDados.idUFOperadora
+        AND 
+            ROWNUM < 2;
+
+    oStatus.idUF = 1;
+
+    oDados.idUsuarioAlteracao = _idUsuarioAlteracao;
+    oStatus.idUsuarioAlteracao = _idUsuarioAlteracaoFlag;
+
+    // Verifica se o registro existe
+    EXEC SQL
+        SELECT 
+            COUNT(1)
+        INTO 
+            :iRegistroExiste
+        FROM
+            ATENDIMENTO.AUXATDPALITAGEM
+        WHERE
+            DTABERTURA = TO_DATE(:oDados.dtAbertura, 'DD/MM/YYYY HH24:MI')
+        AND IDCONTATO = :oDados.idContato
+        AND IDPESSOAUSUARIO = :oDados.idPessoaUsuarioAbertura
+        AND IDGRUPO = :oDados.idGrupoAbertura
+        AND IDUFOPERADORA = :oDados.idUFOperadora
+        AND IDUF = :oDados.idUF
+        AND ROWNUM < 2;
+
+    // Caso já exista na base, faça um update
+    if(iRegistroExiste > 0)
+    {
+        ULOG("UPDATE AUXATDPALITAGEM");
+
+        EXEC SQL
+            UPDATE ATENDIMENTO.AUXATDPALITAGEM SET 
+                QTPALITAGEM = QTPALITAGEM + 1,
+                DTULTIMAALTERACAO = SYSDATE
+            WHERE
+                DTABERTURA = TO_DATE(:oDados.dtAbertura, 'DD/MM/YYYY HH24:MI')
+                AND IDCONTATO = :oDados.idContato
+                AND IDPESSOAUSUARIO = :oDados.idPessoaUsuarioAbertura
+                AND IDGRUPO = :oDados.idGrupoAbertura
+                AND IDUFOPERADORA = :oDados.idUFOperadora
+                AND IDUF = :oDados.idUF;
+    }
+    else // Insert
+    {
+        ULOG("INSERT AUXATDPALITAGEM");
+
+        EXEC SQL 
+            INSERT INTO ATENDIMENTO.AUXATDPALITAGEM 
+            (
+                DTABERTURA,
+                 QTPALITAGEM,
+                  IDCONTATO,
+                   IDPESSOAUSUARIO,
+                    IDGRUPO,
+                     IDUFOPERADORA,
+                      IDUF,
+                       IDUSUARIOALTERACAO,
+                        DTULTIMAALTERACAO 
+            )
+            VALUES 
+            (
+                TO_DATE(:oDados.dtAbertura, 'DD/MM/YYYY HH24:MI'),
+                 :oDados.qtPalitagem,
+                  :oDados.idContato,
+                   :oDados.idPessoaUsuarioAbertura,
+                    :oDados.idGrupoAbertura,
+                     :oDados.idUFOperadora,
+                      :oDados.idUF,
+                       :oDados.idUsuarioAlteracao,
+                        SYSDATE 
+            );
+    }
+
+    ULOG_END("proCAtualizarAtdPalitagem()");
+}
+
+void sql_error_WFPPRelatorios( sqlca * sqlca )
+{
+    ULOGE("sql_error_WFAtdInBoxAdq:sqlcode=%d,sqlerrmc=%.70s"
+                            ,sqlca->sqlcode
+                            ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

@@ -1,0 +1,678 @@
+    /**
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author
+ * @version $Revision: 1.1.2.5.6.2 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/05 17:23:54 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include<ctype.h>
+
+#include "../include/cWFAtendimento.h"
+#include "../../../commons/SmallString.h"
+#include "../include/queryMacroFila.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+void sql_error_WFAtendimento(sqlca*sqlca);
+
+bool proCAlterarWFAtendimentoPriorizacao(st_Atendimento* dados, st_vlAtendimento* status);
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+    #include "../include/stWFAtendimento.h"
+EXEC SQL END DECLARE SECTION;
+
+
+bool proCExcluirWFAtendimento(st_Atendimento* dados, st_vlAtendimento* status, XMLDPR *xmlDpr)
+{
+    ULOG_START( "proCExcluirWFAtendimento()" );
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        long idAtendimento = dados->idAtendimento;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+
+    ULOG("idAtendimento=%d",idAtendimento);
+
+    EXEC SQL 
+        DELETE
+            atendimento.Atendimento
+        WHERE
+            idAtendimento = :idAtendimento;
+
+    // ==> SM324--DPR--DEZ/2006--Cassio
+    if ( xmlDpr )
+    {
+        AtendimentoDPR atendimentodpr;
+
+        atendimentodpr.setIdAtendimento(idAtendimento);
+        atendimentodpr.setOpCode(OPCODE_DELETE);
+
+        xmlDpr->atendimentovo.inserir(&atendimentodpr);
+    }
+    // <== SM324--DPR--DEZ/2006--Cassio
+
+    ULOG_END( "proCExcluirWFAtendimento()" );
+    return true;
+}
+
+bool proCAlterarWFAtendimento(st_Atendimento* dados, st_vlAtendimento* status, XMLDPR *xmlDpr)
+{
+    ULOG_START( "proCAlterarWFAtendimento()" );
+
+    AtendimentoDPR atendimentodpr;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_Atendimento   oDados;
+        struct st_vlAtendimento oStatus;
+        char idAtendimento[32];
+
+        struct 
+        {
+            VARCHAR dtAbertura[64];
+            VARCHAR dtPrazoFinalInterno[64];
+            VARCHAR vlPesoAtendimento[256];
+            int idContato;
+            int idCanal;
+            int idProcedencia;
+            int idTipoCarteira;
+            int idSegmentacao;
+            int qtInsistencia;
+        } DadosDPR;
+
+        struct 
+        {
+            short dtAbertura;
+            short dtPrazoFinalInterno;
+            short vlPesoAtendimento;
+            short idContato;
+            short idCanal;
+            short idProcedencia;
+            short idTipoCarteira;
+            short idSegmentacao;
+            short qtInsistencia;
+        } iDadosDPR;
+
+        char query[800] = "UPDATE atendimento.Atendimento SET ";
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+    memset(&DadosDPR,0,sizeof(DadosDPR));
+    memset(&iDadosDPR,-1,sizeof(iDadosDPR));
+
+    sprintf(idAtendimento,"%ld",dados->idAtendimento);
+
+    ULOG("idAtendimento=%s",idAtendimento);
+
+    EXEC SQL
+        SELECT 
+            TO_CHAR(DTABERTURA,'DD/MM/YYYY HH24:MI:SS'),
+            TO_CHAR(DTPRAZOFINALINTERNO,'DD/MM/YYYY HH24:MI:SS'),
+            VLPESOATENDIMENTO,
+            IDCONTATO,
+            IDCANAL,
+            IDPROCEDENCIA,
+            IDTIPOCARTEIRA,
+            IDSEGMENTACAO,
+            QTINSISTENCIA
+        INTO
+            DadosDPR:iDadosDPR
+        FROM
+            ATENDIMENTO.ATENDIMENTO
+        WHERE
+            IDATENDIMENTO = :idAtendimento;
+
+    CONVIND(DadosDPR.dtAbertura,iDadosDPR.dtAbertura);
+    CONVIND(DadosDPR.dtPrazoFinalInterno,iDadosDPR.dtPrazoFinalInterno);
+    CONVIND(DadosDPR.vlPesoAtendimento,iDadosDPR.vlPesoAtendimento);
+
+    atendimentodpr.setIdAtendimento(dados->idAtendimento);
+    atendimentodpr.setDtAbertura((char*)DadosDPR.dtAbertura.arr);
+    atendimentodpr.setDtPrazoFinalInterno((char*)DadosDPR.dtPrazoFinalInterno.arr);
+    atendimentodpr.setIdContato(DadosDPR.idContato);
+    atendimentodpr.setQtInsistencia(DadosDPR.qtInsistencia);
+    atendimentodpr.setIdCanal(DadosDPR.idCanal);
+    atendimentodpr.setIdProcedencia(DadosDPR.idProcedencia);
+    atendimentodpr.setIdTipoCarteira(DadosDPR.idTipoCarteira);
+    atendimentodpr.setIdSegmentacao(DadosDPR.idSegmentacao);
+    atendimentodpr.setVlPesoAtendimento((char*)DadosDPR.vlPesoAtendimento.arr);
+
+    bool separa = false;
+
+    if (status->dtAbertura != -1)
+    {
+        atendimentodpr.setDtAbertura(oDados.dtAbertura);
+        montaUpdate("dtAbertura", oDados.dtAbertura, TIPO_DATAHORA);
+    }
+
+    if (status->idContato != -1)
+    {
+        atendimentodpr.setIdContato(oDados.idContato);
+        montaUpdate("idContato", oDados.idContato, TIPO_INT);
+    }
+
+    if (status->dtPrazoFinalInterno != -1)
+    {
+        atendimentodpr.setDtPrazoFinalInterno(oDados.dtPrazoFinalInterno);
+        montaUpdate("dtPrazoFinalInterno", oDados.dtPrazoFinalInterno, TIPO_DATAHORA);
+    }
+
+    if (status->qtInsistencia != -1)
+    {
+        atendimentodpr.setQtInsistencia(oDados.qtInsistencia);
+        montaUpdate("qtInsistencia", oDados.qtInsistencia, TIPO_INT);
+    }
+
+    if (status->inAlarme != -1) 
+        montaUpdate("inAlarme", oDados.inAlarme, TIPO_INT);
+
+    if (status->idCanal != -1) 
+    {
+        atendimentodpr.setIdCanal(oDados.idCanal);
+        montaUpdate("idCanal", oDados.idCanal, TIPO_INT);
+    }
+
+    if (status->idProcedencia != -1)
+    {
+        atendimentodpr.setIdProcedencia(oDados.idProcedencia);
+        montaUpdate("idProcedencia", oDados.idProcedencia, TIPO_INT);
+    }
+
+    if (status->idTipoCarteira != -1)
+    {
+        atendimentodpr.setIdTipoCarteira(oDados.idTipoCarteira);
+        montaUpdate("idTipoCarteira", oDados.idTipoCarteira, TIPO_INT);
+    }
+
+    if (status->idSegmentacao != -1)
+    {
+        atendimentodpr.setIdSegmentacao(oDados.idSegmentacao);
+        montaUpdate("idSegmentacao", oDados.idSegmentacao, TIPO_INT);
+    }
+
+    if (status->idPessoaUsuarioAbertura != -1) 
+        montaUpdate("idPessoaUsuarioAbertura", oDados.idPessoaUsuarioAbertura, TIPO_LONG);
+
+    if (status->idGrupoAbertura != -1) 
+        montaUpdate("idGrupoAbertura", oDados.idGrupoAbertura, TIPO_INT);
+
+    if (status->dtPrazoFinalAnatel != -1) 
+        montaUpdate("dtPrazoFinalAnatel", oDados.dtPrazoFinalAnatel, TIPO_DATAHORA);
+
+    //if (status->idDiscador != -1) 
+    //    montaUpdate("idDiscador", oDados.idDiscador, 1);
+
+    if (status->nrNivel != -1) 
+        montaUpdate("nrNivel", oDados.nrNivel, TIPO_INT);
+
+    if (status->idFase != -1) 
+        montaUpdate("idFase", oDados.idFase, TIPO_INT);
+
+    if (status->qtHorasPrazoAtendimento != -1) 
+        montaUpdate("qtHorasPrazoAtendimento", oDados.qtHorasPrazoAtendimento, TIPO_INT);
+
+    if (status->vlPesoAtendimento != -1)
+    {
+        atendimentodpr.setVlPesoAtendimento(oDados.vlPesoAtendimento);
+        montaUpdate("vlPesoAtendimento", oDados.vlPesoAtendimento, TIPO_CHAR);
+    }
+
+    if (status->idTipoRetornoContato != -1) 
+        montaUpdate("idTipoRetornoContato", oDados.idTipoRetornoContato, TIPO_INT);
+
+    if (status->idTipoAbertura != -1) 
+        montaUpdate("idTipoAbertura", oDados.idTipoAbertura, TIPO_INT);
+
+    if (status->idPessoaConta != -1) 
+        montaUpdate("idPessoaConta", oDados.idPessoaConta, TIPO_INT);
+
+    if (status->idUsuarioAlteracao != -1) 
+        montaUpdate("idUsuarioAlteracao", oDados.idUsuarioAlteracao, TIPO_INT);
+
+    if (status->dtUltimaOperacaoExcFila != -1) 
+        montaUpdate("dtUltimaOperacaoExcFila", oDados.dtUltimaOperacaoExcFila, TIPO_DATAHORA);
+
+    if (status->dtJanelaPortout != -1) 
+        montaUpdate("dtJanelaPortout", oDados.dtJanelaPortout, TIPO_DATAHORA);
+
+    if (status->sgOperadoraSolicitante != -1) 
+        montaUpdate("sgOperadoraSolicitante", oDados.sgOperadoraSolicitante, TIPO_CHAR);
+
+    sprintf(idAtendimento,"%ld",dados->idAtendimento);
+
+    strcat(query," WHERE idAtendimento = ");
+    strcat(query,idAtendimento);
+
+    ULOG("QUERY=[%s]",query);
+
+    EXEC SQL EXECUTE IMMEDIATE :query;
+
+    // A tabela de atendimentoPriorizacao possui os mesmos campos de atendimento 
+    // entre outros e estes devem estar em sincronia. Apenas o tempo de vida dos
+    // registros de atendimentoPriorizazao é mais curto. Jan/2006 - Cassio
+    proCAlterarWFAtendimentoPriorizacao(dados,status);
+
+    // ==> SM324--DPR--DEZ/2006--Cassio
+    if ( xmlDpr )
+    {
+        atendimentodpr.setOpCode(OPCODE_UPDATE);
+
+        xmlDpr->atendimentovo.inserir(&atendimentodpr);
+    }
+    // <== SM324--DPR--DEZ/2006--Cassio
+
+    ULOG_END( "proCAlterarWFAtendimento()" );
+
+    return true;
+}
+
+bool proCAlterarWFAtendimentoPriorizacao(st_Atendimento* dados, st_vlAtendimento* status)
+{
+    ULOG_START( "proCAlterarWFAtendimentoPriorizacao()" );
+
+    struct sqlca sqlca;
+    char idAtendimento[32];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_Atendimento   oDados;
+        struct st_vlAtendimento oStatus;
+
+        char query[800] = "UPDATE atendimento.AtendimentoPriorizacao SET ";
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimento(&sqlca);
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    bool separa = false;
+
+    if (status->dtAbertura != -1)
+        montaUpdate("dtAbertura", oDados.dtAbertura, TIPO_DATAHORA);
+
+    if (status->idContato != -1) 
+        montaUpdate("idContato", oDados.idContato, TIPO_INT);
+
+    if (status->dtPrazoFinalInterno != -1)
+        montaUpdate("dtPrazoFinalInterno", oDados.dtPrazoFinalInterno, TIPO_DATAHORA);
+
+    if (status->qtInsistencia != -1) 
+        montaUpdate("qtInsistencia", oDados.qtInsistencia, TIPO_INT);
+
+    if (status->inAlarme != -1) 
+        montaUpdate("inAlarme", oDados.inAlarme, TIPO_INT);
+
+    if (status->idCanal != -1) 
+        montaUpdate("idCanal", oDados.idCanal, TIPO_INT);
+
+    if (status->idProcedencia != -1) 
+        montaUpdate("idProcedencia", oDados.idProcedencia, TIPO_INT);
+
+    if (status->idTipoCarteira != -1) 
+        montaUpdate("idTipoCarteira", oDados.idTipoCarteira, TIPO_INT);
+
+    if (status->idSegmentacao != -1) 
+        montaUpdate("idSegmentacao", oDados.idSegmentacao, TIPO_INT);
+
+    if (status->idPessoaUsuarioAbertura != -1) 
+        montaUpdate("idPessoaUsuarioAbertura", oDados.idPessoaUsuarioAbertura, TIPO_LONG);
+
+    if (status->idGrupoAbertura != -1) 
+        montaUpdate("idGrupoAbertura", oDados.idGrupoAbertura, TIPO_INT);
+
+    if (status->dtPrazoFinalAnatel != -1) 
+        montaUpdate("dtPrazoFinalAnatel", oDados.dtPrazoFinalAnatel, TIPO_DATAHORA);
+
+    //if (status->idDiscador != -1) 
+    //    montaUpdate("idDiscador", oDados.idDiscador, 1);
+
+    if (status->nrNivel != -1) 
+        montaUpdate("nrNivel", oDados.nrNivel, TIPO_INT);
+
+    if (status->idFase != -1) 
+        montaUpdate("idFase", oDados.idFase, TIPO_INT);
+
+    if (status->qtHorasPrazoAtendimento != -1) 
+        montaUpdate("qtHorasPrazoAtendimento", oDados.qtHorasPrazoAtendimento, TIPO_INT);
+
+    if (status->vlPesoAtendimento != -1) 
+        montaUpdate("vlPesoAtendimento", oDados.vlPesoAtendimento, TIPO_CHAR);
+
+    if (status->idTipoRetornoContato != -1) 
+        montaUpdate("idTipoRetornoContato", oDados.idTipoRetornoContato, TIPO_INT);
+
+    if (status->idTipoAbertura != -1) 
+        montaUpdate("idTipoAbertura", oDados.idTipoAbertura, TIPO_INT);
+
+    if (status->idPessoaConta != -1) 
+        montaUpdate("idPessoaConta", oDados.idPessoaConta, TIPO_INT);
+
+    if (status->dtUltimaOperacaoExcFila != -1) 
+        montaUpdate("dtUltimaOperacaoExcFila", oDados.dtUltimaOperacaoExcFila, TIPO_DATAHORA);
+
+    if (status->dtJanelaPortout != -1) 
+        montaUpdate("dtJanelaPortout", oDados.dtJanelaPortout, TIPO_DATAHORA);
+
+    if (status->sgOperadoraSolicitante != -1) 
+        montaUpdate("sgOperadoraSolicitante", oDados.sgOperadoraSolicitante, TIPO_CHAR);
+
+    sprintf(idAtendimento,"%ld",dados->idAtendimento);
+
+    strcat(query," WHERE idAtendimento = ");
+    strcat(query,idAtendimento);
+
+    ULOG("QUERY=[%s]",query);
+
+    EXEC SQL EXECUTE IMMEDIATE :query;
+
+    ULOG_END( "proCAlterarWFAtendimentoPriorizacao()" );
+
+    return true;
+}
+
+long proCIncluirWFAtendimento(st_Atendimento *dados, st_vlAtendimento *status, XMLDPR *xmlDpr)
+{
+    ULOG_START( "proCIncluirWFAtendimento()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct st_Atendimento   *oDados = dados;
+        struct st_vlAtendimento *oStatus = status;
+        VARCHAR varOraIdPerfilConsultorAtd[11];
+        VARCHAR varOraIdFornecedorConsultorAtd[11];
+        VARCHAR varOraIdSiteConsultorAtd[11];
+        
+        short statOraIdPerfilConsultorAtd=-1;
+        short statOraIdFornecedorConsultorAtd=-1;
+        short statOraIdSiteConsultorAtd=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimento(&sqlca);
+
+    // Acerta valores de colunas com constraint NOT NULL que por
+    // acaso não tenham sido preenchidas pelo cliente do método.
+    if ( -1 == oStatus->qtInsistencia )
+    {
+        oDados->qtInsistencia = 0;
+        oStatus->qtInsistencia = 1;
+    }
+    if ( -1 == oStatus->inAlarme )
+    {
+        oDados->inAlarme = 0;
+        oStatus->inAlarme = 1;
+    }
+    if ( -1 == oStatus->vlPesoAtendimento )
+    {
+        strcpy(oDados->vlPesoAtendimento,"0");
+        oStatus->vlPesoAtendimento = 1;
+    }
+    if ( -1 == oStatus->idTipoRetornoContato )
+    {
+        oDados->idTipoRetornoContato = 0;
+        oStatus->idTipoRetornoContato = 1;
+    }
+
+    EXEC SQL SELECT ATENDIMENTO.ATENDIMENTOSQ.NEXTVAL INTO :oDados->idAtendimento FROM DUAL;
+
+    ULOG("               dtAbertura status=%d,valor=%s",oStatus->dtAbertura,oDados->dtAbertura);
+    ULOG("      dtPrazoFinalInterno status=%d,valor=%s",oStatus->dtPrazoFinalInterno,oDados->dtPrazoFinalInterno);
+    ULOG("            qtInsistencia status=%d,valor=%d",oStatus->qtInsistencia,oDados->qtInsistencia);
+    ULOG("                 inAlarme status=%d,valor=%d",oStatus->inAlarme,oDados->inAlarme);
+    ULOG("           idTipoCarteira status=%d,valor=%d",oStatus->idTipoCarteira,oDados->idTipoCarteira);
+    ULOG("            idSegmentacao status=%d,valor=%d",oStatus->idSegmentacao,oDados->idSegmentacao);
+    ULOG("       dtPrazoFinalAnatel status=%d,valor=%s",oStatus->dtPrazoFinalAnatel,oDados->dtPrazoFinalAnatel);
+    ULOG("                  nrNivel status=%d,valor=%d",oStatus->nrNivel,oDados->nrNivel);
+    ULOG("  qtHorasPrazoAtendimento status=%d,valor=%d",oStatus->qtHorasPrazoAtendimento,oDados->qtHorasPrazoAtendimento);
+    ULOG("        vlPesoAtendimento status=%d,valor=%s",oStatus->vlPesoAtendimento,oDados->vlPesoAtendimento);
+    ULOG("     idTipoRetornoContato status=%d,valor=%d",oStatus->idTipoRetornoContato,oDados->idTipoRetornoContato);
+    ULOG("       idUsuarioAlteracao status=%d,valor=%d",oStatus->idUsuarioAlteracao,oDados->idUsuarioAlteracao);
+    ULOG("      dtPrazoFinalCPrevio status=%d,valor=%s",oStatus->dtPrazoFinalCPrevio,oDados->dtPrazoFinalCPrevio);
+    ULOG("           idTipoAbertura status=%d,valor=%d",oStatus->idTipoAbertura,oDados->idTipoAbertura);
+    ULOG("           cdAreaRegistro status=%d,valor=%d",oStatus->cdAreaRegistro,oDados->cdAreaRegistro);
+    ULOG("idAgrupamentoEstadoTpProc status=%d,valor=%d",oStatus->idAgrupamentoEstadoTpProc,oDados->idAgrupamentoEstadoTpProc);
+    ULOG("        idLinhaTelefonica status=%d,valor=%d",oStatus->idLinhaTelefonica,oDados->idLinhaTelefonica);
+    ULOG("            idEstadoLinha status=%d,valor=%d",oStatus->idEstadoLinha,oDados->idEstadoLinha);
+    ULOG("   idPessoaLinhaHistorico status=%d,valor=%ld",oStatus->idPessoaLinhaHistorico,oDados->idPessoaLinhaHistorico);
+    ULOG("              idTipoLinha status=%d,valor=%d",oStatus->idTipoLinha,oDados->idTipoLinha);
+    ULOG("            idUFOperadora status=%d,valor=%d",oStatus->idUFOperadora,oDados->idUFOperadora);
+    ULOG("      sgTipoPortabilidade status=%d,valor=%s",oStatus->sgTipoPortabilidade,oDados->sgTipoPortabilidade);
+    ULOG("   sgOperadoraSolicitante status=%d,valor=%s",oStatus->sgOperadoraSolicitante,oDados->sgOperadoraSolicitante);
+    ULOG("   idAtendimentoProtocolo status=%d,valor=%s",oStatus->idAtendimentoProtocolo,oDados->idAtendimentoProtocolo);
+    ULOG(" nrProtocoloPortabilidade status=%d,valor=%s",oStatus->nrProtocoloPortabilidade,oDados->nrProtocoloPortabilidade);
+    ULOG("            idPessoaConta status=%d,valor=%d",oStatus->idPessoaConta,oDados->idPessoaConta);
+    ULOG("          dtJanelaPortout status=%d,valor=%s",oStatus->dtJanelaPortout,oDados->dtJanelaPortout);
+    ULOG("    sgRegraEncaminhamento status=%d,valor=%s",oStatus->sgRegraEncaminhamento,oDados->sgRegraEncaminhamento);
+    ULOG("       sgFluxoAtendimento status=%d,valor=%s",oStatus->sgFluxoAtendimento,oDados->sgFluxoAtendimento);
+    ULOG("             nrOrdemVenda status=%d,valor=%s",oStatus->nrOrdemVenda,oDados->nrOrdemVenda);
+    ULOG("           idAtendimento  -------- valor=%ld",oDados->idAtendimento);
+    ULOG("               idContato  -------- valor=%d",oDados->idContato);
+    ULOG("                 idCanal  -------- valor=%d",oDados->idCanal);
+    ULOG("           idProcedencia  -------- valor=%d",oDados->idProcedencia);
+    ULOG("         idGrupoAbertura  -------- valor=%d",oDados->idGrupoAbertura);
+    ULOG("                  idFase  -------- valor=%d",oDados->idFase);
+    ULOG(" idPessoaUsuarioAbertura  -------- valor=%d",oDados->idPessoaUsuarioAbertura);
+
+    // Se não recebeu um número de protocolo obtém o próximo número disponível
+    // if ( oStatus->nrProtocolo == -1 )
+    // {
+    //     ULOG("vai obter nrProtocolo...");
+    // 
+    //     EXEC SQL SELECT ATENDIMENTO.FN_PROTOCOLO INTO :nrProtocolo:i_nrProtocolo FROM DUAL;
+    // 
+    //     CONVIND(nrProtocolo,i_nrProtocolo);
+    // 
+    //     strcpy(oDados->nrProtocolo,(char*)nrProtocolo.arr);
+    //     strcpy(dados->nrProtocolo,(char*)nrProtocolo.arr);
+    // 
+    //     oStatus->nrProtocolo = 1;
+    //     ULOG("nrProtocolo obtido='%s'",oDados->nrProtocolo);
+    // }
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG ("Vai obter dados de 'meucliente' em USUARIO...");
+
+    EXEC SQL
+        SELECT
+            IDPERFILCONSULTORATD,
+            IDFORNECEDORCONSULTORATD,
+            IDSITECONSULTORATD
+        INTO
+            :varOraIdPerfilConsultorAtd:statOraIdPerfilConsultorAtd,
+            :varOraIdFornecedorConsultorAtd:statOraIdFornecedorConsultorAtd,
+            :varOraIdSiteConsultorAtd:statOraIdSiteConsultorAtd
+        FROM
+            ACESSO.USUARIO
+        WHERE
+            IDPESSOAUSUARIO = :oDados->idPessoaUsuarioAbertura;
+
+    if (sqlca.sqlcode == 0)
+    {
+        CONVIND(varOraIdPerfilConsultorAtd,statOraIdPerfilConsultorAtd);
+        CONVIND(varOraIdFornecedorConsultorAtd,statOraIdFornecedorConsultorAtd);
+        CONVIND(varOraIdSiteConsultorAtd,statOraIdSiteConsultorAtd);
+
+        //strcpy(oDados->idPerfilConsultorAtd    ,(char*)varOraIdPerfilConsultorAtd.arr);
+        //strcpy(oDados->idFornecedorConsultorAtd,(char*)varOraIdFornecedorConsultorAtd.arr);
+        //strcpy(oDados->idSiteConsultorAtd      ,(char*)varOraIdSiteConsultorAtd.arr);
+
+        strcpy(dados->idPerfilConsultorAtd     ,(char*)varOraIdPerfilConsultorAtd.arr);
+        strcpy(dados->idFornecedorConsultorAtd ,(char*)varOraIdFornecedorConsultorAtd.arr);
+        strcpy(dados->idSiteConsultorAtd       ,(char*)varOraIdSiteConsultorAtd.arr);
+
+        //status->idPerfilConsultorAtd     = oStatus->idPerfilConsultorAtd     = statOraIdPerfilConsultorAtd;
+        //status->idFornecedorConsultorAtd = oStatus->idFornecedorConsultorAtd = statOraIdFornecedorConsultorAtd;
+        //status->idSiteConsultorAtd       = oStatus->idSiteConsultorAtd       = statOraIdSiteConsultorAtd;
+
+        status->idPerfilConsultorAtd     = statOraIdPerfilConsultorAtd;
+        status->idFornecedorConsultorAtd = statOraIdFornecedorConsultorAtd;
+        status->idSiteConsultorAtd       = statOraIdSiteConsultorAtd;
+
+        ULOG("     idPerfilConsultorAtd status=%d,valor='%s'",oStatus->idPerfilConsultorAtd,oDados->idPerfilConsultorAtd);
+        ULOG(" idFornecedorConsultorAtd status=%d,valor='%s'",oStatus->idFornecedorConsultorAtd,oDados->idFornecedorConsultorAtd);
+        ULOG("       idSiteConsultorAtd status=%d,valor='%s'",oStatus->idSiteConsultorAtd,oDados->idSiteConsultorAtd);
+    }
+    else
+    {
+        ULOG("Dados do usuário não encontrados.");
+    }
+
+    ULOG ("Vai inserir em ATENDIMENTO...");
+
+    EXEC SQL
+        INSERT INTO
+            ATENDIMENTO.ATENDIMENTO
+            (
+                IDATENDIMENTO,
+                DTABERTURA,
+                IDCONTATO,
+                DTPRAZOFINALINTERNO,
+                QTINSISTENCIA,
+                INALARME,
+                IDCANAL,
+                IDPROCEDENCIA,
+                IDTIPOCARTEIRA,
+                IDSEGMENTACAO,
+                IDPESSOAUSUARIOABERTURA,
+                IDGRUPOABERTURA,
+                DTPRAZOFINALANATEL,
+                NRNIVEL,
+                IDFASE,
+                QTHORASPRAZOATENDIMENTO,
+                VLPESOATENDIMENTO,
+                IDTIPORETORNOCONTATO,
+                IDUSUARIOALTERACAO,
+                DTULTIMAALTERACAO,
+                DTPRAZOFINALCPREVIO,
+                IDTIPOABERTURA,
+                CDAREAREGISTRO,
+                IDAGRUPAMENTOESTADOTPPROC,
+                IDANDAMENTOATUAL,
+                IDGRUPOATUAL,
+                IDLINHATELEFONICA,
+                IDESTADOLINHA,
+                IDPESSOALINHAHISTORICO,
+                IDPESSOAUSUARIOATUAL,
+                IDTIPOLINHA,
+                IDUFOPERADORA,
+                IDATENDIMENTOPROTOCOLO,
+                SGTIPOPORTABILIDADE,
+                SGOPERADORASOLICITANTE,
+                NRPROTOCOLOPORTABILIDADE,
+                IDPESSOACONTA,
+                DTJANELAPORTOUT,
+                DTULTIMAOPERACAOEXCFILA,
+                SGREGRAENCAMINHAMENTO,
+                SGFLUXOATENDIMENTO,
+                IDPERFILCONSULTORATD,
+                IDFORNECEDORCONSULTORATD,
+                IDSITECONSULTORATD,
+                NRORDEMVENDA
+            )
+            VALUES
+            (
+                :oDados->idAtendimento,
+                TO_DATE(:oDados->dtAbertura:oStatus->dtAbertura,'DD/MM/YYYY HH24:MI:SS'),
+                :oDados->idContato,
+                TO_DATE(:oDados->dtPrazoFinalInterno:oStatus->dtPrazoFinalInterno,'DD/MM/YYYY HH24:MI:SS'),
+                :oDados->qtInsistencia:oStatus->qtInsistencia,
+                :oDados->inAlarme:oStatus->inAlarme,
+                :oDados->idCanal,
+                :oDados->idProcedencia,
+                :oDados->idTipoCarteira:oStatus->idTipoCarteira,
+                :oDados->idSegmentacao:oStatus->idSegmentacao,
+                :oDados->idPessoaUsuarioAbertura,
+                :oDados->idGrupoAbertura,
+                TO_DATE(:oDados->dtPrazoFinalAnatel:oStatus->dtPrazoFinalAnatel,'DD/MM/YYYY HH24:MI:SS'),
+                :oDados->nrNivel:oStatus->nrNivel,
+                :oDados->idFase,
+                :oDados->qtHorasPrazoAtendimento:oStatus->qtHorasPrazoAtendimento,
+                TO_NUMBER(:oDados->vlPesoAtendimento:oStatus->vlPesoAtendimento),
+                :oDados->idTipoRetornoContato:oStatus->idTipoRetornoContato,
+                :oDados->idUsuarioAlteracao:oStatus->idUsuarioAlteracao,
+                SYSDATE, // dtUltimaAlteracao
+                TO_DATE(:oDados->dtPrazoFinalCPrevio:oStatus->dtPrazoFinalCPrevio,'DD/MM/YYYY HH24:MI:SS'),
+                :oDados->idTipoAbertura:oStatus->idTipoAbertura,
+                :oDados->cdAreaRegistro:oStatus->cdAreaRegistro,
+                :oDados->idAgrupamentoEstadoTpProc:oStatus->idAgrupamentoEstadoTpProc,
+                NULL, // idAndamentoAtual
+                NULL, // idGrupoAtual
+                :oDados->idLinhaTelefonica:oStatus->idLinhaTelefonica,
+                :oDados->idEstadoLinha:oStatus->idEstadoLinha,
+                :oDados->idPessoaLinhaHistorico:oStatus->idPessoaLinhaHistorico,
+                DECODE(:oDados->sgFluxoAtendimento,'MC1',:oDados->idPessoaUsuarioAbertura,NULL), // idPessoaUsuarioAtual
+                :oDados->idTipoLinha:oStatus->idTipoLinha,
+                :oDados->idUFOperadora:oStatus->idUFOperadora,
+                TO_NUMBER(:oDados->idAtendimentoProtocolo:oStatus->idAtendimentoProtocolo),
+                :oDados->sgTipoPortabilidade:oStatus->sgTipoPortabilidade,
+                :oDados->sgOperadoraSolicitante:oStatus->sgOperadoraSolicitante,
+                TO_NUMBER(:oDados->nrProtocoloPortabilidade:oStatus->nrProtocoloPortabilidade),
+                :oDados->idPessoaConta:oStatus->idPessoaConta,
+                TO_DATE(:oDados->dtJanelaPortout:oStatus->dtJanelaPortout,'DDMMYYYYHH24MISS'),
+                NULL, // dtUltimaOperacaoExcFila
+                :oDados->sgRegraEncaminhamento:oStatus->sgRegraEncaminhamento,
+                :oDados->sgFluxoAtendimento:oStatus->sgFluxoAtendimento,
+                :varOraIdPerfilConsultorAtd:statOraIdPerfilConsultorAtd,
+                :varOraIdFornecedorConsultorAtd:statOraIdFornecedorConsultorAtd,
+                :varOraIdSiteConsultorAtd:statOraIdSiteConsultorAtd,
+                :oDados->nrOrdemVenda:oStatus->nrOrdemVenda
+            );
+
+    ULOG ("Inseriu em ATENDIMENTO.ATENDIMENTO com SUCESSO.");
+
+    // ==> SM324--DPR--DEZ/2006--Cassio
+    if ( xmlDpr )
+    {
+        AtendimentoDPR atendimentodpr;
+
+        atendimentodpr.setIdAtendimento(oDados->idAtendimento);
+        atendimentodpr.setDtAbertura(oDados->dtAbertura);
+        atendimentodpr.setDtPrazoFinalInterno(oDados->dtPrazoFinalInterno);
+        atendimentodpr.setIdCanal(oDados->idCanal);
+        atendimentodpr.setIdContato(oDados->idContato);
+        atendimentodpr.setIdProcedencia(oDados->idProcedencia);
+        atendimentodpr.setIdSegmentacao(oDados->idSegmentacao);
+        atendimentodpr.setIdTipoCarteira(oDados->idTipoCarteira);
+        atendimentodpr.setVlPesoAtendimento(oDados->vlPesoAtendimento);
+        atendimentodpr.setQtInsistencia(oDados->qtInsistencia);
+        atendimentodpr.setOpCode(OPCODE_INSERT);
+
+        xmlDpr->atendimentovo.inserir(&atendimentodpr);
+    }
+    // <== SM324--DPR--DEZ/2006--Cassio
+
+    ULOG_END( "proCIncluirWFAtendimento()" );
+
+    return oDados->idAtendimento;
+}
+
+void sql_error_WFAtendimento( sqlca * sqlca )
+{
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOGE("sql_error_WFAtendimento:sqlcode=%d,sqlerrmc=%.70s"
+                            ,sqlca->sqlcode
+                            ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+}

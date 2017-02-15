@@ -1,0 +1,1579 @@
+
+#include <CApoioRet.h>
+
+struct stVendaPJ
+{
+    char szTipoDoc[10];
+    char szPermaneciaSAP[21];
+    char dtDE[16];
+	char dtATE[16];
+	int	 inComodato;
+};
+
+int get_Cpf(char * pretencao,char *pnrcpf,char *pTipoDoc);
+int get_ParametrosPJ(char* psgOf,char* pidTpCart, char* pidContrato, stVendaPJ *pVendaPJ);
+
+#define APARELHO		1
+#define BONUS			22
+#define PONTOS			3
+#define PLANOS			4
+#define SUSPENSAO		5
+#define MIGRACAO		6
+#define ARGUMENTACAO	7
+
+void CApoioRet::ConcluiAnalise(char *pidRetencaoOld)
+{
+    ULOG_START("ConcluiAnalise..");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR  idRetencao[255];
+    EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    strToOra(idRetencao,pidRetencaoOld);
+
+    EXEC SQL 
+    UPDATE RETENCAO.RETENCAOANALISE
+       SET IDTIPOANALISE = 0  // valor definido na tabela TIPOANALISE
+     WHERE IDRETENCAO  = :idRetencao;
+
+  ULOG_END("ConcluiAnalise..");
+}
+
+
+
+int CApoioRet::ValidaPortout( DOMNode * pdnode, char * pnrprotocolo )
+{
+    ULOG_START("ValidaPortout..");
+    int ret=-1;
+    char parm[255];
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR  nrProtocolo[255];
+        int	   iSize=0;
+        VARCHAR  idPessoadePara[21+1];
+        VARCHAR  idLinhaTelefonica[21+1];
+        short inrProtocolo=-1;
+        short iiSize=-1;
+    EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    memset(&nrProtocolo,0,sizeof(nrProtocolo));
+
+    get_tag(parm,pdnode,"idPessoaDePara",0,0); 
+    strToOra(idPessoadePara,parm);
+
+    get_tag(parm,pdnode,"idLinhaTelefonica",0,0); 
+    strToOra(idLinhaTelefonica,parm);
+
+    try
+    {
+        EXEC SQL
+        SELECT idatendimentoprotocolo,
+        LENGTH(NRPROTOCOLOPORTABILIDADE)
+        INTO :nrProtocolo:inrProtocolo,
+        :iSize:iiSize
+        FROM atendimento.atendimentopriorizacao
+        WHERE sgtipoportabilidade ='PORTOUT'
+        AND IDLINHATELEFONICA=:idLinhaTelefonica
+        AND ROWNUM<=1;
+
+        endOraStr(nrProtocolo);
+
+        ULOG("nrProtocolo = [%s]",(const char*)nrProtocolo.arr);
+        strcpy(pnrprotocolo,(const char*)nrProtocolo.arr);
+
+        ULOG("iSize = [%d]",iSize);
+    }
+    catch(...)
+    {
+        ULOG("Ops...erro que nao era pra acontecer...");
+        iSize=0;
+        strcpy(pnrprotocolo,"");
+    }
+
+    ret=(iSize>0?1:ret);
+    ULOG_END("ValidaPortout..");
+    return ret;
+}
+
+int CApoioRet::ValidaTipoEncerramento(char *pidTipoEncerramento)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR     idtpenc[21+1];
+	int			idEncerra=0;
+    int         ligindev=0;
+    EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+	strToOra(idtpenc,pidTipoEncerramento);
+
+	//verificando se o tipode encerramento é ligação indevida
+    EXEC SQL
+        SELECT COUNT(IDTIPOENCERRAMENTO)
+        into :ligindev
+        FROM RETENCAO.TIPOENCERRAMENTO
+        WHERE INLIGACAOINDEVIDA=1
+        AND   IDTIPOENCERRAMENTO=:idtpenc;
+
+    //se quantidade maior que 0
+    //o valor do idpassa para 4
+    //senão seta retorna o valor atual de idtpenc
+    //facilitando a query abaixo
+   return idEncerra=(ligindev>0)?4:atoi(pidTipoEncerramento);
+
+}
+
+void CApoioRet::GetContatoTipoEncerramento(int idtipoencerramento,char *pidofertarealizada,char *pidcontato,
+										   char *psgOferta, char* pidConta,char *pidTipoCarteira, char *pidTipoLinha,
+										   char *pidpessoadepara, char* pidlinhatelefonica)
+{
+    ULOG_START("GetContatoTipoEncerramento()");
+    ULOG(" idtipoencerramento=[%d]",idtipoencerramento);
+    ULOG(" pidmatriz=[%s]",pidofertarealizada);
+    ULOG(" pidcontato=[%s]",pidcontato);
+    ULOG(" psgOferta=[%s]",psgOferta);
+    int existReg=1;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    int         idtpenc =idtipoencerramento;
+    int         ligindev=0;
+    VARCHAR     szContato[21+1];
+    VARCHAR     idOfRealizada[21+1];
+    VARCHAR     sgOferta[20];
+    short       i_szContato=-1 ;
+
+	VARCHAR     idPessoaDePara[21+1];
+    VARCHAR     idLinhaTelefonica[21+1];
+
+	VARCHAR		idConta[21+1];
+	VARCHAR		idTipoCarteira[21+1];
+	VARCHAR		idTipoLinha[21+1];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    memset(&sgOferta,0x0,sizeof(sgOferta));
+    memset(&szContato,0x0,sizeof(szContato));
+
+	memset(&idConta,0x0,sizeof(idConta));
+    memset(&idTipoCarteira,0x0,sizeof(idTipoCarteira));
+	memset(&idTipoLinha,0x0,sizeof(idTipoLinha));
+
+
+    strToOra(idOfRealizada,pidofertarealizada);
+
+    strToOra(idPessoaDePara,pidpessoadepara);
+    strToOra(idLinhaTelefonica,pidlinhatelefonica);
+
+    memset(&szContato,0,sizeof(VARCHAR));
+
+    //verificando se o tipode encerramento é ligação indevida
+    EXEC SQL
+        SELECT COUNT(IDTIPOENCERRAMENTO)
+        into :ligindev
+        FROM RETENCAO.TIPOENCERRAMENTO
+        WHERE INLIGACAOINDEVIDA=1
+        AND   IDTIPOENCERRAMENTO=:idtpenc;
+
+    //se quantidade maior que 0
+    //o valor do idpassa para 4
+    //senão seta retorna o valor atual de idtpenc
+    //facilitando a query abaixo
+    idtpenc=(ligindev>0)?4:idtpenc;
+
+    ULOG("idtpenc = [%d]",idtpenc);
+    ULOG("ligindev = [%d]",ligindev);
+
+
+    ULOG_VAR (szContato);
+    ULOG("existReg = [%d]",existReg);
+    EXEC SQL WHENEVER NOT FOUND DO cl_flag(&existReg);
+    EXEC SQL
+        SELECT IDCONTATO
+        INTO    :szContato:i_szContato
+        FROM RETENCAO.CONTATOENCERRAMENTO
+        WHERE IDTIPOENCERRAMENTO=:idtpenc;
+
+    ULOG("existReg = [%d]",existReg);
+    ULOG("szContato = [%s]",(char*)szContato.arr);
+//    if( szContato.len==0 )
+    if(!existReg)
+    {
+
+        ULOG(" => if(!existReg) ");
+        //capturando a sigla da oferta aceita
+        EXEC SQL
+        SELECT SGCLASSIFICACAO
+        INTO    :sgOferta
+        FROM retencao.oferta
+        WHERE idunidadeoferta IN (SELECT idoferta FROM retencao.ofertarealizada	WHERE idofertarealizada=:idOfRealizada);
+
+
+        ULOG("sgOferta = [%s]" ,(char *)sgOferta.arr);
+        //capturando contato da oferta aceita
+        EXEC SQL
+        SELECT IDCONTATO
+        INTO    :szContato
+        FROM RETENCAO.CONTATOOFERTA
+        WHERE CDCONTATOOFERTA=:sgOferta;
+
+        ULOG("szContato = [%s]" ,(char *)szContato.arr);
+
+    }
+
+    endOraStr(sgOferta);
+    ULOG_VAR (sgOferta);
+    endOraStr(szContato);
+    ULOG_VAR (szContato);
+    strcpy(pidcontato,(const char*)szContato.arr);
+    strcpy(psgOferta,(const char*)sgOferta.arr);
+
+    EXEC SQL
+    SELECT
+        PESSOACONTA.IDCONTA,
+        PESSOA.IDTIPOCARTEIRA
+    INTO
+        :idConta,
+        :idTipoCarteira
+    FROM   
+        customer.PESSOA,
+        customer.PESSOADEPARA PESSOADEPARA,
+        customer.pessoaconta  PESSOACONTA
+    WHERE  
+        PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+    AND
+        PESSOADEPARA.IDPESSOADEPARA=PESSOACONTA.IDPESSOADEPARA
+    AND
+        PESSOADEPARA.IDPESSOADEPARA = :idPessoaDePara
+    AND
+        ROWNUM<=1;
+
+    endOraStr(idConta);
+    endOraStr(idTipoCarteira);
+
+    strcpy(pidConta,(const char*)idConta.arr);
+    strcpy(pidTipoCarteira,(const char*)idTipoCarteira.arr);
+
+    EXEC SQL
+    SELECT
+        idTipoLinha
+    INTO
+        :idTipoLinha
+    FROM
+        LINHA.LINHATELEFONICA
+    WHERE
+        IDLINHATELEFONICA=:idLinhaTelefonica
+    AND ROWNUM < 2;
+
+    endOraStr(idTipoLinha);
+    strcpy(pidTipoLinha,(const char*)idTipoLinha.arr);
+
+    ULOG_END("GetContatoTipoEncerramento()");
+
+}
+
+
+bool CApoioRet::VerificaContatoCliente( int * idPessoaDeParaPrm,char *pidGrupo, char *pidTipoEncerramento,
+							 char *pidOferta,char* sContatoPrm )
+{
+    ULOG_START("CApoioRet::VerificaContatoCliente()");
+    char cdParametro[256];
+    char vlParametro[256];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int     idPessoaDePara = *idPessoaDeParaPrm;
+        long     idPessoa = 0;
+		VARCHAR	idGrupo[21+1];
+		int		idTipoEncerramento=0;
+		VARCHAR	idOferta[21+1];
+        VARCHAR dsContato[256];
+        VARCHAR dsValorParametro[256];
+		VARCHAR idPessoaComunicacao[21+1];
+        int		iComunic=0;
+		int     iRegistros = 0;
+
+		short	i_iComunic=-1;
+		short   i_iRegistros = -1;
+		short   i_idPessoaComunicacao = -1;
+        short   i_dsContato = -1;
+        short   i_dsValorParametro = -1;
+        short   i_idPessoa = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    memset(&idOferta,0x0,sizeof(idOferta));
+
+    memset(&dsContato,0x0,sizeof(dsContato));
+    memset(&dsValorParametro,0x0,sizeof(dsValorParametro));
+
+    memset( cdParametro,0x0,sizeof(cdParametro) );
+    memset( vlParametro,0x0,sizeof(vlParametro));
+
+	strToOra( idOferta, pidOferta );
+
+	idTipoEncerramento=atoi(pidTipoEncerramento);
+
+
+    ULOG( ">>> idoferta [%s]",(char *)idOferta.arr );
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOG( ">>> idPessoaDePara [%d]",idPessoaDePara );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL
+    SELECT
+		PESSOADEPARA.idPessoa
+    INTO
+       :idPessoa
+    FROM
+        CUSTOMER.PESSOADEPARA PESSOADEPARA
+    WHERE
+        PESSOADEPARA.IDPESSOADEPARA = :idPessoaDePara;
+
+   ULOG( ">>> idPessoaDeParaPrm [%d]",idPessoaDeParaPrm );
+	*idPessoaDeParaPrm = idPessoa;
+ULOG( ">>> idPessoa [%ld]",idPessoa );
+
+    if ( !idPessoa )
+    {
+	    ULOG( "idPessoaDePara inválido..." );
+	    ULOG_END("CApoioRet::VerificaContatoCliente()");
+        return false;
+    }
+
+    strcpy( cdParametro, "COMUNICACAO_FID" );
+	ObtemVlrParametro( cdParametro, vlParametro );
+	strToOra( dsValorParametro, vlParametro );
+
+    ULOG( "idTipoComunicacao [%s]",(char*)dsValorParametro.arr);
+    ULOG( "Verificando idPessoa [%d] ",*idPessoaDeParaPrm );
+    ULOG( "dsValorParametro [%s]",(char*)dsValorParametro.arr);
+	
+	strToOra(idGrupo,pidGrupo);
+   ULOG( "local 1." );
+   if(idTipoEncerramento==3)
+	{
+		ULOG("idTipoEncerramento = [%d]",idTipoEncerramento);
+		EXEC SQL
+		SELECT COUNT(1)
+			INTO  :iRegistros:i_iRegistros
+		FROM RETENCAO.VALIDACOMUNICACAO 
+	    WHERE IDGRUPO=:idGrupo   
+		AND	IDUNIDADEOFERTA=:idOferta;
+	   ULOG( "local 2." );
+
+	    
+	}
+	else if(idTipoEncerramento==2)
+	{
+		ULOG( "local 3." );
+		EXEC SQL
+		SELECT COUNT(1)
+			INTO  :iRegistros:i_iRegistros
+		FROM 
+		(select DSVALORPARAMETRO idgrupo
+			from  APOIO.PARAMETRO	
+			where CDPARAMETRO like 'GRPRET%')RAC
+       WHERE RAC.IDGRUPO=:idGrupo;
+	}
+	else
+	{
+		   ULOG( "Nao atualizar - Operacoes invalidas" );
+		return false;
+	}
+
+
+	   ULOG( "local 4." );
+
+	   ULOG("iRegistros = [%d]",iRegistros);
+	if(iRegistros==1)
+	{
+		
+		EXEC SQL
+		SELECT
+		  PESSOACOMUNICACAO.IDPESSOACOMUNICACAO,
+		  (case when TRUNC( PESSOACOMUNICACAO.DTULTIMAALTERACAO ) <=  TRUNC(SYSDATE) - 30 then
+		  1 else -1 end) 
+		INTO
+		   :idPessoaComunicacao:i_idPessoaComunicacao,
+		   :iComunic:i_iComunic
+		FROM
+			CUSTOMER.PESSOACOMUNICACAO PESSOACOMUNICACAO,
+			CUSTOMER.PESSOADEPARA	   PESSOADEPARA
+		WHERE
+			PESSOACOMUNICACAO.IDPESSOA=PESSOADEPARA.IDPESSOA
+		AND
+			PESSOACOMUNICACAO.IDTIPOCOMUNICACAO = :dsValorParametro
+		AND
+		   PESSOADEPARA.IDPESSOADEPARA=:idPessoaDePara
+		AND
+			rownum <=1;
+
+		ULOG( "iRegistros idTipoEncerramento!=2 [%d]",iRegistros );
+		ULOG( "iComunic  [%d]",iComunic );
+	}
+	else
+	{
+		  ULOG( "else return false ." );
+		return false;
+	}
+
+    if ( iComunic >=0)
+    {
+
+		ULOG( "Vai atualizar contato...");
+
+	    EXEC SQL
+	    SELECT
+	        PESSOACOMUNICACAO.DSCONTATO
+	    INTO
+	       :dsContato:i_dsContato
+	    FROM
+	        CUSTOMER.PESSOACOMUNICACAO PESSOACOMUNICACAO
+	    WHERE
+	        PESSOACOMUNICACAO.IDTIPOCOMUNICACAO = :dsValorParametro
+	    AND
+	        PESSOACOMUNICACAO.IDPESSOA = :idPessoa;
+
+	    endOraStr(dsContato);
+
+	    ULOG( "dsContato atual [%s]",(char*)dsContato.arr );
+
+	    if ( dsContato.len > 0 )
+	    {
+	        strcpy( sContatoPrm,(char*)dsContato.arr );
+	        ULOG( "Contato [%s]",sContatoPrm );
+	    }
+	    else
+	    {
+	        ULOG( "Contato inexistente ou desatualizado..." );
+	    }
+
+
+	    ULOG_END("CApoioRet::VerificaContatoCliente()");
+        return true;
+    }
+    else
+    {
+    	ULOG( "Nao atualiza contato..." );
+	    ULOG_END("CApoioRet::VerificaContatoCliente()");
+        return false;
+    }
+
+}
+
+
+
+bool CApoioRet::ObtemVlrParametro( char *cdPrm,char *vlPrm )
+{
+    ULOG_START("CApoioRet::ObtemVlrParametro()");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR cdParametro[256];
+        VARCHAR vlParametro[256];
+        short   i_cdParametro = -1;
+        short   i_vlParametro = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    memset(&cdParametro,0x0,sizeof(cdParametro));
+    memset(&vlParametro,0x0,sizeof(vlParametro));
+	strToOra( cdParametro, cdPrm );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	EXEC SQL
+    SELECT
+		PARAMETRO.dsvalorparametro
+    INTO
+       :vlParametro:i_vlParametro
+    FROM
+        APOIO.PARAMETRO PARAMETRO
+    WHERE
+        PARAMETRO.cdparametro = :cdParametro;
+
+    endOraStr( vlParametro );
+
+    if ( vlParametro.len > 0 )
+    {
+        strcpy( vlPrm,(char*)vlParametro.arr );
+        ULOG( "valorParametro [%s]",vlPrm );
+        ULOG_END("CApoioRet::ObtemVlrParametro()");
+        return true;
+    }
+    else
+    {
+        ULOG( "valorParametro inexistente..." );
+        ULOG_END("CApoioRet::ObtemVlrParametro()");
+        return false;
+    }
+
+}
+void CApoioRet::AtualizaNRProtocolo(char* pidRetencao,char *pnrProtocolo)
+{
+    ULOG_START("AtualizaNRProtocolo..");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR  nrProtocolo[21+1];
+        VARCHAR  idRetencao[21+1];
+    EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    strToOra(nrProtocolo,pnrProtocolo);
+    strToOra(idRetencao,pidRetencao);
+    try
+    {
+        EXEC SQL UPDATE RETENCAO.RETENCAOCONSOLIDADA
+        SET  NRPROTOCOLO   =:nrProtocolo   // valor do numero de protocolo quando sucesso!
+        WHERE IDRETENCAO  = :idRetencao;
+    }
+    catch(...)
+    {
+        throw;
+    }
+    ULOG_END("AtualizaNRProtocolo..");
+}
+
+
+void CApoioRet::GravaLinhasAssociadasCancelamento(DOMNode *pdnode)
+{
+    ULOG_START("GravaLinhasAssociadasCancelamento..");
+
+    char	parm[255];
+    int i=0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR  idAtendimento[21+1];
+        VARCHAR  cdConta[21+1];
+        VARCHAR  nrTelefone[21+1];
+    EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    get_tag(parm,pdnode,"idPalitagem",0,-1);
+
+    strToOra(idAtendimento,parm);
+  
+    try
+    {
+        while ( get_tag(parm,pdnode,"nrConta",i,-1) != -1) 
+        {
+            try
+            {
+                strToOra(cdConta,parm);
+                get_tag(parm,pdnode,"nrLinha",i+1,-1);
+                strToOra(nrTelefone,parm);
+
+                EXEC SQL 
+                insert into ATENDIMENTO.ATENDIMENTOLINHAS
+                ( 
+                    IDATENDIMENTOLINHAS, 
+                    IDATENDIMENTO,      
+                    CDCONTA,            
+                    NRTELEFONE
+                )         
+                VALUES
+                (
+                    ATENDIMENTO.ATENDIMENTOLINHASSQ.NEXTVAL,
+                    :idAtendimento,
+                    :cdConta,
+                    :nrTelefone
+                );
+                i++;
+            }
+            catch(...)
+            {
+                ULOG("Erro na gravacao do nrTelefone:");
+            }
+        }
+    }
+    catch(...)
+    {
+        ULOG("throw;");
+    }
+    ULOG_END("GravaLinhasAssociadasCancelamento..");
+}
+
+
+
+int CApoioRet::InserirDadosAtivacao(DOMNode *pdnode,char *pidRetencao,char *pIduser,int vOferta)
+{
+    ULOG_START("InserirDadosAtivacao..");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR  vlChip[256];
+        short i_vlChip = -1;
+        int idTipoPessoa = 1;
+        VARCHAR TipoDoc[256];
+        int idUFOperadora;
+        
+        VARCHAR Validade_DE[256];
+        VARCHAR Validade_ATE[256];
+        VARCHAR Permanencia[256];
+        VARCHAR  cdChip[256];
+        VARCHAR  idRetencao[21+1];  //parametro entrada
+        VARCHAR  idLinhaTelefonica[21+1]; //parametro entrada
+        VARCHAR  idPessoaDepara[21+1]; //paramentro entrada
+        VARCHAR  nrProtocolo[21+1]; //XML
+        VARCHAR  idAtendimento[21+1];
+        VARCHAR  idContato[21+1]; //busca ativacao
+        int	   iTpOperacao=2; //busca ativacao
+        VARCHAR  idTipoCarteira[21+1]; //busca ativacao
+        VARCHAR  idSegmentacao[21+1]; //xml de entrada
+        VARCHAR  idCanal[21+1];	//fixo
+        VARCHAR  idGrupoAbertura[21+1]; //xmlde entrada	
+        VARCHAR  idUsuario[21+1];
+
+        //VARCHAR  cdAreaRegistro[21+1];
+        VARCHAR   nrLinha[21+1]; //xml de entrada
+        VARCHAR   cdConta[21+1];//busca
+        int	    idTipoLinha; 	
+        int       inProcessado=0; //Busca
+        int     qtTentativa=0;//fixo 0
+        int     idProcedencia=1; //fixo
+        int     inAtivaLegado=-1;
+        VARCHAR nrDocumento[21+1];
+        VARCHAR novoPlano[255];
+        VARCHAR planoAtual[255];
+        varchar cdCodPlano[60+1];
+        varchar cdCodBonus[60+1];
+        VARCHAR nmBonus[255];
+        VARCHAR idLinhaSistemaOrigem[255];
+        //VARIAVEIS PARA SAP
+        VARCHAR nmOrgVenda[255]; 
+        VARCHAR tpDocumento[255]; 
+        VARCHAR dsBairroEntrega[255]; 
+        VARCHAR dsCidadeEntrega[255]; 
+        VARCHAR dsCEp[255]; 
+        VARCHAR dsEstadoEntrega[255]; 
+        VARCHAR nmPessoa[255]; 
+        VARCHAR dsEndEntrega[255]; 
+        VARCHAR condPgto[255]; 
+        VARCHAR szAUGRU[255]; 
+        VARCHAR szPMTHOD[255]; 
+        VARCHAR szVKGRP[255]; 
+        VARCHAR meioPgto[255]; 
+        VARCHAR cdSAP[255]; 
+        VARCHAR vlVenda[255]; 
+        VARCHAR dsTpValor[255];
+        VARCHAR idApCor[255];
+    EXEC SQL END DECLARE SECTION;
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    char parm[255];
+    int iCTRPortabilidade=0;
+    char szIDTIPOCARTEIRA[256];
+    char szSGOFERTA[256];
+    char szPermanencia[256];
+    char szVALIDADE_DE[256];
+    char szVALIDADE_ATE[256];
+    char szTipoDoc[256];
+    char szIDPESSOA[256];
+    char szDOCUMENTO[256];
+    struct	stVendaPJ ostVendaPj;
+
+    try
+    {
+        strToOra(idRetencao,pidRetencao);	
+        strToOra(idUsuario,pIduser);
+        memset( &dsBairroEntrega, 0x0, sizeof(dsBairroEntrega) );
+        memset( &dsCidadeEntrega, 0x0, sizeof(dsCidadeEntrega) );
+        memset( &dsEstadoEntrega, 0x0, sizeof(dsEstadoEntrega) );
+        memset( &nmPessoa, 0x0, sizeof(nmPessoa) );
+        memset( &dsEndEntrega, 0x0, sizeof(dsEndEntrega) );
+        memset( &dsCEp, 0x0, sizeof(dsCEp) );
+        memset( &vlChip, 0x0, sizeof(vlChip) );
+        memset( &cdChip, 0x0, sizeof(cdChip) );
+        memset( &Permanencia, 0x0, sizeof(TipoDoc) );
+        memset( &TipoDoc, 0x0, sizeof(TipoDoc) );
+        memset( &Validade_DE, 0x0, sizeof(Validade_DE) );
+        memset( &Validade_ATE, 0x0, sizeof(Validade_ATE) );
+        memset( &szVKGRP, 0x0, sizeof(szVKGRP) );
+        memset( &szPMTHOD, 0x0, sizeof(szPMTHOD) );
+        memset( &szAUGRU, 0x0, sizeof(szAUGRU) );
+        memset(&nrProtocolo,0x0,sizeof(nrProtocolo));
+        memset(&idLinhaSistemaOrigem,0x0,sizeof(idLinhaSistemaOrigem));
+        memset(&novoPlano,0x0,sizeof(novoPlano));
+        memset(&planoAtual,0x0,sizeof(planoAtual));
+        /*
+        memset(&dtFinalVigencia,0,sizeof(dtFinalVigencia));
+        memset(&idUser,0,sizeof(idUser));
+        */
+
+        get_tag(parm,pdnode,"idLinhaTelefonica",0,0);  // OK
+        strToOra(idLinhaTelefonica,parm);	
+
+        get_tag(parm,pdnode,"idPessoaDePara",0,0);  // OK
+        strToOra(idPessoaDepara,parm);	
+
+        get_tag(parm,pdnode,"idGrupo",0,0);  // OK
+        strToOra(idGrupoAbertura,parm);	
+
+        get_tag(parm,pdnode,"idSegmentacao",0,0);  // OK
+        strToOra(idSegmentacao,parm);	
+
+        get_tag(parm,pdnode,"nrLinha",0,0);  // OK
+        strToOra(nrLinha,parm);	
+
+        EXEC SQL
+        SELECT NVL (grpord.INATIVAOFERTA,0) //Este grupo pode Ativar?
+          INTO :inAtivaLegado
+          FROM retencao.grupomotivoordem grpord
+         WHERE grpord.idgrupo = :idGrupoAbertura;
+    
+        if(!inAtivaLegado) 
+        {
+             return inAtivaLegado;
+        }
+
+        iCTRPortabilidade=get_tag(parm,pdnode,"nrProtocoloPortabilidade",0,-1);
+        
+        if(iCTRPortabilidade!=-1)//se for uma portabilidade
+        {
+            strToOra(nrProtocolo,parm);
+            EXEC SQL
+            SELECT idatendimento
+              INTO :idAtendimento
+              FROM atendimento.atendimento
+             WHERE NRPROTOCOLOPORTABILIDADE = :nrProtocolo;
+            
+            endOraStr( idAtendimento );
+            inProcessado=-1;//aguarda cancelamento do SPN
+        }
+
+        /* Atributos FAKE por enquanto */
+        strToOra(idContato,"100003554");
+        strToOra(idCanal,"16");
+        /*  strToOra(idTipoCarteira,"1");  */
+        iTpOperacao=2;
+       /*<Atributos FAKE*/	
+
+        EXEC SQL
+        SELECT c.cdconta,
+               l.idtipolinha,
+               l.idlinhasistemaorigem
+        into   :cdConta,
+               :idTipoLinha,
+               :idLinhaSistemaOrigem
+        FROM customer.linhaconta lc,
+             linha.linhatelefonica l,
+             customer.conta c
+        WHERE lc.IDCONTA=c.IDCONTA
+        and	  l.idlinhatelefonica=lc.idlinhatelefonica
+        AND  lc.idLinhaTelefonica=:idLinhaTelefonica;
+
+        endOraStr( cdConta );
+        endOraStr( idLinhaSistemaOrigem );
+        
+        ULOG_VAR(idRetencao);
+        ULOG_VAR(idLinhaTelefonica);
+        ULOG_VAR(idPessoaDepara);
+        ULOG_VAR(idContato);
+        ULOG("iTpOperacao:%d",iTpOperacao);
+        ULOG_VAR(nrLinha);      
+        ULOG_VAR(cdConta); 
+
+        EXEC SQL
+        select idtipocarteira
+        into :idTipoCarteira
+        from customer.pessoa p,
+             customer.pessoadepara pdp
+        where p.idpessoa=pdp.idpessoa
+        and   pdp.idpessoadepara=:idPessoaDepara;
+
+        EXEC SQL
+        INSERT INTO RETENCAO.FILARETENCAOLEGADO
+        (
+            IDFILARETENCAOLEGADO, 
+            IDRETENCAO,
+            IDLINHATELEFONICA, 
+            IDPESSOADEPARA, 
+            IDCONTATO, 
+            TPOPERACAO, 
+            IDTIPOCARTEIRA, 
+            IDSEGMENTACAO, 
+            IDCANAL, 
+            IDGRUPOABERTURA, 
+            CDAREAREGISTRO, 
+            NRLINHA, 
+            CDCONTA, 
+            INPROCESSADO, 
+            QTTENTATIVA, 
+            IDUSUARIOALTERACAO,
+            DTULTIMAALTERACAO,
+            IDPROCEDENCIA,
+            IDATENDIMENTO
+        )
+        VALUES
+        (
+            RETENCAO.FILARETENCAOLEGADOSQ.NEXTVAL,
+            :idRetencao,
+            :idLinhaTelefonica,
+            :idPessoaDepara,			                           
+            :idContato,
+            :iTpOperacao,
+            :idTipoCarteira,
+            :idSegmentacao,
+            :idCanal,
+            :idGrupoAbertura,
+            SUBSTR(:nrLinha,1,2),
+            SUBSTR(:nrLinha,3),      
+            :cdConta,      
+            :inProcessado,                         
+            0,
+            :idUsuario,
+            SYSDATE,
+            :idProcedencia,
+            :idAtendimento
+        ); 
+
+        switch(vOferta)
+        {
+            case PONTOS:
+                EXEC SQL
+                SELECT DISTINCT documento.nrdocumento
+                INTO :nrDocumento
+                FROM customer.pessoadocumento pessoadocumento,
+                    customer.documento documento,
+                    apoio.tipodocumento tipodocumento,
+                    apoio.uf uf,
+                    apoio.pais pais
+                WHERE pessoadocumento.iddocumento = documento.iddocumento
+                AND documento.idtipodocumento = tipodocumento.idtipodocumento
+                AND documento.iduf = uf.iduf
+                AND documento.idpais = pais.idpais
+                AND tipodocumento.dstipodocumento IN ('CPF', 'CNPJ')
+                AND pessoadocumento.idpessoa IN (SELECT idpessoaorigem
+                                                 FROM customer.pessoadepara
+                                                 WHERE idpessoadepara =:idPessoaDepara)
+                AND ROWNUM < 2;
+                endOraStr( nrDocumento );
+
+                EXEC SQL
+                INSERT INTO RETENCAO.FILAATIVACAOPONTO
+                (
+                    CDDOCUMENTO, 
+                    DSOPERACAO, 
+                    DTEFETIVACAO, 
+                    DTULTIMAALTERACAO, 
+                    IDFILAATIVACAOPONTO, 
+                    IDFILARETENCAOLEGADO, 
+                    IDUSUARIOALTERACAO
+                )
+                VALUES
+                (
+                    :nrDocumento,
+                    'pedidoConfirmar',
+                    SYSDATE+1,
+                    sysdate,
+                    RETENCAO.FILAATIVACAOPONTOSQ.NEXTVAL,
+                    RETENCAO.FILARETENCAOLEGADOSQ.CURRVAL,
+                    :idUsuario
+                );
+            break;
+
+            case BONUS:
+                if ( idTipoLinha == 2 || idTipoLinha == 6 )
+                {
+                    ULOG( "BONUS--NGIN.. Do iden planos!!..." );
+                    get_tag( parm, pdnode, "nmBonus", 0, 0 ); 
+                    strToOra( nmBonus, parm );
+                    EXEC SQL
+                    SELECT 
+                        CDSERVICO
+                    INTO 
+                        :cdCodBonus
+                    FROM 
+                        RETENCAO.BONUS
+                    WHERE 
+                        DSBONUS = :nmBonus;
+                    endOraStr( cdCodBonus );
+
+                    EXEC SQL
+                    INSERT INTO RETENCAO.FILAATIVACAONGIN
+                    (
+                        IDFILAATIVACAONGIN, 
+                        IDFILARETENCAOLEGADO, 
+                        IDUSUARIOALTERACAO, 
+                        DTULTIMAALTERACAO, 
+                        NMNOVOPLANO
+                    )
+                    VALUES
+                    (
+                        RETENCAO.FILAATIVACAONGINSQ.NEXTVAL,
+                        RETENCAO.FILARETENCAOLEGADOSQ.CURRVAL,
+                        :idUsuario,
+                        sysdate,
+                        :cdCodBonus
+                    );
+                }
+                else
+                {
+                    get_tag(parm,pdnode,"nmBonus",0,0); 
+                    strToOra(nmBonus,parm);
+
+                    EXEC SQL
+                    SELECT 
+                        CDSERVICO
+                    INTO 
+                        :cdCodBonus
+                    FROM 
+                        RETENCAO.BONUS
+                    WHERE 
+                        DSBONUS=:nmBonus;
+                    endOraStr( cdCodBonus );
+
+                    EXEC SQL
+                    INSERT INTO RETENCAO.FILAATIVACAOATLYS
+                    ( 
+                        IDFILAATIVACAOATLYS,
+                        IDFILARETENCAOLEGADO,
+                        IDLINHASISTEMAORIGEM,
+                        NMPLANOANTERIOR,
+                        CDTIPOSERVICOANTERIOR,
+                        NMPLANOSERVICONOVO,
+                        CDTIPOPLANOSERVICONOVO,
+                        INPLANOSERVICO,
+                        IDUSUARIOALTERACAO,
+                        DTULTIMAALTERACAO
+                    )
+                    VALUES
+                    (	 
+                        RETENCAO.FILAATIVACAOATLYSSQ.NEXTVAL,
+                         RETENCAO.FILARETENCAOLEGADOSQ.CURRVAL,
+                         :idLinhaSistemaOrigem,
+                         :planoAtual,
+                         'PK',
+                         :cdCodBonus,
+                         'PK',
+                         1,
+                         :idUsuario,
+                         sysdate				  
+                    );
+                }
+            break;
+
+            case PLANOS:
+                if(idTipoLinha==2||idTipoLinha==6)
+                {
+                    get_tag(parm,pdnode,"novoPlano",0,0); 
+                    strToOra(novoPlano,parm);
+                    EXEC SQL
+                    SELECT 
+                        CDSERVICO
+                    INTO 
+                        :cdCodPlano
+                    FROM 
+                        RETENCAO.PLANO
+                    WHERE 
+                        NMPLANO = :novoPlano;
+
+                    endOraStr(cdCodPlano);
+
+                    EXEC SQL
+                    INSERT INTO RETENCAO.FILAATIVACAONGIN
+                    (
+                        IDFILAATIVACAONGIN, 
+                        IDFILARETENCAOLEGADO, 
+                        IDUSUARIOALTERACAO, 
+                        DTULTIMAALTERACAO, 
+                        NMNOVOPLANO
+                    )
+                    VALUES
+                    (
+                        RETENCAO.FILAATIVACAONGINSQ.NEXTVAL,
+                        RETENCAO.FILARETENCAOLEGADOSQ.CURRVAL,
+                        :idUsuario,
+                        sysdate,
+                        :cdCodPlano
+                    );
+
+                }
+                else
+                {
+                    get_tag(parm,pdnode,"novoPlano",0,0); 
+                    strToOra(novoPlano,parm);
+
+                    EXEC SQL
+                    SELECT NVL(LPS.IDSERVICOSISTEMAORIGEM,'Nao Encontrado') 
+                    INTO  :planoAtual 
+                    FROM LINHA.PLANOSERVICOLINHA LPSL,
+                          LINHA.PLANOSERVICO LPS
+                    WHERE LPSL.IDSERVICO = LPS.IDSERVICO
+                    AND LPSL.INPLANO = 1
+                    AND NVL(LPSL.DTEXPIRACAO,SYSDATE) >= SYSDATE
+                    AND NVL(LPSL.DTVIGENCIAFINAL,SYSDATE) >=SYSDATE
+                    AND LPSL.IDLINHATELEFONICA=:idLinhaTelefonica;
+
+                    endOraStr(planoAtual);
+
+                    EXEC SQL	
+                    SELECT 
+                        CDSERVICO
+                    INTO 
+                        :cdCodPlano
+                    FROM 
+                        RETENCAO.PLANO
+                    WHERE 
+                        NMPLANO = :novoPlano;
+
+                    endOraStr(cdCodPlano);
+
+                    EXEC SQL
+                    INSERT INTO RETENCAO.FILAATIVACAOATLYS
+                    ( 
+                        IDFILAATIVACAOATLYS,
+                        IDFILARETENCAOLEGADO,
+                        IDLINHASISTEMAORIGEM,
+                        NMPLANOANTERIOR,
+                        CDTIPOSERVICOANTERIOR,
+                        NMPLANOSERVICONOVO,
+                        CDTIPOPLANOSERVICONOVO,
+                        INPLANOSERVICO,
+                        IDUSUARIOALTERACAO,
+                        DTULTIMAALTERACAO
+                    )
+                    VALUES
+                    (
+                        RETENCAO.FILAATIVACAOATLYSSQ.NEXTVAL,
+                        RETENCAO.FILARETENCAOLEGADOSQ.CURRVAL,
+                        :idLinhaSistemaOrigem,
+                        :planoAtual,
+                        'PK',
+                        :cdCodPlano,
+                        'PK',
+                        0,
+                        :idUsuario,
+                        sysdate
+                    );
+                }
+            break;
+
+            case APARELHO:
+                ULOG("APARELHO.");
+                get_tag(parm,pdnode,"sgTipoPessoa",0,-1);
+                if ( !strcmp(parm,"PJ") )
+                {
+                    idTipoPessoa = 2;
+                    EXEC SQL
+                    SELECT DISTINCT documento.nrdocumento
+                    INTO :nrDocumento
+                    FROM customer.pessoadocumento pessoadocumento,
+                        customer.documento documento,
+                        apoio.tipodocumento tipodocumento,
+                        apoio.uf uf,
+                        apoio.pais pais
+                    WHERE pessoadocumento.iddocumento = documento.iddocumento
+                    AND documento.idtipodocumento = tipodocumento.idtipodocumento
+                    AND documento.iduf = uf.iduf
+                    AND documento.idpais = pais.idpais
+                    AND tipodocumento.dstipodocumento IN ('CPF', 'CNPJ')
+                    AND pessoadocumento.idpessoa IN (SELECT idpessoaorigem
+                                                     FROM customer.pessoadepara
+                                                     WHERE idpessoadepara =:idPessoaDepara)
+                    AND ROWNUM < 2;
+                    endOraStr( nrDocumento );	
+
+                 //get_tag(parm,pdnode,"idPessoaDePara",0,-1);
+               
+                    
+                
+                    strcpy(szIDTIPOCARTEIRA,(char*)idTipoCarteira.arr);
+                    
+                    get_tag(parm,pdnode,"sgOfertaAceita",0,0);
+                    strcpy(szSGOFERTA,parm);
+                
+                    get_tag(parm,pdnode,"przVigencia",0,-1);
+                    if ( parm[0] == NULL )
+                        szPermanencia[0] = 0x0;
+                    else
+                        strcpy(szPermanencia,parm);
+                    get_ParametrosPJ(szSGOFERTA,
+                                     szIDTIPOCARTEIRA,
+                                     szPermanencia,
+                                     &ostVendaPj);
+
+                    strcpy(szTipoDoc,ostVendaPj.szTipoDoc);
+                    strToOra(TipoDoc,szTipoDoc);	
+
+                    strcpy(szPermanencia,ostVendaPj.szPermaneciaSAP);
+                    strToOra(Permanencia,szPermanencia);	
+
+                    if(ostVendaPj.inComodato==1)
+                    {
+                        strcpy(szVALIDADE_DE,ostVendaPj.dtDE);
+                        strcpy(szVALIDADE_ATE,ostVendaPj.dtATE);
+                        strToOra(Validade_DE,szVALIDADE_DE);	
+                        strToOra(Validade_ATE,szVALIDADE_ATE);	
+                    }
+                    else
+                    {
+                        strcpy(szVALIDADE_DE,"");
+                        strcpy(szVALIDADE_ATE,"");
+                        strToOra(Validade_DE,szVALIDADE_DE);	
+                        strToOra(Validade_ATE,szVALIDADE_ATE);	
+                    }
+
+                }
+                else
+                {
+                    idTipoPessoa = 1;
+                    szDOCUMENTO[0] = 0x0;
+
+                    EXEC SQL
+                    SELECT DISTINCT documento.nrdocumento
+                    INTO :nrDocumento
+                    FROM customer.pessoadocumento pessoadocumento,
+                        customer.documento documento,
+                        apoio.tipodocumento tipodocumento,
+                        apoio.uf uf,
+                        apoio.pais pais
+                    WHERE pessoadocumento.iddocumento = documento.iddocumento
+                    AND documento.idtipodocumento = tipodocumento.idtipodocumento
+                    AND documento.iduf = uf.iduf
+                    AND documento.idpais = pais.idpais
+                    AND tipodocumento.dstipodocumento IN ('CPF', 'CNPJ')
+                    AND pessoadocumento.idpessoa IN (SELECT idpessoaorigem
+                                                     FROM customer.pessoadepara
+                                                     WHERE idpessoadepara =:idPessoaDepara)
+                    AND ROWNUM < 2;
+
+                    endOraStr( nrDocumento );	
+                    stpcpy(szTipoDoc,"CPF");
+                    strToOra(TipoDoc,szTipoDoc);
+                }
+
+                EXEC SQL 
+                SELECT  RGS.SGGRUPOVENDEDORSAP VKGRP,
+                        ATPS.NMTIPOPEDIDOSAP   PO_METHOD,
+                        AMOS.SGMOTIVOORDEMSAP  AUGRU
+                INTO	:szVKGRP,
+                        :szPMTHOD,
+                        :szAUGRU
+                FROM   ACESSO.GRUPO AG,
+                       RETENCAO.GRUPOVENDEDORSAP RGS,
+                       RETENCAO.MATRIZAPARELHOSAP RMTS,
+                       APOIO.TIPOPEDIDOSAP		  ATPS,
+                       APOIO.MOTIVOORDEMSAP		  AMOS
+                WHERE  AG.IDGRUPO=RGS.IDGRUPO
+                AND	   RGS.IDGRUPO=RMTS.IDGRUPO
+                AND	   ATPS.IDTIPOPEDIDOSAP=RMTS.IDTIPOPEDIDOSAP
+                AND	   AMOS.IDMOTIVOORDEMSAP=RMTS.IDMOTIVOORDEMSAP
+                AND	   RMTS.IDTIPOPESSOA=:idTipoPessoa
+                AND	   RMTS.IDGRUPO = :idGrupoAbertura
+                AND	   RGS.IDSEGMENTACAO=:idSegmentacao
+                AND	   ROWNUM < 2;
+        
+                endOraStr(szVKGRP);
+                endOraStr(szPMTHOD);
+                endOraStr(szAUGRU);
+
+
+	/*<dsEndereco>PCA  JUCA NOVAES</dsEndereco>
+	<nrEndereco>342</nrEndereco>
+	<dsComplemento>asas</dsComplemento>
+	<dsBairro>CENTRO</dsBairro>
+	<dsCidade>AVARE</dsCidade>
+	<dsUF>SP</dsUF>
+	<dsCEP>18700-970</dsCEP>*/
+          
+                parm[0] = 0x0;
+                get_tag(parm,pdnode,"dsEndereco",0,-1);
+                if ( parm[0] != NULL )
+                    strToOra(dsEndEntrega,parm);
+             
+                parm[0] = 0x0;
+                get_tag(parm,pdnode,"nrEndereco",0,-1); 
+                if ( parm[0] != NULL )
+                 strToOra(dsEndEntrega,parm);
+
+                parm[0] = 0x0;
+                get_tag(parm,pdnode,"dsComplemento",0,-1); 
+                if ( parm[0] != NULL )
+                 strToOra(dsEndEntrega,parm);
+
+                parm[0] = 0x0;
+                get_tag(parm,pdnode,"dsBairro",0,-1); 
+                if ( parm[0] != NULL )
+                    strToOra(dsBairroEntrega,parm);
+
+                parm[0] = 0x0;
+                get_tag(parm,pdnode,"dsUF",0,-1); 
+                if ( parm[0] != NULL )
+                    strToOra(dsCidadeEntrega,parm);
+
+                strToOra(dsEstadoEntrega,parm);
+
+                parm[0] = 0x0;
+                get_tag(parm,pdnode,"dsCEP",0,-1); 
+                if ( parm[0] != NULL )
+                    strToOra(dsCEp,parm);
+          
+
+/* pode ser util....
+          
+					(SELECT CDSAPTIPOCONTRATOPJ
+					FROM RETENCAO.TIPOCONTRATOPJ 
+					WHERE IDTIPOCONTRATOPJ=RA.CDSAPPRAZOVIGENCIA)PRAZO,
+*/
+
+
+                EXEC SQL
+                SELECT 
+                    NMORGVENDA 
+                INTO
+                    :nmOrgVenda
+                FROM 
+                    RETENCAO.ORGANIZACAOVENDA OV,
+                    APOIO.AREAREGISTRO AR
+                WHERE 
+                    AR.IDAREAREGISTRO = OV.IDAREAREGISTRO
+                AND 
+                    ar.CDAREAREGISTRO = SUBSTR(:nrLinha,1,2);
+
+                endOraStr(nmOrgVenda);
+                ULOG( "nmOrgVenda [%s]",(char*)nmOrgVenda.arr );
+        
+                EXEC SQL
+                SELECT
+                    nvl(VLPRECOABS-VLCHIP,0),
+                    idtipopagamentoaparelho,
+                    nrparcelas,
+                    CDSAPAPARELHO,
+                    nvl(CDCHIP,'Sem Chip'),
+                    nvl(VLCHIP,0)
+                INTO
+                    :vlVenda,
+                    :meioPgto,
+                    :condPgto,
+                    :cdSAP,
+                    :cdChip,
+                    :vlChip:i_vlChip
+                FROM 
+                    RETENCAO.RETENCAOAPARELHO RA
+                WHERE 
+                    IDRETENCAO = :idRetencao;
+
+                EXEC SQL
+                SELECT 
+                    IDAPARELHOCOR
+                INTO
+                    :idApCor
+                FROM 
+                    RETENCAO.APARELHOCOR 
+                WHERE 
+                    CDSAPAPARELHO = :cdSAP
+                AND 
+                    ROWNUM < 2;
+
+                endOraStr( vlChip );
+                endOraStr( cdChip );
+        
+                if ( !strcmp((char*)cdChip.arr,"Sem Chip") )
+                {
+                    cdChip.arr[0] = 0x0;
+                    cdChip.len = 0;
+                }
+
+        exec sql
+        select
+           idufoperadora
+        into
+           :idUFOperadora
+        from
+           retencao.retencaoconsolidada
+        where
+           idretencao = :idRetencao;
+           
+        EXEC SQL
+        INSERT INTO RETENCAO.FILAORDEMVENDASAP
+        (
+            IDFILAORDEMVENDASAP, 
+            NMORGVENDA, 
+            TPDOCUMENTO, 
+            CDDOCUMENTO, 
+            NRTELEFONE, 
+            DSENDERECOENTREGA, 
+            DSBAIRROENTREGA, 
+            DSCIDADEENTREGA, 
+            DSCEPENTREGA, 
+            DSESTADOENTREGA, 
+            DSPAISENTREGA, 
+            NMPESSOACLIENTE, 
+            DSDOCUMENTOCLIENTE, 
+            DSENDERECOCLIENTE, 
+            DSBAIRROCLIENTE, 
+            DSCIDADECLIENTE, 
+            DSCEPCLIENTE, 
+            DSESTADOCLIENTE, 
+            DSPAISCLIENTE, 
+            CONDICAOPAGTO, 
+            AUGRU, 
+            POMETHOD, 
+            VKGRP, 
+            NRPEDIDO, 
+            NRLINHA, 
+            MEIOPAGTO, 
+            OBSERVACAO, 
+            DSMATERIAL, 
+            QTMATERIAL, 
+            DTREMESSA, 
+            VALORVENDA, 
+            DSTIPOVALOR,
+            DTULTIMAALTERACAO, 
+            IDFILARETENCAOLEGADO, 
+            IDUFOPERADORA, 
+            IDTIPOPESSOA, 
+            IDAPARELHOCOR,
+            CDCHIPSAP,
+            VLRCHIPSAP,
+            PERMANENCIA,
+            DTPJINI,
+            DTPJFIM
+        )
+        VALUES
+        (
+            RETENCAO.FILAORDEMVENDASAPSQ.NEXTVAL, 
+            :nmOrgVenda, 
+            :TipoDoc, 
+            :nrDocumento, 
+            :nrLinha, 
+            :dsEndEntrega, 
+            :dsBairroEntrega, 
+            :dsCidadeEntrega, 
+            :dsCEp, 
+            :dsEstadoEntrega, 
+            'BR', 
+            :nmPessoa, 
+            :nrDocumento, 
+            :dsEndEntrega, 
+            :dsBairroEntrega, 
+            :dsCidadeEntrega, 
+            :dsCEp, 
+            :dsEstadoEntrega, 
+            'BR', 
+            :condPgto, 
+            :szAUGRU, 
+            :szPMTHOD, 
+            :szVKGRP, 
+            :idRetencao, 
+            :nrLinha, 
+            :meioPgto, 
+            'Portabilidade', 
+            :cdSAP, 
+            '1', 
+            sysdate, 
+            :vlVenda, 
+            'POS',
+            sysdate, 
+            RETENCAO.FILARETENCAOLEGADOSQ.CURRVAL,
+            :idUFOperadora, 
+            :idTipoPessoa, 
+            :idApCor,
+            :cdChip,
+            TO_NUMBER(NVL(:vlChip,'0')),
+            :Permanencia,
+            TO_DATE(:Validade_DE,'DD/MM/YYYY'),
+            TO_DATE(:Validade_ATE,'DD/MM/YYYY')
+        );
+
+		break;
+		case SUSPENSAO:
+		ULOG("SUSPENSAO.. Do Nothing...");
+		break;
+		case MIGRACAO:
+		ULOG("MIGRACAO.. Do Nothing...");
+		break;
+     }
+ }
+ catch(...)
+	{
+	ULOG("Why so serious???");
+	}
+	return 1;
+
+	ULOG_END("InserirDadosAtivacao..");
+}
+
+
+
+int get_Cpf( char* pretencao, char* pnrcpf, char* pTipoDoc)
+{
+    ULOG_START("get_Cpf()");
+    
+    char szTipoDoc[10];  //sm 229
+    char szTipoDocTemp[10]; //sm 229 
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+	    VARCHAR nrdocumento[256];
+	    VARCHAR idPessoa[256];
+    EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+	strToOra(idPessoa,pretencao);
+	strToOra(nrdocumento,"0"); 
+    strcpy(szTipoDoc,pTipoDoc); 
+    
+    memset( pTipoDoc, 0x0,sizeof(pTipoDoc) );
+    memset( szTipoDocTemp, 0x0,sizeof(szTipoDocTemp) );
+    memset( &nrdocumento, 0x0,sizeof(nrdocumento) );
+    memset( &idPessoa, 0x0,sizeof(idPessoa) );
+    
+	EXEC SQL
+    SELECT nrdocumento
+      INTO :nrdocumento
+      FROM customer.documento
+     WHERE iddocumento IN (SELECT iddocumento
+                             FROM customer.pessoadocumento
+                            WHERE idpessoa = :idPessoa)
+       AND idtipodocumento IN (SELECT idtipodocumento
+                                 FROM apoio.tipodocumento
+                                WHERE sgclassificacao LIKE '%CPF%')
+       AND ROWNUM < 2;
+
+    if( nrdocumento.len < 3 )
+    {
+
+        EXEC SQL
+        SELECT nrdocumento
+          INTO :nrdocumento
+          FROM customer.documento
+         WHERE iddocumento IN (SELECT iddocumento
+                                 FROM customer.pessoadocumento
+                                WHERE idpessoa = :idPessoa)
+           AND idtipodocumento IN (
+                  SELECT idtipodocumento
+                    FROM apoio.tipodocumento
+                   WHERE (sgclassificacao LIKE '%CGC%'
+                          OR sgclassificacao LIKE '%CNPJ%'
+                         ))
+           AND ROWNUM < 2;
+        
+        strcpy(szTipoDocTemp,"CGC"); //sm 229
+    }
+    else
+    {
+        strcpy(szTipoDocTemp,"CPF"); //sm 229
+    }
+    
+    if ( !strcmp(szTipoDoc,"CON") )
+        strcpy(pTipoDoc,szTipoDoc);
+    else
+        strcpy(pTipoDoc,szTipoDocTemp);
+
+    endOraStr( nrdocumento );
+    strcpy( pnrcpf,(char*)nrdocumento.arr );
+    
+    ULOG_END("get_Cpf()");
+    return 1;
+
+}
+
+
+
+int get_ParametrosPJ(char* psgOf,char* pidTpCart, char* pidContrato, stVendaPJ *pVendaPJ)
+{
+   ULOG_START( "int get_ParametrosPJ()" );
+
+  
+  EXEC SQL BEGIN DECLARE SECTION;
+        
+		//parametros de entrada
+        VARCHAR sgOferta[4];
+		VARCHAR idTipoCarteira[21+1];
+		VARCHAR idContrato[21+1];
+
+		//Parametros de Saida
+        VARCHAR cdSAPContrato[6];
+        VARCHAR cdSAPTipoDoc[6];
+		VARCHAR	dtDE[10];
+		VARCHAR	dtATE[10];
+		
+		short      icdSAPContrato=-1;
+		short	   icdSAPTipoDoc=-1; 
+		short	   idtDE=-1;        
+		short	   idtATE=-1;       
+
+    EXEC SQL END DECLARE SECTION;
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+	//zerando variaveis
+	//entrada
+    memset( &sgOferta,0x0,sizeof(sgOferta) );
+    memset( &idTipoCarteira,0x0,sizeof(idTipoCarteira) );
+	memset( &idContrato,0x0,sizeof(idContrato) );     
+	//saida
+	memset( &cdSAPContrato,0x0,sizeof(cdSAPContrato) );
+	memset( &cdSAPTipoDoc,0x0,sizeof(cdSAPTipoDoc) );     
+	memset( &dtDE,0x0,sizeof(dtDE) );
+	memset( &dtATE,0x0,sizeof(dtATE));	
+
+	ULOG("INICIANDO PROCESSAMENTO");
+	//Atribuindo valores às variaves oracle
+	strToOra(sgOferta,psgOf);
+    ULOG( "sgOferta [%s]",(char*)sgOferta.arr);
+
+	strToOra(idTipoCarteira,pidTpCart);
+    ULOG( "idTipoCarteira [%s]",(char*)idTipoCarteira.arr);
+
+	strToOra(idContrato,pidContrato);
+    ULOG( "idContrato [%s]",(char*)idContrato.arr);
+
+ EXEC SQL
+    SELECT    NVL(TPDOC.CDSAPTIPODOCPJ,(CASE WHEN TPCONT.SGOFERTAAPARELHO='APC'
+ 		   							 THEN 'CPM' ELSE 'VPM'END))cdsap,
+	 		   TPCONT.CDSAPTIPOCONTRATOPJ,			   			   
+	 		   (CASE WHEN TPCONT.SGOFERTAAPARELHO='APC' THEN
+	 		   TO_CHAR(SYSDATE,'DD/MM/YYYY') ELSE ''END)DTDE,
+	 		   (CASE WHEN TPCONT.SGOFERTAAPARELHO='APC' THEN
+	 		   TO_CHAR((SYSDATE+TPCONT.QTPRAZODIAS),'DD/MM/YYYY') ELSE ''END)DTATE
+	 INTO	   :cdSAPTipoDoc:icdSAPTipoDoc,
+	 	  	   :cdSAPContrato:icdSAPContrato,
+	 		   :dtDE:idtDE,
+	 		   :dtATE:idtATE
+	 FROM      RETENCAO.TIPOCONTRATOPJ TPCONT,
+	 		   (SELECT TPDOC.CDSAPTIPODOCPJ,
+			   		   TPDOC.SGOFERTAAPARELHO,
+					   TPDOC.IDTIPOCARTEIRA
+	 	   	   FROM RETENCAO.TIPODOCPJ TPDOC) TPDOC	 		   
+	 WHERE     TPCONT.SGOFERTAAPARELHO=TPDOC.SGOFERTAAPARELHO(+)
+	 AND 	   TPCONT.SGOFERTAAPARELHO=:sgOferta
+	 AND	   TPCONT.IDTIPOCONTRATOPJ=:idContrato
+	 AND	   TPDOC.IDTIPOCARTEIRA(+)=:idTipoCarteira;	 
+	
+	ULOG("DEPOIS DA QUERY");
+	 endOraStr(cdSAPContrato);
+     endOraStr(cdSAPTipoDoc);
+     endOraStr(dtDE);	
+     endOraStr(dtATE);	
+
+
+	ULOG_VAR(cdSAPContrato);
+	ULOG_VAR(cdSAPTipoDoc);
+	ULOG_VAR(dtDE);
+	ULOG_VAR(dtATE);
+
+	strcpy(pVendaPJ->szTipoDoc,(char*)cdSAPTipoDoc.arr);
+	strcpy(pVendaPJ->szPermaneciaSAP,(char*)cdSAPContrato.arr);
+	strcpy(pVendaPJ->dtDE,(char*)dtDE.arr);
+	strcpy(pVendaPJ->dtATE,(char*)dtATE.arr);
+
+	ULOG(pVendaPJ->szTipoDoc);
+	ULOG(pVendaPJ->szPermaneciaSAP);
+	ULOG(pVendaPJ->dtDE);
+	ULOG(pVendaPJ->dtATE);
+
+
+	//Se a terceira letra da sigla de oferta for igual
+	//a 'C' (só poderá ser APC) e um comodato.
+    pVendaPJ->inComodato=(psgOf[2] == 'C')?1:0;
+
+	ULOG_END("int get_ParametrosPJ()");
+	return 1;
+	
+	
+};

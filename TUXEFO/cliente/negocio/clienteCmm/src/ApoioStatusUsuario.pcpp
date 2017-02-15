@@ -1,0 +1,157 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../include/ApoioStatusUsuario.h"
+#include <tuxfw.h>
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+/*******************************************************************************************************/
+ApoioStatusUsuario::ApoioStatusUsuario(void)
+{
+    ULOG_START("ApoioStatusUsuario::ApoioStatusUsuario");
+    memset(&m_tApoioStatusUsuario, 0x00, sizeof(TApoioStatusUsuario));
+    ULOG_END("ApoioStatusUsuario::ApoioStatusUsuario");
+}
+
+/*******************************************************************************************************/
+ApoioStatusUsuario::~ApoioStatusUsuario(void)
+{
+    ULOG("ApoioStatusUsuario::~ApoioStatusUsuario");
+}
+
+/*******************************************************************************************************/
+void ApoioStatusUsuario::controleAlocacao(void)
+{
+    m_iQtdElementosAlocados=QTD_ELEMENTOS_STATUS_USUARIO;
+    m_iQtdElementosObtidos=0;
+
+    ULOG("m_iQtdElementosAlocados(%d)", m_iQtdElementosAlocados);
+    ULOG("sizeof(TApoioStatusUsuario)(%d)", sizeof(TApoioStatusUsuario));
+
+    if((m_ptApoioStatusUsuario = (TApoioStatusUsuario *) malloc((sizeof(TApoioStatusUsuario) * (m_iQtdElementosAlocados)))) == NULL ) {
+        throw new TuxBasicSvcException("13E0001", "Erro alocando memoria!");
+    }
+    ULOG("Memoria alocada m_ptApoioStatusUsuario (%p)", m_ptApoioStatusUsuario);
+}
+
+/*******************************************************************************************************/
+void ApoioStatusUsuario::clearApoioStatusUsuario(void)
+{
+    memset(&m_tApoioStatusUsuario, 0x00, sizeof(TApoioStatusUsuario));
+}
+
+/*******************************************************************************************************/
+TApoioStatusUsuario *ApoioStatusUsuario::buscaApoioStatusUsuario(void)
+{
+    static int iFlag=0;
+    static TApoioStatusUsuario tApoioStatusUsuarioAux;
+    static TApoioStatusUsuario *ptApoioStatusUsuarioAux;
+    static int iCount=0;
+
+    ULOG_START("ApoioStatusUsuario::buscaApoioStatusUsuario");
+
+    if(iFlag == 0) {
+        this->controleAlocacao();
+        this->buscaApoioStatusUsuarioPc();
+        ptApoioStatusUsuarioAux=m_ptApoioStatusUsuario;
+        iFlag=1;
+    }
+
+    ULOG("m_ptApoioStatusUsuario(%p)ptApoioStatusUsuarioAux(%p)", m_ptApoioStatusUsuario, ptApoioStatusUsuarioAux);
+    ULOG("m_iQtdElementosAlocados(%d)m_iQtdElementosObtidos(%d)iCount(%d)", m_iQtdElementosAlocados, m_iQtdElementosObtidos, iCount);
+
+    if(iCount < m_iQtdElementosObtidos)
+    {
+        memcpy(&tApoioStatusUsuarioAux, ptApoioStatusUsuarioAux, sizeof(TApoioStatusUsuario));
+        iCount++;
+        ptApoioStatusUsuarioAux++;
+
+        ULOG_END("ApoioStatusUsuario::buscaApoioStatusUsuario <NOT NULL>");
+        return &tApoioStatusUsuarioAux;
+    }
+    else
+    {
+        ULOG("Desalocando memoria ->m_ptApoioStatusUsuario(%p)", m_ptApoioStatusUsuario);
+        free(m_ptApoioStatusUsuario);
+        m_ptApoioStatusUsuario=NULL;
+        iFlag=0;
+        iCount=0;
+        m_iQtdElementosObtidos=0;
+
+        ULOG_END("ApoioStatusUsuario::buscaApoioStatusUsuario <NULL>");
+        return NULL;
+    }
+}
+
+/*******************************************************************************************************/
+void ApoioStatusUsuario::buscaApoioStatusUsuarioPc(void)
+{
+    ULOG_START("ApoioStatusUsuario::buscaApoioStatusUsuarioPc");
+
+    struct sqlca sqlca;
+    int iCount;
+    TApoioStatusUsuario *ptApoioStatusUsuarioAux;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdStatusUsuario[LEN_IDSTATUSUSUARIO];
+        VARCHAR oszDsStatusUsuario[LEN_DSSTATUSUSUARIO];
+    EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+
+    EXEC SQL DECLARE cStatusUsuario CURSOR FOR
+        SELECT idstatususuario,
+               dsstatususuario
+          FROM apoio.statususuario
+         ORDER BY idstatususuario;
+
+
+    EXEC SQL OPEN cStatusUsuario;
+
+    for(iCount=0, ptApoioStatusUsuarioAux=m_ptApoioStatusUsuario;;iCount++, ptApoioStatusUsuarioAux++, m_iQtdElementosObtidos++)
+    {
+        EXEC SQL FETCH cStatusUsuario INTO
+             :oszIdStatusUsuario,
+             :oszDsStatusUsuario;
+
+        ULOG("m_iQtdElementosAlocados(%d)iCount(%d)", m_iQtdElementosAlocados, iCount);
+
+        /* Verifica se precisa realocar espaco */
+        if(iCount >= m_iQtdElementosAlocados) {
+            m_iQtdElementosAlocados++;
+
+            ULOG("Realocando memoria [%p]", m_ptApoioStatusUsuario);
+            m_ptApoioStatusUsuario = (TApoioStatusUsuario *) realloc(m_ptApoioStatusUsuario, sizeof(TApoioStatusUsuario) * (m_iQtdElementosAlocados));
+            ULOG("Memoria realocada [%p] bloco(%d)", m_ptApoioStatusUsuario, sizeof(TApoioStatusUsuario) * (m_iQtdElementosAlocados));
+
+            /* Atribui o novo endereco obtido e posiciona o ponteiro na posicao do ultimo registro obtido antes da realocacao */
+            ptApoioStatusUsuarioAux = m_ptApoioStatusUsuario+iCount;
+        }
+
+        /* copia as informacoes obtidas para o ponteiro */
+        memset(ptApoioStatusUsuarioAux, 0x00, sizeof(TApoioStatusUsuario));
+        STRCPY_FROM_ORA(ptApoioStatusUsuarioAux->szIdStatusUsuario, oszIdStatusUsuario);
+        STRCPY_FROM_ORA(ptApoioStatusUsuarioAux->szDsStatusUsuario, oszDsStatusUsuario);
+
+    }
+
+    EXEC SQL CLOSE cStatusUsuario;
+
+    ULOG("iCount(%d) m_iQtdElementosAlocados(%d) m_iQtdElementosObtidos(%d)", iCount, m_iQtdElementosAlocados, m_iQtdElementosObtidos);
+
+    ULOGI("Finalizando ApoioStatusUsuario::buscaApoioStatusUsuarioPc");
+    ULOG_END("ApoioStatusUsuario::buscaApoioStatusUsuarioPc");
+    return;
+
+    erro:
+        ULOGE("Finalizando ApoioStatusUsuario::buscaApoioStatusUsuarioPc <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+}

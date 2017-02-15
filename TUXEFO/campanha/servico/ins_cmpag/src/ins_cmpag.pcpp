@@ -1,0 +1,131 @@
+//
+// $Id: ins_cmpag.pcpp,v 1.1 2009/07/31 15:34:18 a5110702 Exp $
+//
+
+#include "../../negocio/cmputil/include/campanha.hpp"
+
+int ins_cmpag(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char parm[501];
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  int	    idAgenda;
+  int	    idAtendimentoCampanha;
+  VARCHAR   dtAgendamento[255];
+  VARCHAR	nrTelefoneContato[255];
+  VARCHAR	nmPessoaContato[255];
+  short     idPessoaUsuarioAlteracao;
+  int		inAgendaCumprida;
+  VARCHAR	dsObservacaoAgenda[499];
+  int		idmotivocampanha;
+  int		idStatus=0;
+  int		idMotivo=0;
+  int		idSubMotivo=0;
+
+  int		idMotivoCampanha=0;
+
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+  try
+  {
+    //  Obtendo dados do xml
+    get_tag(parm, dnode, "idAtendimentoCampanha", 0, 0);
+    idAtendimentoCampanha = atoi(parm);
+
+    get_tag(parm, dnode, "dtAgendamento", 0, 0);
+	strToOra(dtAgendamento,parm);
+    
+    get_tag(parm, dnode, "nrTelefoneContato", 0, 0);
+	strToOra(nrTelefoneContato,parm);
+    
+	get_tag(parm, dnode, "nmPessoaContato", 0, 0);
+    strToOra(nmPessoaContato,parm);
+
+    get_tag(parm, dnode, "inAgendaCumprida", 0, 0);
+    inAgendaCumprida = atoi(parm);
+
+    get_tag(parm, dnode, "dsObservacaoAgenda", 0, 0);
+    strToOra(dsObservacaoAgenda,parm);
+ 
+	//alterar o status do atendimento
+	get_tag(parm, dnode, "idStatus", 0, 0);
+    idStatus = atoi(parm);
+
+	get_tag(parm, dnode, "idMotivo", 0, 0);
+    idMotivo = atoi(parm);
+
+	get_tag(parm, dnode, "idSubMotivo", 0, 0);
+    idSubMotivo = atoi(parm);
+
+	/*<idStatus>1</idStatus>
+	  <idMotivo>481</idMotivo>
+	  <idSubMotivo>144</idSubMotivo>*/
+
+	EXEC SQL
+		SELECT IDMOTIVOCAMPANHA
+		INTO   :idMotivoCampanha
+		FROM CAMPANHA.MOTIVOCAMPANHA
+		WHERE IDTIPOMOTIVOCAMPANHA=:idMotivo
+		AND	  IDTIPOSTATUSCAMPANHA=:idStatus
+		AND   IDTIPOSUBMOTIVOCAMPANHA=:idSubMotivo
+		AND	  IDSUBCAMPANHAHISTORICO IN 
+						( SELECT IDSUBCAMPANHAHISTORICO 
+							FROM CAMPANHA.CANALCAMPANHA
+							WHERE IDCANALCAMPANHA IN 
+									( SELECT IDCANALCAMPANHA FROM CAMPANHA.ATENDIMENTOCAMPANHA
+									  WHERE IDATENDIMENTOCAMPANHA = :idAtendimentoCampanha 
+									) 
+						);
+
+
+	EXEC SQL
+		UPDATE CAMPANHA.ATENDIMENTOCAMPANHA
+		SET IDMOTIVOCAMPANHA=:idMotivoCampanha
+		WHERE IDATENDIMENTOCAMPANHA=:idAtendimentoCampanha;
+
+    // Pegando id do usuario
+    idPessoaUsuarioAlteracao = usuario;
+
+	//Pegando o idAgenda para retorno
+	EXEC SQL
+		select campanha.agendasq.NEXTVAL into :idAgenda from DUAL;
+
+   
+ //################################################################
+ //##     INSTRUÇÃO SQL DE INSERCAO NA TABELA CAMPANHA.AGENDA ##
+ //################################################################
+   EXEC SQL
+	INSERT INTO campanha.agenda(IDAGENDA,
+		   					   IDATENDIMENTOCAMPANHA,
+							   IDPESSOAUSUARIO,
+							   DTAGENDAMENTO,
+							   IDUSUARIOALTERACAO, 
+							   NRTELEFONECONTATO,
+							   DSOBSERVACAOAGENDA,
+							   NMPESSOACONTATO,
+							   INAGENDACUMPRIDA,
+							   DTULTIMAALTERACAO)
+			VALUES(:idAgenda,
+				   :idAtendimentoCampanha,
+				   :idPessoaUsuarioAlteracao,
+				   TO_DATE(:dtAgendamento,'DD/MM/YYYY HH24:MI'),
+			       :idPessoaUsuarioAlteracao,
+				   :nrTelefoneContato,
+				   :dsObservacaoAgenda,
+				   :nmPessoaContato,
+				   :inAgendaCumprida,
+				   SYSDATE);		
+
+
+    /* INSERIDO OK */
+    xml->addItem("descricao","MODIFICADO");
+    xml->addItem("idagenda",idAgenda);
+  }
+  catch(...)
+  {
+	throw;
+  }
+  
+  return 1;
+}

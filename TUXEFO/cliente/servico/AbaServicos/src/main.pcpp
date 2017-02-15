@@ -1,0 +1,80 @@
+/*
+ * Serviço de preenchimento da aba de serviços na tela inicial
+ * Versão inicial, 22/07/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/AtlysAbaServicos.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+
+#include "../include/AbaServicos.h"
+
+DECLARE_TUXEDO_SERVICE(AbaServicos);
+
+void implAbaServicos::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+	char* pcIdConta = NULL;
+	int iIdConta;
+	char* pcIdLinha = NULL;
+	int* iIdLinha = (int*) malloc(sizeof(int));
+
+    ULOG_START( "implAbaServicos::Execute()" );
+    
+
+	// Traz ID da conta, informação obrigatória.
+	pcIdConta = walkTree(dnode, XML_IN_ID_CONTA, 0);
+	if (pcIdConta == NULL) {
+		ERROR(NRO_CONTA_ID_NE);
+		TAG_INEXISTENTE(XML_IN_ID_CONTA);
+		throw new TuxBasicSvcException(sNrMsg, sMsg);
+	}
+	if (!*pcIdConta) {
+		ERROR(NRO_CONTA_ID_VV);
+		TAG_VALOR_VAZIO(XML_IN_ID_CONTA);
+        if (pcIdConta)
+            XMLString::release(&pcIdConta);
+		throw new TuxBasicSvcException(sNrMsg, sMsg);
+	}
+	if ((iIdConta = atoi(pcIdConta)) <= 0) {
+		ERROR(NRO_CONTA_ID_VI);
+		TAG_VALOR_INVALIDO(XML_IN_ID_CONTA);
+        if (pcIdConta)
+            XMLString::release(&pcIdConta);
+		throw new TuxBasicSvcException(sNrMsg, sMsg);
+	}
+
+	// Traz ID da Linha, informação não obrigatória.
+	pcIdLinha = walkTree(dnode, XML_IN_ID_LINHA, 0);
+	if (pcIdLinha == NULL || !*pcIdLinha) 
+		iIdLinha = NULL;
+	else {
+		if ((*iIdLinha = atoi(pcIdLinha)) <= 0) {
+			ERROR(NRO_ID_LINHA_VI);
+			TAG_VALOR_INVALIDO(XML_IN_ID_LINHA);
+            if (pcIdLinha)
+                XMLString::release(&pcIdLinha);
+			throw new TuxBasicSvcException(sNrMsg, sMsg);
+		}
+	}
+    if (pcIdLinha)
+        XMLString::release(&pcIdLinha);
+
+	// Checa se a conta e/ou a linha é do cliente.
+	CAtlysAbaServicos* poAbaServ = new CAtlysAbaServicos(iIdConta, iIdLinha);
+	xml_g->createTag(XML_OUT_ROOT);
+	xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+	if (poAbaServ->getXMLAbaServicos() != NULL)
+		xml_g->aggregateXML(poAbaServ->getXMLAbaServicos());
+	xml_g->closeTag();
+
+	// Execução OK.
+	free(iIdLinha);
+    free(poAbaServ);
+
+	INFORMATION(NRO_OK);
+
+    ULOG_END( "implAbaServicos::Execute()" );
+	setStatusCode(sNrMsg, MSG_OK);
+}

@@ -1,0 +1,129 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw.h>
+
+#include "../include/SETTRACK.h"
+#include "../../negocio/clienteCmm/include/ParametroEntrega.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+DECLARE_TUXEDO_SERVICE(SETTRACK);
+
+void implSETTRACK::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+    CParametroEntregapc *pclParametroEntrega=NULL;
+
+    DOMNode *DNCampos=NULL;
+
+    char szAux[255 + 1];
+    char szTpOperacao[25 + 1];
+
+    ULOG_START("implSETTRACK::Execute");
+
+    try
+    {
+        pclParametroEntrega = new CParametroEntregapc;
+
+        pXmlG->createTag("TrackingPrevisaoEntregaVO");
+        pXmlG->addProp("xmlns", "tracking.fo.vivo.com.br/vo");
+
+
+        GETTREE(szTpOperacao, pDnode, "tpOperacao", 0, OBRIGATORIO, "tpOperacao"); ULOG("tpOperacao[%s]", szTpOperacao);
+
+
+        if(!strcmp(szTpOperacao, "gravar"))
+        {
+            if((DNCampos = walkDOM(pDnode, "Campos", 0)) != NULL)
+            {
+                GETTREE(szAux, DNCampos, "idSO", 0, OBRIGATORIO, "idSO"); ULOG("idSO[%s]", szAux);
+                pclParametroEntrega->setIdSistemaOrigem(szAux);
+
+                GETTREE(szAux, DNCampos, "nmSO", 0, NOBRIGATORIO, "nmSO"); ULOG("nmSO[%s]", szAux);
+                pclParametroEntrega->setNmSistemaOrigem(szAux);
+
+                GETTREE(szAux, DNCampos, "sgUF", 0, OBRIGATORIO, "sgUF"); ULOG("sgUF[%s]", szAux);
+                pclParametroEntrega->setUFRegiao(szAux);
+
+                GETTREE(szAux, DNCampos, "qtFornecimento", 0, OBRIGATORIO, "qtFornecimento"); ULOG("qtFornecimento[%s]", szAux);
+                pclParametroEntrega->setQtDiaFornecimento(szAux);
+
+                GETTREE(szAux, DNCampos, "qtPicking", 0, OBRIGATORIO, "qtPicking"); ULOG("qtPicking[%s]", szAux);
+                pclParametroEntrega->setQtDiaPicking(szAux);
+
+                GETTREE(szAux, DNCampos, "qtConfPicking", 0, OBRIGATORIO, "qtConfPicking"); ULOG("qtConfPicking[%s]", szAux);
+                pclParametroEntrega->setQtDiaConfirmaPicking(szAux);
+
+                GETTREE(szAux, DNCampos, "qtFaturamento", 0, OBRIGATORIO, "qtFaturamento"); ULOG("qtFaturamento[%s]", szAux);
+                pclParametroEntrega->setQtDiaFaturamento(szAux);
+
+                GETTREE(szAux, DNCampos, "qtRegSaida", 0, OBRIGATORIO, "qtRegSaida"); ULOG("qtRegSaida[%s]", szAux);
+                pclParametroEntrega->setQtDiaRegistroSaida(szAux);
+
+                GETTREE(szAux, DNCampos, "qtEntrega", 0, OBRIGATORIO, "qtEntrega"); ULOG("qtEntrega[%s]", szAux);
+                pclParametroEntrega->setQtDiaEntrega(szAux);
+
+                pclParametroEntrega->atualizaParametroEntrega();
+            }
+            else
+                throw new TuxBasicSvcException("13E0001", "Noh Campos inexistente!");
+
+        }
+        else
+            throw new TuxBasicSvcException("13E0001", "Tipo de operacao invalida!");
+
+
+        pXmlG->addItem("msgErro", "");
+        pXmlG->addItem("codErro", "0");
+        pXmlG->closeTag(); // TrackingPrevisaoEntregaVO
+
+    }
+    catch(TuxBasicSvcException *ex)
+    {
+        ULOG("Exception TuxBasicSvcException");
+
+        pXmlG->clearAndDestroy();
+
+        pXmlG->createTag("TrackingPrevisaoEntregaVO");
+        pXmlG->addProp("xmlns", "tracking.fo.vivo.com.br/vo");
+            pXmlG->addItem("msgErro", "Erro de Negócio.");
+            pXmlG->addItem("codErro", "1");
+        pXmlG->closeTag(); // TrackingPrevisaoEntregaVO
+
+        delete ex;
+    }
+    catch(TuxBasicOraException *ex)
+    {
+        ULOG("Exception TuxBasicOraException");
+
+        char szErrorMsg[256 + 1];
+        sprintf(szErrorMsg, "Erro de Banco de Dados:[%.*s]", strlen(ex->pMsg) -1, ex->pMsg);
+
+        pXmlG->clearAndDestroy();
+
+        pXmlG->createTag("TrackingPrevisaoEntregaVO");
+        pXmlG->addProp("xmlns", "tracking.fo.vivo.com.br/vo");
+            pXmlG->addItem("msgErro", szErrorMsg);
+            pXmlG->addItem("codErro", "2");
+        pXmlG->closeTag(); // TrackingPrevisaoEntregaVO
+
+        delete ex;
+    }
+
+    catch(...)
+    {
+        ULOG("Exception ...");
+        if(pclParametroEntrega) delete pclParametroEntrega;
+        ULOG_END("implSETTRACK::Execute");
+        throw;
+    }
+
+    ULOG("Normal");
+    if(pclParametroEntrega) delete pclParametroEntrega;
+    ULOG_END("implSETTRACK::Execute");
+    setStatusCode("13I0000", "Sucesso");
+}
+                                   

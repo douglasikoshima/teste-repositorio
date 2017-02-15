@@ -1,0 +1,119 @@
+//
+// $Id: get_listaatendimento.pcpp,v 1.1 2009/07/31 15:34:23 a5110702 Exp $
+// 
+   
+#include "../../negocio/cmputil/include/campanha.hpp"
+
+int get_listaatendimento( char * usuario, DOMNode*dnode,XMLGen*xml)
+{
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR sgCampanha[255+1];
+			int		idsubcampanhahistorico;
+			int     sqVersao;
+			int     sqApresentacao;
+			VARCHAR nmSubCampanha[255+1];
+		} stNivelRegistro;
+		struct
+		{
+			short iisgCampanha;
+			short iidsubcampanhahistorico;
+			short iiVersao;
+			short iiApresentaca;
+			short inmSubCampanha;
+		} stNivelIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Declara um cursor para listar os Registros
+		EXEC SQL DECLARE CursorNivelRelacao_00 CURSOR FOR
+
+		SELECT DISTINCT 	CAMPANHA2.SGCAMPANHA || ' ' || SUBCAMPANHAHISTORICO2.SQVERSAO AS VersaoCampanha,
+	   						SUBCAMPANHAHISTORICO.idsubcampanhahistorico,				
+							SUBCAMPANHAHISTORICO.SQVERSAO,
+							SUBCAMPANHAHISTORICO.sqApresentacao,
+							SUBCAMPANHAHISTORICO.NMSUBCAMPANHA
+		FROM	campanha.listacanalcampanha LISTACANALCAMPANHA,
+				campanha.CanalCampanha CANALCAMPANHA,
+				campanha.subcampanhahistorico SUBCAMPANHAHISTORICO,
+				campanha.subcampanhafixa SUBCAMPANHAFIXA,
+				apoio.campanha CAMPANHA,
+				campanha.canalufoperadora CANALUFOPERADORA,
+				apoio.canal CANAL,
+				campanha.listaconteudo LISTACONTEUDO
+		WHERE  LISTACANALCAMPANHA.idlista = LISTACONTEUDO.idLista
+		AND    CANALCAMPANHA.idcanalcampanha = LISTACANALCAMPANHA.idcanalcampanha
+		AND    SUBCAMPANHAHISTORICO.idsubcampanhahistorico = CANALCAMPANHA.idsubcampanhahistorico
+		AND    SUBCAMPANHAFIXA.idsubcampanhafixa = SUBCAMPANHAHISTORICO.idsubcampanhafixa
+		AND    CAMPANHA.idcampanha = SUBCAMPANHAFIXA.idcampanha
+		AND    CANALUFOPERADORA.idcanalufoperadora = CANALCAMPANHA.idcanalufoperadora
+		AND    CANAL.idcanal = CANALUFOPERADORA.idcanal
+		AND    CAMPANHA.inativo=1
+		and	   CANALCAMPANHA.INATIVO = 1
+		AND    SUBCAMPANHAHISTORICO.idsubcampanhahistorico IN 
+				(	
+					SELECT idsubcampanhahistorico 
+					FROM campanha.motivocampanha
+					WHERE inativo=1 
+				)	
+		AND   LISTACONTEUDO.idlistaconteudo NOT IN
+				(	
+					SELECT DISTINCT ATENDIMENTOCAMPANHA1.idlistaconteudo                                                
+					FROM campanha.atendimentocampanha ATENDIMENTOCAMPANHA1
+					)
+		ORDER BY SUBCAMPANHAHISTORICO.sqApresentacao;
+
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListaAtendimento;
+		EXEC SQL OPEN CursorNivelRelacao_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+			return -1;//Erro
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stNivelRegistro, 0, sizeof(stNivelRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorNivelRelacao_00 INTO :stNivelRegistro:stNivelIndicator;
+				
+				xml->createTag("campanhasRelacionadas");
+				xml->addItem("sgCampanha",(char*)stNivelRegistro.sgCampanha.arr);
+				xml->addItem("idsubcampanhahistorico",stNivelRegistro.idsubcampanhahistorico);
+				xml->addItem("sqVersao",stNivelRegistro.sqVersao);
+				xml->addItem("sqApresentacao",stNivelRegistro.sqApresentacao);
+				xml->addItem("nmSubCampanha",(char *)stNivelRegistro.nmSubCampanha.arr);
+				
+				xml->closeTag();
+
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorNivelRelacao_00;
+		}
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListaAtendimento:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}

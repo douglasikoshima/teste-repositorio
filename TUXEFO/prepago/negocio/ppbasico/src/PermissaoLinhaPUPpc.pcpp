@@ -1,0 +1,292 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+
+#include "tuxfw.h"
+#include "PermissaoLinhaPUPpc.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+/****************************************************************************************/
+void CPermissaoLinhaPUPpc::proCInserePermissaoLinhaPUP(TPermissaoLinhaPUP *ptPermissaoLinhaPUP)
+{
+    ULOG_START("CPermissaoLinhaPUPpc::proCInserePermissaoLinhaPUP");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszSgPermissaoPUP[LEN_SGPERMISSAOPUP];
+        VARCHAR oszInAtivo[LEN_INATIVO];
+        VARCHAR oszDtExpiracao[LEN_DTEXPIRACAO];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+		VARCHAR	oscdArea[3];
+		VARCHAR	osznrLinha[11];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, ptPermissaoLinhaPUP->szIdLinhaTelefonica);
+    STRCPY_TO_ORA(oszSgPermissaoPUP, ptPermissaoLinhaPUP->szSgPermissaoPUP);
+    STRCPY_TO_ORA(oszInAtivo, ptPermissaoLinhaPUP->szInAtivo);
+    STRCPY_TO_ORA(oszDtExpiracao, ptPermissaoLinhaPUP->szDtExpiracao);
+    STRCPY_TO_ORA(oszIdUsuarioAlteracao, ptPermissaoLinhaPUP->szIdUsuarioAlteracao);
+
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+		EXEC SQL 
+		SELECT	AR.CDAREAREGISTRO,
+				LB.NRLINHA
+		into	:oscdArea,
+				:osznrLinha
+			FROM APOIO.AREAREGISTRO AR,
+				 LINHA.LINHABASE LB,
+				 LINHA.LINHATELEFONICA LT
+		WHERE LT.IDLINHATELEFONICA=:oszIdLinhaTelefonica
+		and	  LT.IDLINHABASE=LB.IDLINHABASE
+		AND	  AR.IDAREAREGISTRO=LB.IDAREAREGISTRO;
+
+
+    EXEC SQL
+        INSERT INTO LINHA.PERMISSAOLINHAPUP
+    	( 
+            CDAREAREGISTRO,
+			NRLINHA,
+            SGPERMISSAOPUP,
+            INATIVO,
+            DTEXPIRACAO,
+            IDUSUARIOALTERACAO,
+            DTULTIMAALTERACAO 
+    	)
+    	VALUES 
+    	( 
+            :oscdArea,
+			:osznrLinha,
+            :oszSgPermissaoPUP,
+            :oszInAtivo,
+            SYSDATE + :oszDtExpiracao,
+            :oszIdUsuarioAlteracao,
+            SYSDATE
+    	);
+
+    ULOGI("Finalizando proCInserePermissaoLinhaPUP <OK>");
+    ULOG_END("CPermissaoLinhaPUPpc::proCInserePermissaoLinhaPUP");
+    return;
+
+    erro:
+        ULOGE("Finalizando proCInserePermissaoLinhaPUP <ERROR>");
+        ULOG_END("CPermissaoLinhaPUPpc::proCInserePermissaoLinhaPUP");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/****************************************************************************************/
+void CPermissaoLinhaPUPpc::proCAlteraCadastroLinhaPUP(TPermissaoLinhaPUP *ptPermissaoLinhaPUP)
+{
+    ULOG_START("CPermissaoLinhaPUPpc::proCAlteraCadastroLinhaPUP");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+		VARCHAR osznrLinha[11+1];
+		varchar oscdArea[3];
+		int		iOperacao=0;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, ptPermissaoLinhaPUP->szIdLinhaTelefonica);
+    STRCPY_TO_ORA(oszIdUsuarioAlteracao, ptPermissaoLinhaPUP->szIdUsuarioAlteracao);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+	EXEC SQL 
+		SELECT	AR.CDAREAREGISTRO,
+				LB.NRLINHA
+		into	:oscdArea,
+				:osznrLinha
+			FROM APOIO.AREAREGISTRO AR,
+				 LINHA.LINHABASE LB,
+				 LINHA.LINHATELEFONICA LT
+		WHERE LT.IDLINHATELEFONICA=:oszIdLinhaTelefonica
+		and	  LT.IDLINHABASE=LB.IDLINHABASE
+		AND	  AR.IDAREAREGISTRO=LB.IDAREAREGISTRO;
+
+	exec sql
+		select count(1) 
+		into :iOperacao
+		from linha.linhapup
+		where cdarearegistro=:oscdArea
+		and	  nrlinha=:osznrLinha;
+
+	if(!iOperacao)
+	{
+		ULOG("Primeiro Cadastro na Pup!");
+	EXEC SQL
+		INSERT INTO LINHA.linhapup
+		(CDAREAREGISTRO,
+		 NRLINHA,
+		 DTCADASTROPUP,
+		 IDUSUARIOCADASTROPUP)
+		VALUES
+		   (:oscdArea,
+			:osznrLinha,
+			SYSDATE,
+			:oszIdUsuarioAlteracao);
+	}
+	else
+	{
+		EXEC SQL
+			UPDATE LINHA.linhapup
+			SET   DTCADASTROPUP=SYSDATE,
+				  IDUSUARIOCADASTROPUP=:oszIdUsuarioAlteracao
+			WHERE CDAREAREGISTRO=:oscdArea
+			AND	  NRLINHA=:osznrLinha;
+	}
+
+    ULOGI("Finalizando proCAlteraCadastroLinhaPUP <OK>");
+    ULOG_END("CPermissaoLinhaPUPpc::proCAlteraCadastroLinhaPUP");
+    return;
+
+    erro:
+        ULOGE("Finalizando proCAlteraCadastroLinhaPUP <ERROR>");
+        ULOG_END("CPermissaoLinhaPUPpc::proCAlteraCadastroLinhaPUP");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/****************************************************************************************/
+bool CPermissaoLinhaPUPpc::proCBuscaPermissaoLinhaPUP(TPermissaoLinhaPUP *ptPermissaoLinhaPUP)
+{
+    ULOG_START("CPermissaoLinhaPUPpc::proCBuscaPermissaoLinhaPUP");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+        VARCHAR oszSgPermissaoPUP[LEN_SGPERMISSAOPUP];
+        VARCHAR oszInAtivo[LEN_INATIVO];
+        VARCHAR oszDtExpiracao[LEN_DTEXPIRACAO];
+        VARCHAR oszIdUsuarioAlteracao[LEN_IDUSUARIOALTERACAO];
+
+
+        short oiIdLinhaTelefonica=0;
+        short oiSgPermissaoPUP=0;
+        short oiInAtivo=0;
+        short oiDtExpiracao=0;
+        short oiIdUsuarioAlteracao=0;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, ptPermissaoLinhaPUP->szIdLinhaTelefonica);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    EXEC SQL 
+    	SELECT
+            IDLINHATELEFONICA,
+            SGPERMISSAOPUP,
+            INATIVO,
+            DTEXPIRACAO,
+            IDUSUARIOALTERACAO
+        INTO 
+            :oszIdLinhaTelefonica:oiIdLinhaTelefonica,
+            :oszSgPermissaoPUP:oiSgPermissaoPUP,
+            :oszInAtivo:oiInAtivo,
+            :oszDtExpiracao:oiDtExpiracao,
+            :oszIdUsuarioAlteracao:oiIdUsuarioAlteracao
+        FROM 
+            LINHA.PERMISSAOLINHAPUP
+    	WHERE
+    		IDLINHATELEFONICA = :oszIdLinhaTelefonica;
+
+
+    if(oiIdLinhaTelefonica != -1) {
+        STRCPY_FROM_ORA(ptPermissaoLinhaPUP->szIdLinhaTelefonica, oszIdLinhaTelefonica);
+    }
+
+    if(oiSgPermissaoPUP != -1) {
+        STRCPY_FROM_ORA(ptPermissaoLinhaPUP->szSgPermissaoPUP, oszSgPermissaoPUP);
+    }
+
+    if(oiInAtivo != -1) {
+        STRCPY_FROM_ORA(ptPermissaoLinhaPUP->szInAtivo, oszInAtivo);
+    }
+
+    if(oiDtExpiracao != -1) {
+        STRCPY_FROM_ORA(ptPermissaoLinhaPUP->szDtExpiracao, oszDtExpiracao);
+    }
+
+    if(oiIdUsuarioAlteracao != -1) {
+        STRCPY_FROM_ORA(ptPermissaoLinhaPUP->szIdUsuarioAlteracao, oszIdUsuarioAlteracao);
+    }
+
+    ULOGI("Finalizando proCBuscaPermissaoLinhaPUP <FOUND>");
+    ULOG_END("CPermissaoLinhaPUPpc::proCBuscaPermissaoLinhaPUP");
+	return true;
+
+    naoexiste:
+        ULOGI("Finalizando proCBuscaPermissaoLinhaPUP <NOT FOUND>");
+        ULOG_END("CPermissaoLinhaPUPpc::proCBuscaPermissaoLinhaPUP");
+        return false;
+
+    erro:
+        ULOGE("Finalizando proCBuscaPermissaoLinhaPUP <ERROR>");
+        ULOG_END("CPermissaoLinhaPUPpc::proCBuscaPermissaoLinhaPUP");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+/****************************************************************************************/
+void CPermissaoLinhaPUPpc::proCApagaPermissaoLinhaPUP(TPermissaoLinhaPUP *ptPermissaoLinhaPUP)
+{
+    ULOG_START("CPermissaoLinhaPUPpc::proCApagaPermissaoLinhaPUP");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLinhaTelefonica[LEN_IDLINHATELEFONICA];
+		VARCHAR oscdArea[3];
+		VARCHAR osznrLinha[10];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, ptPermissaoLinhaPUP->szIdLinhaTelefonica);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+
+	EXEC SQL 
+		SELECT	AR.CDAREAREGISTRO,
+				LB.NRLINHA
+		into	:oscdArea,
+				:osznrLinha
+			FROM APOIO.AREAREGISTRO AR,
+				 LINHA.LINHABASE LB,
+				 LINHA.LINHATELEFONICA LT
+		WHERE LT.IDLINHATELEFONICA=:oszIdLinhaTelefonica
+		and	  LT.IDLINHABASE=LB.IDLINHABASE
+		AND	  AR.IDAREAREGISTRO=LB.IDAREAREGISTRO;
+
+
+    EXEC SQL 
+        DELETE FROM 
+            LINHA.PERMISSAOLINHAPUP
+    	WHERE
+    		cdarearegistro = :oscdArea
+		and	
+			nrlinha		   = :osznrLinha;
+
+    ULOGI("Finalizando proCApagaPermissaoLinhaPUP <FOUND>");
+    ULOG_END("CPermissaoLinhaPUPpc::proCApagaPermissaoLinhaPUP");
+	return;
+
+    naoexiste:
+        ULOGI("Finalizando proCApagaPermissaoLinhaPUP <NOT FOUND>");
+        ULOG_END("CPermissaoLinhaPUPpc::proCApagaPermissaoLinhaPUP");
+        return;
+
+    erro:
+        ULOGE("Finalizando proCApagaPermissaoLinhaPUP <ERROR>");
+        ULOG_END("CPermissaoLinhaPUPpc::proCApagaPermissaoLinhaPUP");
+        throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}

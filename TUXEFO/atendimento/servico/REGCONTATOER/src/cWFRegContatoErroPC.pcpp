@@ -1,0 +1,107 @@
+/**
+ * @author  Eder Jani Martins
+ * @version $Revision: 1.1.2.1.6.2 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/06 12:36:43 $
+ **/ 
+ 
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/cWFRegContatoErro.h"
+
+void sql_error_WFRegContatoErro(sqlca*sqlca);
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+    #include "../include/stWFRegContatoErro.h"
+EXEC SQL END DECLARE SECTION;
+
+
+unsigned long proCIncluirWFRegContatoErro(st_RegContatoLogErro* dados, st_vlRegContatoLogErro* status)
+{
+    ULOG_START( "proCIncluirWFRegContatoErro()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct st_RegContatoLogErro   oDados;
+        struct st_vlRegContatoLogErro oStatus;
+    EXEC SQL END DECLARE SECTION;
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFRegContatoErro(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	//Recupera o chave primária para poder gerar o log com ela
+	EXEC SQL
+	    SELECT 
+		    ATENDIMENTO.ATENDIMENTOREGCONTATOERRSQ.NEXTVAL
+	    INTO
+		    :oDados.idAtendimentoRegContatoErr:oStatus.idAtendimentoRegContatoErr
+	    FROM
+		    DUAL;
+
+    //Log para verificação dos dados caso o insert falhe
+	ULOG( "oDados.idAtendimentoRegContatoErr=[%ld]",oDados.idAtendimentoRegContatoErr );
+    ULOG( "oDados.idContato=[%d]",                 oDados.idContato );
+    ULOG( "oDados.idCanal=[%d]",                   oDados.idCanal );
+    ULOG( "oDados.idGrupoAbertura=[%d]",           oDados.idGrupoAbertura );
+    ULOG( "oDados.idPessoaUsuarioAbertura=[%ld]",   oDados.idPessoaUsuarioAbertura );
+    ULOG( "oDados.idTipoCarteira=[%d]",            oDados.idTipoCarteira );
+    ULOG( "oDados.xmlEntrada=[%s]",                oDados.xmlEntrada );
+    ULOG( "oDados.mensagemErro=[%s]",              oDados.mensagemErro );
+
+    ULOG( "oStatus.idAtendimentoRegContatoErr=[%d]",oStatus.idAtendimentoRegContatoErr );
+    ULOG( "oStatus.idContato=[%d]",                 oStatus.idContato );
+    ULOG( "oStatus.idCanal=[%d]",                   oStatus.idCanal );
+    ULOG( "oStatus.idGrupoAbertura=[%d]",           oStatus.idGrupoAbertura );
+    ULOG( "oStatus.idPessoaUsuarioAbertura=[%ld]",   oStatus.idPessoaUsuarioAbertura );
+    ULOG( "oStatus.idTipoCarteira=[%d]",            oStatus.idTipoCarteira );
+    ULOG( "oStatus.xmlEntrada=[%d]",                oStatus.xmlEntrada );
+    ULOG( "oStatus.mensagemErro=[%d]",              oStatus.mensagemErro );
+
+	//Insere os dados, qualquer campo que não vier será incluído como nulo
+	//Menos a PK, e o XML de entrada
+	EXEC SQL
+	    INSERT INTO ATENDIMENTO.ATENDIMENTOREGCONTATOERR
+	    (
+		    IDATENDIMENTOREGCONTATOERR, 
+		    IDCONTATOERR, 
+		    IDCANALERR, 
+		    IDGRUPOABERTURAERR, 
+		    IDPROCEDENCIAERR, 
+		    IDPESSOAUSUARIOABERTURAERR, 
+		    IDSEGMENTACAOERR, 
+		    IDTIPOCARTEIRAERR, 
+		    DTOCORRENCIA, 
+		    XMLENTRADA, 
+		    MENSAGEMERRO
+	    )
+	    VALUES
+	    (
+		    :oDados.idAtendimentoRegContatoErr,
+		    DECODE( :oStatus.idContato              , -1, NULL, :oDados.idContato), 
+		    DECODE( :oStatus.idCanal                , -1, NULL, :oDados.idCanal), 
+		    DECODE( :oStatus.idGrupoAbertura        , -1, NULL, :oDados.idGrupoAbertura), 
+		    DECODE( :oStatus.idProcedencia          , -1, NULL, :oDados.idProcedencia), 
+		    DECODE( :oStatus.idPessoaUsuarioAbertura, -1, NULL, :oDados.idPessoaUsuarioAbertura), 
+		    DECODE( :oStatus.idSegmentacao          , -1, NULL, :oDados.idSegmentacao), 
+		    DECODE( :oStatus.idTipoCarteira         , -1, NULL, :oDados.idTipoCarteira), 
+		    SYSDATE,
+		    SUBSTR( :oDados.xmlEntrada, 1, 4000 ),
+		    DECODE( :oStatus.mensagemErro           , -1, NULL, SUBSTR( :oDados.mensagemErro, 1, 1024 ) )
+	    );
+
+    ULOG_END( "proCIncluirWFRegContatoErro()" );
+
+	return oDados.idAtendimentoRegContatoErr;
+}
+
+void sql_error_WFRegContatoErro(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

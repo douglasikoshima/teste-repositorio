@@ -1,0 +1,2108 @@
+/**
+ * @modulo  Atendimento
+ * @usecase Fechamento em massa
+ * @author  Eder Jani Martins
+ * @version $Revision: 1.1.2.13.6.4 $
+ * @CVS     $Author: a5114878 $ - $Date: 2013/02/06 12:36:43 $
+ **/
+
+#include"../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+#include "../include/cWF_CERRAMEFECPC.h"
+
+#include "../../PPRelatorios/include/cWFPPRelatorios.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/stWF_CERRAMEFEC.h"
+EXEC SQL END DECLARE SECTION;
+
+//Construtor padrão da classe.
+cWF_CERRAMEFECPC::cWF_CERRAMEFECPC()
+{
+    //Zera a variavel que contera dados do sistema
+    memset( &stSistema, 0, sizeof( ST_SYSTEMA ) );
+    
+    //Recupera data, hora e datahora
+    sistema();
+
+    //Estrutura XML com VOs das tabelas monitoradas pelo DPR
+    xmlDpr = 0;
+}
+
+//Destrutor padrão da classe.
+cWF_CERRAMEFECPC::~cWF_CERRAMEFECPC()
+{
+    if ( xmlDpr ) {delete xmlDpr;xmlDpr=0;}
+}
+
+/**
+    Retorna a data atual do banco de dados para ser usada como parametro das demais chamadas.
+*/
+
+void cWF_CERRAMEFECPC::sistema( void )
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct
+        {
+            VARCHAR stData[10+1];
+            VARCHAR stHora[10+1];
+            VARCHAR stDataHora[20+1];
+        } stRegistro;
+        struct
+        {
+            short sData;
+            short sHora;
+            short sDataHora;
+        } stIndicator;
+    EXEC SQL END DECLARE SECTION;
+
+    //Apaga a estrutura local
+    memset( &stRegistro, 0, sizeof( stRegistro ) );
+
+    //Controle de erro
+    EXEC SQL WHENEVER SQLERROR  DO sqlErro(&sqlca);
+
+    //Recupera os dados no ORACLE
+    EXEC SQL 
+    SELECT
+        TO_CHAR(SYSDATE, 'DD/MM/YYYY') DATA,
+        TO_CHAR(SYSDATE, 'HH24:MI:SS') HORA,
+        TO_CHAR(SYSDATE, 'DD/MM/YYYY HH24:MI:SS') DATAHORA
+    INTO    
+        :stRegistro:stIndicator
+    FROM
+        DUAL;
+
+    //Copias os dados para a estrutura interna na classe
+    strcpy(stSistema.cData, (char*) stRegistro.stData.arr);
+    strcpy(stSistema.cHora, (char*) stRegistro.stHora.arr);
+    strcpy(stSistema.cDataHora, (char*) stRegistro.stDataHora.arr);
+
+}
+
+//Retorna a data que esta armazenada na estrutura interna
+char* cWF_CERRAMEFECPC::getData( void )
+{
+    return stSistema.cData;
+}
+//Retorna a hora que esta armazenada na estrutura interna
+char* cWF_CERRAMEFECPC::getHota( void )
+{
+    return stSistema.cHora;
+}
+//Retorna a datahora que esta armazenada na estrutura interna
+char* cWF_CERRAMEFECPC::getDataHora( void )
+{
+    return stSistema.cDataHora;
+}
+
+bool cWF_CERRAMEFECPC::sendMail( struct ST_DADOS_ENTRADA* stDados )
+{
+
+// Ambiente windows não possui servidor de envio de SMS/e-mail.
+#ifndef WIN32
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+//      char*  idAtendimento = stDados->stDadosFixos.cidAtendimento;
+        char*  idAtendimento = stDados->stDadosProcesso[0].cidAtendimento;
+        char*  idBxa = stDados->stDadosFixos.cidBaixa;
+        int  inEnvEmail = 0;
+        int  inEnvSms = 0;
+        int  inEnvTel = 0;
+        VARCHAR dsMsg[256];
+        VARCHAR dsCom[256];
+
+        short i_dsMsg = -1;
+        short i_dsCom = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    EXEC SQL WHENEVER SQLERROR DO sqlErro(&sqlca);
+
+    // Log dos dados de entrada
+    ULOG("cWF_CERRAMEFECPC::sendMail  idAtendimento=[%s] idBxa=[%s]", idAtendimento, idBxa);
+
+    EXEC SQL DECLARE crsEmailSMS CURSOR FOR 
+        SELECT 
+            DSMENSAGEMBAIXA, DSCOMUNICACAO, INENVIOEMAIL, INENVIOSMS, INENVIOTELEFONE 
+        FROM
+            ATENDIMENTO.ATDFORMARETORNOV01
+        WHERE 
+            IDATENDIMENTO = :idAtendimento
+            AND IDBAIXA = :idBxa            
+        ORDER BY NRORDEMUTILIZACAO;
+    
+    EXEC SQL OPEN crsEmailSMS;
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+    for(;;)
+    {
+        i_dsMsg = -1;
+        i_dsCom = -1;
+        inEnvEmail = 0;
+        inEnvSms = 0;
+        inEnvTel = 0;
+
+        EXEC SQL FETCH crsEmailSMS INTO :dsMsg:i_dsMsg, :dsCom:i_dsCom, :inEnvEmail, :inEnvSms, :inEnvTel;
+    
+        CONVIND(dsMsg, i_dsMsg);
+        CONVIND(dsCom, i_dsCom);
+
+        ULOG("cWF_CERRAMEFECPC::sendMail  inEnvEmail=[%d] inEnvSms=[%d]", inEnvEmail, inEnvSms);
+    
+        if ( inEnvEmail == 1 )
+        {
+            st_EmailUtil m_stDadosEmail;
+            st_vlEmailUtil m_vlDadosEmail;
+            XMLGen xmlMail;
+
+            memset(&m_stDadosEmail, 0, sizeof(m_stDadosEmail));
+            memset(&m_vlDadosEmail,-1, sizeof(m_vlDadosEmail));
+            strcpy(m_stDadosEmail.destinatario, (const char *)dsCom.arr);
+            m_vlDadosEmail.destinatario=1;
+            strcpy(m_stDadosEmail.assunto, "VIVO informa......");
+            m_vlDadosEmail.assunto=1;
+            strcpy(m_stDadosEmail.mensagem, (const char *)dsMsg.arr);
+            m_vlDadosEmail.mensagem=1;
+
+            cEmailUtil email(&m_stDadosEmail, &m_vlDadosEmail, &xmlMail);
+
+            email.enviar();         
+
+            ULOG("cWF_CERRAMEFECPC::sendMail  enmail.enviar para[%s]", m_stDadosEmail.destinatario);
+        }
+
+        if (inEnvSms == 1)
+        {
+            st_SMSUtil m_stDadosSms;
+            st_vlSMSUtil m_vlDadosSms;
+            XMLGen xmlSms;
+
+            char destino [11];
+            int min = 0;
+            memset(&m_stDadosSms, 0, sizeof(m_stDadosSms));
+            memset(&m_vlDadosSms,-1, sizeof(m_vlDadosSms));
+            int tamDatosBaixaHistorico =  (int)strlen((const char *)dsCom.arr);
+
+            for (int k=0; k<tamDatosBaixaHistorico;k++)
+            {
+                // Alteracao do if para inserir apenas numeros
+                if ( (dsCom.arr[k] >= '0') && (dsCom.arr[k] <= '9') )
+                {
+                    destino[min] = dsCom.arr[k];
+                    min++;
+                }
+            }
+
+            destino[min] =  '\0';
+            strcpy(m_stDadosSms.destinatario, destino);
+            m_vlDadosSms.destinatario=1;
+            strcpy(m_stDadosSms.mensagem, (const char *)dsMsg.arr);
+            m_vlDadosSms.mensagem=1;
+
+            cSMSUtil sms(&m_stDadosSms, &m_vlDadosSms, &xmlSms);
+
+            sms.enviar();           
+            ULOG("cWF_CERRAMEFECPC::sendMail  sms.enviar para[%s]", destino);
+        }
+
+    } // Fim do for para o envio das mensagens
+
+    EXEC SQL CLOSE crsEmailSMS;
+
+    // Troca a diretiva para a 
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+#endif
+
+    return true;
+}
+
+
+//Dado um idAtendimento recupera diversos dados relativos ao atendimento
+void cWF_CERRAMEFECPC::encerrarProcessos( struct ST_DADOS_ENTRADA* stDados)
+{
+    struct sqlca sqlca;
+    char idAgrupamentoEstadoTpProcAnt[8];
+	int idxFrase;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char cPesquisa[2024];
+        struct ST_GETATENDIMENTO stgetAtendimento;
+        struct ST_GETATENDIMENTOIND stgetAtendimentoInd;
+        struct
+        {
+            VARCHAR stidGrupo[21+1];
+            VARCHAR stnmGrupo[255+1];
+            VARCHAR stINCRI[21+1];
+            VARCHAR stidPessoaLInhaHistorico[21+1];
+            VARCHAR stidPessoaUsuario[21+1];
+            VARCHAR stidAndamento[21+1];
+            char    cidUsuario[21+1];
+            char    cdtSysDate[21+1];
+            char    cidAtividadeMassa[21+1];
+            char    cidAgrupamentoEstadoTProcFut[21+1];
+            char    cidBaixa[21+1];
+            char    cidFase[21+1];
+            char    cidMensagemBaixa[21+1];
+            char    cdsObservacao[1000+1];
+        }stRegistro;
+        struct
+        {
+            short sidGrupo;
+            short snmGrupo;
+            short sINCRI;
+            short sidPessoaLInhaHistorico;
+            short sidAgrupamentoEstadoTProcFut;
+            short sidPessoaUsuario;
+            short sidAndamento;
+            short sidFase;
+        }stRegistroInd;
+        struct
+        {
+            VARCHAR stdsMensagemBaixa[255+1];
+            VARCHAR stdsComunicacao[255+1];
+            VARCHAR stinEnvioEmail[21+1];
+            VARCHAR stinEnvioSms[21+1];
+            VARCHAR stinEnvioTelefone[21+1];
+        }stMensagemBaixa;
+        struct
+        {
+            short sdsMensagemBaixa;
+            short sdsComunicacao;
+            short sinEnvioEmail;
+            short sinEnvioSms;
+            short sinEnvioTelefone;
+        }stMensagemBaixaInd;
+        VARCHAR stidAtendimentoBaixaHistorico[21+1];
+        VARCHAR stidBaixaMensagem[21+1];
+        VARCHAR stidAtendimentoNivel[21+1];
+        int     iCount;
+        int     fechado; //0= atendimento fechado, 1=não fechado
+        char *pDataHora = stSistema.cDataHora;
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &stRegistro, 0, sizeof( stRegistro ) );
+    //Recupera o idUsuario, aquele que esta executando a operacao
+    strcpy( stRegistro.cidUsuario, stDados->cidUsuario );
+    //Data e hora atual
+    strcpy( stRegistro.cdtSysDate, getDataHora() );
+    //Atividade utilizada para fechamento em massa, vem do XMLIN
+    strcpy( stRegistro.cidAtividadeMassa, stDados->stDadosFixos.cidAtividadeMassa );
+    //Novo tipo de estado utilizado para fechamento em massa, vem do XMLIN
+    strcpy( stRegistro.cidAgrupamentoEstadoTProcFut, stDados->stDadosFixos.cidAgrupamentoEstadoTProcFut );
+    //Baixa utilizado para fechamento em massa, vem do XMLIN
+    strcpy( stRegistro.cidBaixa, stDados->stDadosFixos.cidBaixa );
+    //Fase utilizado para fechamento em massa, vem do XMLIN
+    strcpy( stRegistro.cidFase, stDados->stDadosFixos.cidFase );
+    //BaixaMensagem utilizado para fechamento em massa, vem do XMLIN
+    strcpy( stRegistro.cidMensagemBaixa, stDados->stDadosFixos.cidMensagemBaixa );
+    //dsObservacao utilizado para fechamento em massa, vem do XMLIN
+    strncpy( stRegistro.cdsObservacao, &stDados->stDadosFixos.cdsObservacao[0], 1000 );
+
+    //Apaga a estrutura local
+    // memset( cPesquisa, 0, sizeof( cPesquisa ) );
+
+    ///////////////////////////////////////////////////////
+    // Inicio da montagem pesquisa dinamica de atendimentos
+    ///////////////////////////////////////////////////////
+    strcpy( cPesquisa,
+        "SELECT "
+            "NULL as IDANDAMENTO, " //Este campo eh para manter compatibilidate com a estrutura ST_GETATENDIMENTO
+            "IDATENDIMENTO, "
+            "DATAABERTURA, "
+            "IDCONTATO, "
+            "DATAPRAZOFINALINTERNO, "
+            "IDTIPORETORNOCONTATO, "
+            "IDCANAL, "
+            "NMCANAL, "
+            "IDPROCEDENCIA, "
+            "DSPROCEDENCIA, "
+            "IDSEGMENTACAO, "
+            "DSSEGMENTACAO, "
+            //"IDDISCADOR, "
+            "IDFASE, "
+            "IDPESSOAUSUARIOABERTURA, "
+            "NMLOGINUSUARIO, "
+            "IDGRUPOABERTURA, "
+            "NMGRUPO, "
+            "IDTIPOCARTEIRA, "
+            "DSTIPOCARTEIRA,"
+            "NRNIVEL, "
+            "QTINSISTENCIA, "
+            "IDAGRUPAMENTOESTADOTPPROC, "
+            "IDESTADO, "
+            "DSESTADO, "
+            "IDSUBESTADO, "
+            "DSSUBESTADO, "
+            "CDCONTA, "
+            "NRLINHA, "
+            "IDATENDIMENTOBAIXAHISTORICO, "
+            "IDATENDIMENTOORIGEM, "
+            "DATAFECHAMENTO, "
+            "IDGRUPOANDAMENTO, "
+            "0 INCRI, "
+            "NULL AS IDGRUPOATUAL, " //Este campo eh para manter compatibilidate com a estrutura ST_GETATENDIMENTO
+            "NULL AS INCRIATUAL, "    //Este campo eh para manter compatibilidate com a estrutura ST_GETATENDIMENTO
+            "NULL AS IDPESSOALINHAHISTORICO,"    //Este campo eh para manter compatibilidate com a estrutura ST_GETATENDIMENTO
+            "IDATENDIMENTOPROTOCOLO "
+        "FROM "
+            "ATENDIMENTO.ATENDIMENTODETALHEV01 "
+        "WHERE "
+            "IDATENDIMENTO IN ( "
+    );
+
+    //Caso o XML nao envie FASE, temos que pesquisar
+    if( STRLENNULL( stRegistro.cidFase ) <= 0 )
+    {
+        //Em fechamento a fase eh sempre 2, ou seja tratamento
+        EXEC SQL
+        SELECT 
+            IDFASE
+        INTO
+            :stRegistro.cidFase:stRegistroInd.sidFase
+        FROM 
+            WORKFLOW.FASE
+        WHERE
+            UPPER(SGFASE) = 'T';
+        alltrim( stRegistro.cidFase );
+    }
+
+    //Monta a pesquisa dinamica com os dados de entrada
+    for( int x = 0; x < stDados->iTotalProcessos; x++ )
+    {
+        if( x > 0 )
+            strcat( cPesquisa, "," );
+        strcat( cPesquisa, "'" );
+        strcat( cPesquisa, stDados->stDadosProcesso[x].cidAtendimento );
+        strcat( cPesquisa, "'" );
+    }
+    strcat( cPesquisa, " )" );
+    ///////////////////////////////////////////////////////
+    // Fim da montagem pesquisa dinamica de atendimentos
+    ///////////////////////////////////////////////////////
+
+    //Vamos logar a pesquisa
+    ULOG("cWF_CERRAMEFECPC::getAtendimento:Pesquisa[%s]", cPesquisa );
+
+    //Controle de erro
+    EXEC SQL WHENEVER SQLERROR  DO sqlErro(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    //Prepara a pesquisa dinamica
+    EXEC SQL PREPARE qPesquisa FROM :cPesquisa;
+    //Monta o cursor
+    EXEC SQL DECLARE CursorgetAtendimento CURSOR FOR qPesquisa;
+    //Cria o cursor
+    EXEC SQL OPEN CursorgetAtendimento;
+
+    memset(&idAgrupamentoEstadoTpProcAnt,0,sizeof(idAgrupamentoEstadoTpProcAnt));
+
+    for(int y=1;;y++)
+    //for(int y=0;;y++)
+    {
+        // DPR--SM324--Estruturas VO de tabelas monitoradas pelo DPR
+        if ( xmlDpr ) {delete xmlDpr;xmlDpr=0;}
+        xmlDpr = new XMLDPR;
+
+        memset( &stgetAtendimento, 0, sizeof( stgetAtendimento ) );
+
+        ULOG("cWF_CERRAMEFECPC::FETCH CursorgetAtendimento, interação[%d]", y );
+        EXEC SQL
+        FETCH CursorgetAtendimento
+        INTO
+            :stgetAtendimento:stgetAtendimentoInd;
+
+        ULOG("cWF_CERRAMEFECPC::Processando o atendimento [%s]", alltrim( stgetAtendimento.cidAtendimento ) );
+		
+		for ( idxFrase=0;;idxFrase++)
+		{
+		    if( (char*)stDados->stDadosProcesso[idxFrase].cidAtendimento[0] == 0x0 )
+			{
+			    break;
+			}
+			if ( !strcmp(stgetAtendimento.cidAtendimento,(char*)stDados->stDadosProcesso[idxFrase].cidAtendimento) )
+			{
+			   break;
+			}
+		}
+
+        memset( &stRegistroInd, 0, sizeof( stRegistroInd ) );
+        memset( &stRegistro.stidGrupo, 0, sizeof( stRegistro.stidGrupo ) );
+
+        ///////////////////////////////////////////////////////
+        // Precisa do idContato para análise no DPR-SM324
+        ///////////////////////////////////////////////////////
+        strcpy(stDados->stDadosProcesso[y].cidContato,stgetAtendimento.cidContato);
+        int idAgrupamentoEstadoTProcFut = atoi(stRegistro.cidAgrupamentoEstadoTProcFut);
+
+        ///////////////////////////////////////////////////////
+        // Para Cada atendimento verifica se eh ou nao CRI
+        ///////////////////////////////////////////////////////
+        alltrim( stgetAtendimento.cidAtendimento );
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+        // É necessário verificar se o processo do lote já foi fechado para evitar erros
+        // de concorrência. - Abril, 2006 - Cassio
+        // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+        // EXEC SQL
+        //     SELECT 
+        //         COUNT(1) 
+        //     INTO
+        //         :fechado
+        //     FROM
+        //         ATENDIMENTO.ATENDIMENTOFECHAMENTO
+        //     WHERE 
+        //         IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+        EXEC SQL
+            SELECT 
+                DECODE(DTFECHAMENTO,NULL,0,1)
+            INTO
+                :fechado
+            FROM
+                ATENDIMENTO.ATENDIMENTO
+            WHERE 
+                IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+
+        if ( fechado )
+        {
+            ULOG("cWF_CERRAMEFECPC::atendimento [%s] ja havia sido fechado!", stgetAtendimento.cidAtendimento);
+            continue;
+        }
+
+        ///////////////////////////////////////////////////////
+        // Define o idAgrupamentoEstadoTpProc futuro
+        ///////////////////////////////////////////////////////
+        alltrim( stgetAtendimento.cidAgrupamentoEstadoTpProc );
+        
+        if( STRLENNULL( stDados->stDadosFixos.cidAgrupamentoEstadoTProcFut ) <= 0 )
+        { // se xml de entrada não possui um idAgrupamentoEstadoTpProc futuro, então pesquisa
+            if( strcmp(stgetAtendimento.cidAgrupamentoEstadoTpProc,idAgrupamentoEstadoTpProcAnt) )
+            { // Se o estado imediatamente anterior era o mesmo não precisa pesquisar o estado futuro
+
+                ULOG("cWF_CERRAMEFECPC::XMLIN sem, buscando em PROXIMOESTADOV01" );
+                ULOG("cWF_CERRAMEFECPC::XMLIN sem AGRUPAMENTOORIGEM [%s]", stgetAtendimento.cidAgrupamentoEstadoTpProc );
+                ULOG("cWF_CERRAMEFECPC::XMLIN sem IDATIVIDADE [%s]", stRegistro.cidAtividadeMassa );
+
+                strcpy(idAgrupamentoEstadoTpProcAnt,stgetAtendimento.cidAgrupamentoEstadoTpProc);
+
+                EXEC SQL
+                SELECT 
+                    AGRUPAMENTODESTINO
+                INTO
+                    :stRegistro.cidAgrupamentoEstadoTProcFut:stRegistroInd.sidAgrupamentoEstadoTProcFut
+                FROM 
+                    WORKFLOW.PROXIMOESTADOV01
+                WHERE
+                    IDATIVIDADE = :stRegistro.cidAtividadeMassa
+                AND 
+                    AGRUPAMENTOORIGEM = :stgetAtendimento.cidAgrupamentoEstadoTpProc;
+
+                alltrim( stRegistro.cidAgrupamentoEstadoTProcFut );
+
+                ULOG("cWF_CERRAMEFECPC::XMLIN sem AGRUPAMENTODESTINO [%s]", stRegistro.cidAgrupamentoEstadoTProcFut );
+
+                if( STRLENNULL( stRegistro.cidAgrupamentoEstadoTProcFut ) <= 0 )
+                {
+                    ULOG("Agrupamento futuro não encontrado para o processo %s", stgetAtendimento.cidAtendimento);
+                    continue;
+                }
+            }
+        }
+        else
+        {
+            ULOG("cWF_CERRAMEFECPC::XMLIN Com idAgrupamentoEstadoTProcFut [%s]", stRegistro.cidAgrupamentoEstadoTProcFut );
+        }
+
+        /////////////////////////////////////////////////////////////////////////
+        // Precisa do idAgrupamentoEstadoTpProc futuro para outras operações do
+        // DPR. SM324 - Fev/2007 - Cassio
+        /////////////////////////////////////////////////////////////////////////
+        strcpy(stDados->stDadosProcesso[y].cidAgrupamentoEstadoTProcFut,stRegistro.cidAgrupamentoEstadoTProcFut);
+
+        /*
+        if( strcmp( rtrim( stgetAtendimento.cINCRI ), "0" ) == 0 )
+        {
+            memset( &stRegistro.stINCRI, 0, sizeof( stRegistro.stINCRI ) );
+        */
+            ///////////////////////////////////////////////////////
+            // Caso nao seja CRI recupera grupo atual
+            ///////////////////////////////////////////////////////
+            ULOG("cWF_CERRAMEFECPC::Recuperando ATENDIMENTOGRUPOATUAL");
+            // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+            // EXEC SQL
+            // SELECT 
+            //     ATENDIMENTOGRUPOATUAL.IDGRUPO
+            // INTO
+            //     :stRegistro.stidGrupo:stRegistroInd.sidGrupo
+            // FROM 
+            //     ATENDIMENTO.ATENDIMENTOGRUPOATUAL ATENDIMENTOGRUPOATUAL
+            // WHERE 
+            //     ATENDIMENTOGRUPOATUAL.IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+            EXEC SQL
+            SELECT 
+                ATENDIMENTO.IDGRUPOATUAL
+            INTO
+                :stRegistro.stidGrupo:stRegistroInd.sidGrupo
+            FROM 
+                ATENDIMENTO.ATENDIMENTO ATENDIMENTO
+            WHERE 
+                ATENDIMENTO.IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+            ULOG("cWF_CERRAMEFECPC::Recuperando ATENDIMENTOGRUPOATUAL [%s] OK", (char*)stRegistro.stidGrupo.arr );
+
+            if ( (char*)stRegistro.stidGrupo.len > 0 )
+            {
+                // Os objetos de tabelas contém outros negócios agregados.
+                if (  6 == idAgrupamentoEstadoTProcFut
+                  ||  7 == idAgrupamentoEstadoTProcFut
+                  || 19 == idAgrupamentoEstadoTProcFut
+                  || 20 == idAgrupamentoEstadoTProcFut )
+                { // Só vai devolver para grupo de tratamento se o processo estiver sendo encerrado
+                    atualizarAtendimentoGrupoReceptor(stgetAtendimento.cidAtendimento
+                                                    ,(const char*)stRegistro.stidGrupo.arr
+                                                    ,stRegistro.cidUsuario);
+                }
+
+                // ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTOGRUPODEVOLUCAO");
+                // EXEC SQL
+                // INSERT INTO
+                //     ATENDIMENTO.ATENDIMENTOGRUPODEVOLUCAO
+                //     (
+                //         IDATENDIMENTO,
+                //         IDGRUPO,
+                //         IDUSUARIOALTERACAO,
+                //         DTULTIMAALTERACAO
+                //     )
+                //     VALUES
+                //     (
+                //         :stgetAtendimento.cidAtendimento,
+                //         :stRegistro.stidGrupo,
+                //         :stRegistro.cidUsuario,
+                //         TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+                //     );
+                // ULOG("cWF_CERRAMEFECPC::inserção em ATENDIMENTOGRUPODEVOLUCAO OK" );
+            }
+            else
+            {
+                ULOG("cWF_CERRAMEFECPC::Grupo atual não informado" );
+            }
+
+        /*
+        }//if( strcmp( rtrim( stgetAtendimento.cINCRI ), "0" ) == 0 )
+        else
+        {
+            memset( &stRegistro.stidPessoaLInhaHistorico, 0, sizeof( stRegistro.stidPessoaLInhaHistorico ) );
+            ///////////////////////////////////////////////////////
+            // Sendo CRI entao recupera grupo e pessoalinhahistorico
+            ///////////////////////////////////////////////////////
+            EXEC SQL
+            SELECT 
+                IDGRUPO, 
+                IDPESSOALINHAHISTORICO 
+            INTO
+                :stRegistro.stidGrupo:stRegistroInd.sidGrupo,
+                :stRegistro.stidPessoaLInhaHistorico:stRegistroInd.sidPessoaLInhaHistorico
+            FROM 
+                ATENDIMENTO.GRUPOCRI
+            WHERE 
+                IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+        }//else if( strcmp( rtrim( stgetAtendimento.cINCRI ), "0" ) == 0 )
+        */
+        ///////////////////////////////////////////////////////
+        // Para cada atendimento efetuamos a verificacao se existe 
+        // algum sendo tratado
+        ///////////////////////////////////////////////////////
+        ULOG("cWF_CERRAMEFECPC::Recuperando ATENDIMENTOUSUARIOATUAL");
+        // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+        // EXEC SQL
+        // SELECT 
+        //     IDPESSOAUSUARIO
+        // INTO
+        //     :stRegistro.stidPessoaUsuario:stRegistroInd.sidPessoaUsuario
+        // FROM 
+        //     ATENDIMENTO.ATENDIMENTOUSUARIOATUAL 
+        // WHERE 
+        //     IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+        EXEC SQL
+        SELECT 
+            ATENDIMENTO.IDPESSOAUSUARIOATUAL
+        INTO
+            :stRegistro.stidPessoaUsuario:stRegistroInd.sidPessoaUsuario
+        FROM 
+            ATENDIMENTO.ATENDIMENTO ATENDIMENTO
+        WHERE 
+            ATENDIMENTO.IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+        ULOG("cWF_CERRAMEFECPC::Recuperando ATENDIMENTOUSUARIOATUAL OK [%s]",(char*)stRegistro.stidPessoaUsuario.arr);
+
+        ///////////////////////////////////////////////////////
+        // Verifica se achou usuario em atendimentousuarioatual
+        ///////////////////////////////////////////////////////
+        if( stRegistro.stidPessoaUsuario.len > 0 )
+        {
+            // ULOG("cWF_CERRAMEFECPC::Verificando ATENDIMENTOUSUARIODEVOLUCAO" );
+            // EXEC SQL
+            // SELECT 
+            //     COUNT(1)
+            // INTO
+            //     :iCount
+            // FROM 
+            //     ATENDIMENTO.ATENDIMENTOUSUARIODEVOLUCAO
+            // WHERE
+            //     IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+            // 
+            // if ( iCount == 0 )
+            // {
+                // Os objetos de tabelas contém outros negócios agregados.
+                if (  6 == idAgrupamentoEstadoTProcFut
+                  ||  7 == idAgrupamentoEstadoTProcFut
+                  || 19 == idAgrupamentoEstadoTProcFut
+                  || 20 == idAgrupamentoEstadoTProcFut )
+                { // Só vai devolver para grupo de tratamento se o processo estiver sendo encerrado
+                    atualizarAtendimentoUsuarioReceptor(stgetAtendimento.cidAtendimento
+                                                       ,(const char*)stRegistro.stidPessoaUsuario.arr
+                                                       ,stRegistro.cidUsuario);
+                }
+                // 
+                // ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTOUSUARIODEVOLUCAO [%s]",(char*)stRegistro.stidPessoaUsuario.arr);
+                // EXEC SQL
+                // INSERT INTO
+                //     ATENDIMENTO.ATENDIMENTOUSUARIODEVOLUCAO
+                //     (
+                //         IDATENDIMENTO,
+                //         IDPESSOAUSUARIO,
+                //         IDUSUARIOALTERACAO,
+                //         DTULTIMAALTERACAO
+                //     )
+                //     VALUES
+                //     (
+                //         :stgetAtendimento.cidAtendimento,
+                //         :stRegistro.stidPessoaUsuario,
+                //         :stRegistro.cidUsuario,
+                //         TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+                //     );
+                // ULOG("cWF_CERRAMEFECPC::Inserção em ATENDIMENTOUSUARIODEVOLUCAO OK" );
+            // }
+            // else
+            // {
+            //     ULOG("cWF_CERRAMEFECPC::Atualizando ATENDIMENTOUSUARIODEVOLUCAO [%s]",(char*)stRegistro.stidPessoaUsuario.arr);
+            //     EXEC SQL
+            //     UPDATE
+            //         ATENDIMENTO.ATENDIMENTOUSUARIODEVOLUCAO
+            //     SET 
+            //         IDPESSOAUSUARIO = :stRegistro.stidPessoaUsuario,
+            //         IDUSUARIOALTERACAO = :stRegistro.cidUsuario,
+            //         DTULTIMAALTERACAO = TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+            //     WHERE
+            //         IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+            // 
+            //     ULOG("cWF_CERRAMEFECPC::Atualização em ATENDIMENTOUSUARIODEVOLUCAO OK" );
+            // }
+
+            ///////////////////////////////////////////////////////
+            // Altera andamento transferecia, isto se achar pessoa em ATENDIMENTOUSUARIOATUAL
+            ///////////////////////////////////////////////////////
+            ULOG("cWF_CERRAMEFECPC::Alterando ANDAMENTOTRANSFERENCIA.DTFIMTRANSFERENCIA [%s]", stRegistro.cidUsuario );
+            EXEC SQL
+            UPDATE 
+                ATENDIMENTO.ANDAMENTOTRANSFERENCIA
+            SET
+                DTFIMTRANSFERENCIA = TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS'),
+                IDUSUARIOALTERACAO = :stRegistro.cidUsuario,
+                DTULTIMAALTERACAO  = TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+            WHERE 
+                IDANDAMENTO IN 
+                (
+                    SELECT
+                        IDANDAMENTO
+                    FROM
+                        ATENDIMENTO.OBTEMATDTRANSFERENCIAV01 
+                    WHERE 
+                        DTFINTRANSFERENCIA IS NULL
+                    AND
+                        IDATENDIMENTO = :stgetAtendimento.cidAtendimento
+                );
+            ULOG("cWF_CERRAMEFECPC::Alterando ANDAMENTOTRANSFERENCIA.DTFIMTRANSFERENCIA OK" );
+
+            ///////////////////////////////////////////////////////
+            // Se chegou aqui eh porque tem atendimentousuarioatual
+            // Entrando ou nao no if acima, tem que apagar atendimentousuarioatual
+            // para este atendimento
+            ///////////////////////////////////////////////////////
+            // ULOG("cWF_CERRAMEFECPC::Apagando ATENDIMENTOUSUARIOATUAL [%s]", stgetAtendimento.cidAtendimento );
+            // 
+            // Devido a implantação do DPR no FO, foi necessário fazer com que todos os
+            // serviços usem classes básicas do atendimento para inc/alt/exc de linhas
+            // de tabelas sejam monitoradas e enviadas ao DPR.
+            // SM324--DPR--DEZ/2006--Cassio
+            // 
+            // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+            // O modelo novo deixa registrado o ultimo usuário responsável pelo processo.
+            // excluirAtendimentoUsuarioAtual(stgetAtendimento.cidAtendimento,stRegistro.cidUsuario,xmlDpr);
+
+        } //if( stRegistro.stidPessoaUsuario.len > 0 )
+        else
+        { // se não possui usuário BKO atrelado ao processo assume o usuário que esta fechando como o usuário responsável
+            //
+            ///////////////////////////////////////////////////////
+            ULOG("cWF_CERRAMEFECPC::Atualizando ATENDIMENTOUSUARIOATUAL [%s]", stgetAtendimento.cidAtendimento );
+            // 
+            // Devido a implantação do DPR no FO, foi necessário fazer com que todos os
+            // serviços usem classes básicas do atendimento para inc/alt/exc de linhas
+            // de tabelas sejam monitoradas e enviadas ao DPR.
+            // SM324--DPR--DEZ/2006--Cassio
+            // 
+            // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+            // O modelo novo considera como ultimo usuário responsável pelo processo o usuário que encerrou
+            // ou cancelou o processo.
+            atualizarAtendimentoUsuarioAtual(stgetAtendimento.cidAtendimento,stRegistro.cidUsuario,xmlDpr);
+            ULOG("cWF_CERRAMEFECPC::Atualizando ATENDIMENTOUSUARIOATUAL OK" );
+        }
+        //
+        ///////////////////////////////////////////////////////
+        // Apaga de ATENDIMENTO.ATENDIMENTOPAUSA
+        ///////////////////////////////////////////////////////
+        //
+        ULOG("cWF_CERRAMEFECPC::Apagando ATENDIMENTOPAUSA [%s]", stgetAtendimento.cidAtendimento );
+        excluirAtendimentoPausa(stgetAtendimento.cidAtendimento);
+        ULOG("cWF_CERRAMEFECPC::Apagando ATENDIMENTOPAUSA OK" );
+        //
+        ///////////////////////////////////////////////////////
+        // Inicio da insecao de andamento
+        ///////////////////////////////////////////////////////
+        // 
+        // Devido a implantação do DPR no FO, foi necessário fazer com que todos os
+        // serviços usem classes básicas do atendimento para inc/alt/exc de linhas
+        // de tabelas sejam monitoradas e enviadas ao DPR.
+        // SM324--DPR--DEZ/2006--Cassio
+        // 
+        //
+        //Recupera a chave primaria de andamento
+        // EXEC SQL
+        // SELECT
+        //  ANDAMENTO.ANDAMENTOSQ.NEXTVAL
+        // INTO
+        //  :stgetAtendimento.cidAndamento
+        // FROM 
+        //  DUAL;
+
+        //Remove os espacos
+        // alltrim( stgetAtendimento.cidAndamento );
+
+        //Insere andamento com novos status
+        ULOG("cWF_CERRAMEFECPC::Inserindo ANDAMENTO" );
+        // ULOG("cWF_CERRAMEFECPC::ANDAMENTO.IDANDAMENTO [%s]", stgetAtendimento.cidAndamento );
+        // ULOG("cWF_CERRAMEFECPC::ANDAMENTO.IDATIVIDADE [%s]", stRegistro.cidAtividadeMassa );
+        // ULOG("cWF_CERRAMEFECPC::ANDAMENTO.IDAGRUPAMENTOESTADOTPPROC [%s]", stRegistro.cidAgrupamentoEstadoTProcFut );
+        // ULOG("cWF_CERRAMEFECPC::ANDAMENTO.IDATENDIMENTO [%s]", stgetAtendimento.cidAtendimento );
+        // ULOG("cWF_CERRAMEFECPC::ANDAMENTO.IDPESSOAUSUARIO [%s]", stRegistro.cidUsuario );
+        // ULOG("cWF_CERRAMEFECPC::ANDAMENTO.IDGRUPO [%s]", (char*)stRegistro.stidGrupo.arr );
+        // ULOG("cWF_CERRAMEFECPC::ANDAMENTO.IDUSUARIOALTERACAO [%s]", stRegistro.cidUsuario );
+
+        inserirAndamento(stRegistro.cidAtividadeMassa,
+                         stRegistro.cidAgrupamentoEstadoTProcFut,
+                         stgetAtendimento.cidAtendimento,
+                         stRegistro.cidUsuario,
+                         (const char*)stRegistro.stidGrupo.arr,
+                         stgetAtendimento.cidAndamento,
+                         xmlDpr);
+
+        // EXEC SQL 
+        // INSERT INTO
+        // ANDAMENTO.ANDAMENTO
+        // (
+        //  IDANDAMENTO,
+        //  IDATIVIDADE,
+        //  IDAGRUPAMENTOESTADOTPPROC,
+        //  IDATENDIMENTO,
+        //  IDPESSOAUSUARIO,
+        //  IDGRUPO,
+        //  DTANDAMENTO,
+        //  IDUSUARIOALTERACAO,
+        //  DTULTIMAALTERACAO
+        // )
+        // VALUES
+        // (
+        //  :stgetAtendimento.cidAndamento,
+        //  :stRegistro.cidAtividadeMassa,
+        //  :stRegistro.cidAgrupamentoEstadoTProcFut,
+        //  :stgetAtendimento.cidAtendimento,
+        //  :stRegistro.cidUsuario,
+        //  DECODE(:stRegistro.stidGrupo, NULL, 1, :stRegistro.stidGrupo),
+        //  TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS'),
+        //  :stRegistro.cidUsuario,
+        //  TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+        // );
+
+        ULOG("cWF_CERRAMEFECPC::Inserindo ANDAMENTO OK [%s]",stgetAtendimento.cidAndamento );
+        ///////////////////////////////////////////////////////
+        // Fim da insecao de andamento
+        ///////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////
+        // Pesquisa de mensagembaixa
+        ///////////////////////////////////////////////////////
+        memset( &stMensagemBaixa, 0, sizeof ( stMensagemBaixa ) );
+        ULOG("cWF_CERRAMEFECPC::Recuperando ATENDIMENTO.ATDFORMARETORNOV01" );
+        EXEC SQL
+        SELECT 
+            DSMENSAGEMBAIXA, 
+            DSCOMUNICACAO, 
+            INENVIOEMAIL, 
+            INENVIOSMS, 
+            INENVIOTELEFONE 
+        INTO
+            :stMensagemBaixa.stdsMensagemBaixa:stMensagemBaixaInd.sdsMensagemBaixa,
+            :stMensagemBaixa.stdsComunicacao:stMensagemBaixaInd.sdsComunicacao,
+            :stMensagemBaixa.stinEnvioEmail:stMensagemBaixaInd.sinEnvioEmail,
+            :stMensagemBaixa.stinEnvioSms:stMensagemBaixaInd.sinEnvioSms,
+            :stMensagemBaixa.stinEnvioTelefone:stMensagemBaixaInd.sinEnvioTelefone
+        FROM
+        (
+            SELECT 
+                DSMENSAGEMBAIXA, 
+                DSCOMUNICACAO, 
+                INENVIOEMAIL, 
+                INENVIOSMS, 
+                INENVIOTELEFONE 
+            FROM
+                ATENDIMENTO.ATDFORMARETORNOV01
+            WHERE 
+                IDATENDIMENTO = :stgetAtendimento.cidAtendimento
+            AND 
+                IDBAIXA = :stRegistro.cidBaixa
+            ORDER BY 
+                NRORDEMUTILIZACAO
+        )
+        WHERE 
+            ROWNUM <= 1;
+
+        ULOG("cWF_CERRAMEFECPC::Após recuperando ATDFORMARETORNOV01 [%s]", (char*)stMensagemBaixa.stdsMensagemBaixa.arr );
+
+        ///////////////////////////////////////////////////////
+        // Inicio da insercao de atendimento baixa historico
+        ///////////////////////////////////////////////////////
+        //
+        // Devido a implantação do DPR no FO, foi necessário fazer com que todos os
+        // serviços usem classes básicas do atendimento para inc/alt/exc de linhas
+        // de tabelas sejam monitoradas e enviadas ao DPR.
+        // SM324--DPR--DEZ/2006--Cassio
+        //
+        memset( &stidAtendimentoBaixaHistorico, 0, sizeof( stidAtendimentoBaixaHistorico ) );
+
+        //Recupera a chave primaria
+        // EXEC SQL
+        // SELECT
+        //     ATENDIMENTO.ATENDIMENTOBAIXAHISTORICOSQ.NEXTVAL
+        // INTO
+        //     :stidAtendimentoBaixaHistorico
+        // FROM
+        //     DUAL;
+
+        //Insere os dados propriamente
+        // ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTOBAIXAHISTORICO [%s]", (char*)stidAtendimentoBaixaHistorico.arr );
+
+        inserirAtendimentoBaixaHistorico(stgetAtendimento.cidAtendimento,
+                                         stRegistro.cidBaixa,
+                                         stRegistro.cidFase,
+                                         stRegistro.cidUsuario,
+                                         stgetAtendimento.cidAndamento,
+                                         (char*)stidAtendimentoBaixaHistorico.arr,
+                                         xmlDpr);
+
+        stidAtendimentoBaixaHistorico.len = 
+                strlen((char*)stidAtendimentoBaixaHistorico.arr);
+
+        // EXEC SQL 
+        // INSERT INTO ATENDIMENTO.ATENDIMENTOBAIXAHISTORICO
+        // (
+        //     IDATENDIMENTOBAIXAHISTORICO,
+        //     IDATENDIMENTO,
+        //     IDBAIXA,
+        //     IDFASE,
+        //     DTBAIXA,
+        //     IDPESSOAUSUARIO,
+        //     IDANDAMENTO,
+        //     IDUSUARIOALTERACAO,
+        //     DTULTIMAALTERACAO
+        // )
+        // VALUES
+        // (
+        //     :stidAtendimentoBaixaHistorico,
+        //     :stgetAtendimento.cidAtendimento,
+        //     :stRegistro.cidBaixa,
+        //     :stRegistro.cidFase,
+        //     TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS'),
+        //     :stRegistro.cidUsuario,
+        //     :stgetAtendimento.cidAndamento,
+        //     :stRegistro.cidUsuario,
+        //     TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+        // );
+
+        // ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTOBAIXAHISTORICO OK" );
+
+        ///////////////////////////////////////////////////////
+        // Inicio da insercao de atendimento baixa historico
+        ///////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////
+        //OBS.: a variavel stRegistro.cidMensagemBaixa tem o nome similar
+        //  a variavel stidBaixaMensagem, mas nao sao a mesma coisa
+        //  pois temos duas tabelas parecidadas:
+        //  CONTATOADM.BAIXAMENSAGEM e 
+        //  CONTATOADM.MENSAGEMBAIXA
+        //  Alguem errou o nome da TAG de entrada <idBaixaMensagem>, que na verdade
+        //  tem contem o idMensagemBaixa.
+        //Resumindo:
+        //  stidBaixaMensagem = idBaixaMensagem
+        //  stRegistro.cidMensagemBaixa = idMensagemBaixa
+        ///////////////////////////////////////////////////////
+        memset( &stidBaixaMensagem, 0, sizeof( stidBaixaMensagem ) );
+        //Recuperando ID para inserir atendimento baixa mensagem
+        ULOG("cWF_CERRAMEFECPC::Pesquisando CONTATOADM.BAIXAMENSAGEM" );
+        EXEC SQL
+        SELECT 
+            IDBAIXAMENSAGEM
+        INTO
+            :stidBaixaMensagem
+        FROM
+            CONTATOADM.BAIXAMENSAGEM
+        WHERE 
+            IDBAIXA = :stRegistro.cidBaixa 
+        AND 
+            IDMENSAGEMBAIXA = :stRegistro.cidMensagemBaixa
+        AND 
+            ROWNUM < 2;
+
+        ULOG("cWF_CERRAMEFECPC::Pesquisando CONTATOADM.BAIXAMENSAGEM [%s]", (char*)stidBaixaMensagem.arr );
+
+        if ( stidAtendimentoBaixaHistorico.arr[0] && stidBaixaMensagem.arr[0] )
+        {
+            //Inserindo atendimento baixa mensagem
+            ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTOBAIXAMENSAGEM [%s]", (char*)stidAtendimentoBaixaHistorico.arr );
+            
+            EXEC SQL 
+            INSERT INTO
+            ATENDIMENTO.ATENDIMENTOBAIXAMENSAGEM
+            (
+                IDATENDIMENTOBAIXAHISTORICO,
+                IDBAIXAMENSAGEM,
+                IDUSUARIOALTERACAO,
+                DTULTIMAALTERACAO
+            )
+            VALUES
+            (
+                :stidAtendimentoBaixaHistorico,
+                :stidBaixaMensagem,
+                :stRegistro.cidUsuario,
+                TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+            );
+        }
+        else
+        {
+            if ( !stidAtendimentoBaixaHistorico.arr[0] )
+            {
+                ULOG("Nao foi possivel inserir em ATENDIMENTOBAIXAMENSAGEM, "
+                                "pois coluna IDATENDIMENTOBAIXAHISTORICO is NULL");
+            }
+
+            if ( !stidBaixaMensagem.arr[0] )
+            {
+                ULOG("Nao foi possivel inserir em ATENDIMENTOBAIXAMENSAGEM, "
+                                "pois coluna IDBAIXAMENSAGEM is NULL");
+            }
+        }
+
+        ///////////////////////////////////////////////////////
+        // Fim da insercao de atendimento baixa historico
+        ///////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////
+        // Inicio da verificacao de atendimento baixa atual
+        ///////////////////////////////////////////////////////
+        //Verifica se exite atendimento baixa atual
+        ULOG("cWF_CERRAMEFECPC::Verificando ATENDIMENTOBAIXAATUAL 0 ou 1" );
+        EXEC SQL
+        SELECT 
+            COUNT(1)
+        INTO
+            :iCount
+        FROM 
+            ATENDIMENTO.ATENDIMENTOBAIXAATUAL
+        WHERE
+            IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+
+        ULOG("cWF_CERRAMEFECPC::Verificando ATENDIMENTOBAIXAATUAL [%s]", iCount );
+
+        if( iCount > 0 )
+        {
+            //Se existe entao faz update
+            ULOG("cWF_CERRAMEFECPC::Atualizando ATENDIMENTOBAIXAATUAL [%s]", (char*)stidAtendimentoBaixaHistorico.arr );
+            EXEC SQL
+            UPDATE ATENDIMENTO.ATENDIMENTOBAIXAATUAL 
+            SET
+                IDATENDIMENTOBAIXAHISTORICO = :stidAtendimentoBaixaHistorico,
+                IDUSUARIOALTERACAO = :stRegistro.cidUsuario,
+                DTULTIMAALTERACAO = TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+            WHERE
+                IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+            ULOG("cWF_CERRAMEFECPC::Atualizando ATENDIMENTOBAIXAATUAL OK" );
+        }//if( iCount > 0 )
+        else
+        {
+            //Se nao existe entao insere
+            ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTOBAIXAATUAL [%s]", (char*)stidAtendimentoBaixaHistorico.arr );
+            EXEC SQL 
+            INSERT INTO ATENDIMENTO.ATENDIMENTOBAIXAATUAL
+            (
+                IDATENDIMENTO,
+                IDATENDIMENTOBAIXAHISTORICO,
+                IDUSUARIOALTERACAO,
+                DTULTIMAALTERACAO
+            )
+            VALUES
+            (
+                :stgetAtendimento.cidAtendimento,
+                :stidAtendimentoBaixaHistorico,
+                :stRegistro.cidUsuario,
+                TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+            );
+            ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTOBAIXAATUAL OK" );
+        }//else if( iCount > 0 )
+        ///////////////////////////////////////////////////////
+        // Fim da verificacao de atendimento baixa atual
+        ///////////////////////////////////////////////////////
+
+        ///////////////////////////////////////////////////////
+        // Inicio da insecao de ATENDIMENTO.ATENDIMENTONIVEL
+        ///////////////////////////////////////////////////////
+        memset( &stidAtendimentoNivel, 0, sizeof( stidAtendimentoNivel ) );
+        //Recupera uma chave primaria
+        ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTO.ATENDIMENTONIVEL" );
+        EXEC SQL
+        SELECT
+            ATENDIMENTO.ATENDIMENTONIVELSQ.NEXTVAL
+        INTO
+            :stidAtendimentoNivel
+        FROM
+            DUAL;
+
+        EXEC SQL 
+        INSERT INTO ATENDIMENTO.ATENDIMENTONIVEL
+        (
+            IDATENDIMENTONIVEL,
+            IDATENDIMENTO,
+            IDGRUPO,
+            IDFASE,
+            IDATIVIDADE,
+            NRNIVEL,
+            DTNIVEL,
+            INCONCLUIDO,
+            IDUSUARIOALTERACAO,
+            DTULTIMAALTERACAO
+        )
+        VALUES
+        (
+            :stidAtendimentoNivel,
+            :stgetAtendimento.cidAtendimento,
+            DECODE(:stRegistro.stidGrupo, NULL, 1, :stRegistro.stidGrupo),
+            :stRegistro.cidFase,
+            :stRegistro.cidAtividadeMassa,
+            TRIM(:stgetAtendimento.cnrNivel),
+            TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS'),
+            0,
+            :stRegistro.cidUsuario,
+            TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+        );
+        ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTO.ATENDIMENTONIVEL OK" );
+        ///////////////////////////////////////////////////////
+        // Fim da insecao de ATENDIMENTO.ATENDIMENTONIVEL
+        ///////////////////////////////////////////////////////
+        alltrim( stgetAtendimento.cqtInsistencia );
+        alltrim( stgetAtendimento.cnrNivel );
+        //Alterando os dados de atendimento, para indicar o fechamento em massa
+
+        if ( (idAgrupamentoEstadoTProcFut >= 8 && idAgrupamentoEstadoTProcFut <= 13)
+          || (idAgrupamentoEstadoTProcFut >= 21 && idAgrupamentoEstadoTProcFut <= 26)
+          || (idAgrupamentoEstadoTProcFut >= 34 && idAgrupamentoEstadoTProcFut <= 35)
+           )
+        {
+            ULOG("cWF_CERRAMEFECPC::Vai decrementar qtde.processos pendentes para o protocolo" );
+            decrementarPendentes(stgetAtendimento.cidAtendimentoProtocolo,stRegistro.cidUsuario);
+            ULOG("cWF_CERRAMEFECPC::Qtde.processos pendentes para o protocolo decrementada" );
+        }
+        else
+        {
+            ULOG("Processo não esta sendo encerrado para ser decrementado do protocolo."); 
+        }
+
+        ULOG("cWF_CERRAMEFECPC::Atualizando ATENDIMENTO.ATENDIMENTO" );
+        //
+        // Devido a implantação do DPR no FO, foi necessário fazer com que todos os
+        // serviços usem classes básicas do atendimento para inc/alt/exc de linhas
+        // de tabelas sejam monitoradas e enviadas ao DPR.
+        // SM324--DPR--DEZ/2006--Cassio
+        //
+        alterarAtendimento(stgetAtendimento.cidAtendimento,
+                           3,
+                           stgetAtendimento.cnrNivel,
+                           stgetAtendimento.cqtInsistencia,
+                           stRegistro.cidUsuario,
+                           xmlDpr);
+
+        // EXEC SQL
+        // UPDATE 
+        //     ATENDIMENTO.ATENDIMENTO 
+        // SET
+        //     IDFASE  = ( SELECT IDFASE FROM WORKFLOW.FASE WHERE SGFASE = 'R' ),
+        //     NRNIVEL = :stgetAtendimento.cnrNivel,
+        //     QTINSISTENCIA = :stgetAtendimento.cqtInsistencia,
+        //     IDUSUARIOALTERACAO = :stRegistro.cidUsuario,
+        //     DTULTIMAALTERACAO = TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+        // WHERE
+        //     IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+
+        //
+        // Não há necessidade de atualizar por aqui pois a classe de andamento
+        // já se responsabiliza por esta tarefa. - Dez/2006 - Cassio.
+        //
+        // EXEC SQL
+        // UPDATE 
+        //     ATENDIMENTO.ATENDIMENTOANDAMENTOATUAL 
+        // SET
+        //     IDANDAMENTO = :stgetAtendimento.cidAndamento,
+        //     IDUSUARIOALTERACAO = :stRegistro.cidUsuario,
+        //     DTULTIMAALTERACAO = TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+        // WHERE
+        //     IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+
+        ULOG("cWF_CERRAMEFECPC::Atualizou ATENDIMENTO.ATENDIMENTO" );
+
+        ////////////////////////////////////////////////////////////////////////////////////////////////
+        // ==> Remoção de dados das tabelas de otmização de pesquisas - Jan/2006 - Cassio
+        ////////////////////////////////////////////////////////////////////////////////////////////////
+        //
+        //----------------------------------------------------------------------------------------------
+        //Remove os dados de atendimentoPriorizacao (esta tabela contém somente processos abertos)
+        //
+        // A partir da implantação do DPR, SM324, esta sendo usada a classe básica de
+        // andamento, a qual se responsabiliza pela execução destas operações de
+        // sincronismo com ATENDIMENTO.ATENDIMENTOPRIORIZACAO e ANDAMENTO.ANDAMENTOTRANS.
+        // SM324--DPR--DEZ/2006--Cassio
+        //
+        // EXEC SQL
+        // DELETE 
+        //     ATENDIMENTO.ATENDIMENTOPRIORIZACAO 
+        // WHERE
+        //     IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+        // ULOG("cWF_CERRAMEFECPC::Removeu de ATENDIMENTO.ATENDIMENTOPRIORIZACAO ");
+
+        //----------------------------------------------------------------------------------------------
+        //Remove os dados de andamentoTrans (esta tabela se refere somente a processos abertos)
+        // EXEC SQL
+        // DELETE
+        //     ANDAMENTO.ANDAMENTOTRANS
+        // WHERE
+        //     IDATENDIMENTO = :stgetAtendimento.cidAtendimento;
+        // ULOG("cWF_CERRAMEFECPC::Removeu de ANDAMENTO.ANDAMENTOTRANS ");
+        //
+        ////////////////////////////////////////////////////////////////////////////////////////////////
+        // <== Fim da remoção de dados das tabelas de otmização de pesquisas - Jan/2006 - Cassio
+        ////////////////////////////////////////////////////////////////////////////////////////////////
+
+        //Inserindo ATENDIMENTO.ANDAMENTOOBSERVACAO
+        //
+        // Devido a implantação do DPR no FO, foi necessário fazer com que todos os
+        // serviços usem classes básicas do atendimento para inc/alt/exc de linhas
+        // de tabelas sejam monitoradas e enviadas ao DPR.
+        // SM324--DPR--DEZ/2006--Cassio
+        //
+
+		// Bloqueio de aparelhos
+		/*
+		ULOG( "==> idAtendimento [%s]", (char*)stDados->stDadosProcesso[y-1].cidAtendimento );
+		ULOG( "==> Observacao    [%s]", (char*)stDados->stDadosProcesso[y-1].cdsObservacao );
+		
+		if ( stDados->stDadosProcesso[y-1].cdsObservacao[0] != 0x0 )
+		{
+			strcpy( stRegistro.cdsObservacao, (char*)stDados->stDadosProcesso[y-1].cdsObservacao );
+		}
+		*/
+		
+		//ULOG( "==> idAtendimento [%s]", (char*)stDados->stDadosProcesso[y].cidAtendimento );
+		ULOG( "==> Observacao    [%s]", (char*)stDados->stDadosProcesso[idxFrase].cdsObservacao );
+		
+		if ( stDados->stDadosProcesso[idxFrase].cdsObservacao[0] != 0x0 )
+		{
+			strcpy( stRegistro.cdsObservacao, (char*)stDados->stDadosProcesso[idxFrase].cdsObservacao );
+		}
+		
+        if (strlen(stRegistro.cdsObservacao) )
+        {
+            ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTO.ANDAMENTOOBSERVACAO" );
+		ULOG( "--> Observacao    [%s]", (char*)stRegistro.cdsObservacao );
+            inserirAndamentoObservacao(stgetAtendimento.cidAndamento,
+                                       stRegistro.cidUsuario,
+                                       stRegistro.cdsObservacao,
+                                       xmlDpr);
+            ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTO.ANDAMENTOOBSERVACAO OK" );
+        }
+
+        // EXEC SQL 
+        // INSERT INTO ATENDIMENTO.ANDAMENTOOBSERVACAO
+        // (
+        //     IDANDAMENTO,
+        //     DSANDAMENTOOBSERVACAO,
+        //     IDUSUARIOALTERACAO,
+        //     DTULTIMAALTERACAO
+        // )
+        // VALUES
+        // (
+        //     :stgetAtendimento.cidAndamento,
+        //     TRIM(SUBSTR(:stRegistro.cdsObservacao, 1, 1000 ) ),
+        //     :stRegistro.cidUsuario,
+        //     TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+        // );
+
+        //Inserindo ATENDIMENTO.ATENDIMENTOFECHAMENTO
+        //
+        // Devido a implantação do DPR no FO, foi necessário fazer com que todos os
+        // serviços usem classes básicas do atendimento para inc/alt/exc de linhas
+        // de tabelas sejam monitoradas e enviadas ao DPR.
+        // SM324--DPR--DEZ/2006--Cassio
+        //
+        ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTO.ATENDIMENTOFECHAMENTO");
+
+        inserirAtendimentoFechamento(stgetAtendimento.cidAtendimento,
+                                     stRegistro.cidUsuario,
+                                     stgetAtendimento.cidAndamento,
+                                     xmlDpr);
+        // EXEC SQL 
+        // INSERT INTO ATENDIMENTO.ATENDIMENTOFECHAMENTO
+        // (
+        //     IDATENDIMENTO,
+        //     DTFECHAMENTO,
+        //     IDANDAMENTO,
+        //     IDPESSOAUSUARIO,
+        //     IDUSUARIOALTERACAO,
+        //     DTULTIMAALTERACAO
+        // )
+        // VALUES
+        // (
+        //     :stgetAtendimento.cidAtendimento,
+        //     TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS'),
+        //     :stgetAtendimento.cidAndamento,
+        //     :stRegistro.cidUsuario,
+        //     :stRegistro.cidUsuario,
+        //     TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+        // );
+
+        ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTO.ATENDIMENTOFECHAMENTO OK" );
+
+        //---------------------------------------------------------------------------------------
+        // Processa campos do relatório PRODUTIVIDADE POR REPRESENTANTE de acordo com as ações.
+        // Este pré-processamento foi criado para tornar viável o tempo de execução do relatório
+        // e para atender a incidência 2331 no TD de Pré-Produção.
+        //---------------------------------------------------------------------------------------
+        //
+        ULOG("cWF_CERRAMEFECPC::PRE-PROCESSAMENTO DE RELATÓRIOS" );
+
+        preProcessarRelEncFech(atoi(stgetAtendimento.cidAtendimento)
+                              ,atoi((char*)stRegistro.stidGrupo.arr)
+                              ,atoi(stRegistro.cidAgrupamentoEstadoTProcFut)
+                              ,atoi((char*)stRegistro.stidPessoaUsuario.arr)
+                              ,atoi(stRegistro.cidAtividadeMassa));
+        
+        ULOG("cWF_CERRAMEFECPC::PRE-PROCESSAMENTO DE RELATÓRIOS OK" );
+
+        // ==> SM324--DPR--DEZ/2006--Cassio
+        int idAgrupamentoEstadoTProcFutTp = atoi(stRegistro.cidAgrupamentoEstadoTProcFut);
+        if ( idAgrupamentoEstadoTProcFutTp >= INI_AGRPTPPROC_TECNICO 
+           && idAgrupamentoEstadoTProcFutTp <= FIM_AGRPTPPROC_TECNICO )
+        {
+            ULOG("cWF_CERRAMEFECPC::REGISTRA DPR ..." );
+            registrarAcaoDPR(atoi(stDados->cidUsuario),0/*atoi(stgetAtendimento.cidContato)*/,stgetAtendimento.cidAtendimento,xmlDpr);
+            ULOG("cWF_CERRAMEFECPC::REGISTRA DPR ... OK" );
+        }
+        else
+        {
+            ULOG("cWF_CERRAMEFECPC::PROCESSO %s NÃO É TÉCNICO.",stgetAtendimento.cidAtendimento );
+        }
+    }//for(;;)
+
+    EXEC SQL CLOSE CursorgetAtendimento;
+
+}
+
+//Remove todos os atendimentos que estao em atendimentogrupoatual
+void cWF_CERRAMEFECPC::removeAtendimentoGrupoAtual( struct ST_DADOS_ENTRADA* stDados )
+{
+    struct sqlca sqlca;
+    AtendimentoGrupoAtualDPR atendimentogrupoatualdpr;
+
+    //DPR--SM324--Estrutura VO de tabelas monitoradas
+    if ( xmlDpr ) {delete xmlDpr;xmlDpr=0;}
+    xmlDpr = new XMLDPR;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char    cPesquisa[2024];
+        char    cGrupos[2024];
+    EXEC SQL END DECLARE SECTION;
+
+    //Apaga a estrutura local
+    //memset( cPesquisa, 0, sizeof( cPesquisa ) );
+    
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    //Pesquisa dinamica
+    //strcpy( cPesquisa,
+    //    "DELETE "
+    //        "ATENDIMENTO.ATENDIMENTOGRUPOATUAL "
+    //    "WHERE "
+    //        "IDATENDIMENTO IN ( "
+    //);
+
+    //Monta a pesquisa dinamica com os dados de entrada
+    cGrupos[0] = 0;
+
+    for( int x = 0; x < stDados->iTotalProcessos; x++ )
+    {
+        // Se o tamanho do XML estiver atingindo o limite da coluna do Oracle
+        // é melhor quebrar as gravações.
+        //if ( xmlDpr->obterTamAreaXML() > 3500 )
+        //{
+        //    registrarAcaoDPR(atoi(stDados->cidUsuario),atoi(stDados->stDadosProcesso[x].cidContato),stDados->stDadosProcesso[x].cidAtendimento,xmlDpr);
+        //    if ( xmlDpr ) {delete xmlDpr;xmlDpr=0;}
+        //    xmlDpr = new XMLDPR;
+        //}
+
+        // ==> SM324--DPR--DEZ/2006--Cassio
+        int idAgrupamentoEstadoTProcFutTp = atoi(stDados->stDadosProcesso[x].cidAgrupamentoEstadoTProcFut);
+        if ( idAgrupamentoEstadoTProcFutTp >= INI_AGRPTPPROC_TECNICO 
+           && idAgrupamentoEstadoTProcFutTp <= FIM_AGRPTPPROC_TECNICO )
+        {
+            atendimentogrupoatualdpr.setIdAtendimento(stDados->stDadosProcesso[x].cidAtendimento);
+            atendimentogrupoatualdpr.setOpCode(OPCODE_DELETE);
+            xmlDpr->atendimentogrupoatualvo.inserir(&atendimentogrupoatualdpr);
+        }
+        // <== SM324--DPR--DEZ/2006--Cassio
+
+        if( x > 0 )
+        {
+            strcat( cGrupos, "," );
+        }
+        strcat( cGrupos, "'" );
+        strcat( cGrupos, stDados->stDadosProcesso[x].cidAtendimento );
+        strcat( cGrupos, "'" );
+    }
+
+    sprintf( cPesquisa,"UPDATE ATENDIMENTO.ATENDIMENTO SET IDGRUPOATUAL = NULL WHERE IDATENDIMENTO IN (%s)",cGrupos);
+
+    //Vamos logar a pesquisa
+    ULOG("\ncWF_CERRAMEFECPC::removeAtendimentoGrupoAtual:Pesquisa[%s]", cPesquisa );
+
+    //Controle de erro
+    EXEC SQL WHENEVER SQLERROR DO sqlErro(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    //Prepara e executa a pesquisa dinamica
+    EXEC SQL EXECUTE IMMEDIATE :cPesquisa;
+
+    sprintf( cPesquisa,"UPDATE ATENDIMENTO.ATENDIMENTOPRIORIZACAO SET IDGRUPOATUAL = NULL WHERE IDATENDIMENTO IN (%s)",cGrupos);
+
+    //Prepara e executa a pesquisa dinamica
+    EXEC SQL EXECUTE IMMEDIATE :cPesquisa;
+
+    // ==> SM324--DPR--DEZ/2006--Cassio
+    //
+    if ( stDados->iTotalProcessos )
+    {
+        // Se houverem muitos processos não dará para registrar o idAtendimento na coluna IDATENDIMENTO
+        // do DPR, mas se o fechamento for para apenas um processo então grava o numero do processo na
+        // tabela do DPR.
+        //
+        if ( stDados->iTotalProcessos > 1 )
+        {
+            registrarAcaoDPR(atoi(stDados->cidUsuario),0/*atoi(stDados->stDadosProcesso[0].cidContato)*/,0,xmlDpr);
+        }
+        else
+        {
+            registrarAcaoDPR(atoi(stDados->cidUsuario),0/*atoi(stDados->stDadosProcesso[0].cidContato)*/,stDados->stDadosProcesso[0].cidAtendimento,xmlDpr);
+        }
+    }
+    // <== SM324--DPR--DEZ/2006--Cassio
+}
+
+//Remove todos os atendimentos que estao em 
+void cWF_CERRAMEFECPC::removeCancelamentoSolicitado( struct ST_DADOS_ENTRADA* stDados )
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char    cPesquisa[2024];
+    EXEC SQL END DECLARE SECTION;
+
+    //Apaga a estrutura local
+    memset( cPesquisa, 0, sizeof( cPesquisa ) );
+    
+    //Pesquisa dinamica
+    strcpy( cPesquisa,
+        "DELETE "
+            "ATENDIMENTO.CANCELAMENTOSOLICITADO "
+        "WHERE "
+            "IDATENDIMENTO IN ( "
+    );
+    //Monsta a pesquisa denamica com os dados de entrada
+    for( int x = 0; x < stDados->iTotalProcessos; x++ )
+    {
+        if( x > 0 )
+            strcat( cPesquisa, "," );
+        strcat( cPesquisa, "'" );
+        strcat( cPesquisa, stDados->stDadosProcesso[x].cidAtendimento );
+        strcat( cPesquisa, "'" );
+    }
+    strcat( cPesquisa, " )" );
+    //Vamos logar a pesquisa
+    ULOG("\ncWF_CERRAMEFECPC::removeCancelamentoSolicitado:Pesquisa[%s]", cPesquisa );
+
+    //Controle de erro
+    EXEC SQL WHENEVER SQLERROR DO sqlErro(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    //Executa a query dinamica
+    EXEC SQL EXECUTE IMMEDIATE :cPesquisa;
+}
+
+
+//Remove todos os atendimentos que estao em atendimentogrupoatual
+void cWF_CERRAMEFECPC::removeAtendimentoSuspeito( struct ST_DADOS_ENTRADA* stDados )
+{
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        char    cPesquisa[2024];
+    EXEC SQL END DECLARE SECTION;
+
+    //Apaga a estrutura local
+    memset( cPesquisa, 0, sizeof( cPesquisa ) );
+
+    //Pesquisa dinamica
+    strcpy( cPesquisa,
+        "DELETE "
+            "ATENDIMENTO.ATENDIMENTOSUSPEITO "
+        "WHERE "
+            "IDATENDIMENTO IN ( "
+    );
+    //Monsta a pesquisa denamica com os dados de entrada
+    for( int x = 0; x < stDados->iTotalProcessos; x++ )
+    {
+        if( x > 0 )
+            strcat( cPesquisa, "," );
+        strcat( cPesquisa, "'" );
+        strcat( cPesquisa, stDados->stDadosProcesso[x].cidAtendimento );
+        strcat( cPesquisa, "'" );
+    }
+    strcat( cPesquisa, " )" );
+    //Vamos logar a pesquisa
+    ULOG("\ncWF_CERRAMEFECPC::removeAtendimentoSuspeito:Pesquisa[%s]", cPesquisa );
+
+    //Controle de erro
+    EXEC SQL WHENEVER SQLERROR DO sqlErro(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    //Prepara a pesquisa dinamica
+    EXEC SQL EXECUTE IMMEDIATE :cPesquisa;
+}
+
+void cWF_CERRAMEFECPC::incluirFormulario( char* cidAtendimento,struct ST_ATENDIMENTOFORMULARIOREG* stForm, struct ST_DADOS_ENTRADA* stDados )
+{
+    //DPR--SM324--Estrutura VO de tabelas monitoradas pelo DPR
+    //if ( xmlDpr ) {delete xmlDpr;xmlDpr=0;}
+    //xmlDpr = new XMLDPR;
+
+    // struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        struct
+        {
+            VARCHAR stidAtendimentoFrm[21+1];
+            char cidAtendimento[21+1];
+            char cidCampo[21+1];
+            char cidDominio[21+1];
+            char cdsValor[255+1];
+        } stRegistro;
+        char* pzcidAtendimento = cidAtendimento;
+        char* pzcidUsuario = stDados->cidUsuario;
+    EXEC SQL END DECLARE SECTION;
+    
+    //Apaga a estrutura local
+    memset( &stRegistro, 0, sizeof( stRegistro ) );
+
+    if( stForm != NULL )
+    {
+        if( stForm->iQuantidade > 0 )
+        {
+            for( int iFrm = 0; iFrm < stForm->iQuantidade; iFrm++ )
+            {
+                memset( &stRegistro.stidAtendimentoFrm, 0, sizeof( stRegistro.stidAtendimentoFrm ) );
+                //memset( stRegistro.cidCampo, 0, sizeof( stRegistro.cidCampo ) );
+                strcpy( stRegistro.cidCampo, stForm->stAtendimentoFrm[iFrm].cidCampo );
+                //
+                // Devido a implantação do DPR no FO, foi necessário fazer com que todos os
+                // serviços usem classes básicas do atendimento para inc/alt/exc de linhas
+                // de tabelas sejam monitoradas e enviadas ao DPR.
+                // SM324--DPR--DEZ/2006--Cassio
+                //
+                inserirAtendimentoFrm(pzcidAtendimento,
+                                      pzcidUsuario,
+                                      stRegistro.cidCampo,
+                                      (char*)stRegistro.stidAtendimentoFrm.arr,
+                                      xmlDpr);
+
+                //Recupera a chave primaria do formulario
+                // EXEC SQL
+                //     SELECT 
+                //         ATENDIMENTO.ATENDIMENTOFRMSQ.NEXTVAL
+                //     INTO
+                //         :stRegistro.stidAtendimentoFrm
+                //     FROM
+                //         DUAL;
+
+                //Insere o formulario
+                // EXEC SQL
+                // INSERT INTO ATENDIMENTO.ATENDIMENTOFRM
+                // (
+                //     IDATENDIMENTOFRM,
+                //     IDATENDIMENTO,
+                //     IDCAMPO,
+                //     IDUSUARIOALTERACAO,
+                //     DTULTIMAALTERACAO
+                // )
+                // VALUES
+                // (
+                //     :stRegistro.stidAtendimentoFrm,
+                //     :pzcidAtendimento,
+                //     :stRegistro.cidCampo,
+                //     :pzcidUsuario,
+                //     TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+                // );
+
+                if( stForm->stAtendimentoFrm[iFrm].stCampoReg.iQuantidade > 0 )
+                {
+                    for( int iCmp = 0; iCmp < stForm->stAtendimentoFrm[iFrm].stCampoReg.iQuantidade; iCmp++ )
+                    {
+                        //memset( stRegistro.cdsValor, 0, sizeof( stRegistro.cdsValor ) );
+                        //memset( stRegistro.cidDominio, 0, sizeof( stRegistro.cidDominio ) );
+                        strcpy( stRegistro.cdsValor, stForm->stAtendimentoFrm[iFrm].stCampoReg.stCampo[iCmp].cdsValor );
+                        strcpy( stRegistro.cidDominio, stForm->stAtendimentoFrm[iFrm].stCampoReg.stCampo[iCmp].cidDominio );
+                        //
+                        // Devido a implantação do DPR no FO, foi necessário fazer com que todos os
+                        // serviços usem classes básicas do atendimento para inc/alt/exc de linhas
+                        // de tabelas sejam monitoradas e enviadas ao DPR.
+                        // SM324--DPR--DEZ/2006--Cassio
+                        //
+                        inserirAtendimentoFrmCampo(stRegistro.cidDominio,
+                                                   (const char*)stRegistro.stidAtendimentoFrm.arr,
+                                                   stRegistro.cdsValor,
+                                                   (const char*)pzcidUsuario,
+                                                   atoi(stDados->stDadosProcesso->cidContato),
+                                                   xmlDpr);
+
+                        // EXEC SQL
+                        // INSERT INTO ATENDIMENTO.ATENDIMENTOFRMCAMPO
+                        // (
+                        //     IDATENDIMENTOCAMPO,
+                        //     IDDOMINIO,
+                        //     IDATENDIMENTOFRM,
+                        //     DAVALOR,
+                        //     IDUSUARIOALTERACAO,
+                        //     DTULTIMAALTERACAO
+                        // )
+                        // VALUES
+                        // (
+                        //     ATENDIMENTO.ATENDIMENTOFRMCAMPOSQ.NEXTVAL,
+                        //     :stRegistro.cidDominio,
+                        //     :stRegistro.stidAtendimentoFrm,
+                        //     :stRegistro.cdsValor,
+                        //     :pzcidUsuario,
+                        //     TO_DATE(:pDataHora,'DD/MM/YYYY HH24:MI:SS')
+                        // );
+                            
+                    }//for( int iCmp = 0; iCmp < stForm->stAtendimentoFrm[iFrm].stCampoReg.iQuantidade; iCmp++ )
+                }//if( stForm->stAtendimentoFrm[iFrm].stCampoReg.iQuantidade > 0 )
+            }//for( int iFrm = 0; iFrm < stForm->iQuantidade; iFrm++ )
+
+            // DPR--SM324--VOs de tabelas monitoradas pelo DPR
+            // if ( atoi(idAgrupamentoEstadoTpProcFt) >= AGRPTPPROC_TECNICO )
+            // {
+            //     ULOG("cWF_CERRAMEFECPC::REGISTRA DPR ..." );
+            //     registrarAcaoDPR(atoi(stDados->cidUsuario),0 /*atoi(stgetAtendimento.cidContato)*/,cidAtendimento,xmlDpr);
+            //     ULOG("cWF_CERRAMEFECPC::REGISTRA DPR ... OK" );
+            // }
+
+        }//if( stForm->iQuantidade > 0 )
+    }//if( stForm != NULL )
+}
+
+void cWF_CERRAMEFECPC::alterarAtendimento(const char *idAtendimento,
+                                          int idFase,
+                                          const char *nrNivel,
+                                          const char *qtInsistencia,
+                                          const char *idUsuario,
+                                          XMLDPR *xmlDpr)
+{
+    struct st_Atendimento dados;
+    struct st_vlAtendimento status;
+
+    memset( &dados, 0, sizeof(st_Atendimento));
+    memset( &status,-1,sizeof(st_vlAtendimento));
+
+    dados.idAtendimento = atol(idAtendimento);
+    status.idAtendimento = 1;
+
+    dados.idFase = idFase;
+    status.idFase = 1;
+
+    dados.nrNivel = atoi(nrNivel);
+    status.nrNivel = 1;
+
+    dados.qtInsistencia = atoi(qtInsistencia);
+    status.qtInsistencia = 1;
+
+    dados.idUsuarioAlteracao = atoi(idUsuario);
+    status.idUsuarioAlteracao = 1;
+
+    strcpy( dados.dtUltimaAlteracao, stSistema.cDataHora );
+    status.dtUltimaAlteracao = 1;
+
+    cWFAtendimento cwfAtendimento(&dados,&status,0);
+    cwfAtendimento.alterar(xmlDpr);
+}
+
+void cWF_CERRAMEFECPC::decrementarPendentes(const char *idAtendimentoProtocolo,const char *idUsuarioAlteracao)
+{
+    ULOG_START("cWF_CERRAMEFECPC::DecrementarPendentes(const char *idAtendimentoProtocolo)");
+
+    cWfAtdAlterProt cwfatdalterprot;
+
+    cwfatdalterprot.DecrementarPendentes(idAtendimentoProtocolo,"1",idUsuarioAlteracao);
+
+    ULOG_END("cWF_CERRAMEFECPC::DecrementarPendentes(const char *idAtendimentoProtocolo)"); 
+}
+
+void cWF_CERRAMEFECPC::excluirAtendimentoUsuarioAtual(const char *idAtendimento,const char *idUsuario,XMLDPR *xmlDpr)
+{
+    st_AtendimentoUsuarioAtual   dados; 
+    st_vlAtendimentoUsuarioAtual status;
+
+    memset (&dados,   0, sizeof(st_AtendimentoUsuarioAtual));
+    memset (&status, -1, sizeof(st_vlAtendimentoUsuarioAtual));
+
+    dados.idAtendimento = atol(idAtendimento);
+    status.idAtendimento = 1;
+
+    dados.idPessoaUsuario = dados.idUsuarioAlteracao = atoi(idUsuario);
+    status.idPessoaUsuario = 1;
+
+    status.idUsuarioAlteracao = 1;
+
+    cWFAtendimentoUsuarioAtual cwfatendimentousuarioatual(&dados,&status,0);
+
+    cwfatendimentousuarioatual.excluir(xmlDpr);
+}
+
+void cWF_CERRAMEFECPC::atualizarAtendimentoUsuarioAtual(const char *idAtendimento,const char *idUsuario,XMLDPR *xmlDpr)
+{
+    ULOG_START( "cWF_CERRAMEFECPC::atualizarAtendimentoUsuarioAtual()" );
+	
+	int idUser = 1;
+	st_AtendimentoUsuarioAtual   dados; 
+    st_vlAtendimentoUsuarioAtual status;
+
+    memset (&dados,   0, sizeof(st_AtendimentoUsuarioAtual));
+    memset (&status, -1, sizeof(st_vlAtendimentoUsuarioAtual));
+
+    dados.idAtendimento = atol(idAtendimento);
+    status.idAtendimento = 1;
+	
+	//ULOG( "*** usuario parametro [%s]", idUsuario );
+	if ( isdigit(idUsuario[0]) )
+	{
+		idUser = atoi(idUsuario);
+	}
+
+    dados.idPessoaUsuario = dados.idUsuarioAlteracao = idUser;
+    status.idPessoaUsuario = 1;
+
+    status.idUsuarioAlteracao = 1;
+
+    cWFAtendimentoUsuarioAtual cwfatendimentousuarioatual(&dados,&status,0);
+
+    cwfatendimentousuarioatual.alterar(xmlDpr);
+	
+	ULOG_END( "cWF_CERRAMEFECPC::atualizarAtendimentoUsuarioAtual()" );
+
+}
+
+void cWF_CERRAMEFECPC::excluirAtendimentoPausa(const char *idAtendimento)
+{
+    struct st_AtendimentoPausa dados;
+    struct st_vlAtendimentoPausa status;
+
+    memset (&dados,0,sizeof(st_AtendimentoPausa));
+    memset (&status,-1,sizeof(st_vlAtendimentoPausa));
+
+    dados.idAtendimento = atol(idAtendimento);
+    status.idAtendimento = 1;
+
+    cWFAtendimentoPausa cwfatendimentopausa(&dados, &status); 
+
+    cwfatendimentopausa.excluir(); 
+}
+
+void cWF_CERRAMEFECPC::atualizarAtendimentoGrupoReceptor(const char *idAtendimento,const char *idGrupo,const char *idUsuario)
+{
+    ULOG_START("cWF_CERRAMEFECPC::atualizarAtendimentoGrupoReceptor()");
+
+    cWFAtendimentoGrupoDevolucao cwfatendimentogrupodevolucao;
+
+    cwfatendimentogrupodevolucao.atualizar(atol(idAtendimento),atoi(idGrupo),atoi(idUsuario));
+
+    ULOG_END("cWF_CERRAMEFECPC::atualizarAtendimentoGrupoReceptor()");
+}
+
+void cWF_CERRAMEFECPC::atualizarAtendimentoUsuarioReceptor(const char *idAtendimento,const char *idPessoaUsuario,const char *idUsuario)
+{
+    ULOG_START("cWF_CERRAMEFECPC::atualizarAtendimentoUsuarioReceptor()");
+
+    cWFAtendimentoGrupoDevolucao cwfatendimentogrupodevolucao;
+
+    cwfatendimentogrupodevolucao.atualizar(atol(idAtendimento),atoi(idPessoaUsuario),atoi(idUsuario));
+
+    ULOG_END("cWF_CERRAMEFECPC::atualizarAtendimentoUsuarioReceptor()");
+}
+
+void cWF_CERRAMEFECPC::inserirAndamento(const char *idAtividadeMassa,
+                                        const char *idAgrupamentoEstadoTProcFut,
+                                        const char *idAtendimento,
+                                        const char *idUsuario,
+                                        const char *idGrupo,
+                                        char *idAndamento,
+                                        XMLDPR *xmlDpr)
+{
+    struct st_Andamento dados;
+    struct st_vlAndamento status;
+
+    memset (&dados, 0, sizeof( st_Andamento ));
+    memset (&status,-1,sizeof(st_vlAndamento));
+
+    strcpy( dados.dtAndamento, stSistema.cDataHora );
+    status.dtAndamento = 1;
+
+    strcpy( dados.dtUltimaAlteracao, stSistema.cDataHora );
+    status.dtUltimaAlteracao = 1;
+
+    dados.idAtendimento = atol(idAtendimento);
+    status.idAtendimento = 1;
+
+    dados.idPessoaUsuario = atoi(idUsuario);
+    status.idPessoaUsuario = 1;
+
+    dados.idUsuarioAlteracao = atoi(idUsuario);
+    status.idUsuarioAlteracao = 1;
+
+    dados.idAgrupamentoEstadoTpProc = atoi(idAgrupamentoEstadoTProcFut);
+    status.idAgrupamentoEstadoTpProc = 1;
+
+    dados.idAtividade = atoi(idAtividadeMassa);
+    status.idAtividade = 1;
+
+    dados.idGrupo = atoi(idGrupo);
+    status.idGrupo = 1;
+
+    cWFAndamento cwfAndamento( &dados, &status, 0);  
+    
+    sprintf(idAndamento,"%ld",cwfAndamento.incluir(xmlDpr));
+}
+
+void cWF_CERRAMEFECPC::inserirAtendimentoFrm(const char *idAtendimento,
+                                             const char *idUsuario,
+                                             const char *idCampo,
+                                             char *idAtendimentoFrm,
+                                             XMLDPR *xmlDpr)
+{
+    st_AtendimentoFrm m_stDadosAtendimentoFrm;
+    st_vlAtendimentoFrm m_vlDadosAtendimentoFrm;
+
+    memset(&m_stDadosAtendimentoFrm, 0, sizeof(m_stDadosAtendimentoFrm));
+    memset(&m_vlDadosAtendimentoFrm,-1, sizeof(m_vlDadosAtendimentoFrm));
+
+    m_stDadosAtendimentoFrm.idAtendimento = atol(idAtendimento);
+    m_vlDadosAtendimentoFrm.idAtendimento = 1;
+
+    m_stDadosAtendimentoFrm.idUsuarioAlteracao = atoi(idUsuario);
+    m_vlDadosAtendimentoFrm.idUsuarioAlteracao = 1;
+
+    m_stDadosAtendimentoFrm.idCampo = atoi(idCampo);
+    m_vlDadosAtendimentoFrm.idCampo = 1;
+
+    strcpy(m_stDadosAtendimentoFrm.dtUltimaAlteracao,stSistema.cDataHora);
+    m_vlDadosAtendimentoFrm.dtUltimaAlteracao=1;
+
+    cWFAtendimentoFrm cwfAtendimentoFrm(&m_stDadosAtendimentoFrm,&m_vlDadosAtendimentoFrm,0);
+
+    sprintf(idAtendimentoFrm,"%d",cwfAtendimentoFrm.incluir(xmlDpr));
+}
+
+void cWF_CERRAMEFECPC::inserirAtendimentoFrmCampo(const char *idDominio,
+                                                  const char *idAtendimentoFrm,
+                                                  const char *dsValor,
+                                                  const char *idUsuario,
+                                                  int idContato,
+                                                  XMLDPR *xmlDpr)
+{
+    st_AtendimentoFrmCampo m_stDadosAtendimentoFrmCampo;
+    st_vlAtendimentoFrmCampo m_vlDadosAtendimentoFrmCampo;
+
+    memset(&m_stDadosAtendimentoFrmCampo, 0,sizeof(m_stDadosAtendimentoFrmCampo));
+    memset(&m_vlDadosAtendimentoFrmCampo,-1,sizeof(m_vlDadosAtendimentoFrmCampo));
+
+    m_stDadosAtendimentoFrmCampo.idAtendimentoFrm = atol(idAtendimentoFrm);
+    m_vlDadosAtendimentoFrmCampo.idAtendimentoFrm = 1;
+
+    m_stDadosAtendimentoFrmCampo.idDominio = atoi(idDominio);
+    m_vlDadosAtendimentoFrmCampo.idDominio = 1;
+
+    strcpy(m_stDadosAtendimentoFrmCampo.dsValor,dsValor);
+    m_vlDadosAtendimentoFrmCampo.dsValor = 1;
+
+    m_stDadosAtendimentoFrmCampo.idUsuarioAlteracao = atoi(idUsuario);
+    m_vlDadosAtendimentoFrmCampo.idUsuarioAlteracao = 1;
+
+    strcpy(m_stDadosAtendimentoFrmCampo.dtUltimaAlteracao,stSistema.cDataHora);
+    m_vlDadosAtendimentoFrmCampo.dtUltimaAlteracao = 1;
+
+    cWFAtendimentoFrmCampo cwfAtendimentoFrmCampo(&m_stDadosAtendimentoFrmCampo,&m_vlDadosAtendimentoFrmCampo,0);
+
+    cwfAtendimentoFrmCampo.incluir(xmlDpr);
+
+    // Se o tamanho do XML estiver atingindo o limite da coluna do Oracle
+    // é melhor quebrar as gravações.
+    // if ( xmlDpr->obterTamAreaXML() > 3500 )
+    // {
+    //     registrarAcaoDPR(m_stDadosAtendimentoFrmCampo.idUsuarioAlteracao,idContato,stgetAtendimento.cidAtendimento,xmlDpr);
+    // }
+}
+
+void cWF_CERRAMEFECPC::inserirAndamentoObservacao(const char *idAndamento,
+                                                  const char *idUsuario,
+                                                  const char *dsObservacao,
+                                                  XMLDPR *xmlDpr)
+{
+	st_AndamentoObservacao m_stDadosAndamentoObservacao;
+    st_vlAndamentoObservacao m_vlDadosAndamentoObservacao;
+
+    memset(&m_stDadosAndamentoObservacao, 0, sizeof(m_stDadosAndamentoObservacao));
+    memset(&m_vlDadosAndamentoObservacao,-1, sizeof(m_vlDadosAndamentoObservacao));
+
+    m_stDadosAndamentoObservacao.idAndamento = atol(idAndamento);
+    m_vlDadosAndamentoObservacao.idAndamento = 1;
+
+    m_stDadosAndamentoObservacao.pdsAndamentoObservacao = dsObservacao;
+    m_vlDadosAndamentoObservacao.dsAndamentoObservacao = 1;
+
+    m_stDadosAndamentoObservacao.idUsuarioAlteracao = atoi(idUsuario);
+    m_vlDadosAndamentoObservacao.idUsuarioAlteracao = 1;
+
+    strcpy(m_stDadosAndamentoObservacao.dtUltimaAlteracao,stSistema.cDataHora); 
+    m_vlDadosAndamentoObservacao.dtUltimaAlteracao = 1;
+
+    cWFAndamentoObservacao cwfAndamentoObservacao(&m_stDadosAndamentoObservacao,&m_vlDadosAndamentoObservacao,0);
+    cwfAndamentoObservacao.incluir(xmlDpr);
+}
+
+void cWF_CERRAMEFECPC::inserirAtendimentoFechamento(const char *idAtendimento,
+                                                    const char *idUsuario,
+                                                    const char *idAndamento,
+                                                    XMLDPR *xmlDpr)
+{
+    st_AtendimentoFechamento m_stDadosAndamentoFechamento;
+    st_vlAtendimentoFechamento m_vlDadosAndamentoFechamento;
+
+    memset(&m_stDadosAndamentoFechamento, 0, sizeof(m_stDadosAndamentoFechamento));
+    memset(&m_vlDadosAndamentoFechamento,-1, sizeof(m_vlDadosAndamentoFechamento));
+
+    m_stDadosAndamentoFechamento.idAtendimento = atol(idAtendimento);
+    m_stDadosAndamentoFechamento.idAndamento = atol(idAndamento);
+    m_stDadosAndamentoFechamento.idPessoaUsuario = atoi(idUsuario);
+    strcpy(m_stDadosAndamentoFechamento.dtFechamento,stSistema.cDataHora);
+
+    m_vlDadosAndamentoFechamento.idAtendimento = 1;
+    m_vlDadosAndamentoFechamento.idAndamento = 1;
+    m_vlDadosAndamentoFechamento.idPessoaUsuario = 1;
+    m_vlDadosAndamentoFechamento.dtFechamento = 1;
+
+    cWFAtendimentoFechamento cwfAtendimentoFechamento(&m_stDadosAndamentoFechamento,&m_vlDadosAndamentoFechamento,0);
+
+    cwfAtendimentoFechamento.incluir(xmlDpr);
+}
+
+void cWF_CERRAMEFECPC::inserirAtendimentoBaixaHistorico(const char *idAtendimento,
+                                                        const char *idBaixa,
+                                                        const char *idFase,
+                                                        const char *idUsuario,
+                                                        const char *idAndamento,
+                                                        char *idAtendimentoBaixaHistorico,
+                                                        XMLDPR *xmlDpr)
+{
+    ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTOBAIXAHISTORICO");
+
+    st_AtendimentoBaixaHistorico m_stDadosHist;
+    st_vlAtendimentoBaixaHistorico m_vlDadosHist;
+
+    memset(&m_stDadosHist, 0, sizeof(m_stDadosHist));
+    memset(&m_vlDadosHist,-1, sizeof(m_vlDadosHist));
+
+    m_stDadosHist.idAtendimento=atol(idAtendimento);
+    m_vlDadosHist.idAtendimento=1;
+
+    m_stDadosHist.idBaixa= atoi(idBaixa);
+    m_vlDadosHist.idBaixa=1;
+
+    m_stDadosHist.idFase=atoi(idFase);
+    m_vlDadosHist.idFase=1;
+
+    m_stDadosHist.idAndamento=atol(idAndamento);
+    m_vlDadosHist.idAndamento=1;
+
+    m_stDadosHist.idPessoaUsuario=atoi(idUsuario);
+    m_vlDadosHist.idPessoaUsuario=1;
+
+    m_stDadosHist.idUsuarioAlteracao=atoi(idUsuario);
+    m_vlDadosHist.idUsuarioAlteracao=1;
+
+    strcpy(m_stDadosHist.dtUltimaAlteracao,stSistema.cDataHora);
+    m_vlDadosHist.dtUltimaAlteracao=1;
+
+    strcpy(m_stDadosHist.dtBaixa,stSistema.cDataHora);
+    m_vlDadosHist.dtBaixa=1;
+
+    cWFAtendimentoBaixaHistorico AtendimentoBaixaHistorico(&m_stDadosHist,&m_vlDadosHist,0);
+    
+    sprintf(idAtendimentoBaixaHistorico,"%d",AtendimentoBaixaHistorico.incluir(xmlDpr));
+
+    ULOG("cWF_CERRAMEFECPC::Inserindo ATENDIMENTOBAIXAHISTORICO [%s] OK", idAtendimentoBaixaHistorico);
+}
+
+void cWF_CERRAMEFECPC::registrarAcaoDPR(int idUsuario,int /*idContato*/,char *idAtendimento,XMLDPR *xmlDpr)
+{
+    if ( xmlDpr )
+    {
+        if ( xmlDpr->obterTamAreaXML() > 0 )
+        {
+            cWFAtdGerarXMLDPR cwfatdgerarxmldpr;
+
+            xmlDpr->idUser = idUsuario;
+            xmlDpr->nomeServico = "CERRAMEFEC";
+            //xmlDpr.idContato = idContato;
+            xmlDpr->idAtendimento = idAtendimento;
+
+            cwfatdgerarxmldpr.persistirDadosDPRContatoTecnico(xmlDpr);
+        }
+        else
+        {
+            ULOGW("cWF_CERRAMEFECPC::registrarAcaoDPR::XML de DPR vazio.");
+        }
+    }
+    else
+    {
+        ULOGE("cWF_CERRAMEFECPC::registrarAcaoDPR::Ponteiro invalido.");
+    }
+}
+
+bool cWF_CERRAMEFECPC::preProcessarRelEncFech(long idAtendimento,int idGrupoAtual
+                                             ,int idAgrEstTPrFt,int idPessoaUsuario
+                                             ,int idAtividade)
+{
+    st_PPRelatorios dados;
+    st_vlPPRelatorios status;
+    bool retorno=true;
+
+    cWFPPRelatorios cwfpprelatorios(&dados,&status);
+
+    cwfpprelatorios.resetarParametros();
+
+    if ( cwfpprelatorios.setarValoresRelProdRepresentante(idAtividade,0) )
+    {
+        cwfpprelatorios.setarIdAtendimento(idAtendimento);
+        cwfpprelatorios.setarIdGrupoAtual(idGrupoAtual);
+        cwfpprelatorios.setarIdPessoaUsuario(idPessoaUsuario);
+
+        if ( retorno = cwfpprelatorios.atualizar(),!retorno )
+        {
+            ULOG("Erro %s:%s"
+                ,cwfpprelatorios.obterCodErro(),cwfpprelatorios.obterMsgErro());
+        }
+    }
+
+    return retorno;
+}
+
+void cWF_CERRAMEFECPC::sqlErro( sqlca* sqlca )
+{
+    ULOGE( "cWF_CERRAMEFECPC::sqlErro->sqlcode = [%d],sqlerrmc = [%.*s]"
+                ,sqlca->sqlcode,sqlca->sqlerrm.sqlerrml,sqlca->sqlerrm.sqlerrmc);
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}
+
+
+/***************************************************************************************/
+char* cWF_CERRAMEFECPC::alltrim(char *pszString)
+{
+    ltrim(pszString);
+    rtrim(pszString);
+    return pszString;
+}
+
+/***************************************************************************************/
+char* cWF_CERRAMEFECPC::ltrim(char *pszString)
+{
+    register unsigned int iPos;
+    unsigned int iLen;
+    char *pszTmp, *pszAlocado;
+
+    iLen=strlen(pszString);
+
+    pszAlocado = (char *)malloc(iLen + 1);
+    
+    strcpy(pszAlocado, pszString);
+
+    pszTmp=pszAlocado;
+    
+
+    for(iPos=0; iPos < iLen; iPos++)
+        if(pszString[iPos] == 0x20)
+            pszTmp++;
+        else
+            break;
+
+    strcpy(pszString, pszTmp);
+    
+    free(pszAlocado);
+    return pszString;
+}
+
+/***************************************************************************************/
+char* cWF_CERRAMEFECPC::rtrim(char *pszString)
+{
+    register int iPos;
+
+    for(iPos=strlen(pszString)-1; iPos >= 0; iPos--)
+        if(pszString[iPos] == 0x20)
+            pszString[iPos] = 0x00;
+        else
+            break;
+    return pszString;
+}
+
+/***************************************************************************************/
+

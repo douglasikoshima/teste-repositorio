@@ -1,0 +1,166 @@
+//
+// $Id: ins_campanha.pcpp,v 1.1 2009/07/31 15:33:57 a5110702 Exp $
+//
+
+#include "../../negocio/CampanhaCmm/include/campanha.hpp"
+
+int ins_campanha(char * usuario, DOMNode*dnode,XMLGen*xml)
+{
+	char parm[256];
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR sgCampanha[256];
+		VARCHAR dsCampanha[256];
+		int     idPessoaUsuarioAlteracao;
+                int     idCampanha = 0;
+		int		inAtivo;
+		
+		
+		/*--- Mod 12/08/04*/
+		int     NextVal1;
+		int     inDisponibilidade = 0;
+		
+		/*--- Mod 12/08/04*/
+		
+	EXEC SQL END DECLARE SECTION;
+	EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+    //  Obtendo dados do xml
+
+	get_tag(parm, dnode, "sgCampanha", 0, 0);
+	strToOra(sgCampanha,parm);
+
+    //  Obtendo dados do xml
+
+	get_tag(parm, dnode, "dsCampanha", 0, 0);
+	strToOra(dsCampanha,parm);
+
+	// Pegando id do usuario
+	idPessoaUsuarioAlteracao = get_idUsuario(usuario);
+
+	inAtivo = 1;
+
+	/* Verifica se existe o item a adcionar */
+	EXEC SQL DECLARE crsCampanha CURSOR FOR
+                SELECT CAMPANHA.idcampanha
+                FROM   apoio.campanha CAMPANHA
+                WHERE  (CAMPANHA.sgcampanha = :sgCampanha
+                OR     CAMPANHA.DSCAMPANHA = :dsCampanha);
+	EXEC SQL OPEN crsCampanha;
+
+	for(;;) 
+	{
+		EXEC SQL FETCH crsCampanha INTO :idCampanha;
+		break;
+	}
+  
+	EXEC SQL CLOSE crsCampanha;	
+	
+
+	if(idCampanha == 0)
+	{
+
+		EXEC SQL select apoio.campanhasq.nextval into :idCampanha from dual;
+
+		// ulog("Campanha....:   %d ", idCampanha);
+		/* Insert linha */
+		EXEC SQL INSERT INTO apoio.campanha(idcampanha,
+												sgcampanha,  				
+												dscampanha,
+                                                idpessoausuarioinclusao,
+                                                idpessoausuarioalteracao,
+                                                dtinclusao,
+                                                dtalteracao,
+                                                inativo)
+					VALUES(						:idCampanha,
+												:sgCampanha,
+												:dsCampanha,
+                                                :idPessoaUsuarioAlteracao,
+                                                :idPessoaUsuarioAlteracao,
+                                                sysdate,
+                                                sysdate,
+                                                :inAtivo);
+
+		if (sqlca.sqlcode)
+		{
+			throw new TuxBasicSvcException("00E1000","INSERT INTO apoio.campanha");
+		}
+
+		/* insert OK */
+		xml->createTag("CAMPANHA");
+		xml->addItem("INSERT",1);
+		xml->closeTag();
+	}
+	
+	
+	/*--- Mod 12/08/04*/
+	inAtivo = 1;
+	inDisponibilidade = 1;
+
+    EXEC SQL select campanha.subcampanhafixasq.nextval into :NextVal1 from dual;
+	
+
+	// ulog("SubCampanhafixa....:   %d ", NextVal1);
+
+	/* Insert linha */
+	EXEC SQL INSERT INTO campanha.subcampanhafixa(
+									idsubcampanhafixa,
+									idcampanha,
+									inativo,
+									indisponibilidade,
+									idusuarioalteracao,
+									dtultimaalteracao)
+									VALUES(:NextVal1,
+									:idCampanha,
+									:inAtivo,
+									:inDisponibilidade,
+									:idPessoaUsuarioAlteracao,
+									sysdate);
+
+	if (sqlca.sqlcode)
+	{
+		throw new TuxBasicSvcException("00E1000","INSERT INTO campanha.subcampanhafixa");
+	}
+	
+	/*--- Mod 12/08/04*/
+	
+	if(idCampanha > 0)
+	{
+		EXEC SQL UPDATE apoio.campanha
+		    SET inativo = :inAtivo,
+                        sgcampanha = :sgCampanha,
+			dscampanha = :dsCampanha,
+			idPessoaUsuarioAlteracao = :idPessoaUsuarioAlteracao,
+			dtAlteracao = sysdate
+		    WHERE idcampanha = :idCampanha;
+											  
+		if (sqlca.sqlcode)
+		{
+			throw new TuxBasicSvcException("00E1000","UPDATE apoio.campanha ");
+		}
+
+/*--- Mod 12/08/04*/
+		EXEC SQL UPDATE campanha.subcampanhafixa
+				SET		inativo = :inAtivo,
+						indisponibilidade = :inDisponibilidade,
+						idusuarioalteracao = :idPessoaUsuarioAlteracao,
+						dtultimaalteracao = sysdate
+				WHERE idcampanha = :idCampanha;
+
+		if (sqlca.sqlcode)
+		{
+			throw new TuxBasicSvcException("00E1000","UPDATE apoio.campanha ");
+		}
+
+/*--- Mod 12/08/04*/
+		
+		/* insert modificado para update OK */
+		xml->createTag("CAMPANHA");
+		xml->addItem("ID",idCampanha);
+		xml->addItem("UPDATE",1);
+		xml->closeTag();
+	}
+
+	return 1;
+
+}

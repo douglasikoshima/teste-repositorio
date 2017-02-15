@@ -1,0 +1,131 @@
+//
+// $Id: ins_pergunta.pcpp,v 1.1 2009/07/31 15:34:01 a5110702 Exp $
+//
+
+#include "../../negocio/cmputil/include/campanha.hpp"
+
+
+int ins_pergunta(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  TuxHelper txhI;
+  char parm[2000];
+  int iSubno = 0;
+  int iNroObjCta = 0;
+  DOMNode *pNoConta;
+  DOMNode *pConta;
+  int i = 1;
+  EXEC SQL BEGIN DECLARE SECTION;
+  int     inAtivo = 0;
+  int     inDisponibilidade = 0;
+  int     idPessoaUsuarioAlteracao = 0;
+  int     idTipoApresentacaoPergunta = 0;
+  int     idApresentacao = 0;
+  VARCHAR dsPergunta[2000];
+  int     inObrigatoria = 0;
+  int     sqApresentacao = 0;
+  VARCHAR dsScriptPergunta[2000];
+  int     inEncerramento = 0;
+  int     idCanalCampanha = 0;
+  int     sqVersao = 0;
+  int     NextVal1;
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+
+  try {
+    inAtivo = 1;
+    inDisponibilidade = 1;
+
+    //  Obtendo dados do xml
+    get_tag(parm, dnode, "idApresentacao", 0, 0);
+    idTipoApresentacaoPergunta= atoi(parm);
+
+    get_tag(parm, dnode, "dsPergunta", 0, 0);
+    strToOra(dsPergunta,parm);
+
+    get_tag(parm, dnode, "inEncerramento", 0, 0);
+    inEncerramento= atoi(parm);
+
+    get_tag(parm, dnode, "inDisponibilidade", 0, 0);
+    inDisponibilidade= atoi(parm);
+
+    get_tag(parm, dnode, "dsScriptPergunta", 0, 0);
+    strToOra(dsScriptPergunta,parm);
+
+    get_tag(parm, dnode, "sqApresentacao", 0, 0);
+    sqApresentacao= atoi(parm);
+
+    get_tag(parm, dnode, "inObrigatoria", 0, 0);
+    inObrigatoria= atoi(parm);
+
+    // Pegando id do usuario
+    idPessoaUsuarioAlteracao = usuario;
+
+    // Usando select externo pois variavel serah necessari fora do SQL
+    EXEC SQL SELECT questionario.perguntasq.NEXTVAL INTO :NextVal1 FROM DUAL;
+	
+    /* Insert linha */
+    EXEC SQL INSERT INTO questionario.pergunta(idpergunta, 
+						  idtipoapresentacaopergunta, 
+						  dspergunta, 
+						  inobrigatoria, 
+						  indisponibilidade, 
+						  sqapresentacao, 
+						  dsscriptpergunta, 
+						  inencerramento, 
+						  idusuarioalteracao, 
+						  dtultimaalteracao)
+      VALUES(:NextVal1, 
+	     :idTipoApresentacaoPergunta, 
+	     :dsPergunta, 
+	     :inObrigatoria, 
+	     :inDisponibilidade, 
+	     :sqApresentacao, 
+	     :dsScriptPergunta, 
+	     :inEncerramento, 
+	     :idPessoaUsuarioAlteracao,
+	     sysdate);
+
+    // CanalUtil
+
+        iNroObjCta = 0;
+        pConta = txhI.walkDOM(dnode, "CanalUtil", iNroObjCta);
+
+    for( iNroObjCta = 0; (pNoConta = txhI.walkDOM(pConta, "ApoioCanalVO", iNroObjCta)) ; iSubno=0, iNroObjCta++ ) 
+    {
+      //  Obtendo dados do xml
+      get_tag(parm, pNoConta, "idCanalCampanha", 0, 0);
+      idCanalCampanha= atoi(parm);
+
+      get_tag(parm, pNoConta, "cnlcmpinAtivo", 0, 0);
+      inAtivo= atoi(parm);
+
+      // ulog("Canal [%d], passou for %d - ",idCanalCampanha, i++);
+
+      /* Insert linha */
+      EXEC SQL 
+	INSERT INTO  campanha.campanhaquestionario(idcampanhaquestionario, 
+						      idpergunta, 
+						      idcanalcampanha, 
+						      idusuarioalteracao, 
+						      dtultimaalteracao, 
+						      inativo)
+	VALUES(campanha.campanhaquestionariosq.NEXTVAL, 
+	       :NextVal1, 
+	       :idCanalCampanha, 
+	       :idPessoaUsuarioAlteracao,
+	       sysdate, 
+	       :inAtivo);
+      
+      idCanalCampanha= 0;
+      inAtivo= 0;
+    }
+
+    /* insert OK */
+    xml->addItem("descricao","idPergunta");
+    xml->addItem("valor",NextVal1);
+
+  }catch( ... ){throw;}	
+
+  return 1;
+
+}

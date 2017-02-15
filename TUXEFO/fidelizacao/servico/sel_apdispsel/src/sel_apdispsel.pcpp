@@ -1,0 +1,213 @@
+//
+// $Id: sel_apdispsel.pcpp,v 1.1 2009/07/31 15:34:33 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+#include <string>
+
+using namespace std;
+
+int sel_apdispsel(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+    char parm[255];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int     idUfOperadora;
+        int     idTipoPessoa;
+        int     idSegmentacao;
+        int     idAparelho;
+        int	  idGrupo;
+        VARCHAR dsModelo[255];
+        char * query;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+  try
+  {
+    //  Obtendo dados do xml
+    get_tag(parm,dnode,"idUfOperadora",0,0);
+    idUfOperadora = atoi(parm);
+
+    get_tag(parm,dnode,"idTipoPessoa",0,0);
+    idTipoPessoa = atoi(parm);
+ 
+    get_tag(parm,dnode,"idSegmentacao",0,0);
+    idSegmentacao = atoi(parm);
+
+	get_tag(parm,dnode,"idGrupo",0,0);
+    idGrupo = atoi(parm);
+ 
+    // Definicao dos cursores
+    // Aparelhos disponiveis
+
+    string stmt;
+    char bf[128];
+    memset( bf,0x0,sizeof(bf) );
+
+    stmt  = 
+        "select "
+            "RA.idAparelho, "
+	       "(CASE WHEN  RA.IDTIPOAPARELHO !=1 THEN"
+   		   " RA.dsModelo || ' - ' || (SELECT TIPOAPARELHO.DSTIPOAPARELHO FROM APOIO.TIPOAPARELHO TIPOAPARELHO WHERE TIPOAPARELHO.IDTIPOAPARELHO = RA.IDTIPOAPARELHO)"
+		   " ELSE RA.DSMODELO END) dsModelo " 
+        "from "
+            "RETENCAO.APARELHO       RA ,"
+			"apoio.tipoaparelho		apt "
+        "where "
+		"RA.IDTIPOAPARELHO=APT.IDTIPOAPARELHO "
+            " and RA.inAtivo = 1 "
+        "and "
+            "RA.idAparelho not in ( select idAparelho "
+						        "from retencao.MatrizAparelho "
+						        "where inAtivo != 0 "
+						        "and   idUfOperadora = ";
+                                sprintf( bf,"%d ", idUfOperadora );
+                                stmt += bf;
+
+                                stmt +=
+						        "and   idTipoPessoa = ";
+                                sprintf( bf,"%d ", idTipoPessoa );
+                                stmt += bf;
+						        
+                                stmt +=
+                                "and   idSegmentacao = ";
+                                sprintf( bf,"%d ", idSegmentacao );
+                                stmt += bf;
+						        
+                                stmt +=
+                                "and idGrupo = ";
+                                sprintf( bf,"%d )", idGrupo );
+                                stmt += bf;
+    stmt += "order by dsmodelo";
+
+    query = (char *)stmt.c_str();
+    ULOG( "Query Aparelhos disponiveis [%s]", query );
+
+    EXEC SQL PREPARE CnsAparelhosExs FROM :query;
+    EXEC SQL DECLARE crsApaExs CURSOR FOR CnsAparelhosExs;
+
+/*
+    EXEC SQL DECLARE crsApaExs CURSOR FOR
+			  select idAparelho,
+					 dsModelo
+			  from  retencao.aparelho
+			  where inAtivo=1
+			  and idAparelho not in ( select idAparelho
+										from retencao.MatrizAparelho
+										where inAtivo != 0
+										and   idUfOperadora = :idUfOperadora
+										and   idTipoPessoa = :idTipoPessoa
+										and   idSegmentacao = :idSegmentacao
+										and	  idGrupo		=:idGrupo)
+			 order by dsmodelo;
+*/
+   
+    // aparelhos selecionados 
+
+    stmt  = "SELECT       RA.idAparelho," 
+	       "(CASE WHEN  RA.IDTIPOAPARELHO !=1 THEN"
+   		   " RA.dsModelo || ' - ' || (SELECT TIPOAPARELHO.DSTIPOAPARELHO FROM APOIO.TIPOAPARELHO TIPOAPARELHO WHERE TIPOAPARELHO.IDTIPOAPARELHO = RA.IDTIPOAPARELHO)"
+		   " ELSE RA.DSMODELO END) dsModelo " 
+        " FROM " 
+	        "retencao.MatrizAparelho RMT, "
+	        "RETENCAO.APARELHO       RA ,"
+			"apoio.tipoaparelho		apt "
+        "WHERE "
+			 "RA.IDTIPOAPARELHO=APT.IDTIPOAPARELHO " 
+		"AND "
+	        "RMT.inAtivo = 1 "
+        "AND " 
+	        "RA.INATIVO = 1 "
+        "AND "
+	        " RA.IDAPARELHO = RMT.IDAPARELHO "
+		"AND "
+			"RMT.idUfOperadora = ";
+        sprintf( bf,"%d ", idUfOperadora );
+    stmt += bf;
+        
+    stmt +=
+        "AND "
+	        "RMT.idTipoPessoa = ";
+        sprintf( bf,"%d ", idTipoPessoa );
+    stmt += bf;
+        
+    stmt +=
+        "AND "
+	        "RMT.idSegmentacao = ";
+        sprintf( bf,"%d ", idSegmentacao );
+    stmt += bf;
+        
+    stmt +=
+        "AND "
+	        "RMT.idGrupo = ";
+        sprintf( bf,"%d ", idGrupo );
+    stmt += bf;
+
+
+    query = (char *)stmt.c_str();
+    ULOG( "Query aparelhos selecionados [%s]", query );
+
+    EXEC SQL PREPARE CnsAparelhosSel FROM :query;
+    EXEC SQL DECLARE crsApaSel CURSOR FOR CnsAparelhosSel;
+
+/*
+    EXEC SQL DECLARE crsApaSel CURSOR FOR
+       SELECT RA.idAparelho,
+			 RA.dsModelo
+      FROM  retencao.MatrizAparelho RMT,
+	  		RETENCAO.APARELHO		RA  
+      WHERE RMT.inAtivo = 1
+	  AND	RA.INATIVO  = 1
+	  AND   RA.IDAPARELHO=RMT.IDAPARELHO
+      AND   RMT.idUfOperadora = :idUfOperadora
+      AND   RMT.idTipoPessoa = :idTipoPessoa
+      AND   RMT.idSegmentacao = :idSegmentacao
+	  AND	RMT.idGrupo		  =	:idGrupo;
+*/
+
+    // select aparelhos totais menos selecionados
+    EXEC SQL OPEN crsApaExs;   
+  
+    xml->createTag("tns:fidelizacaoListaGeralVO");
+    for(;;) {
+      EXEC SQL FETCH crsApaExs into :idAparelho,dsModelo;
+
+      endOraStr(dsModelo);
+      ULOG_INT(idAparelho);
+      ULOG_VAR(dsModelo);
+      xml->createTag("tns:itemListaVO");
+      xml->addItem("id",idAparelho);
+      xml->addItem("descricao",(char *)dsModelo.arr);
+      xml->closeTag();
+    }
+    xml->closeTag();
+
+    // select aparelhos selecionados
+    EXEC SQL OPEN crsApaSel;
+
+    xml->createTag("tns:fidelizacaoListaGeralVO");
+    for(;;) {
+      EXEC SQL FETCH crsApaSel into :idAparelho,dsModelo;
+
+      endOraStr(dsModelo);
+      ULOG_INT(idAparelho);
+      ULOG_VAR(dsModelo);
+      xml->createTag("tns:itemListaVO");
+      xml->addItem("id",idAparelho);
+      xml->addItem("descricao",(char *)dsModelo.arr);
+      xml->closeTag();
+    }
+    xml->closeTag();
+
+    EXEC SQL CLOSE crsApaExs;
+    EXEC SQL CLOSE crsApaSel; 
+  }catch(...){throw;}
+
+  return 1;
+}
+
+

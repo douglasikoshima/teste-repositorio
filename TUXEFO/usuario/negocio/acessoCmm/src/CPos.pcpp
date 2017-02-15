@@ -1,0 +1,279 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "CPos.h"
+
+CPos::CPos()
+{
+}
+
+CPos::~CPos()
+{
+}
+
+char* CPos::RTrim(char *pszString)
+{
+    ULOG_START("CPos::RTrim()");
+    int iLen;
+
+    iLen=strlen(pszString);
+
+    for(;;)
+    {
+        if(pszString[iLen-1] != ' ')
+            break;
+
+        iLen--;
+
+        if(iLen == 0)
+            break;
+    }
+    pszString[iLen] = 0x00;
+	
+	ULOG_END("CPos::RTrim()");
+	return pszString;
+}
+
+int CPos::Insert( char* cdsPosicao )
+{
+	ULOG_START("CPos::Insert()");
+	
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidPosicao[21+1];
+		char* cAuxdsPosicao  = cdsPosicao;
+	EXEC SQL END DECLARE SECTION;
+	
+	try
+	{
+		
+		ZeraPosicao();
+		
+		memset( &cAuxidPosicao, 0, sizeof(cAuxidPosicao) );
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		sqlca.sqlcode=0;
+		
+		//Pega um id unico e sequencia para a insercao
+		EXEC SQL
+			SELECT C_EMARINS.POSICAOSQ.NEXTVAL
+			INTO :cAuxidPosicao
+			FROM DUAL;
+	
+		EXEC SQL 
+			INSERT INTO C_EMARINS.POSICAO
+			  (IDPOSICAO, 
+			   DSPOSICAO )
+			VALUES
+			  (:cAuxidPosicao, 
+			   :cAuxidPosicao );
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+	ULOG_END("CPos::Insert()");
+	if( sqlca.sqlcode == 0 )
+		return 1;
+	else
+		return 0;
+
+GotoInsert:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CPos::Update( char* cidPosicao, 
+				  char* cdsPosicao )
+{
+	ULOG_START("CPos::Update()");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidPosicao  = cidPosicao;
+		char* cAuxdsPosicao  = cdsPosicao;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraPosicao();
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+		sqlca.sqlcode=0;
+		
+		EXEC SQL 
+			UPDATE C_EMARINS.POSICAO
+			   SET DSPOSICAO = :cAuxdsPosicao
+			 WHERE IDPOSICAO = :cAuxidPosicao;  
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPos::Update()");
+	if( sqlca.sqlcode == 0 )
+		return 1;
+	else
+		return 0;
+
+GotoUpdate:
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CPos::ListId( char* cid )
+{
+	ULOG_START("CPos::ListId()");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidOra = cid;
+		struct
+		{
+			VARCHAR stidPosicao[21+1];
+			VARCHAR stdsPosicao[255+1];
+		} stPosicao;
+		struct
+		{
+			short iidPosicao;
+			short idsPosicao;
+		} stPosicaoInd;
+	EXEC SQL END DECLARE SECTION;
+	try
+	{
+		ZeraPosicao();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorPosicaoListId CURSOR FOR
+			SELECT IDPOSICAO, 
+			       DSPOSICAO 
+			  FROM C_EMARINS.POSICAO
+			 WHERE IDPOSICAO = :cidOra;
+	
+		EXEC SQL OPEN CursorPosicaoListId;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPos::ListId()");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stPosicao, 0, sizeof(stPosicao) );
+				EXEC SQL FETCH CursorPosicaoListId INTO :stPosicao:stPosicaoInd;
+	
+				Add( (char*)stPosicao.stidPosicao.arr, (char*)stPosicao.stdsPosicao.arr );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorPosicaoListId;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPos::ListId()");
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CPos::ListAll( void )
+{
+	ULOG_START("CPos::ListAll()");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidPosicao[21+1];
+			VARCHAR stdsPosicao[255+1];
+		} stPosicao;
+		struct
+		{
+			short iidPosicao;
+			short idsPosicao;
+		} stPosicaoInd;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		ZeraPosicao();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorPosicaoListAll CURSOR FOR
+			SELECT IDPOSICAO, 
+			       DSPOSICAO 
+			  FROM C_EMARINS.POSICAO;
+	
+		EXEC SQL OPEN CursorPosicaoListAll;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPos::ListAll()");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stPosicao, 0, sizeof(stPosicao) );
+				EXEC SQL FETCH CursorPosicaoListAll INTO :stPosicao:stPosicaoInd;
+	
+				Add( (char*)stPosicao.stidPosicao.arr, (char*)stPosicao.stdsPosicao.arr );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorPosicaoListAll;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+	ULOG_END("CPos::ListAll()");
+	return iCont;
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CPos::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	ULOG_START("CPos::GetXml()");
+	if( Quantidade() > 0 )
+	{
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			xml->createTag(cNomeTag);
+			xml->addProp(	"xmlns", "usuario.fo.vivo.com.br/vo" );
+			if( Registro( x ) != NULL )
+			{
+				xml->addItem("idPosicao"   , Registro(x)->cidPosicao   );
+				xml->addItem("dsPosicao"   , Registro(x)->cdsPosicao   );
+			}
+			xml->closeTag();
+		}
+	}
+	ULOG_END("CPos::GetXml()");
+}

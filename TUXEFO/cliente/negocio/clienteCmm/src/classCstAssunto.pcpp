@@ -1,0 +1,575 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../include/Exception.h"
+
+#undef MSG_NONE
+#define MSG_NONE
+#include "../include/Messages.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../include/classCstAssunto.h";
+
+
+// Usuário de alteração
+void CCstAssunto::setUsuarioAlteracao(char* value) {
+	if (value != NULL) {
+		strncpy(sIdUsuarioAlteracao,value, 255);
+		sIdUsuarioAlteracao[255]='\0';
+	}
+}
+
+CCstAssunto::CCstAssunto()
+{
+    memset(&tAss, 0x00, sizeof(tAss));
+	poSubAssuntos = NULL;
+	iNrSubAssuntos = 0;
+
+	memset(sIdUsuarioAlteracao,0,256);
+}
+
+void CCstAssunto::setIdAssunto(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tAss.iIdAssuntoNull = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tAss.sIdAssunto, pDado);
+        tAss.iIdAssuntoNull = 0;
+    }
+}
+
+void CCstAssunto::setDsAssunto(char *pDado)
+{
+    STRCPY_TO_ORA(tAss.sDsAssunto, pDado);
+}
+
+void CCstAssunto::setInDisponibilidade(char*pDado)
+{
+    STRCPY_TO_ORA(tAss.sInDisponibilidade, pDado);
+}
+
+void CCstAssunto::setSubAssuntos(CCstSubAssunto* value)
+{
+    poSubAssuntos = value;
+}
+
+void CCstAssunto::setNrSubAssuntos(int value)
+{
+    iNrSubAssuntos = value;
+}
+
+char *CCstAssunto::getIdAssunto()
+{
+    return ((char *)tAss.sIdAssunto.arr);
+}
+
+char *CCstAssunto::getDsAssunto()
+{
+    return ((char *)tAss.sDsAssunto.arr);
+}
+
+char *CCstAssunto::getInDisponibilidade()
+{
+    return((char*)tAss.sInDisponibilidade.arr);
+}
+
+CCstSubAssunto* CCstAssunto::getSubAssuntos()
+{
+    return poSubAssuntos;
+}
+
+int CCstAssunto::getNrSubAssuntos()
+{
+    return iNrSubAssuntos;
+}
+
+int CCstAssunto::Incluir()
+{
+    ULOG_START("CCstAssunto::Incluir()");
+    
+    struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        int iTemRegistro;
+	EXEC SQL END DECLARE SECTION;
+
+
+    //Verificando se o registro existe
+	EXEC SQL SELECT count(1)
+               INTO :iTemRegistro
+               FROM customer.assunto
+              WHERE upper(dsassunto) = upper(:tAss.sDsAssunto);
+
+    if (iTemRegistro)
+    {
+        ULOG_END("CCstAssunto::Incluir()");
+        return DUPLICATE_KEY;
+     }
+
+
+
+    /* Obtendo a sequence */
+    EXEC SQL SELECT customer.assuntosq.NEXTVAL 
+               INTO :tAss.sIdAssunto:tAss.iIdAssuntoNull
+               FROM dual;
+
+
+	EXEC SQL WHENEVER SQLERROR	goto erro;
+
+    EXEC SQL 
+        INSERT INTO customer.assunto
+                    ( 
+                        idassunto,
+                        dsassunto,
+                        indisponibilidade,
+						idusuarioalteracao,
+						dtultimaalteracao
+                    )
+            VALUES ( 
+                        :tAss.sIdAssunto:tAss.iIdAssuntoNull,
+                        :tAss.sDsAssunto:tAss.iDsAssuntoNull,
+                        :tAss.sInDisponibilidade:tAss.iInDisponibilidadeNull,
+						:sIdUsuarioAlteracao,
+						SYSDATE
+                    );
+
+    ULOG_END("CCstAssunto::Incluir()");
+    if (!sqlca.sqlerrd[2])
+        return NOK;
+    else
+        return OK;
+
+	erro:
+    {
+        if (sqlca.sqlcode == DUPLICATE_KEY )
+        {
+            ULOG_END("CCstAssunto::Incluir()");
+            return DUPLICATE_KEY;
+         }
+
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CCstAssunto::Incluir()");
+		throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+    }
+}
+
+int CCstAssunto::Excluir()
+{
+    ULOG_START("CCstAssunto::Excluir()");
+
+    struct sqlca sqlca;
+
+	EXEC SQL WHENEVER SQLERROR	goto erro;
+
+    /* Deleta os filhos */
+    EXEC SQL DELETE FROM customer.subassunto
+                   WHERE idassunto = :tAss.sIdAssunto;
+
+    /* Deleta os pais */
+    EXEC SQL DELETE FROM customer.assunto
+                   WHERE idassunto = :tAss.sIdAssunto;
+
+  
+    ULOG_END("CCstAssunto::Excluir()");
+    if (!sqlca.sqlerrd[2])
+        return NOK;
+    else
+        return OK;
+
+	erro:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CCstAssunto::Excluir()");
+		throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,
+					sqlca.sqlerrm.sqlerrml);
+}
+
+
+int CCstAssunto::Alterar()
+{
+    ULOG_START("CCstAssunto::Alterar()");
+    
+    struct sqlca sqlca;
+
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        int iTemRegistro;
+	EXEC SQL END DECLARE SECTION;
+
+
+    //Verificando se o registro existe
+	EXEC SQL SELECT count(1)
+               INTO :iTemRegistro
+               FROM customer.assunto
+              WHERE upper(dsassunto) = upper(:tAss.sDsAssunto)
+                AND idassunto != :tAss.sIdAssunto;
+
+    if (iTemRegistro)
+    {
+        ULOG_END("CCstAssunto::Alterar()");
+        return DUPLICATE_KEY;
+    }
+
+
+	EXEC SQL WHENEVER SQLERROR	goto erro;
+
+    EXEC SQL UPDATE customer.assunto
+                SET dsassunto         = :tAss.sDsAssunto:tAss.iDsAssuntoNull,
+                    indisponibilidade = :tAss.sInDisponibilidade:tAss.iInDisponibilidadeNull,
+				    IdUsuarioAlteracao = :sIdUsuarioAlteracao,
+					DtUltimaAlteracao = SYSDATE
+              WHERE idassunto = :tAss.sIdAssunto;
+  
+    ULOG_END("CCstAssunto::Alterar()");
+    if (!sqlca.sqlerrd[2])
+        return NOK;
+    else
+        return OK;
+
+	erro:
+    {
+        if (sqlca.sqlcode == DUPLICATE_KEY )
+        {
+            ULOG_END("CCstAssunto::Alterar()");
+            return DUPLICATE_KEY;
+        }
+
+        ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        ULOG_END("CCstAssunto::Alterar()");
+		throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,
+					sqlca.sqlerrm.sqlerrml);
+    }
+}
+
+CCstAssunto* CCstAssunto::RecuperarTodosComSubAssunto(int* iNroObjetos, char *pszIdGrupo)
+{
+    ULOG_END("CCstAssunto::RecuperarTodosComSubAssunto()");
+    struct sqlca sqlca;
+
+	CCstAssunto* poListaAssuntos = NULL;
+	int iNroObjLocal = 0;
+	int iIdAssuntoControle = -1;
+	int iSubAssuntosNoAssunto = 0;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        TASSUNTO tAssunto;
+	TSUBASSUNTO tSubAssunto;
+
+        VARCHAR oszIdGrupo[LEN_NUMBER_ORA + LEN_EOS];
+	EXEC SQL END DECLARE SECTION;
+
+    
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorListaFull;
+
+    STRCPY_TO_ORA(oszIdGrupo, pszIdGrupo);
+
+    ULOG(">>> pszIdGrupo[%s]", pszIdGrupo);
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE cAssFull CURSOR for
+                               SELECT 
+                                     ass.idassunto,
+                                            ass.dsassunto,
+                                                   ass.indisponibilidade,
+                                                   subAss.idsubassunto, 
+                                                   subAss.idassunto,
+                                                   subAss.nmsubassunto, 
+                                                   subAss.sqapresentacao, 
+                                                   subAss.indisponibilidade
+                                  FROM      customer.assunto       ass,
+                                                   customer.subassunto    subAss
+                                  WHERE
+                                                   subass.idassunto(+) = ass.idassunto
+                                               AND subass.INDISPONIBILIDADE = 1
+                                               AND ass.INDISPONIBILIDADE = 1
+                                               AND idsubassunto in ((SELECT IDSUBASSUNTO FROM CUSTOMER.DINAMICOV01 WHERE IDGRUPO = TO_NUMBER(:oszIdGrupo))
+                                UNION
+                                   SELECT distinct atributo.idsubassunto 
+                                      FROM     
+                                             apoio.canal canal,
+                                             acesso.grupocanal grupocanal,
+                                             customer.atributocanal atributocanal,
+                                             customer.atributo atributo
+                                      WHERE      
+                                             atributo.idatributo = atributocanal.idatributo
+                                         AND atributocanal.idcanal = canal.idcanal
+                                         AND canal.idcanal = grupocanal.idcanal
+                                         AND atributo.idtipoapresentacaopergunta in (5, 3)
+                                         AND atributo.indisponibilidade = 1
+                                         AND grupocanal.idgrupo = TO_NUMBER(:oszIdGrupo)
+            )
+             ORDER BY ass.idAssunto, subAss.sqApresentacao;
+
+
+
+	EXEC SQL OPEN cAssFull;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;;) 
+    {
+		
+		EXEC SQL FETCH cAssFull 
+                  INTO :tAssunto.sIdAssunto:tAssunto.iIdAssuntoNull,
+                       :tAssunto.sDsAssunto:tAssunto.iDsAssuntoNull,
+                       :tAssunto.sInDisponibilidade:tAssunto.iInDisponibilidadeNull,
+					   :tSubAssunto.sIdSubAssunto:tSubAssunto.iIdSubAssuntoNull,
+                       :tSubAssunto.sIdAssunto:tSubAssunto.iIdAssuntoNull,
+                       :tSubAssunto.sNmSubAssunto:tSubAssunto.iNmSubAssuntoNull,
+                       :tSubAssunto.sSqApresentacao:tSubAssunto.iSqApresentacaoNull,
+                       :tSubAssunto.sInDisponibilidade:tSubAssunto.iInDisponibilidadeNull;
+
+
+		// Checa se ainda é o mesma assunto
+		ZERA_TO_ORA(tAssunto.sIdAssunto);
+		if (atoi((char*)tAssunto.sIdAssunto.arr) == iIdAssuntoControle) {
+			CCstSubAssunto* poSub = NULL;
+
+			iSubAssuntosNoAssunto++;
+
+			poSub = poListaAssuntos[iNroObjLocal-1].getSubAssuntos();
+			if ((poSub = (CCstSubAssunto*) realloc((void *)poSub, (sizeof(CCstSubAssunto) * iSubAssuntosNoAssunto))) != NULL) {
+
+				ZERA_TO_ORA(tSubAssunto.sIdSubAssunto);
+				ZERA_TO_ORA(tSubAssunto.sIdAssunto);
+				ZERA_TO_ORA(tSubAssunto.sNmSubAssunto);
+				ZERA_TO_ORA(tSubAssunto.sSqApresentacao);
+				ZERA_TO_ORA(tSubAssunto.sInDisponibilidade);
+				poSub[iSubAssuntosNoAssunto-1].setIdSubAssunto((char*)tSubAssunto.sIdSubAssunto.arr);
+				poSub[iSubAssuntosNoAssunto-1].setIdAssunto((char*)tSubAssunto.sIdAssunto.arr);
+				poSub[iSubAssuntosNoAssunto-1].setNmSubAssunto((char*)tSubAssunto.sNmSubAssunto.arr);
+				poSub[iSubAssuntosNoAssunto-1].setSqApresentacao((char*)tSubAssunto.sSqApresentacao.arr);
+				poSub[iSubAssuntosNoAssunto-1].setInDisponibilidade((char*)tSubAssunto.sInDisponibilidade.arr);
+
+				poListaAssuntos[iNroObjLocal-1].setSubAssuntos(poSub);
+				poListaAssuntos[iNroObjLocal-1].setNrSubAssuntos(iSubAssuntosNoAssunto);
+
+			} else {
+				ULOGE("ERRO DE MEMORIA -> NRO_MEMORIA");
+				ULOG_END("CCstAssunto::RecuperarTodosComSubAssunto()");
+				throw TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+			}
+		} 
+		else 
+		{
+			// Aloca memória para o objeto atual.
+			iNroObjLocal++;
+			if ((poListaAssuntos = (CCstAssunto*) realloc((void *)poListaAssuntos, (sizeof(CCstAssunto) * iNroObjLocal))) != NULL) {
+				
+				ZERA_TO_ORA(tAssunto.sIdAssunto);
+				ZERA_TO_ORA(tAssunto.sDsAssunto);
+				ZERA_TO_ORA(tAssunto.sInDisponibilidade);
+
+				iIdAssuntoControle = atoi((char*)tAssunto.sIdAssunto.arr);
+
+				poListaAssuntos[iNroObjLocal-1].setIdAssunto((char*)tAssunto.sIdAssunto.arr);
+				poListaAssuntos[iNroObjLocal-1].setDsAssunto((char*)tAssunto.sDsAssunto.arr);
+				poListaAssuntos[iNroObjLocal-1].setInDisponibilidade((char*)tAssunto.sInDisponibilidade.arr);
+
+				if(tSubAssunto.iIdSubAssuntoNull >= 0) {
+					// Monta novo objeto de lista de subassuntos.
+					CCstSubAssunto* poSub;
+
+					poSub = (CCstSubAssunto*) malloc(sizeof(CCstSubAssunto));
+
+					ZERA_TO_ORA(tSubAssunto.sIdSubAssunto);
+					ZERA_TO_ORA(tSubAssunto.sIdAssunto);
+					ZERA_TO_ORA(tSubAssunto.sNmSubAssunto);
+					ZERA_TO_ORA(tSubAssunto.sSqApresentacao);
+					ZERA_TO_ORA(tSubAssunto.sInDisponibilidade);
+					poSub->setIdSubAssunto((char*)tSubAssunto.sIdSubAssunto.arr);
+					poSub->setIdAssunto((char*)tSubAssunto.sIdAssunto.arr);
+					poSub->setNmSubAssunto((char*)tSubAssunto.sNmSubAssunto.arr);
+					poSub->setSqApresentacao((char*)tSubAssunto.sSqApresentacao.arr);
+					poSub->setInDisponibilidade((char*)tSubAssunto.sInDisponibilidade.arr);
+					iSubAssuntosNoAssunto = 1;
+					poListaAssuntos[iNroObjLocal-1].setSubAssuntos(poSub);
+					poListaAssuntos[iNroObjLocal-1].setNrSubAssuntos(iSubAssuntosNoAssunto);
+				} 
+                else
+                {
+					poListaAssuntos[iNroObjLocal-1].setSubAssuntos(NULL);
+					poListaAssuntos[iNroObjLocal-1].setNrSubAssuntos(0);
+                }
+			} else {
+				if (poListaAssuntos)
+					free(poListaAssuntos);
+				ULOGE("ERRO DE MEMORIA -> NRO_MEMORIA");
+				throw TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+			}
+		}
+	}
+
+	*iNroObjetos = iNroObjLocal;
+	ULOG_END("CCstAssunto::RecuperarTodosComSubAssunto()");
+	return poListaAssuntos;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorListaFull:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CCstAssunto::RecuperarTodosComSubAssunto()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+CCstAssunto* CCstAssunto::RecuperarTodos(int* iNroObjetos)
+{
+    ULOG_START("CCstAssunto::RecuperarTodos()");
+    struct sqlca sqlca;
+
+	CCstAssunto* oSub = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        TASSUNTO tAssunto;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE cAss CURSOR FOR
+            SELECT idassunto,
+                   dsassunto,
+                   indisponibilidade
+             FROM customer.assunto
+         ORDER BY upper(dsassunto);
+
+	EXEC SQL OPEN cAss;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;; iNroObjLocal++) 
+    {
+		
+        memset(&tAssunto, 0x00, sizeof(tAssunto));
+		EXEC SQL FETCH cAss 
+                  INTO :tAssunto.sIdAssunto:tAssunto.iIdAssuntoNull,
+                       :tAssunto.sDsAssunto:tAssunto.iDsAssuntoNull,
+                       :tAssunto.sInDisponibilidade:tAssunto.iInDisponibilidadeNull;
+
+		// Aloca memória para o objeto atual.
+		if ((oSub = (CCstAssunto*) realloc((void *)oSub, (sizeof(CCstAssunto) * iNroObjLocal))) != NULL)
+        {
+			oSub[iNroObjLocal-1].setIdAssunto((char*)tAssunto.sIdAssunto.arr);
+			oSub[iNroObjLocal-1].setDsAssunto((char*)tAssunto.sDsAssunto.arr);
+			oSub[iNroObjLocal-1].setInDisponibilidade((char*)tAssunto.sInDisponibilidade.arr);
+		} 
+        else 
+        {
+			if (oSub) 
+                free(oSub);
+
+	        EXEC SQL CLOSE cAss;
+			ULOGE("ERRO DE MEMORIA -> NRO_MEMORIA");
+			ULOG_END("CCstAssunto::RecuperarTodos()");
+			throw TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+		}
+	}
+
+	EXEC SQL CLOSE cAss;
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG_END("CCstAssunto::RecuperarTodos()");
+	return oSub;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CCstAssunto::RecuperarTodos()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+CCstAssunto* CCstAssunto::ListarPorTipoApresentacao(int* iNroObjetos, char *pFil)
+{
+    ULOG_START("CCstAssunto::ListarPorTipoApresentacao()");
+    
+    struct sqlca sqlca;
+
+	CCstAssunto* oSub = NULL;
+	int iNroObjLocal = 1;
+    char *pTok;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        TASSUNTO tAssunto;
+		int iP1;
+		int iP2;
+	EXEC SQL END DECLARE SECTION;
+
+    if (pFil){
+        pTok = strtok(pFil, ",");
+	    iP1 = atoi(pTok);
+        pTok = strtok(NULL, ",");
+	    iP2 = atoi(pTok);
+    }
+    else
+        iP1 = -1;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE cTpApre CURSOR FOR
+        SELECT idassunto,
+               dsassunto,
+               indisponibilidade
+          FROM customer.assunto
+         WHERE assunto.idassunto IN
+               (SELECT idassunto
+                  FROM customer.subassunto, 
+                       customer.atributo
+                 WHERE subassunto.idsubassunto = atributo.idsubassunto 
+                   AND ( idtipoapresentacaopergunta NOT IN (:iP1, :iP2) OR :iP1 = -1))
+      ORDER BY upper(dsassunto);
+
+	EXEC SQL OPEN cTpApre;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;; iNroObjLocal++) 
+    {
+		
+        memset(&tAssunto, 0x00, sizeof(tAssunto));
+		EXEC SQL FETCH cTpApre 
+                  INTO :tAssunto.sIdAssunto:tAssunto.iIdAssuntoNull,
+                       :tAssunto.sDsAssunto:tAssunto.iDsAssuntoNull,
+                       :tAssunto.sInDisponibilidade:tAssunto.iInDisponibilidadeNull;
+
+		// Aloca memória para o objeto atual.
+		if ((oSub = (CCstAssunto*) realloc((void *)oSub, (sizeof(CCstAssunto) * iNroObjLocal))) != NULL)
+        {
+			oSub[iNroObjLocal-1].setIdAssunto((char*)tAssunto.sIdAssunto.arr);
+			oSub[iNroObjLocal-1].setDsAssunto((char*)tAssunto.sDsAssunto.arr);
+			oSub[iNroObjLocal-1].setInDisponibilidade((char*)tAssunto.sInDisponibilidade.arr);
+		} 
+        else 
+        {
+			if (oSub) 
+                free(oSub);
+
+	        EXEC SQL CLOSE cTpApre;
+			ULOGE("ERRO DE MEMORIA -> NRO_MEMORIA");
+			throw TuxBasicSvcException(sNrMsg,MSG_MEMORIA);
+		}
+	}
+
+	EXEC SQL CLOSE cTpApre;
+
+	*iNroObjetos = iNroObjLocal - 1;
+	ULOG_END("CCstAssunto::ListarPorTipoApresentacao()");
+	return oSub;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	    ULOG_END("CCstAssunto::ListarPorTipoApresentacao()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

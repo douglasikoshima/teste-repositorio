@@ -1,0 +1,207 @@
+// AtlysHexa.pcpp: implementation for the 
+// CConsultaHexa class.
+//////////////////////////////////////////////////////////////////////
+
+//* Review:
+//*
+//* Task force to seek potential memory leaks and exception errors - March,2005 - Cassio
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw.h>
+#include "../include/Global.h"
+#include "../include/Funcoes.h"
+#include "../include/ConsultaHexa.h"
+#include "../include/DES.h"
+
+//
+// Construtor e Destrutor
+CConsultaHexa::CConsultaHexa(int iIdLinha, char *pszUser) 
+{
+	ULOG_START("CConsultaHexa::CConsultaHexa()");
+    struct sqlca sqlca;
+    int iSz = 0;
+    //char* pcErrorId;
+    char* pcHexa=0;
+    char* ret=0;
+	char  szLegado[255];
+	
+	//zerando a variavel e padronizando a msg de 
+	//retorno
+    memset( szLegado, 0, sizeof( szLegado ) );
+	strcpy(szLegado,"Erro ao acesso no Legado: ");
+
+    const char *pMemBufId = "inputInfo";
+    TuxRemoteService* remoteService=0;
+    TuxMessage* inputMessage=0;
+    MemBufInputSource *pMemBuf=0;
+    XercesDOMParser* pParser=0;
+    DOMNode* pDoc;
+
+    ULOG("iIdLinha(%d) pszUser[%s]", iIdLinha
+                            ,pszUser?pszUser:"(null)");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+	    // Entrada
+	    int iOraIdLinha;
+		
+		 // Saida
+	    char cNrLinha[12];
+		int iOraIdTipoLinha;
+    EXEC SQL END DECLARE SECTION;
+    iOraIdLinha = iIdLinha;
+    
+    //Apagando a variavel interna da classe
+    memset( cHexa, 0, sizeof( cHexa ) );
+
+    // Busca o número da linha
+    EXEC SQL 
+    SELECT 
+        AREAREGISTRO.CDAREAREGISTRO || LINHABASE.NRLINHA,
+		LINHATELEFONICA.IDTIPOLINHA
+    INTO
+        :cNrLinha,
+		:iOraIdTipoLinha
+    FROM
+        LINHA.LINHATELEFONICA LINHATELEFONICA,
+        LINHA.LINHABASE LINHABASE,
+        APOIO.AREAREGISTRO AREAREGISTRO
+    WHERE LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+    AND   LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+    AND   LINHATELEFONICA.IDLINHATELEFONICA = :iOraIdLinha;
+
+	if (sqlca.sqlcode == NO_DATA_FOUND)
+    {
+        ULOG_END("CConsultaHexa::CConsultaHexa()");
+	    throw new TuxBasicSvcException(NRO_ERR_LINHA_NAO_ENCONTRADA
+                                      ,MSG_ERR_LINHA_NAO_ENCONTRADA);
+    }
+
+    ULOG("Linha Encontrada: %s.", cNrLinha);
+
+    // Monta XML de entrada para consulta no serviço de ATLYS
+    XMLGen xmlGen;
+    xmlGen.addItem("ProxyLinha", cNrLinha);
+    if(iOraIdTipoLinha == 1 || iOraIdTipoLinha == 5) /* pos */
+    {
+        xmlGen.addItem("ProxyOperacao", "getESN");
+    }
+    else /* pre */
+    {
+        xmlGen.addItem("ProxyOperacao", "getDetalheAparelho");
+    }
+    xmlGen.addItem("usuario", "FO"); 
+
+    // Faz a solicitação ao serviço de consulta de HEXA no ATLYS ou no NGIN.
+    try {
+        remoteService = new TuxRemoteService();
+        inputMessage = new TuxMessage();
+
+        inputMessage->setUser(pszUser);
+
+		//Deve se tomar muito cuidado com essa verificação
+		//pois no plano hibrido devera ser verificado nos dois legados
+		//conforme documentação até o dia 01/06/2006
+		//deverá ser alterada a lógica.
+        if(iOraIdTipoLinha == 1 || iOraIdTipoLinha == 5) /* pos */
+		{
+			strcat(szLegado,"Atlys");
+			inputMessage->setService("DTUXATLYSBE");
+	        remoteService->setServiceName("DTUXATLYSBE");
+			ULOG("Legado escolhido: DTUXATLYSBE");
+		}
+		else 
+		{
+			strcat(szLegado,"NGIN");
+			inputMessage->setService("DTUXNGINBE");
+	        remoteService->setServiceName("DTUXNGINBE");
+			ULOG("Legado escolhido: DTUXNGINBE");
+		}
+        inputMessage->setMessageBody(&xmlGen);
+
+
+        remoteService->setInputMessage(inputMessage);
+
+        if(remoteService->remoteCall() != TUXFWRET_OK) {
+            delete remoteService;
+            delete inputMessage;
+            throw new TuxBasicSvcException(NRO_ERR_COMM_ATLYS
+                                          ,szLegado);
+        }
+
+        if (remoteService->getOutputMessage()->getStatusCode() != NULL 
+         && strlen(remoteService->getOutputMessage()->getStatusCode()) >= 3 
+         && remoteService->getOutputMessage()->getStatusCode()[2] !='I') {
+            delete remoteService;
+            delete inputMessage;
+            throw new TuxBasicSvcException(remoteService->getOutputMessage()->getStatusCode()
+                                          ,remoteService->getOutputMessage()->getStatusText());
+	    }
+
+        ret = remoteService->getOutputMessage()->getMessageBody();
+    }
+    catch(TuxException* tE) {
+        delete remoteService;
+        delete inputMessage;
+
+        throw tE;
+    }
+
+    ULOG("XML recebido do legado/Proxy: %s", ret);
+
+    char *fullRet = (char*) malloc(strlen(ret) + 100);
+    sprintf(fullRet, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>%s", ret);
+
+    pParser = new XercesDOMParser;
+    pMemBuf = new MemBufInputSource((const XMLByte*)fullRet, strlen(fullRet), pMemBufId);
+
+    pParser->parse(*pMemBuf);
+    pDoc = pParser->getDocument();
+
+    if(iOraIdTipoLinha == 1 || iOraIdTipoLinha == 5)
+    {
+        pcHexa = walkTree(pDoc, "serial", 0);
+    }
+    else
+    {
+		pcHexa = walkTree(pDoc, "ESNIMEI", 0);
+    }
+
+    if (pcHexa == NULL || !*pcHexa) {
+        delete remoteService;
+        delete inputMessage;
+
+        delete pParser;
+        delete pMemBuf;
+
+        if ( pcHexa ) XMLString::release(&pcHexa);
+        if ( fullRet ) free(fullRet);
+
+        throw new TuxBasicSvcException(NRO_ERR_COMM_ATLYS
+                                      ,szLegado);
+    }
+
+    ULOG("Hexa: %s", pcHexa);
+    sprintf(cHexa, "%8.8s", pcHexa);
+    ULOG("Hexa tratado: %s", cHexa);
+
+    delete remoteService;
+    delete inputMessage;
+    delete pParser;
+    delete pMemBuf;
+
+    if ( pcHexa ) XMLString::release(&pcHexa);
+    if ( fullRet ) free(fullRet);
+    ULOG_END("CConsultaHexa::CConsultaHexa()");
+}
+
+CConsultaHexa::~CConsultaHexa() {
+}
+
+//
+// Metodos getter
+char* CConsultaHexa::getHexa() {
+	return cHexa;
+}

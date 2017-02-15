@@ -1,0 +1,299 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+
+#include "../include/cWFAtendimentoBaixaHistorico.h"
+#include "../include/stWFAtendimentoBaixaHistorico.h"
+
+void sql_error_WFAtendimentoBaixaHistorico(sqlca*sqlca);
+
+    // Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+        #include "../include/stWFAtendimentoBaixaHistorico.h"
+    EXEC SQL END DECLARE SECTION;
+
+long proCIncluirWFAtendimentoBaixaHistorico(st_AtendimentoBaixaHistorico* dados, st_vlAtendimentoBaixaHistorico* status,XMLDPR *xmlDpr)
+{
+    ULOG_START( "proCIncluirWFAtendimentoBaixaHistorico()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtendimentoBaixaHistorico   *oDados = dados;
+        struct st_vlAtendimentoBaixaHistorico *oStatus = status;
+
+    EXEC SQL END DECLARE SECTION;
+ 
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoBaixaHistorico(&sqlca);
+
+    EXEC SQL SELECT atendimento.AtendimentoBaixaHistoricoSQ.NEXTVAL INTO :oDados->idAtendimentoBaixaHistorico FROM DUAL;
+
+    ULOG("idAtendimentoBaixaHistorico=%ld",oDados->idAtendimentoBaixaHistorico);
+    ULOG("              idAtendimento=%ld",oDados->idAtendimento);
+    ULOG("                    idBaixa=%d",oDados->idBaixa);
+    ULOG("                     idFase=%d",oDados->idFase);
+    ULOG("                    dtBaixa=%s",oDados->dtBaixa);
+    ULOG("            idPessoaUsuario=%d",oDados->idPessoaUsuario);
+    ULOG("                idAndamento=%u",oDados->idAndamento);
+    ULOG("         idUsuarioAlteracao=%d",oDados->idUsuarioAlteracao);
+
+    EXEC SQL 
+        INSERT INTO
+            atendimento.AtendimentoBaixaHistorico
+            (
+                idAtendimentoBaixaHistorico,
+                idAtendimento,
+                idBaixa,
+                idFase,
+                dtBaixa,
+                idPessoaUsuario,
+                idAndamento,
+                idUsuarioAlteracao,
+                dtUltimaAlteracao
+            )
+            VALUES
+            (
+                :oDados->idAtendimentoBaixaHistorico,
+                :oDados->idAtendimento,
+                :oDados->idBaixa,
+                :oDados->idFase,
+                SYSDATE, //TO_DATE(:oDados->dtBaixa,'DD/MM/YYYY HH24:MI:SS'),
+                :oDados->idPessoaUsuario,
+                :oDados->idAndamento,
+                DECODE(:oStatus->idUsuarioAlteracao, -1, NULL, :oDados->idUsuarioAlteracao),
+                SYSDATE //TO_DATE(:oDados->dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS')
+            );
+
+    // ==> SM324--DPR--DEZ/2006--Cassio
+    if ( xmlDpr )
+    {
+        AtendimentoBaixaHistoricoDPR atendimentobaixahistoricodpr;
+
+        atendimentobaixahistoricodpr.setIdAtendimento(oDados->idAtendimento);
+        atendimentobaixahistoricodpr.setIdAtendimentoBaixaHistorico(oDados->idAtendimentoBaixaHistorico);
+        atendimentobaixahistoricodpr.setIdBaixa(oDados->idBaixa);
+        atendimentobaixahistoricodpr.setDtBaixa(oDados->dtBaixa);
+        atendimentobaixahistoricodpr.setOpCode(OPCODE_INSERT);
+        xmlDpr->atendimentobaixahistoricovo.inserir(&atendimentobaixahistoricodpr);
+    }
+    // <== SM324--DPR--DEZ/2006--Cassio
+
+    ULOG_END( "proCIncluirWFAtendimentoBaixaHistorico()" );
+
+    return oDados->idAtendimentoBaixaHistorico;
+    
+}
+
+bool proCIncluirWFAtendimentoBaixaMensagem(st_AtendimentoBaixaHistorico* dados, st_vlAtendimentoBaixaHistorico* status, XMLGen* saida)
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtendimentoBaixaHistorico   *oDados = dados;
+        struct st_vlAtendimentoBaixaHistorico *oStatus = status;
+
+    EXEC SQL END DECLARE SECTION;
+
+
+    ULOG("idAtendimentoBaixaHistorico=%d",oDados->idAtendimentoBaixaHistorico);
+    ULOG("idBaixaMensagem=%d",oDados->idBaixaMensagem);
+    ULOG("idUsuarioAlteracao:status=%d,valor=%d",oStatus->idUsuarioAlteracao,oDados->idUsuarioAlteracao);
+    ULOG("dtUltimaAlteracao='%s'",oStatus->dtUltimaAlteracao==-1?"SYSDATE":oDados->dtUltimaAlteracao);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoBaixaHistorico(&sqlca);
+
+    EXEC SQL 
+        INSERT INTO
+            atendimento.AtendimentoBaixaMensagem
+            (
+                idAtendimentoBaixaHistorico,
+                idBaixaMensagem,
+                idUsuarioAlteracao,
+                dtUltimaAlteracao
+            )
+            VALUES
+            (
+                :oDados->idAtendimentoBaixaHistorico,
+                :oDados->idBaixaMensagem,
+                DECODE(:oStatus->idUsuarioAlteracao,-1,NULL,:oDados->idUsuarioAlteracao),
+                DECODE(:oStatus->dtUltimaAlteracao,-1,SYSDATE,TO_DATE(:oDados->dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS'))
+            );
+
+    saida->createTag("Registro");
+        saida->addItem("idAtendimentoBaixaHistorico", oDados->idAtendimentoBaixaHistorico);
+    saida->closeTag();
+
+    return true;
+}
+
+bool proCAlterarWFAtendimentoBaixaHistorico(st_AtendimentoBaixaHistorico* dados, st_vlAtendimentoBaixaHistorico* status, XMLGen* saida)
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtendimentoBaixaHistorico   *oDados = dados;
+        struct st_vlAtendimentoBaixaHistorico *oStatus = status;
+
+        char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoBaixaHistorico(&sqlca);
+
+    sprintf(query,"%s", "UPDATE atendimento.AtendimentoBaixaHistorico SET ");
+
+    bool separa = false;
+
+    if (status->idAtendimento != -1) 
+        montaUpdate("idAtendimento", oDados->idAtendimento, 1);
+
+    if (status->idBaixa != -1) 
+        montaUpdate("idBaixa", oDados->idBaixa, 1);
+
+    if (status->dtBaixa != -1)
+        montaUpdate("dtBaixa", oDados->dtBaixa, 4);
+
+    if (status->idPessoaUsuario != -1) 
+        montaUpdate("idPessoaUsuario", oDados->idPessoaUsuario, 1);
+
+    if (status->idUsuarioAlteracao != -1) 
+        montaUpdate("idUsuarioAlteracao", oDados->idUsuarioAlteracao, TIPO_INT);
+
+    if (status->dtUltimaAlteracao != -1) 
+        montaUpdate("dtUltimaAlteracao", oDados->dtUltimaAlteracao, TIPO_DATAHORA);
+
+    sprintf(query, "%s WHERE idAtendimentoBaixaHistorico = %ld", query, dados->idAtendimentoBaixaHistorico);
+
+    EXEC SQL EXECUTE IMMEDIATE :query;
+
+    return true;
+}
+
+bool proCExcluirWFAtendimentoBaixaHistorico(st_AtendimentoBaixaHistorico* dados, st_vlAtendimentoBaixaHistorico* status, XMLGen* saida)
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimentoBaixaHistorico = dados->idAtendimentoBaixaHistorico;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoBaixaHistorico(&sqlca);
+
+    EXEC SQL 
+        DELETE
+            atendimento.AtendimentoBaixaHistorico
+        WHERE
+            idAtendimentoBaixaHistorico = :idAtendimentoBaixaHistorico;
+
+    return true;
+}
+
+bool proCConsultaWFAtendimentoBaixaHistorico(st_AtendimentoBaixaHistorico* dados, st_vlAtendimentoBaixaHistorico* status, char* order, XMLGen* saida)
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        long idAtendimentoBaixaHistorico;
+        long idAtendimento;
+        int idBaixa;
+        VARCHAR dtBaixa[256];
+        int idPessoaUsuario;
+        int idUsuarioAlteracao;
+        VARCHAR dtUltimaAlteracao[256];
+
+        short i_idUsuarioAlteracao;
+        short i_dtUltimaAlteracao;
+
+        char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    sprintf(query,"SELECT idAtendimentoBaixaHistorico, idAtendimento, idBaixa, TO_CHAR(dtBaixa,'dd/mm/yyyy hh24:mi'), idPessoaUsuarioidUsuarioAlteracao, TO_CHAR(dtUltimaAlteracao, 'DD/MM/YYYY HH24:MI') AS dtUltimaAlteracao FROM atendimento.AtendimentoBaixaHistorico ");
+
+    bool separa = false;
+
+    if (status->idAtendimentoBaixaHistorico != -1) 
+        montaWhere("idAtendimentoBaixaHistorico", dados->idAtendimentoBaixaHistorico, 1);
+
+    if (status->idBaixa != -1) 
+        montaWhere("idBaixa", dados->idBaixa, 1);
+
+    if (status->idAtendimento != -1) 
+        montaWhere("idAtendimento", dados->idAtendimento, 1);
+
+    if (status->dtBaixa != -1) 
+        montaWhere("dtBaixa", dados->dtBaixa, 4);
+
+    if (status->idPessoaUsuario != -1)
+        montaWhere("idPessoaUsuario", dados->idPessoaUsuario, 1);
+
+    if (status->idUsuarioAlteracao != -1) 
+        montaWhere("idUsuarioAlteracao", dados->idUsuarioAlteracao, TIPO_INT);
+
+    if (status->dtUltimaAlteracao != -1) 
+        montaWhere("dtUltimaAlteracao", dados->dtUltimaAlteracao, TIPO_DATAHORA);
+
+    if (strlen(order) > 0) 
+        sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoBaixaHistorico(&sqlca);
+
+    EXEC SQL PREPARE consultaAtendimentoBaixaHistorico FROM :query;
+    EXEC SQL DECLARE consulta CURSOR FOR consultaAtendimentoBaixaHistorico;
+
+    EXEC SQL OPEN consulta;
+
+    while (true)
+    {
+        EXEC SQL FETCH consulta INTO 
+                                    :idAtendimentoBaixaHistorico, 
+                                    :idAtendimento, 
+                                    :idBaixa, 
+                                    :dtBaixa, 
+                                    :idPessoaUsuario,
+                                    :idUsuarioAlteracao:i_idUsuarioAlteracao,
+                                    :dtUltimaAlteracao:i_dtUltimaAlteracao;
+
+        CONV(dtBaixa);
+        CONVIND(dtUltimaAlteracao, i_dtUltimaAlteracao);
+
+        saida->createTag("WFAtendimentoBaixaHistoricoVO");
+            saida->addItem("idAtendimentoBaixaHistorico", idAtendimentoBaixaHistorico);
+            saida->addItem("idAtendimento", idAtendimento);
+            saida->addItem("idBaixa", idBaixa);
+            saida->addItem("dtBaixa", (char *)dtBaixa.arr);
+            saida->addItem("idPessoaUsuario", idPessoaUsuario);
+            saida->addItem("idUsuarioAlteracao", idUsuarioAlteracao);
+            saida->addItem("dtUltimaAlteracao", (char*)dtUltimaAlteracao.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE consulta;
+
+    return true;
+
+}
+
+
+void sql_error_WFAtendimentoBaixaHistorico(sqlca*sqlca)
+{
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

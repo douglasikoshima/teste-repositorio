@@ -1,0 +1,78 @@
+///////////////////////////////////////////////////////////////////////////////
+/**
+ * @modulo  Prepago
+ * @usecase UF
+ * @author  Renato Striitzel Russo
+ * @author  Carlos Eduardo Barbosa Braga
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:33:22 $
+ **/
+///////////////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "tuxfw.h"
+#include "Global.h"
+#include "UFpc.h"
+#include "PrePagoException.h"
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+/****************************************************************************************/
+bool CUFpc::proCBuscaUF(TUF *ptUF)
+{
+    ULOG_START("CUFpc::proCBuscaUF");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdUf[LEN_IDUF];
+        VARCHAR oszSgUf[LEN_SGUF];
+        VARCHAR oszNmUf[LEN_NMUF];
+
+        short iIdUf = 0;
+        short iSgUf = 0;
+        short iNmUf = 0;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    /* atribuicao de valores para as variaveis ProC */
+    STRCPY_TO_ORA(oszIdUf, ptUF->szIdUf);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    EXEC SQL SELECT sguf
+                  , nmuf
+               INTO :oszSgUf:iSgUf
+                  , :oszNmUf:iNmUf
+               FROM apoio.uf
+              WHERE iduf = TO_NUMBER(:oszIdUf);
+
+
+    /* copia os dados obtidos para a estrutura passada como parametro */
+    if(iSgUf != -1) {
+        STRCPY_FROM_ORA(ptUF->szSgUf, oszSgUf);
+    }
+    if(iNmUf != -1) {
+        STRCPY_FROM_ORA(ptUF->szNmUf, oszNmUf);
+    }
+
+
+    ULOGI("Finalizando proCBuscaUF <FOUND>");
+    ULOG_END("CUFpc::proCBuscaUF");
+    return true;
+
+    naoexiste:
+        ULOGI("Finalizando proCBuscaUF <NOT FOUND>");
+        return false;
+
+    erro:
+        ULOGE("Finalizando proCBuscaUF <ERROR>");
+        throw new TuxBasicOraException(sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}

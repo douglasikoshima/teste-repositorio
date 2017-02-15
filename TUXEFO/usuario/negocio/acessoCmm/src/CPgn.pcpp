@@ -1,0 +1,1513 @@
+/*****************************************************************************
+ * 
+ * Modulo:    CPgn
+ * Arquivo:   CPgn.cpp
+ * Proposito: Funcao de Negocios 
+ * Historico:
+ * Data        Autor                 Descricao
+ * ----------  --------------------  -----------------------------------------
+ * 18/05/2004  C_RECOliveira         Criacao
+ * 18/05/2004  C_EDMartins           Criacao
+ *
+ ****************************************************************************/
+/**************************************************************************
+ * Notas:
+ *
+ **************************************************************************/
+
+/*****************************************************************************
+ * Definicao Global
+ ****************************************************************************/
+#define CPgnCPP
+
+/*****************************************************************************
+ * Header
+ ****************************************************************************/
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <tuxfw.h>
+#include "CPgn.h"
+#include "CSafePointer.h"
+
+char* CPgn::RTrim(char *pszString)
+{
+    ULOG_START("CPgn::RTrim()");
+    
+    int iLen;
+
+    iLen=strlen(pszString);
+
+    for(;;)
+    {
+        if(pszString[iLen-1] != ' ')
+            break;
+
+        iLen--;
+
+        if(iLen == 0)
+            break;
+    }
+    pszString[iLen] = 0x00;
+    
+    ULOG_END("CPgn::RTrim()");
+	return pszString;
+}
+
+/**************************************************************************
+ * Classe:
+ **************************************************************************/ 
+int CPgn::PgnRemover(DOMNode*dnode, XMLGen*xml_g,
+				     char* cLogUser)
+{
+	ULOG_START("CPgn::PgnRemover()");
+	// Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	// Declarar Objetos
+	CSafePointer oSafePointer;
+
+	// Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidPagina;
+	EXEC SQL END DECLARE SECTION;
+
+	cidPagina = oSafePointer.getTag(dnode,"idPagina",0);
+	if ( strlennull( cidPagina ) == 0 )
+	{
+	    ULOG_END("CPgn::PgnRemover()");
+		return 2;
+	}
+
+	sqlca.sqlcode=0;
+
+	EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+
+	EXEC SQL
+	DELETE FROM acesso.Pagina 
+	WHERE idPagina = :cidPagina;
+
+	ULOG_END("CPgn::PgnRemover()");
+	return 0;
+
+// Tratamento de Exception
+ErrorF:
+	
+	if( sqlca.sqlcode == -2292 )
+	{
+		ULOG_END("CPgn::PgnRemover()");
+		return 1;
+	}
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPgn::PgnEditar(DOMNode*dnode,XMLGen*xml_g,
+				    char* cLogUser)
+{
+	ULOG_START("CPgn::PgnEditar()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cLogUserOra = cLogUser;
+		char* cidPagina;
+		char* cnmPagina;
+		char* cidSubSistema;
+		char* cnmUrl;
+		char* cinDisponibilidade;
+		int   iCont;
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{
+		cidPagina = oSafePointer.getTag( dnode, "idPagina", 0 );
+		cidSubSistema = oSafePointer.getTag( dnode, "idSubSistema", 0 );
+		cnmUrl = oSafePointer.getTag( dnode, "nmUrl", 0 );
+		cinDisponibilidade = oSafePointer.getTag( dnode, "inDisponib", 0 );
+		cnmPagina = oSafePointer.getTag( dnode, "nmPagina", 0 );
+	
+		if ( strlen( cidPagina ) == NULL ) 
+		{
+		    ULOG_END("CPgn::PgnEditar()");
+			return 1;
+		}
+		if ( strlen( cidSubSistema ) == NULL ) 
+		{
+			ULOG_END("CPgn::PgnEditar()");
+			return 2;
+		}
+		if ( strlen( cnmUrl ) == NULL ) 
+		{
+			ULOG_END("CPgn::PgnEditar()");
+			return 3;
+		}
+		if ( strlen( cinDisponibilidade ) == NULL ) 
+		{
+			ULOG_END("CPgn::PgnEditar()");
+			return 4;
+		}
+		if ( strlen( cnmPagina ) == NULL ) 
+	    {
+			ULOG_END("CPgn::PgnEditar()");
+			return 5;
+		}
+
+		sqlca.sqlcode=0;
+
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	
+		EXEC SQL
+			SELECT
+				COUNT( IDPAGINA )
+			INTO 
+				:iCont
+			FROM
+				ACESSO.PAGINA
+			WHERE
+				UPPER(NMPAGINA) = UPPER( :cnmPagina )
+			AND
+				IDSUBSISTEMA = :cidSubSistema
+			AND
+				IDPAGINA <> :cidPagina;
+
+		if( iCont > 0 )
+		{
+			ULOG_END("CPgn::PgnEditar()");
+			return 7;//Nao pode haver dois nomes iguais no mesmo subsistema
+		}
+
+		EXEC SQL 
+			UPDATE
+				acesso.Pagina 
+			SET 	idSubSistema = :cidSubSistema,
+		       		nmUrl = :cnmUrl,
+		       		inDisponibilidade = :cinDisponibilidade,
+					nmPagina = :cnmPagina,
+					IDUSUARIOALTERACAO = :cLogUserOra, 
+					DTULTIMAALTERACAO  = SYSDATE
+			WHERE 	idPagina = :cidPagina;
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+	ULOG_END("CPgn::PgnEditar()");
+	if(sqlca.sqlcode)
+		return 5; 
+	else
+		return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPgn::PgnInserir(DOMNode*dnode,XMLGen*xml_g,
+				     char* cLogUser)
+{
+	ULOG_START("CPgn::PgnInserir()");
+	
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cLogUserOra = cLogUser;
+		short iidPagina;
+		char  cidPagina[256];
+		char* cnmPagina = NULL;
+		char* cidSubSistema = NULL;
+		char* cnmUrl = NULL;
+		char* cinDisponibilidade = NULL;
+		int   iCont;
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{
+		memset( cidPagina, 0, sizeof( cidPagina ) );
+	
+		if ( ( cidSubSistema = oSafePointer.getTag( dnode, "idSubSistema", 0 ) ) == NULL ) 
+		{
+			ULOG_END("CPgn::PgnInserir()");
+			return 2;
+		}
+	
+		if ( ( cnmUrl = oSafePointer.getTag( dnode, "nmUrl", 0 ) ) == NULL ) 
+		{
+			ULOG_END("CPgn::PgnInserir()");
+			return 3;
+		}
+	
+		if ( ( cinDisponibilidade = oSafePointer.getTag( dnode, "inDisponib", 0 ) ) == NULL ) 
+		{
+			ULOG_END("CPgn::PgnInserir()");
+			return 4;
+		}
+	
+		if ( ( cnmPagina = oSafePointer.getTag( dnode, "nmPagina", 0 ) ) == NULL ) 
+	    {
+			ULOG_END("CPgn::PgnInserir()");
+			return 5;
+		}
+	
+		sqlca.sqlcode=0;
+	
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+		
+		EXEC SQL
+			SELECT
+				COUNT( IDPAGINA )
+			INTO 
+				:iCont
+			FROM
+				ACESSO.PAGINA
+			WHERE
+				UPPER(NMPAGINA) = UPPER( :cnmPagina )
+			AND
+				IDSUBSISTEMA = :cidSubSistema;
+				
+		if( iCont > 0 )
+		{
+			ULOG_END("CPgn::PgnInserir()");
+			return 6;//Nao pode haver dois nomes iguais no mesmo subsistema
+		}
+	
+		EXEC SQL
+			SELECT 
+				ACESSO.PAGINASQ.NEXTVAL
+			INTO 
+				:cidPagina:iidPagina
+			FROM 
+				dual;
+	
+		EXEC SQL 
+			INSERT INTO ACESSO.PAGINA 
+		 	(	
+		 		 IDPAGINA
+		 		,NMPAGINA
+		 		,IDSUBSISTEMA
+		 		,NMURL
+		 		,INDISPONIBILIDADE
+		 		,IDUSUARIOALTERACAO
+		 		,DTULTIMAALTERACAO
+			)
+		VALUES
+		  	(	
+		  		 :cidPagina
+		  		,TRIM(SUBSTR(:cnmPagina,1,255))
+		  		,:cidSubSistema
+		  		,TRIM(SUBSTR(:cnmUrl,1,255))
+		  		,:cinDisponibilidade
+		  		,:cLogUserOra
+		  		,SYSDATE
+		  	);
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+	ULOG_END("CPgn::PgnInserir()");
+	if(sqlca.sqlcode)
+		return 1; 
+	else
+		return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPgn::PgnUniRelaciona(DOMNode*dnode, XMLGen*xml_g,
+				          char* cLogUser)
+{
+	ULOG_START("CPgn::PgnUniRelaciona()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cLogUserOra = cLogUser;
+
+		struct Tstruct {
+			int idPaginaUnidade;
+			int idPagina;
+			int idUnidade;
+		} tstruct;
+
+		struct Tstruct2 {
+			int idUnidade;
+			char cnmUnidade[256];
+		} tstruct2;
+
+		struct Tstructindicator {
+			short sidPaginaUnidade, sidPagina, sidUnidade;
+		} tstructindicator;
+
+		struct Tstructindicator2 {
+			short sidUnidade, snmUnidade;
+		} tstructindicator2;
+
+		int iAcumulador;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct) );
+		memset( &tstruct2, 0, sizeof(Tstruct2) );
+		memset( &tstructindicator, 0, sizeof(Tstructindicator) );
+		memset( &tstructindicator2, 0, sizeof(Tstructindicator2) );
+	
+		//Pega o idPagina que sera utilizado na ralacao
+		if ( ( tstruct.idPagina = atoi( oSafePointer.getTag( dnode, "idPagina", 0  ) ) )  <= 0 ) 
+		{
+			ULOG_END("CPgn::PgnUniRelaciona()");
+			return 3;//idPagina esta nula
+		}
+	
+		sqlca.sqlcode=0;
+	
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	
+		EXEC SQL 
+		SELECT COUNT(idPagina)
+		INTO :iAcumulador
+		FROM acesso.PaginaUnidade
+		WHERE idPagina = :tstruct.idPagina;
+	
+		//Antes de inserir as novas relacoes, deve-se apagar todas, se existirem
+		if (iAcumulador>0) {
+			EXEC SQL 
+			DELETE FROM acesso.PaginaUnidade 
+			WHERE idPagina = :tstruct.idPagina;
+		}
+	
+		//Verifica se o comando DELETE obteve sucesso
+		if(sqlca.sqlcode == 0 )
+		{
+			char* pc;
+	
+			//Pega todos os idUnidade que existem no XML e insere
+			for(int indice=0;;indice++) 
+			{
+	
+				//Se tstruct.idUnidade for igual a zero, entao acabou os ids
+				pc = oSafePointer.getTag( dnode, "idUnidade", indice  );
+				if ( strlen( pc ) == 0 )
+					break;
+	
+				tstruct.idUnidade = atoi( pc );
+	
+				sqlca.sqlcode=0;
+	
+				EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	
+				//Pega um id unico e sequencia para a insercao
+				EXEC SQL
+				SELECT acesso.PaginaUnidadesq.nextval
+				INTO :tstruct.idPaginaUnidade
+				FROM dual;
+	
+				//Insere item a item
+				EXEC SQL 
+					INSERT INTO ACESSO.PAGINAUNIDADE 
+					( 
+						  IDPAGINAUNIDADE
+						, IDPAGINA
+						, IDUNIDADE
+						, IDUSUARIOALTERACAO
+						, DTULTIMAALTERACAO 
+					)
+				VALUES
+					( 
+						  :tstruct.idPaginaUnidade
+						, :tstruct.idPagina
+						, :tstruct.idUnidade
+						, :cLogUserOra
+						, SYSDATE 
+					);
+	
+				//Se der algum erro, desfaz tudo
+				if(sqlca.sqlcode)
+				{
+					ULOG_END("CPgn::PgnUniRelaciona()");
+					return 2;//Falha na insercao de unidades relacionadas
+				}
+			}//for( indice=1;;indice++) 
+		}// if(sqlca.sqlcode == 0 )
+		else
+		{
+			ULOG_END("CPgn::PgnUniRelaciona()");
+			return 1;//Falha ao tentar limpar as unidades relacionadas
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPgn::PgnUniRelaciona()");
+	return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPgn::PgnListaId(DOMNode*dnode, XMLGen*xml_g)
+{
+	ULOG_START("CPgn::PgnListaId()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		struct Tstruct {
+			int  idPagina;
+			char cnmPagina[256];
+			int  idSubSistema;
+			char cnmUrl[256];
+			int  inDisponibilidade;
+			char cnmSubSistema[256];
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidPagina, sidSubSistema, snmUrl, sinDisponibilidade, snmSubSistema;
+		} tstructindicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct));
+		memset( &tstructindicator, 0, sizeof(Tstructindicator));
+	
+		if ( strlen( oSafePointer.getTag( dnode, "idPagina", 0 ) ) == 0 ) 
+		{
+			ULOG_END("CPgn::PgnListaId()");
+			return 3;
+		}
+	
+		if ( ( tstruct.idPagina = atoi( oSafePointer.getTag( dnode, "idPagina", 0  ) ) )<=0 ) 
+		{
+			ULOG_END("CPgn::PgnListaId()");
+			return 2;
+		}
+	
+		sqlca.sqlcode=0;
+	
+		EXEC SQL DECLARE tcursor1 CURSOR for
+		SELECT
+			PAGINA.IDPAGINA,
+			PAGINA.NMPAGINA,
+			SUBSISTEMA.IDSUBSISTEMA,
+			PAGINA.NMURL,
+			PAGINA.INDISPONIBILIDADE,
+			SUBSISTEMA.NMSUBSISTEMA 
+		FROM 
+			ACESSO.SUBSISTEMA SUBSISTEMA,
+			ACESSO.PAGINA PAGINA
+		WHERE 
+		    PAGINA.IDSUBSISTEMA = SUBSISTEMA.IDSUBSISTEMA
+		AND 
+		    PAGINA.IDPAGINA = :tstruct.idPagina
+		ORDER BY 
+  		    UPPER(PAGINA.NMPAGINA);
+
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	
+		EXEC SQL OPEN tcursor1;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPgn::PgnListaId()");
+			return 4;
+		}
+		else
+		{
+			xml_g->createTag("ListaPaginasUsuarioVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+			for(;;) {
+				EXEC SQL FETCH tcursor1 INTO :tstruct INDICATOR :tstructindicator;
+				xml_g->createTag("PaginaUsuarioVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idPagina",tstruct.idPagina);
+				xml_g->addItem("nmPagina",RTrim( tstruct.cnmPagina) );
+				xml_g->addItem("idSubSistema",tstruct.idSubSistema);
+				xml_g->addItem("dsSubSistema",tstruct.cnmSubSistema);
+				xml_g->addItem("nmUrl",RTrim( tstruct.cnmUrl) );
+				xml_g->addItem("inDisponibilidade",tstruct.inDisponibilidade);
+				xml_g->closeTag();
+			}
+			xml_g->closeTag();
+			EXEC SQL CLOSE tcursor1;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPgn::PgnListaId()");
+	return 0;
+	
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPgn::PgnUniRelacao(DOMNode*dnode, XMLGen*xml_g)
+{
+	ULOG_START("CPgn::PgnUniRelacao()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidPagina;
+
+		struct Tstruct {
+			int idUnidade;
+			char cnmUnidade[256];
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidUnidade, snmUnidade;
+		} tstructindicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+		{
+		memset( &tstruct, 0, sizeof(Tstruct));
+		memset( &tstructindicator, 0, sizeof(Tstructindicator));
+	
+		cidPagina = oSafePointer.getTag(dnode,"idPagina",0);
+		//Se o ID estiver vazio entao retornar com codigo de erro
+		if ( strlen( cidPagina ) == 0 )
+		{
+			ULOG_END("CPgn::PgnUniRelacao()");
+			return 3;
+		}
+	
+		sqlca.sqlcode=0;
+	
+		EXEC SQL DECLARE tvcursorrelacionados CURSOR FOR
+		SELECT 
+		      PAGINAUNIDADE.IDUNIDADE, 
+			  UNIDADE.NMUNIDADE
+		FROM 
+	          ACESSO.UNIDADE UNIDADE,
+	          ACESSO.PAGINAUNIDADE PAGINAUNIDADE
+		WHERE 
+			   PAGINAUNIDADE.IDUNIDADE = UNIDADE.IDUNIDADE
+		  AND  
+		       PAGINAUNIDADE.IDPAGINA = :cidPagina
+		ORDER BY 
+			UPPER(UNIDADE.NMUNIDADE);
+			
+		EXEC SQL DECLARE tvcursorexistentes CURSOR FOR
+		SELECT UNIDADE.IDUNIDADE, UNIDADE.NMUNIDADE
+  		  FROM ACESSO.UNIDADE UNIDADE
+		 WHERE ACESSO.UNIDADE.IDUNIDADE	
+			NOT IN (
+					SELECT
+					      PAGINAUNIDADE.IDUNIDADE 
+					FROM 
+				          ACESSO.UNIDADE UNIDADE,
+				          ACESSO.PAGINAUNIDADE PAGINAUNIDADE
+					WHERE 
+						   PAGINAUNIDADE.IDUNIDADE = UNIDADE.IDUNIDADE
+					  AND  
+					       PAGINAUNIDADE.IDPAGINA = :cidPagina
+		    )
+		ORDER BY 
+			UPPER(UNIDADE.NMUNIDADE);
+
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPgn::PgnUniRelacao()");
+			return 4;
+		}
+		else
+		{
+			xml_g->createTag("RelacionarPaginaUnidadeVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+			xml_g->addItem("idPagina",cidPagina);
+			EXEC SQL OPEN tvcursorexistentes;
+			for(;;) {
+				EXEC SQL FETCH tvcursorexistentes INTO :tstruct INDICATOR :tstructindicator;
+				xml_g->createTag("UnidadesExistentesVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idUnidade",tstruct.idUnidade);
+				xml_g->addItem("nmUnidade",RTrim(tstruct.cnmUnidade));
+				xml_g->closeTag();
+			}
+			EXEC SQL CLOSE tvcursorexistentes;
+			EXEC SQL OPEN tvcursorrelacionados;
+			for(;;) {
+				EXEC SQL FETCH tvcursorrelacionados INTO :tstruct INDICATOR :tstructindicator;
+				xml_g->createTag("PerfisRelacionadosVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idUnidade",tstruct.idUnidade);
+				xml_g->addItem("nmUnidade",RTrim(tstruct.cnmUnidade));
+				xml_g->closeTag();
+			}
+			EXEC SQL CLOSE tvcursorrelacionados;
+			xml_g->closeTag();
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPgn::PgnUniRelacao()");
+	if(sqlca.sqlcode)
+		return 4;
+	else
+		return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPgn::PgnLista(DOMNode*dnode,XMLGen*xml_g)
+{
+	ULOG_START("CPgn::PgnLista()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		struct Tstruct {
+			int idPagina;
+			char cnmPagina[256];
+			int idSubSistema;
+			char cnmUrl[256];
+			int inDisponibilidade;
+			char cnmSubSistema[256];
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidPagina, snmPagina, sidSubSistema, snmUrl, sinDisponibilidade, snmSubSistema;
+		} tstructindicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct));
+		memset( &tstructindicator, 0, sizeof(Tstructindicator));
+	
+		sqlca.sqlcode=0;
+		
+		EXEC SQL DECLARE tsqlcursor3 CURSOR for
+		SELECT
+			PAGINA.IDPAGINA,
+			PAGINA.NMPAGINA,
+			SUBSISTEMA.IDSUBSISTEMA,
+			PAGINA.NMURL,
+			PAGINA.INDISPONIBILIDADE,
+			SUBSISTEMA.NMSUBSISTEMA 
+		FROM 
+			ACESSO.SUBSISTEMA SUBSISTEMA,
+			ACESSO.PAGINA PAGINA
+		WHERE 
+		    PAGINA.IDSUBSISTEMA = SUBSISTEMA.IDSUBSISTEMA
+		ORDER BY 
+  		    UPPER(PAGINA.NMPAGINA);
+		
+		EXEC SQL OPEN tsqlcursor3;
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPgn::PgnLista()");
+			return 4;
+		}
+		else
+		{
+			xml_g->createTag("PaginasUsuarioVO");
+			xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+			for(;;) {
+				EXEC SQL FETCH tsqlcursor3 INTO :tstruct INDICATOR :tstructindicator;
+				xml_g->createTag("PaginaUsuarioVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				xml_g->addItem("idPagina",tstruct.idPagina);
+				xml_g->addItem("nmPagina",RTrim( tstruct.cnmPagina) );
+				xml_g->addItem("idSubSistema",tstruct.idSubSistema);
+				xml_g->addItem("dsSubSistema",tstruct.cnmSubSistema);
+				xml_g->addItem("nmUrl",RTrim( tstruct.cnmUrl) );
+				xml_g->addItem("inDisponibilidade",tstruct.inDisponibilidade);
+				xml_g->closeTag();
+			}
+			EXEC SQL CLOSE tsqlcursor3;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPgn::PgnLista()");
+	return 0;
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPgn::PgnListaPar(DOMNode*dnode,XMLGen*xml_g)
+{
+	ULOG_START("CPgn::PgnListaPar()");
+	//Declarar Estruturas
+	struct sqlca sqlca; 
+	
+	//Declarar Objetos
+	CSafePointer oSafePointer;
+
+	//Declarar Variaveis e Estruturas para uso na PL/SQL
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct Tstruct {
+			int  idPagina;
+			char cnmPagina[256];
+			int  idSubSistema;
+			char cnmUrl[256];
+			int  inDisponibilidade;
+			char cnmSubSistema[256];
+		} tstruct;
+
+		struct Tstructindicator {
+			short sidPagina, snmPagina, sidSubSistema, snmUrl, sinDisponibilidade, snmSubSistema;
+		} tstructindicator;
+
+		char vcLike[256];
+
+	EXEC SQL END DECLARE SECTION;
+
+	/************************************************************************
+	 * Processamento Principal
+	 ************************************************************************/
+	try
+	{
+		memset( &tstruct, 0, sizeof(Tstruct));
+		memset( &tstructindicator, 0, sizeof(Tstructindicator));
+	
+		if ( ( tstruct.idSubSistema = atoi( oSafePointer.getTag( dnode, "idSubSistema", 0  ) ) )<=0 ) 
+		{
+			ULOG_END("CPgn::PgnListaPar()");
+			return 2;
+		}
+	
+		if ( ( tstruct.inDisponibilidade = atoi( oSafePointer.getTag( dnode, "inDisponibilidade", 0  ) ) )<=0 ) 
+		{
+			ULOG_END("CPgn::PgnListaPar()");
+			return 2;
+		}
+			
+		char *pc = oSafePointer.getTag(dnode,"nmUrl",0);
+		if ( pc == NULL ) {
+			strcpy( tstruct.cnmUrl, "" );
+		} else {
+			strcpy( tstruct.cnmUrl, pc);
+		}
+		
+		sqlca.sqlcode=0;
+		
+		if ( strlen(tstruct.cnmUrl)==0 ) {
+	
+			EXEC SQL DECLARE tsqlcursor4 CURSOR FOR
+            SELECT   
+	            PAGINA.IDPAGINA, 
+	            PAGINA.NMPAGINA, 
+	            SUBSISTEMA.IDSUBSISTEMA,
+	            PAGINA.NMURL, 
+	            PAGINA.INDISPONIBILIDADE, 
+	            SUBSISTEMA.NMSUBSISTEMA
+            FROM 
+            	ACESSO.SUBSISTEMA SUBSISTEMA, 
+            	ACESSO.PAGINA PAGINA
+            WHERE 
+            	PAGINA.IDSUBSISTEMA = SUBSISTEMA.IDSUBSISTEMA
+            AND 
+            	SUBSISTEMA.IDSUBSISTEMA = :tstruct.idSubSistema
+            ORDER BY 
+            	UPPER (PAGINA.NMPAGINA);
+
+			EXEC SQL OPEN tsqlcursor4;
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	
+			if(sqlca.sqlcode)
+			{
+				ULOG_END("CPgn::PgnListaPar()");
+				return 4;
+			}
+			else
+			{
+				xml_g->createTag("PaginasUsuarioVO");
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" ); 
+				for(;;) {
+					EXEC SQL FETCH tsqlcursor4 INTO :tstruct INDICATOR :tstructindicator;
+					xml_g->createTag("PaginaUsuarioVO");
+				    xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+					xml_g->addItem("idPagina",tstruct.idPagina);
+					xml_g->addItem("idSubSistema",tstruct.idSubSistema);
+					xml_g->addItem("dsSubSistema",tstruct.cnmSubSistema);
+					xml_g->addItem("nmUrl",tstruct.cnmUrl);
+					xml_g->addItem("inDisponibilidade",tstruct.inDisponibilidade);
+					xml_g->closeTag();
+				}
+				EXEC SQL CLOSE tsqlcursor4;
+			}
+	
+		} else {
+			sprintf( vcLike, "%s%s", tstruct.cnmUrl, "%" ); 
+		
+			EXEC SQL DECLARE tcursor11 CURSOR for
+    		SELECT
+    			PAGINA.IDPAGINA,
+    			PAGINA.NMPAGINA,
+    			SUBSISTEMA.IDSUBSISTEMA,
+    			PAGINA.NMURL,
+    			PAGINA.INDISPONIBILIDADE,
+    			SUBSISTEMA.NMSUBSISTEMA 
+    		FROM 
+    			ACESSO.SUBSISTEMA SUBSISTEMA,
+    			ACESSO.PAGINA PAGINA
+    		WHERE 
+    		    PAGINA.IDSUBSISTEMA = SUBSISTEMA.IDSUBSISTEMA
+    		AND	
+    			PAGINA.NMURL LIKE :vcLike
+    		ORDER BY 
+      		    UPPER(PAGINA.NMPAGINA);
+
+			EXEC SQL OPEN tcursor11;
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			EXEC SQL WHENEVER SQLERROR GOTO ErrorF;
+	
+			if(sqlca.sqlcode)
+			{
+				ULOG_END("CPgn::PgnListaPar()");
+				return 4;
+			}
+			else
+			{
+				xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+				for(;;) {
+					EXEC SQL FETCH tcursor11 INTO :tstruct INDICATOR :tstructindicator;
+					xml_g->createTag("PaginasExistentesVO");
+					xml_g->addProp("xmlns", "usuario.fo.vivo.com.br/vo" );
+					xml_g->addItem("idPagina",tstruct.idPagina);
+					xml_g->addItem("idSubSistema",tstruct.idSubSistema);
+					xml_g->addItem("dsSubSistema",tstruct.cnmSubSistema);
+					xml_g->addItem("nmUrl",tstruct.cnmUrl);
+					xml_g->addItem("inDisponibilidade",tstruct.inDisponibilidade);
+					xml_g->closeTag();
+				}
+				EXEC SQL CLOSE tcursor11;
+			}
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPgn::PgnListaPar()");
+	return 0;
+
+
+/************************************************************************
+ * Tratamento de Exception
+ ************************************************************************/
+
+ErrorF:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+/************************************************************************
+ * Metodos criados pelo Eder
+ ************************************************************************/
+
+int CPgn::ListIdItemMenu( char* cidItemMenu )
+{
+	ULOG_START("CPgn::ListIdItemMenu()");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidItemMenu = cidItemMenu;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stIndisponibilidade[21+1];
+			VARCHAR stUrl[255+1];
+			VARCHAR stidSubSistema[21+1];
+			VARCHAR stnmSubSistema[255+1];
+		} stItemMenuPagina;
+		struct
+		{
+			short iId;
+			short iNome;
+			short iIndisponibilidade;
+			short iUrl;
+			short iIdSubSistema;
+			short inmSubSistema;
+		} stItemMenuPaginaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		
+		ZeraPagina();
+	
+		memset( &stItemMenuPagina, 0, sizeof(stItemMenuPagina) );
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListIdItemMenu;
+	
+		//Dado um ID de item de menu, recupera a pagina
+		sqlca.sqlcode=0;
+		EXEC SQL
+			SELECT
+				PAGINA.IDPAGINA, 
+			    PAGINA.NMPAGINA, 
+			    PAGINA.INDISPONIBILIDADE, 
+			    PAGINA.NMURL, 
+			    SUBSISTEMA.IDSUBSISTEMA,
+			    SUBSISTEMA.NMSUBSISTEMA
+			INTO 
+				:stItemMenuPagina:stItemMenuPaginaIndicator
+			FROM 
+				ACESSO.ITEMMENUPAGINA ITEMMENUPAGINA,
+                ACESSO.PAGINA PAGINA,
+                ACESSO.SUBSISTEMA SUBSISTEMA
+			WHERE 
+                ITEMMENUPAGINA.IDPAGINA = PAGINA.IDPAGINA
+            AND
+                PAGINA.IDSUBSISTEMA = SUBSISTEMA.IDSUBSISTEMA
+            AND
+				ITEMMENUPAGINA.IDITEMMENU = :cAuxidItemMenu
+            AND 
+                ROWNUM < 2;
+
+		if( stItemMenuPagina.stId.len > 0 )
+		{
+			Add( (char*)stItemMenuPagina.stId.arr, 
+				 (char*)stItemMenuPagina.stNome.arr,
+				 (char*)stItemMenuPagina.stUrl.arr,
+				 (char*)stItemMenuPagina.stIndisponibilidade.arr,
+				 (char*)stItemMenuPagina.stidSubSistema.arr,
+				 (char*)stItemMenuPagina.stnmSubSistema.arr
+			   );
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPgn::ListIdItemMenu()");
+	return Quantidade();
+
+GotoListIdItemMenu:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CPgn::ListId( char* cid )
+{
+	ULOG_START("CPgn::ListId()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidOra = cid;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stUrl[255+1];
+			VARCHAR stIndisponibilidade[21+1];
+			VARCHAR stidSubSistema[21+1];
+			VARCHAR stnmSubSistema[255+1];
+		} stPaginaRegistro;
+		struct
+		{
+			short iId;
+			short iNome;
+			short iUrl;
+			short iIndisponibilidade;
+			short iIdSubSistema;
+			short inmSubSistema;
+		} stPaginaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		
+		ZeraPagina();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorPaginaId CURSOR for
+		SELECT
+			PAGINA.IDPAGINA,
+			PAGINA.NMPAGINA,
+			PAGINA.NMURL,
+			PAGINA.INDISPONIBILIDADE,
+			SUBSISTEMA.IDSUBSISTEMA,
+			SUBSISTEMA.NMSUBSISTEMA 
+		FROM
+			ACESSO.SUBSISTEMA SUBSISTEMA,
+			ACESSO.PAGINA PAGINA
+		WHERE
+			PAGINA.IDSUBSISTEMA = SUBSISTEMA.IDSUBSISTEMA
+		AND
+			PAGINA.IDPAGINA = :cidOra
+		ORDER BY 
+			UPPER(PAGINA.NMPAGINA);
+	
+		EXEC SQL OPEN CursorPaginaId;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPgn::ListId()");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stPaginaRegistro, 0, sizeof(stPaginaRegistro) );
+				EXEC SQL FETCH CursorPaginaId INTO :stPaginaRegistro:stPaginaIndicator;
+	
+				Add( (char*)stPaginaRegistro.stId.arr, 
+				     (char*)stPaginaRegistro.stNome.arr,
+				     (char*)stPaginaRegistro.stUrl.arr,
+				     (char*)stPaginaRegistro.stIndisponibilidade.arr,
+				     (char*)stPaginaRegistro.stidSubSistema.arr,
+				     (char*)stPaginaRegistro.stnmSubSistema.arr
+				   );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorPaginaId;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPgn::ListId()");
+	return iCont;
+
+GotoListId:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CPgn::ListIdSub( char* cid )
+{
+	ULOG_START("CPgn::ListIdSub()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidOra = cid;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stUrl[255+1];
+			VARCHAR stIndisponibilidade[21+1];
+			VARCHAR stidSubSistema[21+1];
+			VARCHAR stnmSubSistema[255+1];
+		} stPaginaRegistro;
+		struct
+		{
+			short iId;
+			short iNome;
+			short iUrl;
+			short iIndisponibilidade;
+			short iIdSubSistema;
+			short inmSubSistema;
+		} stPaginaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		
+		ZeraPagina();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListIdSub;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorPaginaIdSub CURSOR FOR
+        SELECT
+    		PAGINA.IDPAGINA,
+    		PAGINA.NMPAGINA,
+    		PAGINA.NMURL,
+    		PAGINA.INDISPONIBILIDADE,
+    		SUBSISTEMA.IDSUBSISTEMA,
+    		SUBSISTEMA.NMSUBSISTEMA 
+        FROM 
+        	ACESSO.SUBSISTEMA SUBSISTEMA,
+            ACESSO.PAGINA PAGINA
+        WHERE
+        	PAGINA.IDSUBSISTEMA = SUBSISTEMA.IDSUBSISTEMA
+    	AND
+    		PAGINA.IDSUBSISTEMA = :cidOra
+    	ORDER BY 
+    		UPPER(PAGINA.NMPAGINA);
+	
+		EXEC SQL OPEN CursorPaginaIdSub;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPgn::ListIdSub()");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stPaginaRegistro, 0, sizeof(stPaginaRegistro) );
+				EXEC SQL FETCH CursorPaginaIdSub INTO :stPaginaRegistro:stPaginaIndicator;
+				
+				Add( (char*)stPaginaRegistro.stId.arr, 
+				     (char*)stPaginaRegistro.stNome.arr,
+				     (char*)stPaginaRegistro.stUrl.arr,
+				     (char*)stPaginaRegistro.stIndisponibilidade.arr,
+				     (char*)stPaginaRegistro.stidSubSistema.arr,
+				     (char*)stPaginaRegistro.stnmSubSistema.arr
+				   );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorPaginaIdSub;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPgn::ListIdSub()");
+	return iCont;
+
+GotoListIdSub:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CPgn::ListAll( void )
+{
+	ULOG_START("CPgn::ListAll()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stUrl[255+1];
+			VARCHAR stIndisponibilidade[21+1];
+			VARCHAR stidSubSistema[21+1];
+			VARCHAR stnmSubSistema[255+1];
+		} stPaginaRegistro;
+		struct
+		{
+			short iId;
+			short iNome;
+			short iUrl;
+			short iIndisponibilidade;
+			short iIdSubSistema;
+			short inmSubSistema;
+		} stPaginaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		ZeraPagina();
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorPaginaAll CURSOR for
+		SELECT
+			PAGINA.IDPAGINA,
+			PAGINA.NMPAGINA,
+			PAGINA.NMURL,			
+			SUBSISTEMA.IDSUBSISTEMA,
+			PAGINA.INDISPONIBILIDADE,
+			SUBSISTEMA.NMSUBSISTEMA 
+		FROM 
+			ACESSO.SUBSISTEMA SUBSISTEMA,
+			ACESSO.PAGINA PAGINA
+		WHERE 
+		    PAGINA.IDSUBSISTEMA = SUBSISTEMA.IDSUBSISTEMA
+		ORDER BY 
+  		    UPPER(PAGINA.NMPAGINA);
+
+		EXEC SQL OPEN CursorPaginaAll;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPgn::ListAll()");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stPaginaRegistro, 0, sizeof(stPaginaRegistro) );
+				EXEC SQL FETCH CursorPaginaAll INTO :stPaginaRegistro:stPaginaIndicator;
+	
+				Add( (char*)stPaginaRegistro.stId.arr, 
+				     (char*)stPaginaRegistro.stNome.arr,
+				     (char*)stPaginaRegistro.stUrl.arr,
+				     (char*)stPaginaRegistro.stIndisponibilidade.arr,
+				     (char*)stPaginaRegistro.stidSubSistema.arr,
+				     (char*)stPaginaRegistro.stnmSubSistema.arr
+				   );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorPaginaAll;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPgn::ListAll()");
+	return iCont;
+
+GotoListAll:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CPgn::ListPar( char* cnmPagina
+                  ,char* cnmUrl
+                  ,char* cinDisponib
+                  ,char* cidSubSistema
+                  ,char* cidSistema )
+{
+	ULOG_START("CPgn::ListPar()");
+	
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char pcnmPagina[255+1];
+		char pcnmUrl[255+1];
+		char pcinDisponib[255+1];
+		char pcidSubSistema[255+1];
+		char pcidSistema[255+1];
+		struct
+		{
+			VARCHAR stId[21+1];
+			VARCHAR stNome[255+1];
+			VARCHAR stUrl[255+1];
+			VARCHAR stIndisponibilidade[21+1];
+			VARCHAR stidSubSistema[21+1];
+			VARCHAR stnmSubSistema[255+1];
+		} stPaginaRegistro;
+		struct
+		{
+			short iId;
+			short iNome;
+			short iUrl;
+			short iIndisponibilidade;
+			short iIdSubSistema;
+			short inmSubSistema;
+		} stPaginaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	try
+	{
+		ZeraPagina();
+	
+		if( strlennull( cnmPagina ) <= 0 )
+			strcpy( pcnmPagina, "-1" );
+		else
+			sprintf( pcnmPagina, "%s%%", cnmPagina );
+	
+		if( strlennull( cnmUrl ) <= 0  )
+			strcpy( pcnmUrl, "-1" );
+		else
+			sprintf( pcnmUrl, "%s%%", cnmUrl );
+	
+		if( strlennull( cinDisponib ) <= 0  )
+			strcpy( pcinDisponib, "-1" );
+		else
+			strcpy( pcinDisponib, cinDisponib );
+	
+		if( strlennull( cidSubSistema ) <= 0  )
+			strcpy( pcidSubSistema, "-1" );
+		else
+			strcpy( pcidSubSistema, cidSubSistema );
+	
+		if( strlennull( cidSistema ) <= 0  )
+			strcpy( pcidSistema, "-1" );
+		else
+			strcpy( pcidSistema, cidSistema );
+	
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListPar;
+		sqlca.sqlcode=0;
+	
+	   	EXEC SQL DECLARE CursorPaginaPar CURSOR for
+        	SELECT
+        		PAGINA.IDPAGINA,
+        		PAGINA.NMPAGINA,
+        		PAGINA.NMURL,
+        		PAGINA.INDISPONIBILIDADE,
+        		SUBSISTEMA.IDSUBSISTEMA,
+        		SUBSISTEMA.NMSUBSISTEMA 
+             FROM ACESSO.SUBSISTEMA SUBSISTEMA,
+                  ACESSO.PAGINA PAGINA
+            WHERE PAGINA.IDSUBSISTEMA = SUBSISTEMA.IDSUBSISTEMA
+        	 AND  ( UPPER(PAGINA.NMPAGINA) LIKE( UPPER(:pcnmPagina) ) OR :pcnmPagina = '-1' )
+        		   AND ( UPPER(PAGINA.NMURL) LIKE( UPPER(:pcnmUrl) ) OR :pcnmUrl = '-1' )
+        		   AND ( PAGINA.INDISPONIBILIDADE = :pcinDisponib OR :pcinDisponib = '-1' )
+        		   AND ( SUBSISTEMA.IDSUBSISTEMA = :pcidSubSistema OR :pcidSubSistema = '-1' )
+        		   AND ( SUBSISTEMA.IDSISTEMA = :pcidSistema OR :pcidSistema = '-1' )
+        	  ORDER BY 
+        		 	UPPER(PAGINA.NMPAGINA);
+
+		EXEC SQL OPEN CursorPaginaPar;
+	
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CPgn::ListPar()");
+			return 0;
+		}
+		else
+		{
+			for(;;)
+			{
+				memset( &stPaginaRegistro, 0, sizeof(stPaginaRegistro) );
+				EXEC SQL FETCH CursorPaginaPar INTO :stPaginaRegistro:stPaginaIndicator;
+	
+				Add( (char*)stPaginaRegistro.stId.arr, 
+				     (char*)stPaginaRegistro.stNome.arr,
+				     (char*)stPaginaRegistro.stUrl.arr,
+				     (char*)stPaginaRegistro.stIndisponibilidade.arr,
+				     (char*)stPaginaRegistro.stidSubSistema.arr,
+				     (char*)stPaginaRegistro.stnmSubSistema.arr
+				   );
+	
+				iCont++;
+	
+			}
+			EXEC SQL CLOSE CursorPaginaPar;
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	ULOG_END("CPgn::ListPar()");
+	return iCont;
+
+GotoListPar:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CPgn::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	ULOG_START("CPgn::GetXml()");
+	if( Quantidade() > 0 )
+	{
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			if( strlen( cNomeTag ) > 0 )
+			{
+				xml->createTag(cNomeTag);
+				xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			}
+			if( Registro( x ) != NULL )
+			{
+				xml->addItem("idPagina"    , Registro(x)->cidPagina            );
+				xml->addItem("idSubSistema", Registro(x)->cidSubSistema        );
+				xml->addItem("dsSubSistema", Registro(x)->cnmSubSistema        );
+				xml->addItem("nmPagina"    , Registro(x)->cnmPagina            );
+				xml->addItem("nmUrl"       , Registro(x)->cnmUrl               );
+				xml->addItem("inDisponib"  , Registro(x)->cIndisponibilidade   );
+			}
+			if( strlen( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+	ULOG_END("CPgn::GetXml()");
+}

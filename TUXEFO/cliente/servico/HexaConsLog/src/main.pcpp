@@ -1,0 +1,194 @@
+/*
+ * Serviço de verificação de LOG de consulta de HEXA
+ * Versão inicial, 28/05/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+#include "../include/HexaConsLog.h"
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/MDFive.h"
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/MonitoramentoHexa.h";
+
+DECLARE_TUXEDO_SERVICE(HexaConsLog);
+
+char szAuxLog[512 + 1];
+
+void implHexaConsLog::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+	CMonitoramentoHexa *poMonit = NULL;	
+	CMonitoramentoHexa *poMonitHexa = NULL;	
+	int iNroReg;
+	int iAux;
+
+	char* pcDtIni;
+	char* pcDtFim;
+	char* pcNrLinha;
+	char* pcNmLogin;
+	char* pcCdHexa;
+	char* pcCdDecimal;
+    char szErrorNr[1 + 1];
+
+    char szSgSerialMD5[32 + 1]; // recebe o resultado em MD5
+    char szSerialHexa[255 + 1];
+
+
+    try{
+        ULOG_START( "implHexaConsLog::Execute()" );
+
+        CMDFive clMDFive;
+
+        poMonitHexa = new CMonitoramentoHexa;
+        memset(szErrorNr, 0x00, sizeof(szErrorNr));
+        memset(szSgSerialMD5, 0x00, sizeof(szSgSerialMD5));
+
+
+        // Navega o XML e recupera as informacoes obrigatorias
+        pcDtIni = walkTree(dnode, XML_IN_DT_INICIO, 0);
+        pcDtFim = walkTree(dnode, XML_IN_DT_FIM, 0);
+        pcNrLinha = walkTree(dnode, XML_IN_NR_LINHA, 0);
+        pcNmLogin = walkTree(dnode, XML_IN_NR_LOGIN, 0);
+        pcCdHexa = walkTree(dnode, XML_IN_CD_HEXA, 0);
+        pcCdDecimal = walkTree(dnode, XML_IN_CD_DECIMAL, 0);
+
+        sprintf(szAuxLog, "pcDtIni[%s]", pcDtIni ? pcDtIni : "NULL pointer"); ULOG(szAuxLog);
+        sprintf(szAuxLog, "pcDtFim[%s]", pcDtFim ? pcDtFim : "NULL pointer"); ULOG(szAuxLog);
+        sprintf(szAuxLog, "pcNrLinha[%s]", pcNrLinha ? pcNrLinha : "NULL pointer"); ULOG(szAuxLog);
+        sprintf(szAuxLog, "pcCdHexa[%s]", pcCdHexa ? pcCdHexa : "NULL pointer"); ULOG(szAuxLog);
+        sprintf(szAuxLog, "pcCdDecimal[%s]", pcCdDecimal ? pcCdDecimal : "NULL pointer"); ULOG(szAuxLog);
+        sprintf(szAuxLog, "pcNmLogin[%s]", pcNmLogin ? pcNmLogin : "NULL pointer"); ULOG(szAuxLog);
+
+        /* Verifica Data Inicial */
+        ULOG("Verifica Data Inicial");
+        if (pcDtIni == NULL) {
+            ERROR(NRO_DT_INICIAL_NE);
+            TAG_INEXISTENTE(XML_IN_DT_INICIO);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        } else if (!*pcDtIni) {
+            ERROR(NRO_DT_INICIAL_VV);
+            TAG_VALOR_VAZIO(XML_IN_DT_INICIO);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        
+        /* Verifica Data Final */
+        ULOG("Verifica Data Final");
+        if (pcDtFim == NULL) {
+            ERROR(NRO_DT_FINAL_NE);
+            TAG_INEXISTENTE(XML_IN_DT_FIM);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        } else if (!*pcDtFim) {
+            ERROR(NRO_DT_FINAL_VV);
+            TAG_VALOR_VAZIO(XML_IN_DT_FIM);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+
+        /* Referente a NrLinha */
+        if(!szErrorNr[0]) {
+            if(pcNrLinha) {
+                if(*pcNrLinha) {
+                    sprintf(szAuxLog, "pcNrLinha[%s]", pcNrLinha); ULOG(szAuxLog);
+                    if(poMonitHexa->existeNrLinha(pcNrLinha) == false)
+                        szErrorNr[0] = '1';
+                }
+            }
+        }
+
+
+        /* Referente a Codigo Hexa */
+        if(!szErrorNr[0]) {
+            ULOG("Verifica Codigo Hexa");
+            if(pcCdHexa) {
+                if(*pcCdHexa) {
+                    sprintf(szAuxLog, "pcCdHexa[%s]", pcCdHexa); ULOG(szAuxLog);
+                    strcpy(szSgSerialMD5, clMDFive.getMD5(pcCdHexa));
+
+                    if(poMonitHexa->existeCdHexa(szSgSerialMD5) == false)
+                        szErrorNr[0] = '2';
+                }
+            }
+        }
+
+
+        /* Referente a Codigo Decimal */
+        if(!szErrorNr[0]) {
+            ULOG("Verifica Codigo Decimal");
+            if(pcCdDecimal) {
+                if(*pcCdDecimal) {
+                    sprintf(szAuxLog, "pcCdDecimal[%s]", pcCdDecimal); ULOG(szAuxLog);
+
+                    strcpy(szSerialHexa, poMonitHexa->convertDecimal2Hexa(pcCdDecimal));
+                    sprintf(szAuxLog, "szSerialHexa[%s]", szSerialHexa); ULOG(szAuxLog);
+                    strcpy(szSgSerialMD5, clMDFive.getMD5(szSerialHexa));
+
+                    /* if(poMonitHexa->existeCdDecimal(pcCdDecimal) == false) */
+                    if(poMonitHexa->existeCdHexa(szSgSerialMD5) == false)
+                        szErrorNr[0] = '3';
+                }
+            }
+        }
+
+        /* Referente a Nome Login */
+        if(!szErrorNr[0]) {
+            ULOG("Verifica Nome Login");
+            if(pcNmLogin) {
+                if(*pcNmLogin) {
+                    sprintf(szAuxLog, "pcNmLogin[%s]", pcNmLogin); ULOG(szAuxLog);
+                    if(poMonitHexa->existeNmLogin(pcNmLogin) == false)
+                        szErrorNr[0] = '4';
+                }
+            }
+        }
+
+        sprintf(szAuxLog, "szErrorNr[%s]", szErrorNr); ULOG(szAuxLog);
+
+        if(szErrorNr[0]) {    
+            xml_g->createTag(XML_OUT_ROOT);
+            xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+            xml_g->addItem(XML_OUT_ID_ERRO, szErrorNr);
+            xml_g->closeTag();
+        }
+        else
+        {
+            // Monta a lista
+            poMonit = CMonitoramentoHexa::busca(pcDtIni, pcDtFim, pcNrLinha, pcNmLogin, szSgSerialMD5, &iNroReg);
+            xml_g->createTag(XML_OUT_ROOT);
+            xml_g->addProp(XML_OUT_PROP_XMLNS, XML_OUT_PROP_XMLNS_VALUE);
+            for (iAux = 0; iAux < iNroReg; iAux++) {
+                xml_g->createTag(XML_OUT_CONSULTA);
+                xml_g->addItem(XML_OUT_DT_CONSULTA, rtrim(poMonit[iAux].getDtConsulta()));
+                xml_g->addItem(XML_OUT_NR_LINHA, rtrim(poMonit[iAux].getNrLinha()));
+                xml_g->addItem(XML_OUT_NM_LOGIN, rtrim(poMonit[iAux].getNmLogin()));
+                xml_g->addItem(XML_OUT_DS_TP_LINHA, rtrim(poMonit[iAux].getDsTipoLinha()));
+                xml_g->addItem(XML_OUT_NR_DOCTO, rtrim(poMonit[iAux].getNrDocumento()));
+                xml_g->addItem(XML_OUT_DS_TPDOCTO, rtrim(poMonit[iAux].getDsTipoDocumento()));
+                xml_g->closeTag();
+            }
+            xml_g->closeTag();
+            
+            free(poMonit);
+        }
+
+        //Liberando memoria
+        if (pcDtIni) XMLString::release(&pcDtIni);
+        if (pcDtFim) XMLString::release(&pcDtFim);
+        if (pcNrLinha) XMLString::release(&pcNrLinha);
+        if (pcNmLogin) XMLString::release(&pcNmLogin);
+        if (pcCdHexa) XMLString::release(&pcCdHexa);
+        if (pcCdDecimal) XMLString::release(&pcCdDecimal);
+    
+        delete poMonitHexa;
+
+        ULOG_END( "implHexaConsLog::Execute()" );
+
+    }catch(...){
+        throw;
+    }
+
+	// Execução OK.
+	INFORMATION(NRO_OK);
+	setStatusCode(sNrMsg, MSG_OK);
+}

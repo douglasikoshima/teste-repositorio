@@ -1,0 +1,398 @@
+#include <sqlca.h>
+#include <RemoteLog.h>
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+// CLogBase
+
+CRemoteLogBase::CRemoteLogBase()
+{
+	tuxfw_getlogger()->debug("CRemoteLogBase::CRemoteLogBase()");
+	memset(&m_idSistemaOrigem,0,sizeof(m_idSistemaOrigem));
+	memset(&m_dtInicio,0,sizeof(m_dtInicio));
+	memset(&m_dtFim,0,sizeof(m_dtFim));
+	memset(&m_nrTerminal,0,sizeof(m_nrTerminal));
+	memset(&m_idLinhaSistemaOrigem,0,sizeof(m_idLinhaSistemaOrigem));
+	memset(&m_idContaSistemaOrigem,0,sizeof(m_idContaSistemaOrigem));
+	memset(&m_nmAPI,0,sizeof(m_nmAPI));
+	memset(&m_dsProcesso,0,sizeof(m_dsProcesso));
+	memset(&m_idCanal,0,sizeof(m_idCanal));
+	setExecute(false);
+}
+
+CRemoteLogBase::~CRemoteLogBase()
+{
+	tuxfw_getlogger()->debug("CRemoteLogBase::~CRemoteLogBase()");
+}
+
+int CRemoteLogBase::log(XMLGen*xmlgen,char*dsStatusCode,char*dsStatusText,char*idUser,int idStatusComunicacao)
+{
+	tuxfw_getlogger()->debug("CRemoteLogBase::log");
+	/*if(!getExecute())
+		return 0;
+	int xmlinLength = 0;
+	char *xmlin = "";
+	char statusText[256];
+	memset(&statusText,0,256);
+	strncpy(statusText,dsStatusText,255);
+	if(xmlgen!=NULL)
+		xmlin = xmlgen->retrieveXML(&xmlinLength);
+
+	getTimeSysdateFim();
+
+	XMLGen xmlEnvio;
+	xmlEnvio.createTag("LogVO");
+	xmlEnvio.addItem("idSistemaOrigem",getIdSistemaOrigem());
+	xmlEnvio.addItem("dtInicio",getDtInicio());
+	xmlEnvio.addItem("dtFim",getDtFim());
+	xmlEnvio.addItem("nrTerminal",getNrTerminal());
+	xmlEnvio.addItem("idLinhaSistemaOrigem",getIdLinhaSistemaOrigem());
+	xmlEnvio.addItem("idContaSistemaOrigem",getIdContaSistemaOrigem());
+	xmlEnvio.addItem("nmAPI",getNmAPI());
+	xmlEnvio.addItem("dsProcesso",getDsProcesso());
+	xmlEnvio.addItem("idCanal",getIdCanal());	
+	xmlEnvio.addItem("statusText",statusText);
+	xmlEnvio.addItem("statusCode",dsStatusCode);
+	xmlEnvio.addItem("idUser",idUser);
+	xmlEnvio.addItem("idStatusComunicacao",idStatusComunicacao);
+	xmlEnvio.createTag("xmlin");
+	xmlEnvio.aggregateXML(xmlin);
+	xmlEnvio.closeTag();
+	xmlEnvio.closeTag();
+
+	TuxMessage o_inputMessage;
+	TuxRemoteService o_remoteService;
+
+	o_inputMessage.setMessageBody(&xmlEnvio);
+	o_inputMessage.setService("TUXLOGBE");
+	o_inputMessage.setUser(idUser);
+
+	// Repassa configuracoes ao manipulador do serviço remoto e invoca o servico.
+	o_remoteService.setServiceName("TUXLOGBE");
+	o_remoteService.setInputMessage(&o_inputMessage);
+
+	try
+	{
+		char*sMsgIn = o_inputMessage.getMessageXML();
+		this->remoteCall("DTUXLOGBE", sMsgIn, 0);
+		tuxfw_getlogger()->debug("CRemoteLogBase::log - chamada realizada com sucesso");
+		return 1;
+	}
+	catch(...)
+	{
+		tuxfw_getlogger()->debug("CRemoteLogBase::log erro ao invocar serviço");
+	}
+	*/
+	return 0;
+}
+
+char* CRemoteLogBase::remoteCall(char* nomeServico, char* sMsgIn, int lFlags)
+{
+	//
+	// Declaracao de variaveis
+	char*   sMsgOut = 0L;
+	int ret = TUXFWRET_ERROR;
+	tuxfw_getlogger()->debug("CRemoteLogBase::remoteCall");
+
+
+	char*   bufferE = 0L;
+	char*   bufferS = 0L;
+
+	// Max: Preenche os tamanhos de buffers para a chamada ao tpcall
+	long    snd_len = strlen(sMsgIn);
+	long	rcv_len = TUXFW_MAX_MSG_LEN;
+
+	//
+	// Aloca um buffer de envio com o tamanho do XML de entrada
+	if ((bufferE = (char *)tpalloc("STRING", NULL, snd_len+1)) == NULL)
+	{
+ 		throw new TuxException(ERR_TUX_TPALLOC_RET_CD, ERR_TUX_TPALLOC_RET_MSG);
+	}
+	//
+	// Aloca um buffer de recepcao  com tamanho maximo possivel para retorno
+	if ((bufferS = (char *)tpalloc("STRING", NULL, TUXFW_MAX_MSG_LEN)) == NULL)
+	{
+ 		tpfree(bufferE);
+  		throw new TuxException(ERR_TUX_TPALLOC_RET_CD, ERR_TUX_TPALLOC_RET_MSG);
+	}
+
+	// clona o buffer de entrada no buffer tuxedo de envio
+	strcpy(bufferE, sMsgIn);
+	tuxfw_getlogger()->debug("CRemoteLogBase::remoteCall: dump call parameters:\n\t# serviceName=[%s]\n\tinputBuffer=[%s]\n\t# inputLen=[%d]\n\t# flags=[%d]", nomeServico, bufferE, snd_len, lFlags );
+	if ( tpacall(nomeServico, (char*) bufferE, snd_len, TPNOTRAN|TPNOREPLY) == -1)
+	{
+		long errNo = tperrno;
+		long urCode = tpurcode;
+		tuxfw_getlogger()->error("CRemoteLogBase::remoteCall: tpcall com erro, Tperrno = %d, TpUrCode = %d ", errNo, urCode);
+		//
+		// O porquisse !!! Tenta aproveitar alguma coisa do buffer de retorno mesmo tendo
+		// dado erro na chamada se for erro 11 !!!!
+		if( errNo == TPESVCFAIL )
+		{
+			// Copia o buffer tuxedo de retorno
+			bufferS[rcv_len]='\0';
+			//sMsgOut = derivStr( bufferS );
+			tuxfw_getlogger()->warning("CRemoteLogBase::remoteCall: tpcall processada com ERRO, outputMessage=[%s]", sMsgOut);
+		}
+		else 
+		{
+		
+			tpfree(bufferE); 
+			// Max:
+			bufferE = 0L;
+
+
+			tpfree(bufferS);
+			// Max:
+			bufferS = 0L;
+
+			throw new TuxException(ERR_TUX_REMOTE_CALL_CD , ERR_TUX_REMOTE_CALL_MSG, nomeServico, errNo, urCode);
+		}
+	}
+	else
+	{
+			// Copia o buffer tuxedo de retorno
+			bufferS[rcv_len]='\0';
+			//sMsgOut = derivStr( bufferS );
+			tuxfw_getlogger()->information("CRemoteLogBase::remoteCall: tpacall processada com sucesso, outputMessage=[%s], tamanho=[%d]", sMsgOut, strlen(sMsgOut));
+	}
+	// Max:
+	//tpfree(bufferE);
+	//tpfree(bufferS);
+	if(bufferE) tpfree(bufferE); bufferE = 0L;
+	if(bufferS) tpfree(bufferS); bufferS = 0L;
+
+	return sMsgOut;
+}
+int CRemoteLogBase::getTimeSysdateFim()
+{
+	tuxfw_getlogger()->debug("CRemoteLogBase::getTimeSysdate");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cTimeSysdate[20];
+	EXEC SQL END DECLARE SECTION;
+	memset(&cTimeSysdate,0,sizeof(cTimeSysdate));
+	EXEC SQL
+		SELECT TO_CHAR(SYSDATE,'DD/MM/YYYY HH24:MI:SS') AS DATA 
+		INTO :cTimeSysdate
+		FROM DUAL;
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	setDtFim((char*)cTimeSysdate.arr);
+	return 1;
+	OraNoDataFound:
+		tuxfw_getlogger()->debug("throw TuxBasicOraException %d",sqlca.sqlcode);
+		return 0;
+	OraException:
+		tuxfw_getlogger()->debug("throw TuxBasicOraException %d",sqlca.sqlcode);
+		return 0;
+}
+
+void CRemoteLogBase::setIdSistemaOrigem(char* idSistemaOrigem)
+{
+	if(idSistemaOrigem!=NULL)
+		strcpy(m_idSistemaOrigem,idSistemaOrigem);
+}
+void CRemoteLogBase::setDtInicio(char* dtInicio)
+{
+	if(dtInicio!=NULL)
+		strcpy(m_dtInicio,dtInicio);
+}
+void CRemoteLogBase::setDtFim(char* dtFim)
+{
+	if(dtFim!=NULL)
+		strcpy(m_dtFim,dtFim);
+}
+void CRemoteLogBase::setNrTerminal(char* nrTerminal)
+{
+	if(nrTerminal!=NULL)
+		strcpy(m_nrTerminal,nrTerminal);
+}
+void CRemoteLogBase::setIdLinhaSistemaOrigem(char* idLinhaSistemaOrigem)
+{
+	if(idLinhaSistemaOrigem!=NULL)
+		strcpy(m_idLinhaSistemaOrigem,idLinhaSistemaOrigem);
+}
+void CRemoteLogBase::setIdContaSistemaOrigem(char* idContaSistemaOrigem)
+{
+	if(idContaSistemaOrigem!=NULL)
+		strcpy(m_idContaSistemaOrigem,idContaSistemaOrigem);
+}
+void CRemoteLogBase::setNmAPI(char* nmAPI)
+{
+	if(nmAPI!=NULL)
+		strcpy(m_nmAPI,nmAPI);
+}
+void CRemoteLogBase::setDsProcesso(char* dsProcesso)
+{
+	if(dsProcesso!=NULL)
+		strcpy(m_dsProcesso,dsProcesso);
+}
+void CRemoteLogBase::setIdCanal(char* idCanal)
+{
+	if(idCanal!=NULL)
+		strcpy(m_idCanal,idCanal);
+}
+
+char* CRemoteLogBase::getIdSistemaOrigem()
+{
+	return this->m_idSistemaOrigem;
+}
+char* CRemoteLogBase::getDtInicio()
+{
+	return this->m_dtInicio;
+}
+char* CRemoteLogBase::getDtFim()
+{
+	return this->m_dtFim;
+}
+char* CRemoteLogBase::getNrTerminal()
+{
+	return this->m_nrTerminal;
+}
+char* CRemoteLogBase::getIdLinhaSistemaOrigem()
+{
+	return this->m_idLinhaSistemaOrigem;
+}
+char* CRemoteLogBase::getIdContaSistemaOrigem()
+{
+	return this->m_idContaSistemaOrigem;
+}
+char* CRemoteLogBase::getNmAPI()
+{
+	return this->m_nmAPI;
+}
+char* CRemoteLogBase::getDsProcesso()
+{
+	return this->m_dsProcesso;
+}
+char* CRemoteLogBase::getIdCanal()
+{
+	return this->m_idCanal;
+}
+
+bool CRemoteLogBase::getExecute()
+{
+	return m_execute;
+}
+
+void CRemoteLogBase::setExecute(bool execute)
+{
+	m_execute = execute;
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+// CLog
+CRemoteLog::CRemoteLog()
+{
+	tuxfw_getlogger()->debug("CRemoteLog::CRemoteLog()");
+}
+
+CRemoteLog::~CRemoteLog()
+{
+	tuxfw_getlogger()->debug("CRemoteLog::~CRemoteLog()");
+}
+
+int CRemoteLog::getTimeSysdate()
+{
+	tuxfw_getlogger()->debug("CRemoteLog::getTimeSysdate");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cTimeSysdate[20];
+	EXEC SQL END DECLARE SECTION;
+	memset(&cTimeSysdate,0,sizeof(cTimeSysdate));
+	EXEC SQL
+		SELECT TO_CHAR(SYSDATE,'DD/MM/YYYY HH24:MI:SS') AS DATA 
+		INTO :cTimeSysdate
+		FROM DUAL;
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	setDtInicio((char*)cTimeSysdate.arr);
+	return 1;
+	OraNoDataFound:
+		tuxfw_getlogger()->debug("throw TuxBasicOraException %d",sqlca.sqlcode);
+		return 0;
+	OraException:
+		tuxfw_getlogger()->debug("throw TuxBasicOraException %d",sqlca.sqlcode);
+		return 0;
+}
+
+int CRemoteLog::getSistemaOrigem(char*sgSistemaOrigem)
+{
+	tuxfw_getlogger()->debug("CRemoteLog::getSistemaOrigem");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cSistemaorigem[21];
+		char *cSgSistemaOrigem = sgSistemaOrigem;
+	EXEC SQL END DECLARE SECTION;
+	memset(&cSistemaorigem,0,sizeof(cSistemaorigem));
+	EXEC SQL
+		SELECT IDSISTEMAORIGEM
+		INTO :cSistemaorigem
+		FROM APOIO.SISTEMAORIGEM  
+		WHERE SGSISTEMAORIGEM = :cSgSistemaOrigem;
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	setIdSistemaOrigem((char*)cSistemaorigem.arr);
+	return 1;
+	OraNoDataFound:
+		tuxfw_getlogger()->debug("throw TuxBasicOraException %d",sqlca.sqlcode);	
+		return 0;
+	OraException:
+		tuxfw_getlogger()->debug("throw TuxBasicOraException %d",sqlca.sqlcode);
+		return 0;
+}
+
+int CRemoteLog::getCanal(char*nmCanal)
+{
+	tuxfw_getlogger()->debug("CRemoteLog::getCanal");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cCanal[20];
+		char *cNmCanal = nmCanal;
+	EXEC SQL END DECLARE SECTION;
+	memset(&cCanal,0,sizeof(cCanal));
+	EXEC SQL
+		SELECT IDCANAL INTO :cCanal FROM APOIO.CANAL  WHERE NMCANAL = :cNmCanal;
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	setIdCanal((char*)cCanal.arr);
+	return 1;
+	OraNoDataFound:
+		tuxfw_getlogger()->debug("throw TuxBasicOraException %d",sqlca.sqlcode);
+		setIdCanal("15");
+		return 0;
+	OraException:
+		tuxfw_getlogger()->debug("throw TuxBasicOraException %d",sqlca.sqlcode);
+		setIdCanal("15");
+		return 0;
+}
+
+int CRemoteLog::getParametroLog()
+{
+	tuxfw_getlogger()->debug("CRemoteLog::getParametroLog()");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cParametro[256];
+	EXEC SQL END DECLARE SECTION;
+	memset(&cParametro,0,sizeof(cParametro));
+	EXEC SQL
+		SELECT NVL(DSVALORPARAMETRO,0) INTO :cParametro FROM
+		APOIO.PARAMETRO  WHERE CDPARAMETRO = 'ESTATISTICA_LEGADO';
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	if(!strcmp(((char*)cParametro.arr),"ATIVO"))
+	{
+		setExecute(true);
+		return 1;
+	}
+	return 0;
+	OraNoDataFound:
+		tuxfw_getlogger()->debug("throw TuxBasicOraException %d",sqlca.sqlcode);
+		setExecute(false);
+		return 0;
+	OraException:
+		tuxfw_getlogger()->debug("throw TuxBasicOraException %d",sqlca.sqlcode);
+		setExecute(false);
+		return 0;
+}

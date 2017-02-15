@@ -1,0 +1,69 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <tuxfw.h>
+
+int ConsultaGrupoAberturaGrupoSel( const char *idParam, XMLGen *Saida )
+{
+	ULOG_START("ConsultaGrupoAberturaGrupoSel()");
+	
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR ORA_nmGrupo[256];
+		int     ORA_idGrupo;
+		int     idGrupoParam;
+	EXEC SQL END DECLARE SECTION;
+
+	sqlca.sqlcode = 0;
+
+   idGrupoParam = atoi(idParam);
+
+   EXEC SQL DECLARE ReadGrupoAberturaGrupo CURSOR FOR 
+      SELECT b.nmGrupo , b.idGrupo 
+      FROM Contatoadm.GrupoAberturaGrupo a,
+           Acesso.Grupo                  b
+      WHERE a.idGrupoPai = b.idGrupo 
+        AND a.idGrupo = :idGrupoParam
+        order by b.nmGrupo;
+
+   EXEC SQL OPEN ReadGrupoAberturaGrupo;
+   EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+   EXEC SQL WHENEVER NOT FOUND DO break;
+   
+   int ret = 1 ;
+   
+	if( sqlca.sqlcode )
+		ret =  0;
+	else
+	{
+		for( ;; )
+		{
+         EXEC SQL FETCH ReadGrupoAberturaGrupo INTO :ORA_nmGrupo , :ORA_idGrupo;
+         Saida->createTag( "GrupoVO" );
+            Saida->addItem( "codigo",ORA_idGrupo );
+            ORA_nmGrupo.arr[ ORA_nmGrupo.len ] = 0x0;
+            Saida->addItem( "descricao",(char*)ORA_nmGrupo.arr );
+         Saida->closeTag();
+         memset( (char *)ORA_nmGrupo.arr , 0x0 , sizeof(ORA_nmGrupo.arr) );
+		}
+		EXEC SQL CLOSE ReadGrupoAberturaGrupo;
+	}
+	
+	ULOG_END("ConsultaGrupoAberturaGrupoSel()"); 
+	
+	return ret ;
+
+UndefinedError:
+        throw new TuxBasicOraException( sqlca.sqlcode,
+                                        sqlca.sqlerrm.sqlerrmc,
+                                        sqlca.sqlerrm.sqlerrml );
+
+}
+
+

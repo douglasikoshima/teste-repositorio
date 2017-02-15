@@ -1,0 +1,257 @@
+//////////////////////////////////////////////////////////////////////
+// CRelatorioMotivos.cpp: CRelatorioMotivos class.
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <SRelatorioCampanha.h>
+#include <CRelatorioCampanha.h>
+#include <SRelatorioMotivos.h>
+#include <CRelatorioMotivos.h>
+#include <CTipoMotivoCampanha.h>
+#include <CGetHeader.h>
+
+// Monta o relatório
+void CRelatorioMotivos::montaRelatorio(struct SRelatorioCampanha* sRelatorioCampanha, XMLGen* xml_g) 
+{
+	struct sqlca sqlca;
+
+	char s[256]={NULL}; 
+	int  iQtdReg	= 0 ;
+	int  iSeq		= 0 ;
+	int  i			= 0 ; 
+	long total		= 0 ;
+	float percentual = 0.0;
+	long ret		= 0 ; 
+
+	CTipoMotivoCampanha oTipoMotivoCampanha;
+	struct RelatorioMotivosLista *pstRel = NULL;  
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR oszIdTipoMotivoCampanha [21+1];
+		VARCHAR oszSgTipoMotivoCampanha [255+1];
+		VARCHAR oszDsTipoMotivoCampanha [255+1];
+		VARCHAR oszDsTipoSubMotivoCampanha[300+1];
+		VARCHAR oszValor			    [100+1];
+		VARCHAR datain					[100+1];
+		VARCHAR datafim					[100+1];
+		VARCHAR idpessoa				[100+1];
+		VARCHAR idcanalCampanha			[100+1];
+		VARCHAR idmotivo				[100+1];
+		VARCHAR idsubcampanhahistorico	[100+1];
+		VARCHAR idufoperadora			[100+1];
+		VARCHAR idgrupo					[100+1];
+
+		int iQtde = 0;
+
+		short iIdTipoMotivoCampanha;
+		short iSgTipoMotivoCampanha;
+		short iDsTipoMotivoCampanha;
+		short iDsTipoSubMotivoCampanha;
+	EXEC SQL END DECLARE SECTION;
+
+	memset( &oszIdTipoMotivoCampanha, 0, sizeof( oszIdTipoMotivoCampanha ) );
+	memset( &oszSgTipoMotivoCampanha, 0, sizeof( oszSgTipoMotivoCampanha ) );
+	memset( &oszDsTipoMotivoCampanha, 0, sizeof( oszDsTipoMotivoCampanha ) );
+	memset( &oszDsTipoSubMotivoCampanha, 0, sizeof( oszDsTipoSubMotivoCampanha ) );
+
+	CGetHeader Header(sRelatorioCampanha, xml_g);
+	
+	STRCPY_TO_ORA (idpessoa,				sRelatorioCampanha->pcidOperador); 
+	STRCPY_TO_ORA (idmotivo,				sRelatorioCampanha->pcidMotivo); 
+	STRCPY_TO_ORA (idcanalCampanha,			sRelatorioCampanha->pcidCanalCampanha); 
+	STRCPY_TO_ORA (idsubcampanhahistorico,	sRelatorioCampanha->pcidSubCampanha); 
+	STRCPY_TO_ORA (datain,					sRelatorioCampanha->pcdtInicio); 
+	STRCPY_TO_ORA (datafim,					sRelatorioCampanha->pcdtFim); 
+	STRCPY_TO_ORA (idsubcampanhahistorico,	sRelatorioCampanha->pcidSubCampanha);
+	STRCPY_TO_ORA (idufoperadora ,			sRelatorioCampanha->pcidRegional);
+	STRCPY_TO_ORA (idgrupo ,				sRelatorioCampanha->pcidGrupo);
+
+	EXEC SQL WHENEVER SQLERROR GOTO GotoRelatorioMotivos;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	// Verifica se o idgrupo foi passado e se esta na lista de grupos para esta campanha
+	if( atoi(sRelatorioCampanha->pcidGrupo) > -1 ) 
+	{
+		EXEC SQL 
+		SELECT
+			COUNT(CG.IDGRUPO)
+		INTO
+			:iQtde
+		FROM 
+			CONTATOADM.SUBCAMPANHAGRUPOUSUARIO CG,
+			CAMPANHA.SUBCAMPANHAHISTORICO	   SUB
+		WHERE
+			SUB.IDSUBCAMPANHAHISTORICO = :idsubcampanhahistorico
+			AND SUB.IDSUBCAMPANHAFIXA = CG.IDSUBCAMPANHAFIXA
+			AND CG.IDGRUPO = :idgrupo
+			AND CG.INATIVO = 1;
+
+		// Se este grupo não está na lista, então retorne como nenhum registro encontrado
+		if( iQtde == 0 )
+		{
+
+			xml_g->createTag("RelatorioPercentualVO");
+			xml_g->addProp("xmlns","campanha.fo.vivo.com.br/vo");
+
+			Header.Executar(); 
+
+			xml_g->addItem("total", iQtde); 
+			xml_g->closeTag();	
+			return;
+		}
+	}
+
+
+	//Recupera somente os dados do motivo (TIPOMOTIVOCAMPANHA)
+	EXEC SQL 
+	SELECT 
+		TMC.IDTIPOMOTIVOCAMPANHA,
+		TMC.SGTIPOMOTIVOCAMPANHA,
+		TMC.DSTIPOMOTIVOCAMPANHA
+	INTO
+		:oszIdTipoMotivoCampanha:iIdTipoMotivoCampanha,
+		:oszSgTipoMotivoCampanha:iSgTipoMotivoCampanha,
+		:oszDsTipoMotivoCampanha:iDsTipoMotivoCampanha
+	FROM 
+		APOIO.TIPOMOTIVOCAMPANHA TMC
+	WHERE 
+		TMC.IDTIPOMOTIVOCAMPANHA = :idmotivo;
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	//Dado um motivo e uma subcampanha, recupera todos os submotivos e as quantidades
+	EXEC SQL 
+	DECLARE CursorRelatorioMotivo CURSOR for
+	SELECT DISTINCT
+		TIPOMOTIVOCAMPANHA.DSTIPOMOTIVOCAMPANHA,
+		TIPOSUBMOTIVOCAMPANHA.DSTIPOSUBMOTIVOCAMPANHA,
+		NVL(COUNT(TIPOSUBMOTIVOCAMPANHA.DSTIPOSUBMOTIVOCAMPANHA),0) AS NUMEROATENDIMENTO
+	FROM 
+		CAMPANHA.ATENDIMENTOCAMPANHA ATENDIMENTOCAMPANHA,
+		CAMPANHA.MOTIVOCAMPANHA MOTIVOCAMPANHA, 
+		CAMPANHA.SUBCAMPANHAHISTORICO SUBCAMPANHAHISTORICO, 
+		APOIO.TIPOMOTIVOCAMPANHA TIPOMOTIVOCAMPANHA,
+		APOIO.TIPOSUBMOTIVOCAMPANHA TIPOSUBMOTIVOCAMPANHA,
+		CAMPANHA.CANALCAMPANHA CANALCAMPANHA,
+		CAMPANHA.CANALUFOPERADORA CANALUFOPERADORA, 
+		CUSTOMER.UFOPERADORA UFOPERADORA
+	WHERE
+		ATENDIMENTOCAMPANHA.IDMOTIVOCAMPANHA = MOTIVOCAMPANHA.IDMOTIVOCAMPANHA
+	AND
+		MOTIVOCAMPANHA.IDSUBCAMPANHAHISTORICO = SUBCAMPANHAHISTORICO.IDSUBCAMPANHAHISTORICO
+	AND
+		MOTIVOCAMPANHA.IDTIPOMOTIVOCAMPANHA = TIPOMOTIVOCAMPANHA.IDTIPOMOTIVOCAMPANHA
+	AND
+		MOTIVOCAMPANHA.IDTIPOSUBMOTIVOCAMPANHA = TIPOSUBMOTIVOCAMPANHA.IDTIPOSUBMOTIVOCAMPANHA
+	AND
+		SUBCAMPANHAHISTORICO.IDSUBCAMPANHAHISTORICO = CANALCAMPANHA.IDSUBCAMPANHAHISTORICO(+)
+	AND
+		CANALCAMPANHA.IDCANALUFOPERADORA = CANALUFOPERADORA.IDCANALUFOPERADORA(+)
+	AND
+		CANALUFOPERADORA.IDUFOPERADORA = UFOPERADORA.IDUFOPERADORA(+)
+	AND 
+	(
+			UFOPERADORA.IDUFOPERADORA = :idufoperadora 
+		OR
+			-1 = :idufoperadora
+	)
+	AND 
+	(
+			CANALCAMPANHA.IDCANALCAMPANHA = :idcanalCampanha 
+		OR 
+			-1 = :idcanalCampanha
+	)
+	AND 
+		SUBCAMPANHAHISTORICO.IDSUBCAMPANHAHISTORICO = :idsubcampanhahistorico
+	AND 
+		(
+		  TIPOMOTIVOCAMPANHA.IDTIPOMOTIVOCAMPANHA = :idmotivo 
+		  OR
+		  -1= :idmotivo
+		  )
+	AND 
+		TRUNC( ATENDIMENTOCAMPANHA.DTATENDIMENTO ) BETWEEN TO_DATE(:datain, 'DD/MM/YYYY' ) AND TO_DATE( :datafim, 'DD/MM/YYYY' )
+	GROUP BY 
+		TIPOMOTIVOCAMPANHA.DSTIPOMOTIVOCAMPANHA,
+		TIPOSUBMOTIVOCAMPANHA.DSTIPOSUBMOTIVOCAMPANHA;
+
+	//Abre o cursor
+	EXEC SQL OPEN CursorRelatorioMotivo;
+
+	iQtdReg = 0;
+	for(iSeq=0;;iSeq++)
+	{
+		//Atualiza variavel para pesquisa
+		STRCPY_TO_ORA(oszValor, "0" );
+		STRCPY_TO_ORA(oszDsTipoSubMotivoCampanha, ""); 
+
+		//Calcula a quantidade de um determinado motivo
+		EXEC SQL FETCH CursorRelatorioMotivo
+		INTO
+			:oszDsTipoMotivoCampanha:iDsTipoMotivoCampanha,
+			:oszDsTipoSubMotivoCampanha:iDsTipoSubMotivoCampanha,
+			:oszValor;
+
+		//Atualiza o valor
+		iQtdReg++;
+		pstRel=(RelatorioMotivosLista*)realloc((void*)pstRel, (sizeof(RelatorioMotivosLista)*iQtdReg));
+		memset(&pstRel[iQtdReg-1],0,sizeof(RelatorioMotivosLista));
+		STRCPY_FROM_ORA(pstRel[iSeq].szValor, oszValor );
+		total += atol(pstRel[iSeq].szValor); 
+		STRCPY_FROM_ORA(pstRel[iSeq].szSubMotivoCampanha, oszDsTipoSubMotivoCampanha );
+		STRCPY_FROM_ORA(pstRel[iSeq].szMotivoCampanha, oszDsTipoMotivoCampanha );
+	}
+
+	//Fecha o cursor
+	EXEC SQL CLOSE CursorRelatorioMotivo;
+
+	//------------------------------------------------------------------------------------------------------				
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	xml_g->createTag("RelatorioPercentualVO");
+	xml_g->addProp("xmlns","campanha.fo.vivo.com.br/vo");
+
+	Header.Executar(); 
+
+	xml_g->createTag("motivo");
+
+    for( i = 0; i < iQtdReg; i++ ) 
+	{
+		sprintf( s, "%.2f", atof( pstRel[i].szValor ) / float(total) * 100.0 );
+
+		xml_g->createTag("numerico"); 
+		xml_g->addItem( "sgTipoMotivoCampanha"   , pstRel[i].szMotivoCampanha ); 
+		xml_g->addItem( "sgTipoSubMotivoCampanha", pstRel[i].szSubMotivoCampanha ); 
+		xml_g->addItem( "nroAtendimento",	       pstRel[i].szValor ); 
+		xml_g->addItem( "porcent",	s ); 
+		xml_g->closeTag();//numerico
+		percentual = float(percentual + atof( s ));
+	}
+
+	char stTotal[256]; 
+	sprintf( stTotal, "%d", iQtdReg ); 
+	sprintf( s, "%0.2f", percentual );
+
+	xml_g->addItem( "sgTipoMotivoCampanha",	(char*)oszDsTipoMotivoCampanha.arr );
+	xml_g->addItem( "totalNroAtendimento",  total  ); 
+	xml_g->addItem( "totalPorcent",         s ); 
+
+	xml_g->closeTag();//motivo
+
+	xml_g->addItem("total", stTotal); 
+
+	xml_g->closeTag();//RelatorioPercentualVO
+
+return; 
+
+GotoRelatorioMotivos:
+ free (pstRel); 
+}
+	
+
+

@@ -1,0 +1,345 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/07/31 15:34:07 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+#include "../../AtendimentoCommonsRel/include/cWFComunsRelatorios.h"
+#include "../include/cWFAtendimentoRel6E.h"
+
+// Declara as estruturas compatíveis ao ProC.
+EXEC SQL BEGIN DECLARE SECTION;
+#define MAXCOLUNAS 16
+#define COL_FIXAS   1
+EXEC SQL END DECLARE SECTION;
+
+// Vetor contendo valores lógicos onde cada item representa uma coluna da clausula select
+// sendo executada; Se o valor do vetor respectivo a coluna = true; é gerada uma tag no
+// xml de saida respectiva ao dado da coluna, mesmo que o valor do dado seja = NULL.
+// Caso contrário se o valor do vetor for diferente de true, a coluna não foi solicitada
+// na clausula select e não é gerada uma saida xml para a coluna.
+bool bColunas[MAXCOLUNAS];
+
+void MontarQuebra(string &idColunas,string &group,string &nmColuna,DOMNode *entrada
+                 ,char *dnode,st_AtendimentoRel *dados, st_vlAtendimentoRel *status);
+
+bool proCExecutarRelatorio6E( st_AtendimentoRel *dados
+                            , st_vlAtendimentoRel *status
+                            , XMLGen *saida
+                            , DOMNode *dnode )
+{
+    char valor[32];
+    struct sqlca sqlca;
+    string idColunasA;
+    string idColunasTotal;
+    string idColunasB;
+    string where;
+    string groupA;
+    string groupB;
+    string nmColuna;
+    int linha=0;
+    int i;
+
+    if ( !dados )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !status )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !saida )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !dnode )
+    {
+        ULOGE("%s",erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    // Gera os filtros
+    if( -1 != status->idOperadora )
+    {
+        sprintf(valor,"%d",dados->idOperadora);
+        if (where.size()) where += " AND ";
+        where += " idOperadora=" + (string)valor;
+    }
+
+    if( -1 != status->idRegional )
+    {
+        sprintf(valor,"%d",dados->idRegional);
+        if (where.size()) where += " AND ";
+        where += " idUFOperadora=" + (string)valor;
+    }
+
+    if( -1 != status->idCargo )
+    {
+        sprintf(valor,"%d",dados->idCargo);
+
+        if (where.size()) where += " AND ";
+
+        where += "idGrupo IN (SELECT DISTINCT UG.idGrupo "
+                               "FROM "
+                                    "ORGANOGRAMA.HIERARQUIADEPTOPESSOA HDP, "
+                                    "ACESSO.USUARIOGRUPO UG, "
+                                   "(SELECT NC.IDNIVELCARGO "
+                                      "FROM "
+                                           "ORGANOGRAMA.NIVELCARGO NC, "
+                                           "(SELECT idNivel "
+                                              "FROM ORGANOGRAMA.NIVELHIERARQUIA H "
+                                        "START WITH "
+                                                   "h.idNivelPai = (SELECT IDNIVEL "
+                                                                     "FROM ORGANOGRAMA.NIVELCARGO NCR "
+                                                                    "WHERE NCR.IDNIVELCARGO =" 
+                                                                                + (string)valor + ") "
+                                        "CONNECT BY "
+                                                   "h.idNivelPai = PRIOR h.idNivel) NV "
+                                             "WHERE "
+                                                   "NV.IDNIVEL = NC.IDNIVEL) NCH "
+                                     "WHERE (HDP.IDNIVELCARGO = NCH.IDNIVELCARGO  "
+                                        "OR HDP.IDNIVELCARGO = " + (string)valor + ") "
+                                       "AND HDP.idPessoa = UG.idPessoaUsuario "
+                                       "AND UG.INSUPERVISOR = 1) ";    
+    }
+
+    if( -1 != status->idGrupo )
+    {
+        sprintf(valor,"%d",dados->idGrupo);
+        if (where.size()) where += " AND ";
+        where += " idGrupo=" + (string)valor;
+    }
+
+    if( -1 != status->idRepresentante )
+    {
+        sprintf(valor,"%d",dados->idRepresentante);
+        if (where.size()) where += " AND ";
+        where += " idPessoaUsuario=" + (string)valor;
+    }
+
+    if( -1 != status->dtInicio )
+    {
+        if (where.size()) where += " AND ";
+        where += " TRUNC(dtBaixa) >= TO_DATE('" + (string)dados->dtInicio + "','DD-MM-YYYY')";
+    }
+
+    if( -1 != status->dtFim )
+    {
+        if (where.size()) where += " AND ";
+        where += " TRUNC(dtBaixa) <= TO_DATE('" + (string)dados->dtFim + "','DD-MM-YYYY')";
+    }
+
+    WFAtdRelCompletarWhere(where,dnode,"WFGrupoVO");
+    WFAtdRelCompletarWhere(where,dnode,"FiltroDetalhe");
+
+    MontarQuebra(idColunasA,groupA,nmColuna,dnode,"WFRelatoriosQuebraVO",dados,status);
+
+    idColunasTotal = "SELECT " + idColunasA + "Total FROM ( SELECT " + idColunasA +
+                      "Total,ROWNUM AS nLin "
+                      "FROM ( SELECT " + idColunasA + 
+                      "rtrim(ltrim(to_char(TRUNC(NVL(SUM(totalHoras),0)),'99999909')))||':'||"
+                        "rtrim(ltrim(to_char(ROUND(((NVL(SUM(totalHoras),0) - "
+                            "TRUNC(NVL(SUM(totalHoras),0)))*100)*.6,0),'09'))) AS Total "
+                 " FROM (SELECT idAtendimentoProtocolo,idUfOperadora,nmGrupoOperadora,idUf,UF,pathDepto,idPessoaUsuario,"
+                               "nmNome,nmLoginUsuario,idGrupo,nmGrupo,totalHoras"
+                          " FROM atendimento.TempoMedioTratRepreV01";
+
+    if ( where.size() )
+    {
+        idColunasTotal += " WHERE " + where;
+    }
+
+    idColunasTotal += ")";
+
+    if ( groupA.size() )
+    {
+        idColunasTotal += " GROUP BY " + groupA;
+        idColunasTotal += " ORDER BY " + groupA;
+    }
+
+    char linIni[32],linFin[32];
+    sprintf(linIni,"%d",dados->bloco * dados->qtdLinhasBloco + 1);
+    sprintf(linFin,"%d",(dados->bloco+1) * dados->qtdLinhasBloco + 1); //+1 aqui é necessário para controle de fim de relatório
+
+    idColunasTotal += ")) WHERE nLin >= " + (string)linIni + " AND nLin <= " + (string)linFin;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *query;
+        short i_colunas[MAXCOLUNAS];
+        VARCHAR colunas[MAXCOLUNAS][256];
+    EXEC SQL END DECLARE SECTION;
+
+    query = (char*)idColunasTotal.c_str();
+
+    ULOG( "QUERY = [%s]",query );
+
+    saida->createTag("WFRelatorioDinamicoVO");
+    saida->addProp("xmlns", "workflow.fo.vivo.com.br/vo");
+    saida->addItem("dsTituloRelatorio","Tempo Médio de Tratamento do Processo");
+
+    WFAtdRelGerarHeaderSaidaXML(nmColuna,saida,dnode);
+
+    for ( i=0; i<MAXCOLUNAS;i++ )
+    {
+        colunas[i].arr[0] = 0;
+        colunas[i].len = 0;
+    }
+
+    EXEC SQL WHENEVER SQLERROR DO WFAtdRelSqlErro(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL PREPARE recebeQuery FROM :query;
+    EXEC SQL DECLARE consulta CURSOR FOR recebeQuery;
+
+    EXEC SQL OPEN consulta;
+
+    int nRegs = 0;
+
+    while ( true )
+    {
+        nRegs++;
+
+        EXEC SQL FETCH consulta INTO :colunas[ 0]:i_colunas[ 0],
+                                     :colunas[ 1]:i_colunas[ 1],
+                                     :colunas[ 2]:i_colunas[ 2],
+                                     :colunas[ 3]:i_colunas[ 3],
+                                     :colunas[ 4]:i_colunas[ 4],
+                                     :colunas[ 5]:i_colunas[ 5],
+                                     :colunas[ 6]:i_colunas[ 6],
+                                     :colunas[ 7]:i_colunas[ 7],
+                                     :colunas[ 8]:i_colunas[ 8],
+                                     :colunas[ 9]:i_colunas[ 9],
+                                     :colunas[10]:i_colunas[10],
+                                     :colunas[11]:i_colunas[11],
+                                     :colunas[12]:i_colunas[12],
+                                     :colunas[13]:i_colunas[13],
+                                     :colunas[14]:i_colunas[14],
+                                     :colunas[15]:i_colunas[15];
+
+        if ( nRegs > dados->qtdLinhasBloco )
+        {
+            break;
+        }
+
+        saida->createTag("ValoresRelatorio");
+
+        for ( i=0;i<MAXCOLUNAS;i++ )
+        {
+            CONVIND(colunas[i],i_colunas[i]);
+
+            if ( bColunas[i] ) 
+            {
+                WFAtdRelGerarDadosSaidaXML((VARCHAR*)&colunas[i],saida);
+            }
+        }
+
+        saida->closeTag();
+    }
+
+    saida->addItem("inFin", sqlca.sqlcode == 1403 ? true:false);
+
+    saida->closeTag();
+
+    EXEC SQL CLOSE consulta;
+
+    return true;
+}
+
+void MontarQuebra(string &idColunas,string &group,string &nmColuna,DOMNode *entrada,char *dnode,st_AtendimentoRel *dados, st_vlAtendimentoRel *status)
+{
+    bool firstTime = true;
+    char *p0;
+    DOMNode *dn;
+    int index = 0;
+    int i;
+    TuxHelper tx;
+
+    if ( !entrada )
+    {
+        ULOGE(erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    if ( !dnode )
+    {
+        ULOGE(erroPonteiroInvalido());
+        throw new TuxBasicSvcException("04E9999",erroPonteiroInvalido());
+    }
+
+    while ( dn = tx.walkDOM(entrada,dnode,index ) )
+    {
+        if ( p0 = tx.walkTree(dn,"idCampo",0),p0 )
+        {
+            if (strlen(p0) > 0)
+	        {
+		        if ( group.size() )
+		        {
+			        group += ",";
+			        nmColuna += ",";
+		        }
+
+                if ( stricmp(p0,"idAtendimento") == 0 )
+                {
+		            idColunas += (string)"idAtendimentoProtocolo" + ",";
+		            group += (string)"idAtendimentoProtocolo";
+		            nmColuna += (string)"idAtendimentoProtocolo";
+                }
+                else
+                {
+		            idColunas += (string)p0 + ",";
+		            group += (string)p0;
+		            nmColuna += (string)p0;
+                }
+		        bColunas[index] = true;
+	        }
+	    else
+	    {
+		    idColunas += "NULL,";
+		    bColunas[index] = false;
+        }
+	    XMLString::release(&p0);
+        }
+
+        index++;
+    }
+
+    for ( i=index; i<MAXCOLUNAS-COL_FIXAS; i++ )
+    {
+        bColunas[i] = false;
+    }
+
+    for ( i=MAXCOLUNAS-COL_FIXAS; i<MAXCOLUNAS; i++ )
+    {
+        bColunas[i] = true;
+    }
+
+    if ( nmColuna.size() ) nmColuna += ",";
+    nmColuna += obterNomeColunaFixa(ID_TEMPO_TRATAMENTO);
+
+    index += COL_FIXAS;
+
+    for ( i=index; i<MAXCOLUNAS; i++ )
+    {
+        idColunas += "NULL,";
+    }
+
+    ULOG("group=%s",group.c_str());
+    ULOG("Nomes de colunas=%s",nmColuna.c_str());
+}

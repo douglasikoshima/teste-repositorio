@@ -1,0 +1,149 @@
+//
+// $Id: rel_ofertas.pcpp,v 1.1 2009/07/31 15:33:54 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+
+int rel_ofertas(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char  parm[255];
+  int   idItensaoAtual;
+  int   idDestinoAtual;
+  int   existReg;
+  int   nrIntensao;
+  int   nrDestino;
+  int   of_adplano;
+  int   of_aparelho;
+  int   of_bonus;
+  int   of_migracao;
+  int   of_pontos;
+  int   of_susptemp;
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  VARCHAR dtInicial[255];
+  VARCHAR dtFinal[255];
+  int     idTipoCliente;
+  int     idRespostaIntencao;
+  VARCHAR dsRespIntencao[255];
+  int     idRespostaDestino;
+  VARCHAR dsRespDestino[255];
+  int     idTipoEncerramento;
+  int     idOferta;
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  EXEC SQL WHENEVER NOT FOUND DO cl_flag(&existReg);
+
+  try{
+    //  Obtendo dados do xml
+    get_tag(parm,dnode,"dtInicial",0,0);
+    strToOra(dtInicial,parm);
+
+    get_tag(parm,dnode,"dtFinal",0,0);
+    strToOra(dtFinal,parm);
+
+    get_tag(parm,dnode,"tpCliente",0,0);
+    idTipoCliente = atoi(parm);
+
+
+    // Definicao dos cursores
+    EXEC SQL DECLARE crsOfrts CURSOR FOR
+      SELECT idRespostaIntencao,dsRespIntencao,idRespostaDestino,dsRespDestino,
+      idTipoEncerramento,idOferta
+      FROM   retencao.retencaoV02
+      WHERE  idTipoEncerramento = 3 // Retido 
+      AND    idTipoPessoa = :idTipoCliente
+      AND    TO_CHAR(dtAlteracao,'yyyymmdd') >= :dtInicial
+      AND    TO_CHAR(dtAlteracao,'yyyymmdd') <= :dtFinal
+      ORDER BY idRespostaIntencao,idRespostaDestino;
+
+    EXEC SQL OPEN crsOfrts;
+
+    // Pegar head da lista
+    existReg = 1;
+    EXEC SQL FETCH crsOfrts 
+      INTO :idRespostaIntencao, :dsRespIntencao, :idRespostaDestino, :dsRespDestino,
+      :idTipoEncerramento, :idOferta;
+
+    if ( existReg ){
+      endOraStr(dsRespIntencao);
+      endOraStr(dsRespDestino);
+      ULOG_INT(idRespostaIntencao);
+      ULOG_VAR(dsRespIntencao);
+      ULOG_INT(idRespostaDestino);
+      ULOG_VAR(dsRespDestino);
+      ULOG_INT(idTipoEncerramento);
+      ULOG_INT(idOferta);
+    }
+
+    while( existReg ){
+      nrIntensao = 0;
+      xml->createTag("tns:itemIntencaoVO");
+      xml->addItem("dsIntensao",(char *)dsRespIntencao.arr);
+      idItensaoAtual = idRespostaIntencao;
+      while( idItensaoAtual == idRespostaIntencao ){
+	of_adplano  = 0;
+	of_aparelho = 0;
+	of_bonus    = 0;
+	of_migracao = 0;
+	of_pontos   = 0;
+	of_susptemp = 0;
+	nrDestino   = 0;
+	nrIntensao++;
+	// Loop - destino
+	xml->createTag("tns:itemDestinoVO");
+	xml->addItem("dsDestino",(char *)dsRespDestino.arr);
+	idDestinoAtual = idRespostaDestino;
+	while( idDestinoAtual == idRespostaDestino ){
+	  // Contadores
+	  nrDestino++;
+	  if (idOferta == OF_ADEQUACAO) of_adplano++;
+	  else if (idOferta == OF_APARELHO ) of_aparelho++;
+	  else if (idOferta == OF_BONUS    ) of_bonus++;
+	  else if (idOferta == OF_MIGRACAO ) of_migracao++;
+	  else if (idOferta == OF_PONTOS   ) of_pontos++;
+	  else if (idOferta == OF_SUSPTEMP ) of_susptemp++;
+
+	  EXEC SQL FETCH crsOfrts 
+	    INTO :idRespostaIntencao, :dsRespIntencao, :idRespostaDestino, :dsRespDestino,
+	    :idTipoEncerramento, :idOferta;
+	
+	  endOraStr(dsRespIntencao);
+	  endOraStr(dsRespDestino);
+	  ULOG_INT(idRespostaIntencao);
+	  ULOG_VAR(dsRespIntencao);
+	  ULOG_INT(idRespostaDestino);
+	  ULOG_VAR(dsRespDestino);
+	  ULOG_INT(idTipoEncerramento);
+	  ULOG_INT(idOferta);
+	
+	  // finalizando loop - fim do cursor
+	  if ( !existReg )  break;
+	}
+	// Registrando 
+	xml->addItem("nrRetidos",nrDestino);
+	xml->createTag("tns:seqOfertasVO");
+	xml->addItem("nrAdequacoes",of_adplano);
+	xml->addItem("nrAparelhos",of_aparelho);
+	xml->addItem("nrBonus",of_bonus);
+	xml->addItem("nrMigracao",of_migracao);
+	xml->addItem("nrPontos",of_pontos);
+	xml->addItem("nrSupensoes",of_susptemp);
+	xml->closeTag();
+	xml->closeTag();
+
+	// finalizando loop - fim do cursor
+	if ( !existReg )  break;
+    
+      }
+      xml->addItem("nrIntensoes",nrIntensao);
+      xml->closeTag();
+
+    }
+  
+    EXEC SQL CLOSE crsOfrts;
+  }catch(...){throw;}
+
+  return 1;
+}
+

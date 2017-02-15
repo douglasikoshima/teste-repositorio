@@ -1,0 +1,84 @@
+// PessoaDocumento.cpp: implementation of the PessoaDocumento class.
+//
+//////////////////////////////////////////////////////////////////////
+
+#include "../include/PessoaDocumento.h"
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+PessoaDocumento::PessoaDocumento()
+{
+
+}
+
+PessoaDocumento::~PessoaDocumento()
+{
+
+}
+int PessoaDocumento::getDocumentos(char*idPessoa,ListDocumento&listDocumento)
+{
+	tuxfw_getlogger()->debug("PessoaDocumento::getDocumentos");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct param{
+			VARCHAR idDocumento[21+1];
+			VARCHAR idTipoDocumentoSelecionado[21+1];
+			VARCHAR nrDocumento[256];
+			VARCHAR dtExpedicao[15];
+			VARCHAR dsOrgaoEmissor[256];
+			VARCHAR idUFSelecionado[21+1];
+		}m_param;
+		struct iparam{
+			short idDocumento;
+			short idTipoDocumentoSelecionado;
+			short nrDocumento;
+			short dtExpedicao;
+			short dsOrgaoEmissor;
+			short idUFSelecionado;
+		}m_iparam;
+		char *cidPessoa = idPessoa;
+	EXEC SQL END DECLARE SECTION;	
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	EXEC SQL DECLARE CURSORDOCUMENTO CURSOR FOR
+		SELECT
+			  DOCUMENTO.IDDOCUMENTO,
+			  TIPODOCUMENTO.SGCLASSIFICACAO,
+			  DOCUMENTO.NRDOCUMENTO,
+			  TO_CHAR(DOCUMENTO.DTEMISSAO,'DD/MM/RRRR'),
+			  DOCUMENTO.SGORGAOEXPEDIDOR,
+			  DOCUMENTO.IDUF
+		FROM
+			CUSTOMER.PESSOADOCUMENTO  PESSOADOCUMENTO,
+			CUSTOMER.DOCUMENTO  DOCUMENTO,
+			APOIO.TIPODOCUMENTO  TIPODOCUMENTO
+		WHERE
+			DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO AND
+			PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO AND
+			PESSOADOCUMENTO.IDPESSOA = :cidPessoa;
+	EXEC SQL OPEN CURSORDOCUMENTO;
+	for(;;)
+	{
+		memset(&m_param,0,sizeof(param));
+		memset(&m_iparam,0,sizeof(m_iparam));
+		EXEC SQL FETCH CURSORDOCUMENTO INTO :m_param:m_iparam;	
+		Documento *documento = new Documento();		
+		documento->setIdDocumento((char*)m_param.idDocumento.arr);
+		documento->setIdTipoDocumentoSelecionado((char*)m_param.idTipoDocumentoSelecionado.arr);
+		documento->setNrDocumento((char*)m_param.nrDocumento.arr);
+		documento->setDtExpedicao((char*)m_param.dtExpedicao.arr);
+		documento->setDsOrgaoEmissor((char*)m_param.dsOrgaoEmissor.arr);
+		documento->setIdUfSelecionado((char*)m_param.idUFSelecionado.arr);
+		listDocumento.add(documento);
+	}	
+	EXEC SQL CLOSE CURSORDOCUMENTO;
+	return 1;
+Error:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}

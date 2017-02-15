@@ -1,0 +1,266 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include"../../../commons/queryMacro.h"
+
+#include "../include/cWFAndamentoMotivo.h"
+#include "../include/stWFAndamentoMotivo.h"
+
+void sql_error_WFAndamentoMotivo(sqlca*sqlca);
+
+	// Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+		#include "../include/stWFAndamentoMotivo.h"
+    EXEC SQL END DECLARE SECTION;
+
+bool proCIncluirWFAndamentoMotivo(st_AndamentoMotivo* dados, st_vlAndamentoMotivo* status, XMLGen* saida)
+{
+
+    ULOG_START( "proCIncluirWFAndamentoMotivo()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AndamentoMotivo   *oDados = dados;
+		struct st_vlAndamentoMotivo *oStatus = status;
+        int vcount;
+
+	EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamentoMotivo(&sqlca);
+
+    ULOG( "idAndamento [%ld]",oDados->idAndamento );
+    ULOG( "idMotivo    [%d]",oDados->idMotivo );
+    ULOG( "idFase      [%d]",oDados->idFase );
+
+    EXEC SQL
+        SELECT COUNT(1)
+        INTO :vcount
+        FROM ATENDIMENTO.MOTIVO
+        WHERE IDMOTIVO = :oDados->idMotivo;
+
+    if ( vcount > 0 )
+    { // tabela sem FK para ATENDIMENTO.MOTIVO e algum ponto da aplicação esta enviando lixo
+	    EXEC SQL 
+		    INSERT INTO
+			    atendimento.AndamentoMotivo
+			    (
+				    idAndamento,
+				    idMotivo,
+				    idFase,
+				    idUsuarioAlteracao,
+				    dtUltimaAlteracao
+			    )
+			    VALUES
+			    (
+				    :oDados->idAndamento,
+				    :oDados->idMotivo,
+				    :oDados->idFase,
+				    DECODE(:oStatus->idUsuarioAlteracao, -1, NULL, :oDados->idUsuarioAlteracao),
+                    TO_DATE(DECODE(:oStatus->dtUltimaAlteracao, -1, NULL, :oDados->dtUltimaAlteracao),'DD/MM/YYYY HH24:MI:SS')
+			    );
+    }
+
+    ULOG_END( "proCIncluirWFAndamentoMotivo()" );
+
+	return true;
+}
+
+bool proCAlterarWFAndamentoMotivo(st_AndamentoMotivo* dados, st_vlAndamentoMotivo* status, XMLGen* saida)
+{
+
+    ULOG_START( "proCIncluirWFAndamentoMotivo()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AndamentoMotivo   oDados;
+		struct st_vlAndamentoMotivo oStatus;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamentoMotivo(&sqlca);
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+	sprintf(query,"%s", "UPDATE atendimento.AndamentoMotivo SET ");
+
+	bool separa = false;
+
+	if (status->idMotivo != -1) 
+		montaUpdate("idMotivo", oDados.idMotivo, TIPO_INT);
+
+	if (status->idFase != -1) 
+		montaUpdate("idFase", oDados.idFase, TIPO_INT);
+
+	if (status->idUsuarioAlteracao != -1) 
+		montaUpdate("idUsuarioAlteracao", oDados.idUsuarioAlteracao, TIPO_INT);
+
+	if (status->dtUltimaAlteracao != -1) 
+		montaUpdate("dtUltimaAlteracao", oDados.dtUltimaAlteracao, TIPO_DATAHORA);
+
+	sprintf(query, "%s WHERE idAndamento = %ld", query, dados->idAndamento);
+
+	EXEC SQL EXECUTE IMMEDIATE :query;
+
+    ULOG_END( "proCIncluirWFAndamentoMotivo()" );
+
+	return true;
+}
+
+bool proCExcluirWFAndamentoMotivo(st_AndamentoMotivo* dados, st_vlAndamentoMotivo* status, XMLGen* saida)
+{
+
+    ULOG_START( "proCExcluirWFAndamentoMotivo()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAndamento = dados->idAndamento;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamentoMotivo(&sqlca);
+
+	EXEC SQL 
+		DELETE
+			atendimento.AndamentoMotivo
+		WHERE
+			idAndamento = :idAndamento;
+
+    ULOG_END( "proCExcluirWFAndamentoMotivo()" );
+
+	return true;
+}
+
+int proCGetWFMotivoCancelamento(int sIdAgrupamentoEstadoTpProc)
+{
+
+    ULOG_START( "proCGetWFMotivoCancelamento()" );
+    
+    struct sqlca sqlca;
+
+    int idMotivoCancelamento = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idAgrupamentoEstadoTpProc = sIdAgrupamentoEstadoTpProc;
+
+		int idMotivo;
+		short i_idMotivo = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAndamentoMotivo(&sqlca);
+
+	EXEC SQL 
+		SELECT
+			M.IDMOTIVO
+		INTO
+			idMotivo:i_idMotivo
+		FROM
+			WORKFLOW.AGRPESTTPPROCMOTIVO A
+		   ,ATENDIMENTO.MOTIVO M
+		WHERE
+			IDAGRUPAMENTOESTADOTPPROC = :idAgrupamentoEstadoTpProc
+		AND A.IDMOTIVO = M.IDMOTIVO
+		AND UPPER(M.DSMOTIVO) LIKE '%CANCELADO%'
+		AND ROWNUM < 2;
+
+	if (i_idMotivo != -1)
+    {
+		idMotivoCancelamento = idMotivo;
+    }
+
+    ULOG_END( "proCGetWFMotivoCancelamento()" );
+	return idMotivoCancelamento;
+}
+
+bool proCConsultaWFAndamentoMotivo(st_AndamentoMotivo* dados, st_vlAndamentoMotivo* status, char* order, XMLGen* saida)
+{
+
+    ULOG_START( "proCConsultaWFAndamentoMotivo()" );
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAndamento;
+		int idMotivo;
+		int idFase;
+		int idUsuarioAlteracao;
+		VARCHAR	dtUltimaAlteracao[256];
+
+		short i_idMotivo;
+		short i_idFase;
+		short i_idUsuarioAlteracao;
+		short i_dtUltimaAlteracao;
+
+		char query[800] = "SELECT idAndamento, idMotivo, idUsuarioAlteracao, TO_CHAR( dtUltimaAlteracao, 'DD/MM/YYYY' ) FROM atendimento.AndamentoMotivo ";
+
+    EXEC SQL END DECLARE SECTION;
+
+	bool separa = false;
+
+	if (status->idAndamento != -1) 
+		montaWhere("idAndamento", dados->idAndamento, TIPO_INT);
+
+	if (status->idMotivo != -1) 
+		montaWhere("idMotivo", dados->idMotivo, TIPO_INT);
+
+	if (status->idFase != -1) 
+		montaWhere("idFase", dados->idFase, TIPO_INT);
+
+	if (strlen(order) > 0) 
+		sprintf( query, "%s ORDER BY %s ", query, order);
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAndamentoMotivo(&sqlca);
+
+	ULOG( "QUERY [%s]",query );
+
+    EXEC SQL PREPARE consultaAndamentoMotivo FROM :query;
+	EXEC SQL DECLARE consulta CURSOR FOR consultaAndamentoMotivo;
+
+	EXEC SQL OPEN consulta;
+
+	while (true)
+	{
+		EXEC SQL FETCH consulta INTO 
+									:idAndamento, 
+									:idMotivo:i_idMotivo,
+									:idFase:i_idFase,
+									:idUsuarioAlteracao:i_idUsuarioAlteracao,
+									:dtUltimaAlteracao:i_dtUltimaAlteracao;
+
+		CONVIND(dtUltimaAlteracao,i_dtUltimaAlteracao)
+
+		saida->createTag("WFAndamentoMotivoVO");
+			saida->addItem("idAndamento", idAndamento);
+			saida->addItem("idMotivo", idMotivo);
+			saida->addItem("idFase", idFase);
+			saida->addItem("idUsuarioAlteracao", idUsuarioAlteracao);
+			saida->addItem("dtUltimaAlteracao", (char*)dtUltimaAlteracao.arr);
+		saida->closeTag();
+	}
+
+    ULOG_END( "proCConsultaWFAndamentoMotivo()" );
+
+	EXEC SQL CLOSE consulta;
+
+	return true;
+
+}
+
+void sql_error_WFAndamentoMotivo(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

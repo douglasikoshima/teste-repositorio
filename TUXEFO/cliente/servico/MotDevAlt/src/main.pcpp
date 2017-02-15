@@ -1,0 +1,104 @@
+/*
+ * Serviço de cadastro básico de motivo de devolução de correspondencia
+ * Versão inicial, 19/05/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/MotivoDevolucao.h";
+
+#include "../include/MotivoDevolucaoAltera.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Global.h"
+#include <tuxfw.h>
+
+DECLARE_TUXEDO_SERVICE(MotDevAlt);
+
+void implMotDevAlt::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+    CMotivoDevolucao oMotDev;
+    char* pcIdMotDev;
+    int iIdMotDev;
+    char* pcDisp;
+    int iDisp;
+    int iRet;
+
+    ULOG_START( "implMotDevAlt::Execute()" );
+    // Navega o XML e recupera as informacoes obrigatorias
+    pcIdMotDev = walkTree(dnode, XML_IN_ID_TIPO, 0);
+    if (pcIdMotDev == NULL) {
+        ERROR(NRO_MOT_DEV_ID_NE);
+        TAG_INEXISTENTE(XML_IN_ID_TIPO);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcIdMotDev) {
+        ERROR(NRO_MOT_DEV_ID_VV);
+        TAG_VALOR_VAZIO(XML_IN_ID_TIPO);
+        XMLString::release(&pcIdMotDev);    
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if ((iIdMotDev = atoi(pcIdMotDev)) <= 0) {
+        ERROR(NRO_MOT_DEV_ID_VI);
+        TAG_VALOR_INVALIDO(XML_IN_ID_TIPO);
+        XMLString::release(&pcIdMotDev);    
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+
+    XMLString::release(&pcIdMotDev);    
+
+    pcDisp = walkTree(dnode, XML_IN_DISP, 0);
+    if (pcDisp == NULL) {
+        ERROR(NRO_INDISPON_NE);
+        TAG_INEXISTENTE(XML_IN_DISP);
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    if (!*pcDisp) {
+        ERROR(NRO_INDISPON_VI);
+        TAG_VALOR_VAZIO(XML_IN_DISP);
+        XMLString::release(&pcIdMotDev);    
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+    iDisp = atoi(pcDisp);
+    if (iDisp != 0 && iDisp != 1) {
+        ERROR(NRO_INDISPON_VI);
+        TAG_VALOR_INVALIDO(XML_IN_DISP);
+        XMLString::release(&pcIdMotDev);    
+        throw new TuxBasicSvcException(sNrMsg, sMsg);
+    }
+
+    XMLString::release(&pcIdMotDev);    
+
+
+    // Monta o objeto de MotivoDevolucao
+    oMotDev.setIdMotivoDevolucao(iIdMotDev);
+
+    char* p = walkTree(dnode, XML_IN_SG_TIPO, 0);
+
+    oMotDev.setSgMotivoDevolucao( p );
+    XMLString::release(&p); 
+
+    p = walkTree(dnode, XML_IN_DS_TIPO, 0);
+
+    oMotDev.setDsMotivoDevolucao(p);
+    XMLString::release(&p); 
+
+    oMotDev.setInDisponibilidade(iDisp);
+
+    // Atualiza as informações no banco de dados
+    oMotDev.setUsuarioAlteracao(getUser());
+    iRet = oMotDev.altera();
+
+    switch(iRet)
+    {
+        case DUPLICATE_KEY:
+            xml_g->addItem("FAILED", "DUPLICATE KEY");
+            break;
+    }
+
+    ULOG_END( "implMotDevAlt::Execute()" );
+
+    // Execução OK.
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}
+

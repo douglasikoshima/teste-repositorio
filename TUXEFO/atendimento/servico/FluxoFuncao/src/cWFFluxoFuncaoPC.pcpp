@@ -1,0 +1,203 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include"../../../commons/queryMacro.h"
+
+
+#include "../include/cWFFluxoFuncao.h"
+#include "../include/stWFFluxoFuncao.h"
+
+void sql_error_WFFluxoFuncao(sqlca*sqlca);
+
+	// Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+		#include "../include/stWFFluxoFuncao.h"
+    EXEC SQL END DECLARE SECTION;
+
+bool proCIncluirWFFluxoFuncao(st_FluxoFuncao* dados, st_vlFluxoFuncao* status, XMLGen* saida)
+{
+   ULOG_START("proCIncluirWFFluxoFuncao()");
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_FluxoFuncao   oDados;
+		struct st_vlFluxoFuncao oStatus;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFluxoFuncao(&sqlca);
+
+	EXEC SQL SELECT workflow.FluxoFuncaoSQ.NEXTVAL INTO :oDados.idFluxoFuncao FROM DUAL;
+
+	EXEC SQL 
+		INSERT INTO
+			workflow.FluxoFuncao
+			(
+				idFluxoFuncao,
+				idFluxoFase,
+				numOrdem,
+				idRouterScript
+			)
+			VALUES
+			(
+				:oDados.idFluxoFuncao,
+				:oDados.idFluxoFase,
+				:oDados.numOrdem,
+				:oDados.idRouterScript
+			);
+
+	saida->createTag("Registro");
+		saida->addItem("idFluxoFuncao", oDados.idFluxoFuncao);
+	saida->closeTag();
+	
+   ULOG_END("proCIncluirWFFluxoFuncao()");
+   
+	return true;
+}
+
+bool proCAlterarWFFluxoFuncao(st_FluxoFuncao* dados, st_vlFluxoFuncao* status, XMLGen* saida)
+{
+   ULOG_START("proCAlterarWFFluxoFuncao()");
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_FluxoFuncao   oDados;
+		struct st_vlFluxoFuncao oStatus;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFluxoFuncao(&sqlca);
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+	sprintf(query,"%s", "UPDATE workflow.FluxoFuncao SET ");
+
+	bool separa = false;
+
+	if (status->idFluxoFuncao != -1) 
+		montaUpdate("idFluxoFuncao", oDados.idFluxoFuncao, 1);
+
+	if (status->idFluxoFase != -1) 
+		montaUpdate("idFluxoFase", oDados.idFluxoFase, 1);
+
+	if (status->numOrdem != -1) 
+		montaUpdate("numOrdem", oDados.numOrdem, 1);
+
+	if (status->idRouterScript != -1)
+		montaUpdate("idRouterScript", oDados.idRouterScript, 1);
+
+	sprintf(query, "%s WHERE idFluxoFuncao = %i", query, dados->idFluxoFuncao);
+
+	EXEC SQL EXECUTE IMMEDIATE :query;
+   ULOG_END("proCAlterarWFFluxoFuncao()");
+	return true;
+}
+
+bool proCExcluirWFFluxoFuncao(st_FluxoFuncao* dados, st_vlFluxoFuncao* status, XMLGen* saida)
+{
+   
+   ULOG_START("proCExcluirWFFluxoFuncao()");
+   
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idFluxoFuncao = dados->idFluxoFuncao;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFluxoFuncao(&sqlca);
+
+	EXEC SQL 
+		DELETE
+			workflow.FluxoFuncao
+		WHERE
+			idFluxoFuncao = :idFluxoFuncao;
+			
+   ULOG_END("proCExcluirWFFluxoFuncao()");
+   
+	return true;
+}
+
+bool proCConsultaWFFluxoFuncao(st_FluxoFuncao* dados, st_vlFluxoFuncao* status, char* order, XMLGen* saida)
+{
+   
+   ULOG_START("proCConsultaWFFluxoFuncao()");
+   
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		int idFluxoFuncao;
+		int idFluxoFase;
+		int numOrdem;
+		int idRouterScript;
+
+		char query[800] = "SELECT idFluxoFuncao, idFluxoFase, numOrdem, idRouterScript "
+                            "FROM workflow.FluxoFuncao";
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFluxoFuncao(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	bool separa = false;
+
+	if (status->idFluxoFuncao != -1) 
+		montaWhere("idFluxoFuncao", dados->idFluxoFuncao, 1);
+
+	if (status->idFluxoFase != -1)
+		montaWhere("idFluxoFase", dados->idFluxoFase, 1);
+
+	if (status->numOrdem != -1)
+		montaWhere("numOrdem", dados->numOrdem, 1);
+
+	if (status->idRouterScript != -1)
+		montaWhere("idRouterScript", dados->idRouterScript, 1);
+
+	if (strlen(order) > 0) 
+		sprintf( query, "%s ORDER BY %s ", query, order);
+
+    ULOG("query=%s",query);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFFluxoFuncao(&sqlca);
+
+	EXEC SQL PREPARE consultaFluxoFuncao FROM :query;
+	EXEC SQL DECLARE consulta CURSOR FOR consultaFluxoFuncao;
+
+	EXEC SQL OPEN consulta;
+
+	while (true)
+	{
+		EXEC SQL FETCH consulta INTO :idFluxoFuncao, :idFluxoFase, :numOrdem, :idRouterScript;
+
+		saida->createTag("WFFluxoFuncaoVO");
+			saida->addItem("idFluxoFuncao", idFluxoFuncao);
+			saida->addItem("idFluxoFase", idFluxoFase);
+			saida->addItem("numOrdem", numOrdem);
+			saida->addItem("idRouterScript", idRouterScript);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE consulta;
+	
+   ULOG_END("proCConsultaWFFluxoFuncao()");
+   
+	return true;
+
+}
+
+void sql_error_WFFluxoFuncao(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

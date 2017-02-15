@@ -1,0 +1,188 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+
+#include <tuxfw.h>
+#include "../../negocio/clienteCmm/include/CPacote.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+
+#include "../include/HISTORICOSERV.h"
+
+DECLARE_TUXEDO_SERVICE(HISTORICOSERV);
+
+void implHISTORICOSERV::Execute(DOMNode* dnode, XMLGen* xml_g)
+{
+    const char *pMemBufId = "inputInfo";
+    MemBufInputSource *pMemBuf = NULL;
+    XercesDOMParser* pParser = NULL;
+    DOMNode* pDoc = NULL;
+    char *pRetXML = NULL;
+    XMLGen xmlGen;
+    CPacote clPacote;
+
+    TuxRemoteService* remoteService = NULL;
+    TuxMessage* inputMessage = NULL;
+    char *fullRet = NULL;
+
+    char *pNrLinha = NULL;
+    int iRet;
+
+    char *pParam2=0;    //variavel temp para idtipolinha
+    int  idTipoLinha=0; //variavel de tipo da linha
+                        //para encaminhamento de tuxproxy correto
+
+    try
+    {
+        ULOG_START( "implHISTORICOSERV::Execute()" );
+            
+        //capturando tipo de linha  
+        pParam2 = walkTree(dnode, "idTipoLinha", 0);
+        if(!pParam2)
+        {
+            ERROR("idTipoLinha");
+            TAG_INEXISTENTE("idTipoLinha");
+            throw new TuxBasicSvcException("00E0666","faltando idTipoLinha");
+        }
+        if(!*pParam2)
+        {
+            if ( pParam2 ) XMLString::release(&pParam2);
+            throw new TuxBasicSvcException("00E0666","faltando idTipoLinha");
+        }
+        
+        idTipoLinha=atoi(pParam2);
+        XMLString::release(&pParam2);
+    
+        if(idTipoLinha != 1 && idTipoLinha != 2 && idTipoLinha != 5 && idTipoLinha != 6 && idTipoLinha != 4 && idTipoLinha != 7) {
+            throw new TuxBasicSvcException("00E0666", "IdTipoLinha diferente de 1(pos) 2(pre) 5(poschip) 6(prechip) 4(Controle CDMA) 7(Controle GSM)");
+        }
+    
+    
+        // Obtem o Nr da Linha do XML de entrada
+        pNrLinha = walkTree(dnode, XML_IN_NR_LINHA, 0);
+        if (pNrLinha == NULL) {
+            ERROR(NRO_NR_LINHA_NE);
+            TAG_INEXISTENTE(XML_IN_NR_LINHA);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if (!*pNrLinha) {
+            ERROR(NRO_NR_LINHA_VV);
+            TAG_VALOR_VAZIO(XML_IN_NR_LINHA);
+            if(pNrLinha) XMLString::release(&pNrLinha);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        ULOG("pNrLinha[%s]", pNrLinha);
+    
+    
+        xmlGen.addItem("ProxyOperacao", "getServicos");
+        xmlGen.addItem("ProxyLinha", pNrLinha);
+        xmlGen.addItem("usuario", "FO");
+        xmlGen.addItem("xmlns", "cliente.fo.vivo.com.br/vo");
+        
+        inputMessage = new TuxMessage();
+        inputMessage->setUser(this->getUser());
+    
+        if(idTipoLinha == 1 || idTipoLinha == 5)
+        {
+            inputMessage->setService("DTUXATLYSBE");
+        }
+        else if(idTipoLinha == 2 || idTipoLinha == 6 || idTipoLinha == 4 || idTipoLinha == 7)
+        {
+            inputMessage->setService("DTUXNGINBE");
+        }
+    
+        inputMessage->setMessageBody(&xmlGen);
+
+        remoteService = new TuxRemoteService();
+    
+        if(idTipoLinha == 1 || idTipoLinha == 5)
+        {
+            remoteService->setServiceName("DTUXATLYSBE");  // pos (1) poschip (5)
+        }
+        else if(idTipoLinha == 2 || idTipoLinha == 6 || idTipoLinha == 4 || idTipoLinha == 7)
+        {
+            remoteService->setServiceName("DTUXNGINBE"); // pre (2) prechip (6) ControleCDMA(4) ControleGSM(7)
+        }
+    
+        remoteService->setInputMessage(inputMessage);
+    
+        iRet=remoteService->remoteCall();
+        ULOG("iRet(%d)", iRet);
+    
+        if(iRet != TUXFWRET_OK)
+            throw new TuxBasicSvcException(NRO_ERR_COMM_HS, "Erro invocando remoteCall");
+    
+        char* ret = remoteService->getOutputMessage()->getMessageBody();
+        ULOG("ret[%s]", ret);
+    
+        fullRet = (char*) malloc(strlen(ret) + 100);
+        if(fullRet == NULL) {
+            throw new TuxBasicSvcException(NRO_ERR_COMM_HS, "Erro alocando memoria...");
+        }
+        sprintf(fullRet, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>%s", ret);
+    
+        pParser = new XercesDOMParser;
+        pMemBuf = new MemBufInputSource((const XMLByte*)fullRet, strlen(fullRet), pMemBufId);
+        
+        pParser->parse(*pMemBuf);
+        pDoc = pParser->getDocument();
+    
+        xml_g->createTag(XML_OUT_ROOT);
+        xml_g->addProp("xmlns", XML_OUT_PROP);
+    
+        int iCont=0;
+        while(true)
+        {
+            ULOG("iCont(%d)", iCont);
+    
+            if((pRetXML = walkTree(pDoc, "descricao", iCont)) == NULL) 
+                break;
+    
+            ULOG("descricao[%s]", pRetXML);
+            xml_g->createTag(XML_OUT_NO_SERVICOS);
+            xml_g->addItem("dsServico", pRetXML);
+            clPacote.ListId(pRetXML, "1");
+            clPacote.getXmlBasico("Facilidades", xml_g);
+            XMLString::release(&pRetXML);
+    
+            pRetXML = walkTree(pDoc, "validadeInicial", iCont);
+            ULOG("validadeInicial[%s]", ( pRetXML ? pRetXML : "" ) );
+            xml_g->addItem("dtVigencia", ( pRetXML ? pRetXML : "" ) );
+            XMLString::release(&pRetXML);
+        
+            pRetXML = walkTree(pDoc, "validade", iCont);
+            ULOG("validade[%s]", ( pRetXML ? pRetXML : "" ) );
+            xml_g->addItem("dtExpiracao", ( pRetXML ? pRetXML : "" ) );
+            XMLString::release(&pRetXML);
+    
+            xml_g->closeTag();
+            iCont++;
+        }
+    
+        xml_g->closeTag();
+    }
+    catch(...)
+    {
+        ULOG("Exception!");
+
+        if(remoteService) delete remoteService;
+        if(inputMessage) delete inputMessage;
+        if(pParser) delete pParser;
+        if(pMemBuf) delete pMemBuf;
+        if(fullRet) free(fullRet);
+
+        ULOG_END("implHISTORICOSERV::Execute");
+        throw;
+    }
+
+    ULOG("saida normal");
+    if(remoteService) delete remoteService;
+    if(inputMessage) delete inputMessage;
+    if(pParser) delete pParser;
+    if(pMemBuf) delete pMemBuf;
+    if(fullRet) free(fullRet);
+
+    ULOG_END( "implHISTORICOSERV::Execute()" );
+
+    INFORMATION(NRO_OK);
+    setStatusCode(sNrMsg, MSG_OK);
+}

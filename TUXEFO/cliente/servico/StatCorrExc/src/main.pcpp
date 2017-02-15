@@ -1,0 +1,64 @@
+/*
+ * Serviço de cadastro básico de status de correspondencia
+ * Versão inicial, 24/05/2004
+ */
+
+//EXEC SQL INCLUDE SQLCA;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/StatusCorrespondencia.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/StatusUnidade.h";
+
+#include "../include/StatusCorrespondenciaExclui.h"
+
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include <tuxfw.h>
+
+DECLARE_TUXEDO_SERVICE(StatCorrExc);
+
+void implStatCorrExc::Execute(DOMNode* dnode, XMLGen* xml_g) {
+
+	CStatusCorrespondencia oStatCorr;
+	char* pcIdStatCorr;
+	int iIdStatCorr;
+
+    ULOG_START( "implStatCorrExc::Execute()" );
+	// Navega o XML e recupera as informacoes obrigatorias
+	pcIdStatCorr = walkTree(dnode, XML_IN_ID_TIPO, 0);
+	if (pcIdStatCorr == NULL) {
+		ERROR(NRO_STAT_CORR_ID_NE);
+		TAG_INEXISTENTE(XML_IN_ID_TIPO);
+		throw new TuxBasicSvcException(sNrMsg, sMsg);
+	}
+	if (!*pcIdStatCorr) {
+		ERROR(NRO_STAT_CORR_ID_VV);
+		TAG_VALOR_VAZIO(XML_IN_ID_TIPO);
+        XMLString::release(&pcIdStatCorr);
+		throw new TuxBasicSvcException(sNrMsg, sMsg);
+	}
+	if ((iIdStatCorr = atoi(pcIdStatCorr)) <= 0) {
+		ERROR(NRO_STAT_CORR_ID_VI);
+		TAG_VALOR_INVALIDO(XML_IN_ID_TIPO);
+        XMLString::release(&pcIdStatCorr);
+		throw new TuxBasicSvcException(sNrMsg, sMsg);
+	}
+	
+	// Monta o objeto de StatusCorrespondencia
+	oStatCorr.setIdStatusCorrespondencia(iIdStatCorr);
+
+    XMLString::release(&pcIdStatCorr);
+
+	// Exclui todas os StatusUnidade antes de excluir o status
+	CStatusUnidade::excluiPorStatus(oStatCorr.getIdStatusCorrespondencia());
+
+	// Remove o objeto do banco de dados
+	if (oStatCorr.checaExclusaoPossivel())
+		xml_g->addItem(XML_OUT_MENSAGEM, XML_VAL_REMOCAO_NOK);
+	else
+		oStatCorr.exclui();
+
+    ULOG_END( "implStatCorrExc::Execute()" );
+	// Execução OK.
+	INFORMATION(NRO_OK);
+	setStatusCode(sNrMsg, MSG_OK);
+}
+

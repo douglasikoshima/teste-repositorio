@@ -1,0 +1,250 @@
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/cMotivosAssoc.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/SmallString.h"
+#include "../../../commons/msgPadrao.h"
+
+// Prototipos
+void SqlError( sqlca * sqlca );
+
+
+/*---------------------------------------------------------*/
+
+bool proCListaNaoAssociados( const unsigned long idMotivoPrm, XMLGen * Saida  )
+{
+
+    ULOG_START("proCListaNaoAssociados()");
+    struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idMotivo = idMotivoPrm;
+        unsigned long idTabelaMotivo;
+        VARCHAR       dsTabelaMotivo[257];
+
+        short        i_dsTabelaMotivo;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ConsultaNaoAssociados CURSOR FOR 
+		select
+		   a.idTabelaMotivo,
+		   a.dsTabelaMotivo
+		from
+		   Atendimento.TabelaMotivo   a
+		where
+           a.dsTabelaMotivo is not null
+		and   
+		   a.idTabelaMotivo > 0
+        and
+           a.inVisivel = 1
+		and
+		   a.idTabelaMotivo
+		not in
+		(
+		   select
+			  b.idTabelaMotivo
+		   from
+			  Atendimento.MotivoTabelaMotivo b
+		   where
+			  b.idTabelaMotivo > 0
+           And
+              b.idMotivo = :idMotivo
+		)
+        ORDER BY
+            a.dsTabelaMotivo;
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+  
+
+    EXEC SQL OPEN ConsultaNaoAssociados;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaNaoAssociados INTO 
+                                :idTabelaMotivo,
+                                :dsTabelaMotivo:i_dsTabelaMotivo;
+
+        CONVIND( dsTabelaMotivo,i_dsTabelaMotivo );
+
+        Saida->createTag( "WFAcaoVO" );
+           Saida->addItem( "idAtividade",idTabelaMotivo );
+           Saida->addItem( "dsAtividade",(char*)dsTabelaMotivo.arr );
+        Saida->closeTag();
+
+    }
+    
+    EXEC SQL CLOSE ConsultaNaoAssociados;
+
+    ULOG_END("proCListaNaoAssociados()");
+
+    return 0;
+}
+
+
+
+
+bool proCListaAssociados( const unsigned long idMotivoPrm, XMLGen * Saida  )
+{
+    ULOG_START("proCListaAssociados()");
+    struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idMotivo = idMotivoPrm;
+        unsigned long idTabelaMotivo;
+        VARCHAR       dsTabelaMotivo[257];
+
+        short        i_dsTabelaMotivo;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ConsultaAssociados CURSOR FOR 
+		select
+		   a.idTabelaMotivo,
+		   a.dsTabelaMotivo
+		from
+		   Atendimento.TabelaMotivo   a
+		where
+           a.dsTabelaMotivo is not null
+		and   
+		   a.idTabelaMotivo > 0
+        and
+           a.inVisivel = 1
+		and
+		   a.idTabelaMotivo
+		in
+		(
+		   select
+			  b.idTabelaMotivo
+		   from
+			  Atendimento.MotivoTabelaMotivo b
+		   where
+			  b.idTabelaMotivo > 0
+           And
+              b.idMotivo = :idMotivo
+		)
+        ORDER BY
+            a.dsTabelaMotivo;
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+ 
+
+    EXEC SQL OPEN ConsultaAssociados;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaAssociados INTO 
+                                :idTabelaMotivo,
+                                :dsTabelaMotivo:i_dsTabelaMotivo;
+
+        CONVIND( dsTabelaMotivo,i_dsTabelaMotivo );
+
+        Saida->createTag( "WFAcaoVO" );
+           Saida->addItem( "idAtividade",idTabelaMotivo );
+           Saida->addItem( "dsAtividade",(char*)dsTabelaMotivo.arr );
+        Saida->closeTag();
+
+    }
+    
+    EXEC SQL CLOSE ConsultaAssociados;
+
+    ULOG_END("proCListaAssociados()");
+
+    return 0;
+}
+
+
+
+void proCOrganizaMotivo( unsigned long idMotivoPrm )
+{
+    ULOG_START("proCOrganizaMotivo()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idMotivo = idMotivoPrm;
+
+	EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL 
+        DELETE ATENDIMENTO.MOTIVOTABELAMOTIVO
+    WHERE
+        IDMOTIVO = :idMotivo;
+
+    ULOG_END("proCOrganizaMotivo()");
+
+}
+
+
+
+
+short proCAssociaAtividades
+( 
+    unsigned long idMotivoPrm, 
+    unsigned long idAtividadePrm  
+)
+{
+    ULOG_START("proCAssociaAtividades()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idMotivo    = idMotivoPrm;
+        unsigned long idAtividade = idAtividadePrm;
+
+	EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    
+	EXEC SQL 
+        INSERT INTO Atendimento.MotivoTabelaMotivo
+        (
+            idMotivoTabelaMotivo,
+            idMotivo,
+            idTabelaMotivo,
+            dtUltimaAlteracao,
+            idUsuarioAlteracao
+        )
+        VALUES
+        (
+            Atendimento.MotivoTabelaMotivoSQ.NextVal,
+            :idMotivo,
+            :idAtividade,
+            SYSDATE,
+            NULL
+        );
+
+    ULOG_START("proCAssociaAtividades()");
+
+    return 0;
+
+}
+
+
+
+
+void SqlError( sqlca * sqlca )
+{
+    ULOGE("SqlError -> sqlcode=%d,sqlerrmc=%.70s",sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc);
+	throw new 
+        TuxBasicOraException(
+            sqlca->sqlcode,
+            sqlca->sqlerrm.sqlerrmc,
+            sqlca->sqlerrm.sqlerrml
+            );
+}

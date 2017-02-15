@@ -1,0 +1,1115 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/msgPadrao.h"
+
+#include "../include/cWFAtendimentoGrupoAtual.h"
+#include "../include/stWFAtendimentoGrupoAtual.h"
+
+void sql_error_WFAtendimentoGrupoAtual(sqlca*sqlca);
+bool proCObtemWFAtdGrAtualAndamento(long sIdAtendimento,XMLGen *saida,int *idGrupoAtual,char *nmGrupoAtual);
+
+    // Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+        #include "../include/stWFAtendimentoGrupoAtual.h"
+    EXEC SQL END DECLARE SECTION;
+
+long proCIncluirWFAtendimentoGrupoAtual(st_AtendimentoGrupoAtual* dados, st_vlAtendimentoGrupoAtual* status, XMLDPR *xmlDpr)
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtendimentoGrupoAtual *oDados = dados;
+        struct st_vlAtendimentoGrupoAtual *oStatus = status;
+        int contador;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // Tipo do grupo sendo inserido
+    // EXEC SQL
+    //     SELECT
+    //         DECODE(TIPOGRUPO.CDTIPOGRUPO,'CRI',1,0)
+    //     INTO
+    //         :oDados->inCri
+    //     FROM
+    //         ACESSO.GRUPO GRUPO
+    //        ,APOIO.TIPOGRUPO TIPOGRUPO
+    //     WHERE
+    //         GRUPO.IDGRUPO = :oDados->idGrupo
+    //     AND GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO;
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL 
+    //     INSERT INTO
+    //         ATENDIMENTO.ATENDIMENTOGRUPOATUAL
+    //         (
+    //             IDATENDIMENTO,
+    //             IDGRUPO,
+    //             INCRI,
+    //             DTENTRADABKO,
+    //             DTENTRADAFILA,
+    //             IDUSUARIOALTERACAO,
+    //             DTULTIMAALTERACAO
+    //         )
+    //         VALUES
+    //         (
+    //             :oDados->idAtendimento,
+    //             :oDados->idGrupo,
+    //             :oDados->inCri,
+    //             TO_DATE(:oDados->dtEntradaBKO,'DD/MM/YYYY HH24:MI:SS'),
+    //             TO_DATE(:oDados->dtEntradaFila,'DD/MM/YYYY HH24:MI:SS'),
+    //             DECODE(:oStatus->idUsuarioAlteracao, -1, NULL, :oDados->idUsuarioAlteracao),
+    //             SYSDATE
+    //         );
+
+    // ==> Remodelagem de ATENDIMENTO.ATENDIMENTO - Fev/2007 - Cassio
+    // Versão piloto. Nesta versão devido a data de entrega muito próxima
+    // estou apenas atualizando os campos novos que foram desnormalizados
+    // junto com as tabelas respectivas para em uma segunda versão, com mais
+    // tempo poder criar métodos especificos e mais rápidos para a atualização
+    // destes campos em objetos respectivos às tabelas sendo atualizadas.
+    ULOG("vai atualizar ATENDIMENTO.ATENDIMENTO...");
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTO
+        SET
+            IDGRUPOATUAL = :oDados->idGrupo,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE
+            IDATENDIMENTO = :oDados->idAtendimento;
+
+    EXEC SQL
+        SELECT
+            COUNT(1)
+        INTO
+            :contador
+        FROM
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+        WHERE
+            IDATENDIMENTO = :oDados->idAtendimento;
+
+    if ( contador )
+    {
+        ULOG("vai atualizar ATENDIMENTO.ATENDIMENTOPRIORIZACAO...");
+        EXEC SQL
+            UPDATE
+                ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+            SET
+                IDGRUPOATUAL = :oDados->idGrupo,
+                DTULTIMAALTERACAO = SYSDATE
+            WHERE
+                IDATENDIMENTO = :oDados->idAtendimento;
+    }
+    else
+    {
+        ULOG("processo fechado ATENDIMENTO.ATENDIMENTOPRIORIZACAO não atualizado");
+    }
+    // <== Remodelagem de ATENDIMENTO.ATENDIMENTO - Fev/2007 - Cassio
+
+    // ==> SM324--DPR--DEZ/2006--Cassio
+    if ( xmlDpr )
+    {
+        AtendimentoGrupoAtualDPR atendimentogrupoatualdpr;
+
+        atendimentogrupoatualdpr.setIdAtendimento(oDados->idAtendimento);
+        atendimentogrupoatualdpr.setIdGrupo(oDados->idGrupo);
+        atendimentogrupoatualdpr.setOpCode(OPCODE_INSERT);
+
+        xmlDpr->atendimentogrupoatualvo.inserir(&atendimentogrupoatualdpr);
+    }
+    // <== SM324--DPR--DEZ/2006--Cassio
+
+    return oDados->idAtendimento;
+}
+
+long proCIncluirWFAtendimentoGrupoBko(st_AtendimentoGrupoAtual* dados, st_vlAtendimentoGrupoAtual* status)
+{
+    ULOG_START( "proCIncluirWFAtendimentoGrupoBko()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtendimentoGrupoAtual   *oDados = dados;
+        struct st_vlAtendimentoGrupoAtual *oStatus = status;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+
+    EXEC SQL 
+        INSERT INTO
+            atendimento.AtendimentoGrupoBko
+            (
+                idAtendimento,
+                idGrupo,
+                dtEntrada,
+                dtSaida,
+                qtIntercambio,
+                dtEntradaBKO,
+                dtEntradaFila,
+                idUsuarioAlteracao,
+                dtUltimaAlteracao
+            )
+            VALUES
+            (
+                :oDados->idAtendimento,
+                :oDados->idGrupo,
+                SYSDATE,
+                TO_DATE(DECODE(:oStatus->dtSaida, -1, NULL, TO_CHAR(:oStatus->dtSaida, 'DD/MM/YYYY HH24:MI:SS')),'DD/MM/YYYY HH24:MI:SS'),
+                DECODE(:oStatus->qtIntercambios, -1, 0, :oDados->qtIntercambios),
+                TO_DATE(:oDados->dtEntradaBKO,'DD/MM/YYYY HH24:MI:SS'),
+                TO_DATE(:oDados->dtEntradaFila,'DD/MM/YYYY HH24:MI:SS'),
+                DECODE(:oStatus->idUsuarioAlteracao, -1, NULL, :oDados->idUsuarioAlteracao),
+                SYSDATE
+            );
+
+    ULOG_END( "proCIncluirWFAtendimentoGrupoBko()" );
+
+    return oDados->idAtendimento;
+}
+
+bool proCAlterarWFAtendimentoGrupoAtual(st_AtendimentoGrupoAtual* dados, st_vlAtendimentoGrupoAtual* status, XMLGen* saida, XMLDPR *xmlDpr)
+{
+    ULOG_START( "proCAlterarWFAtendimentoGrupoAtual()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtendimentoGrupoAtual   *oDados = dados;
+        struct st_vlAtendimentoGrupoAtual *oStatus = status;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // ULOG(
+    //    "UPDATE atendimento.AtendimentoGrupoAtual "
+    //       "SET INCRI=(SELECT DECODE(tipogrupo.cdtipogrupo,'CRI',1,0) "
+    //                    "FROM acesso.grupo grupo "
+    //                        ",apoio.tipogrupo tipogrupo "
+    //                   "WHERE grupo.idgrupo = %d "
+    //                     "AND grupo.idtipogrupo = tipogrupo.idtipogrupo) "
+    //          ",IDGRUPO=DECODE(%d,-1,IDGRUPO,%d) "
+    //          ",IDUSUARIOALTERACAO=DECODE(%d,-1,NULL,%d) "
+    //          ",DTENTRADABKO=DECODE(%d,-1,DTENTRADABKO,TO_DATE('%s','DD/MM/YYYY HH24:MI:SS')) "
+    //          ",DTENTRADAFILA=DECODE(%d,-1,DTENTRADAFILA,TO_DATE('%s','DD/MM/YYYY HH24:MI:SS')) "
+    //          ",DTULTIMAALTERACAO=DECODE(%d,-1,SYSDATE,TO_DATE('%s','DD/MM/YYYY HH24:MI:SS')) "
+    //      "WHERE IDATENDIMENTO = %d"
+    //      ,oDados->idGrupo
+    //      ,oStatus->idGrupo
+    //      ,oDados->idGrupo
+    //      ,oStatus->idUsuarioAlteracao
+    //      ,oDados->idUsuarioAlteracao
+    //      ,oStatus->dtEntradaBKO
+    //      ,oDados->dtEntradaBKO
+    //      ,oStatus->dtEntradaFila
+    //      ,oDados->dtEntradaFila
+    //      ,oStatus->dtUltimaAlteracao
+    //      ,oDados->dtUltimaAlteracao
+    //      ,oDados->idAtendimento);
+
+    // EXEC SQL
+    //     UPDATE atendimento.AtendimentoGrupoAtual
+    //        SET INCRI=(SELECT DECODE(tipogrupo.cdtipogrupo,'CRI',1,0)
+    //                     FROM acesso.grupo grupo
+    //                         ,apoio.tipogrupo tipogrupo
+    //                    WHERE grupo.idgrupo = :oDados->idGrupo
+    //                      AND grupo.idtipogrupo = tipogrupo.idtipogrupo)
+    //           ,IDGRUPO=DECODE(:oStatus->idGrupo,-1,IDGRUPO,:oDados->idGrupo)  
+    //           ,IDUSUARIOALTERACAO=DECODE(:oStatus->idUsuarioAlteracao,-1,NULL,:oDados->idUsuarioAlteracao)
+    //           ,DTENTRADABKO=DECODE(:oStatus->dtEntradaBKO,-1,DTENTRADABKO,TO_DATE(:oDados->dtEntradaBKO,'DD/MM/YYYY HH24:MI:SS'))
+    //           ,DTENTRADAFILA=DECODE(:oStatus->dtEntradaFila,-1,DTENTRADAFILA,TO_DATE(:oDados->dtEntradaFila,'DD/MM/YYYY HH24:MI:SS'))
+    //           ,DTULTIMAALTERACAO=DECODE(:oStatus->dtUltimaAlteracao,-1,SYSDATE,TO_DATE(:oDados->dtUltimaAlteracao,'DD/MM/YYYY HH24:MI:SS'))
+    //      WHERE IDATENDIMENTO = :oDados->idAtendimento;
+
+    // ==> Remodelagem de ATENDIMENTO.ATENDIMENTO - Fev/2007 - Cassio
+    // Versão piloto. Nesta versão devido a data de entrega muito próxima
+    // estou apenas atualizando os campos novos que foram desnormalizados
+    // junto com as tabelas respectivas para em uma segunda versão, com mais
+    // tempo poder criar métodos especificos e mais rápidos para a atualização
+    // destes campos em objetos respectivos às tabelas sendo atualizadas.
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTO
+        SET
+            IDGRUPOATUAL = :oDados->idGrupo,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE
+            IDATENDIMENTO = :oDados->idAtendimento;
+
+    EXEC SQL
+        UPDATE
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+        SET
+            IDGRUPOATUAL = :oDados->idGrupo,
+            DTULTIMAALTERACAO = SYSDATE
+        WHERE
+            IDATENDIMENTO = :oDados->idAtendimento;
+    // <== Remodelagem de ATENDIMENTO.ATENDIMENTO - Fev/2007 - Cassio
+
+    // ==> SM324--DPR--DEZ/2006--Cassio
+    if ( xmlDpr )
+    {
+        AtendimentoGrupoAtualDPR atendimentogrupoatualdpr;
+
+        atendimentogrupoatualdpr.setIdAtendimento(oDados->idAtendimento);
+        atendimentogrupoatualdpr.setIdGrupo(oDados->idGrupo);
+        atendimentogrupoatualdpr.setOpCode(OPCODE_UPDATE);
+
+        xmlDpr->atendimentogrupoatualvo.inserir(&atendimentogrupoatualdpr);
+    }
+    // <== SM324--DPR--DEZ/2006--Cassio
+
+    ULOG_END( "proCAlterarWFAtendimentoGrupoAtual()" );
+
+    return true;
+}
+//
+// ============================================================================================
+// Desativei esta versão por 2 motivos: Primeiro que devido a constante movimentação de dados
+// em memória esta versão é mais lenta do que a versão acima, segundo o campo INCRI não estava
+// sendo atualizado corretamente pelos serviços, ocasionando problemas, e a versão acima tomou
+// a responsabilidade de atualizar este campo para ela.
+//
+// Março 2006, Cassio
+// ============================================================================================
+//
+// bool proCAlterarWFAtendimentoGrupoAtual(st_AtendimentoGrupoAtual* dados, st_vlAtendimentoGrupoAtual* status, XMLGen* saida)
+// {
+// 
+//  struct sqlca sqlca;
+// 
+//     EXEC SQL BEGIN DECLARE SECTION;
+// 
+//      struct st_AtendimentoGrupoAtual   oDados;
+//      struct st_vlAtendimentoGrupoAtual oStatus;
+// 
+//      char query[800] = "UPDATE atendimento.AtendimentoGrupoAtual SET ";
+// 
+//     EXEC SQL END DECLARE SECTION;
+// 
+//     EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+// 
+//  memcpy(&oDados,  dados,  sizeof(oDados));
+//  memcpy(&oStatus, status, sizeof(oStatus));
+// 
+//  bool separa = false;
+// 
+//  if (status->idGrupo != -1) 
+//      montaUpdate("idGrupo", oDados.idGrupo,TIPO_INT);
+// 
+//  if (status->inCri != -1) 
+//      montaUpdate("inCRI", !!(oDados.inCri), TIPO_INT);
+// 
+//     /*
+//  if (status->inCri != -1) 
+//  {
+//      if(oDados.inCri > 1)
+//          montaUpdate("inCRI", 1, TIPO_INT);
+//      else if(oDados.inCri < 0)
+//          montaUpdate("inCRI", 0, TIPO_INT);
+//      else if(oDados.inCri == 1 || oDados.inCri == 0) 
+//          montaUpdate("inCRI", oDados.inCri, TIPO_INT);
+//  }
+//     */
+// 
+//  if (status->idUsuarioAlteracao != -1) 
+//      montaUpdate("idUsuarioAlteracao", oDados.idUsuarioAlteracao, TIPO_INT);
+// 
+//  if (status->dtEntradaBKO != -1) 
+//      montaUpdate("dtEntradaBKO", oDados.dtEntradaBKO, TIPO_DATAHORA);
+// 
+//  if (status->dtEntradaFila != -1) 
+//      montaUpdate("dtEntradaFila", oDados.dtEntradaFila, TIPO_DATAHORA);
+// 
+//  if (status->dtUltimaAlteracao != -1) 
+//      montaUpdate("dtUltimaAlteracao", oDados.dtUltimaAlteracao, TIPO_DATAHORA);
+// 
+//  sprintf(query, "%s WHERE idAtendimento = %i", query, dados->idAtendimento);
+// 
+//  EXEC SQL EXECUTE IMMEDIATE :query;
+// 
+//  return true;
+// }
+
+bool proCAlterarWFAtendimentoGrupoBko(st_AtendimentoGrupoAtual* dados, st_vlAtendimentoGrupoAtual* status, XMLGen* saida)
+{
+    ULOG_START( "proCAlterarWFAtendimentoGrupoBko()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct st_AtendimentoGrupoAtual   oDados;
+        struct st_vlAtendimentoGrupoAtual oStatus;
+
+        char query[800] = "UPDATE atendimento.AtendimentoGrupoBko SET ";
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+
+    memcpy(&oDados,  dados,  sizeof(oDados));
+    memcpy(&oStatus, status, sizeof(oStatus));
+
+    bool separa = false;
+
+    if (status->idGrupo != -1) 
+        montaUpdate("idGrupo", oDados.idGrupo, TIPO_INT);
+
+    //if (status->inAssociado != -1) 
+    //    montaUpdate("inAssociado", oDados.inAssociado, TIPO_INT);
+
+    if (status->dtEntradaFila != -1) 
+        montaUpdate("dtEntrada", oDados.dtEntradaFila, TIPO_DATAHORA);
+
+    if (status->dtSaida != -1) 
+        montaUpdate("dtSaida", oDados.dtSaida, TIPO_DATAHORA);
+
+    if (status->qtIntercambios != -1) 
+        montaUpdate("qtIntercambio", oDados.qtIntercambios, TIPO_INT);
+
+    sprintf(query, "%s WHERE idAtendimento = %ld", query, dados->idAtendimento);
+
+    ULOG("QUERY = [%s]",query);
+
+
+    EXEC SQL EXECUTE IMMEDIATE :query;
+
+    ULOG_END( "proCAlterarWFAtendimentoGrupoBko()" );
+
+    return true;
+}
+
+bool proCAtualizaEntradaFila(int chamadaTelefonica, XMLGen* saida)
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int chamadatelefonica = chamadaTelefonica;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL 
+    //     UPDATE
+    //         atendimento.AtendimentoGrupoAtual
+    //     SET
+    //         dtEntradaFila = SYSDATE
+    //     WHERE
+    //         idAtendimento IN (
+    //                             select 
+    //                                 idAtendimento 
+    //                             from 
+    //                                 atendimento.ChamadaAtendimento 
+    //                             where 
+    //                                 idChamadaTelefonica = :chamadatelefonica
+    //                         );
+    EXEC SQL 
+        UPDATE
+            atendimento.AtendimentoGrupoBKO
+        SET
+            dtEntradaFila = SYSDATE
+        WHERE
+            idAtendimento IN (
+                                select 
+                                    idAtendimento 
+                                from 
+                                    atendimento.ChamadaAtendimento 
+                                where 
+                                    idChamadaTelefonica = :chamadatelefonica
+                            );
+
+    return true;
+}
+
+bool proCExcluirWFAtendimentoGrupoAtual(st_AtendimentoGrupoAtual* dados, st_vlAtendimentoGrupoAtual* status, XMLGen* saida, XMLDPR *xmlDpr)
+{
+    ULOG_START( "proCExcluirWFAtendimentoGrupoAtual()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		VARCHAR idAtendimento[256];
+        //long idAtendimento = dados->idAtendimento;
+        int idUsuarioAlteracao = dados->idUsuarioAlteracao;
+        int idGrupo;
+        short i_idGrupo = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+	memset(&idAtendimento,0x0,sizeof(idAtendimento ));
+	ULOG("conteudo do idAtendimento");
+	ULOG("dados->idAtendimento=[%ld]",dados->idAtendimento);
+	sprintf((char *)idAtendimento.arr,"%ld", dados->idAtendimento);
+	idAtendimento.len = strlen((char*)idAtendimento.arr);
+	ULOG("(char *)idAtendimento.arr=[%s]",(char *)idAtendimento.arr);
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL
+    //     SELECT
+    //         IDGRUPO
+    //     INTO
+    //         :idGrupo:i_idGrupo
+    //     FROM
+    //         ATENDIMENTO.ATENDIMENTOGRUPOATUAL
+    //     WHERE
+    //         IDATENDIMENTO = :idAtendimento;
+    EXEC SQL
+        SELECT
+            IDGRUPOATUAL
+        INTO
+            :idGrupo:i_idGrupo
+        FROM
+            ATENDIMENTO.ATENDIMENTO
+        WHERE
+            IDATENDIMENTO = :idAtendimento;
+
+
+
+
+    ULOG( "idAtendimento = %s",(char*)idAtendimento.arr );
+    ULOG( "idGrupo = %d",idGrupo );
+
+    // EXEC SQL
+    //     DELETE
+    //         ATENDIMENTO.ATENDIMENTOGRUPOATUAL
+    //     WHERE
+    //         IDATENDIMENTO = :idAtendimento;
+
+    EXEC SQL
+        UPDATE 
+            ATENDIMENTO.ATENDIMENTO
+        SET 
+            IDGRUPOATUAL = NULL,
+            DTULTIMAALTERACAO = SYSDATE,
+            IDUSUARIOALTERACAO = :idUsuarioAlteracao
+        WHERE
+            IDATENDIMENTO = :idAtendimento;
+
+    EXEC SQL
+        UPDATE 
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+        SET 
+            IDGRUPOATUAL = NULL,
+            DTULTIMAALTERACAO = SYSDATE,
+            IDUSUARIOALTERACAO = :idUsuarioAlteracao
+        WHERE
+            IDATENDIMENTO = :idAtendimento;
+
+    // ==> SM324--DPR--DEZ/2006--Cassio
+    if ( xmlDpr )
+    {
+        AtendimentoGrupoAtualDPR atendimentogrupoatualdpr;
+
+        atendimentogrupoatualdpr.setIdAtendimento(dados->idAtendimento);
+        atendimentogrupoatualdpr.setIdGrupo(idGrupo);
+        atendimentogrupoatualdpr.setOpCode(OPCODE_DELETE);
+
+        xmlDpr->atendimentogrupoatualvo.inserir(&atendimentogrupoatualdpr);
+    }
+    // <== SM324--DPR--DEZ/2006--Cassio
+
+    ULOG_END( "proCExcluirWFAtendimentoGrupoAtual()" );
+
+    return true;
+}
+
+
+bool proCExcluirLogWFAtendimentoGrupoAtual(st_AtendimentoGrupoAtual* dados, st_vlAtendimentoGrupoAtual* status, XMLGen* saida)
+{
+    ULOG_START( "proCExcluirLogWFAtendimentoGrupoAtual()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR idAtendimento[256];
+        //long idAtendimento = dados->idAtendimento;
+        int idUsuarioAlteracao = dados->idUsuarioAlteracao;
+
+    EXEC SQL END DECLARE SECTION;
+
+	memset(&idAtendimento,0x0,sizeof(idAtendimento ));  
+	
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+
+	ULOG("conteudo do idAtendimento");
+	ULOG("dados->idAtendimento=[%ld]",dados->idAtendimento);
+	sprintf((char *)idAtendimento.arr,"%ld", dados->idAtendimento);
+	idAtendimento.len = strlen((char *)idAtendimento.arr);
+	ULOG("(char *)idAtendimento.arr=[%s]",(char *)idAtendimento.arr);
+	
+
+    // Procedimento feito para resolver o problema de ainda existir uma ação
+    // do SSKlunk que faz a exclusão de processos a partir da tela inicial
+    // Esta ação faz exclusão de processos mesmo que os mesmos não estejam fechados
+    // e neste caso a exclusão deve ser lógica.
+    // Fev/2006 - Cassio
+    //
+    //EXEC SQL 
+    //    DELETE
+    //        atendimento.AtendimentoGrupoAtual
+    //    WHERE
+    //        idAtendimento = :idAtendimento;
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL 
+    //     UPDATE
+    //         atendimento.AtendimentoGrupoAtual
+    //     SET
+    //         dtExclusao = SYSDATE
+    //     WHERE
+    //         idAtendimento = :idAtendimento;
+
+    EXEC SQL
+        UPDATE 
+            ATENDIMENTO.ATENDIMENTO
+        SET 
+            IDGRUPOATUAL = NULL,
+            DTULTIMAALTERACAO = SYSDATE,
+            IDUSUARIOALTERACAO = NULL //idUsuarioAlteracao
+        WHERE
+            IDATENDIMENTO = :idAtendimento;
+
+    EXEC SQL
+        UPDATE 
+            ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+        SET 
+            IDGRUPOATUAL = NULL,
+            DTULTIMAALTERACAO = SYSDATE,
+            IDUSUARIOALTERACAO = NULL //idUsuarioAlteracao
+        WHERE
+            IDATENDIMENTO = :idAtendimento;
+
+    ULOG_END( "proCExcluirLogWFAtendimentoGrupoAtual()" );
+
+    return true;
+}
+
+bool proCExcluirWFAtendimentoGrupoBko(st_AtendimentoGrupoAtual* dados, st_vlAtendimentoGrupoAtual* status, XMLGen* saida)
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR idAtendimento[256];
+        //long idAtendimento = dados->idAtendimento;
+
+    EXEC SQL END DECLARE SECTION;
+	
+	memset(&idAtendimento,0x0,sizeof(idAtendimento ));  
+	
+	ULOG("conteudo do idAtendimento");
+	ULOG("dados->idAtendimento=[%ld]",dados->idAtendimento);
+	sprintf((char *)idAtendimento.arr,"%ld", dados->idAtendimento);
+	idAtendimento.len = strlen((char *)idAtendimento.arr);
+	ULOG("(char *)idAtendimento.arr=[%s]",(char *)idAtendimento.arr);
+
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+
+    EXEC SQL 
+        DELETE
+            atendimento.AtendimentoGrupoBko
+        WHERE
+            idAtendimento = :idAtendimento;
+
+    return true;
+}
+
+bool proCObtemWFAtdGrBko(long sIdAtendimento, XMLGen* saida)
+{
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION; 
+
+		VARCHAR idAtendimento[256];
+        //long idAtendimento = sIdAtendimento;
+        int  qtIntercambios;
+        int idGrupo;
+        
+        short i_qtIntercambios = -1;
+        short i_idGrupo = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+	memset(&idAtendimento,0x0,sizeof(idAtendimento ));  
+
+	
+	ULOG("conteudo do idAtendimento");
+	ULOG("sIdAtendimento=[%ld]",sIdAtendimento);
+	sprintf((char *)idAtendimento.arr,"%ld", sIdAtendimento);
+	idAtendimento.len = strlen((char *)idAtendimento.arr);
+	ULOG("(char *)idAtendimento.arr=[%s]",(char *)idAtendimento.arr);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+
+    EXEC SQL 
+    SELECT 
+        QTINTERCAMBIO,
+        IDGRUPO
+    INTO
+        :qtIntercambios:i_qtIntercambios,
+        :idGrupo:i_idGrupo
+    FROM 
+        atendimento.AtendimentoGrupoBKO
+    WHERE 
+        idAtendimento = :idAtendimento;
+    
+    if (i_qtIntercambios != -1)
+    {
+        saida->createTag("AtdGrupoVO");
+            saida->addItem("qtIntercambios", qtIntercambios);
+            saida->addItem("idGrupo", idGrupo);
+        saida->closeTag();
+
+    }
+
+    return true;
+}
+
+bool proCConsultaWFAtendimentoGrupoAtual(st_AtendimentoGrupoAtual* dados, st_vlAtendimentoGrupoAtual* status, char* order, XMLGen* saida)
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR idAtendimento[256];
+        int idGrupo;
+        VARCHAR dtEntradaBKO[256];
+        VARCHAR dtEntradaFila[256];
+        int idUsuarioAlteracao;
+        VARCHAR dtUltimaAlteracao[256];
+
+        short i_idUsuarioAlteracao;
+        short i_dtEntradaBKO;
+        short i_dtEntradaFila;
+        short i_dtUltimaAlteracao;
+
+        // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+        // char query[800] = 
+        //      "SELECT idAtendimento,idGrupo,"
+        //             "idUsuarioAlteracao,"
+        //             "TO_CHAR(dtUltimaAlteracao,'DD/MM/YYYY HH24:MI'),"
+        //             "TO_CHAR(dtEntradaBko, 'DD/MM/YYYY HH24:MI'),"
+        //             "TO_CHAR(dtEntradaFila, 'DD/MM/YYYY HH24:MI') "
+        //             "FROM atendimento.AtendimentoGrupoAtual";
+
+        char query[800] = 
+           "SELECT ATENDIMENTO.IDATENDIMENTO,"
+                  "ATENDIMENTO.IDGRUPOATUAL AS IDGRUPO,"
+                  "ATENDIMENTOGRUPOBKO.IDUSUARIOALTERACAO,"
+                  "TO_CHAR(ATENDIMENTOGRUPOBKO.DTULTIMAALTERACAO,'DD/MM/YYYY HH24:MI') AS DTULTIMAALTERACAO,"
+                  "TO_CHAR(ATENDIMENTOGRUPOBKO.DTENTRADABKO,'DD/MM/YYYY HH24:MI') AS DTENTRADABKO,"
+                  "TO_CHAR(ATENDIMENTOGRUPOBKO.DTENTRADAFILA,'DD/MM/YYYY HH24:MI') AS DTENTRADAFILA "
+           "FROM ATENDIMENTO.ATENDIMENTO ATENDIMENTO,"
+                "ATENDIMENTO.ATENDIMENTOGRUPOBKO ATENDIMENTOGRUPOBKO "
+           "WHERE ATENDIMENTO.IDATENDIMENTO = ATENDIMENTOGRUPOBKO.IDATENDIMENTO(+) ";
+
+    EXEC SQL END DECLARE SECTION;
+
+	memset(&idAtendimento,0x0,sizeof(idAtendimento )); 
+	idAtendimento.len = strlen((char *)idAtendimento.arr);
+
+	
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+
+    bool separa = false;
+
+    if (status->idAtendimento != -1) 
+        montaWhere("ATENDIMENTO.IDATENDIMENTO", dados->idAtendimento, TIPO_ULONG);
+
+    if (status->idGrupo != -1)
+        montaWhere("ATENDIMENTO.IDGRUPOATUAL", dados->idGrupo, TIPO_INT);
+
+    if (status->dtEntradaBKO != -1) 
+        montaWhere("ATENDIMENTOGRUPOBKO.DTENTRADABKO", dados->dtEntradaBKO, TIPO_DATAHORA);
+
+    if (status->dtEntradaFila != -1) 
+        montaWhere("ATENDIMENTOGRUPOBKO.DTENTRADAFILA", dados->dtEntradaFila, TIPO_DATAHORA);
+
+    if (status->idUsuarioAlteracao != -1) 
+        montaWhere("ATENDIMENTOGRUPOBKO.IDUSUARIOALTERACAO", dados->idUsuarioAlteracao, TIPO_INT);
+
+    if (status->dtUltimaAlteracao != -1) 
+        montaWhere("ATENDIMENTOGRUPOBKO.DTULTIMAALTERACAO", dados->dtUltimaAlteracao, TIPO_DATAHORA);
+
+    if (strlen(order) > 0) 
+        sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+
+    EXEC SQL PREPARE consultaAtendimentoGrupoAtual FROM :query;
+    EXEC SQL DECLARE consulta CURSOR FOR consultaAtendimentoGrupoAtual;
+
+    EXEC SQL OPEN consulta;
+
+    while (true)
+    {
+        EXEC SQL FETCH consulta INTO 
+                                    :idAtendimento, 
+                                    :idGrupo,
+                                    :idUsuarioAlteracao:i_idUsuarioAlteracao,
+                                    :dtUltimaAlteracao:i_dtUltimaAlteracao,
+                                    :dtEntradaBKO:i_dtEntradaBKO,
+                                    :dtEntradaFila:i_dtEntradaFila;
+
+        CONVIND(dtUltimaAlteracao, i_dtUltimaAlteracao);
+        CONVIND(dtEntradaBKO,i_dtEntradaBKO);
+        CONVIND(dtEntradaFila,i_dtEntradaFila);
+
+        saida->createTag("WFAtendimentoGrupoAtualVO");
+            saida->addItem("idAtendimento", (char*)idAtendimento.arr);
+            saida->addItem("idGrupo", idGrupo);
+            saida->addItem("dtEntradaBKO", (char*)dtEntradaBKO.arr);
+            saida->addItem("dtEntradaFila", (char*)dtEntradaFila.arr);
+            saida->addItem("idUsuarioAlteracao", idUsuarioAlteracao);
+            saida->addItem("dtUltimaAlteracao", (char*)dtUltimaAlteracao.arr);
+        saida->closeTag();
+    }
+
+    EXEC SQL CLOSE consulta;
+
+    return true;
+
+}
+
+bool proCObtemWFAtdGrAtual(long sIdAtendimento,XMLGen *saida,int *idGrupoAtual,char *nmGrupoAtual)
+{
+    ULOG_START( "proCObtemWFAtdGrAtual()" );
+
+    struct sqlca sqlca;
+    bool retorno = false;
+    
+    EXEC SQL BEGIN DECLARE SECTION; 
+
+		VARCHAR idAtendimento[256];
+        //long idAtendimento = sIdAtendimento;
+        int  idGrupo;
+        int  inCri;
+        VARCHAR nmGrupo[256];
+        
+        short i_idGrupo=-1;
+        short i_inCri=-1;
+        short i_nmGrupo=-1;
+
+    EXEC SQL END DECLARE SECTION;
+
+	//memset((char*)idAtendimento.arr,0,256); idAtendimento.len = 256;
+	
+	memset(&idAtendimento,0x0,sizeof(idAtendimento )); 
+	
+	ULOG("conteudo do idAtendimento");
+	ULOG("sIdAtendimento=[%ld]",sIdAtendimento);
+	sprintf((char *)idAtendimento.arr,"%ld", sIdAtendimento);
+	idAtendimento.len = strlen((char *)idAtendimento.arr);
+	ULOG("(char *)idAtendimento.arr=[%s]",(char *)idAtendimento.arr);
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL 
+    //     SELECT 
+    //         G.IDGRUPO,
+    //         AGA.INCRI,
+    //         G.NMGRUPO
+    //       INTO
+    //         :idGrupo:i_idGrupo,
+    //         :inCri:i_inCri,
+    //         :nmGrupo:i_nmGrupo
+    //     FROM 
+    //         ACESSO.GRUPO G,
+    //         ATENDIMENTO.ATENDIMENTOGRUPOATUAL AGA
+    //     WHERE 
+    //           AGA.IDATENDIMENTO = :idAtendimento
+    //       AND AGA.IDGRUPO = G.IDGRUPO;
+
+    EXEC SQL
+        SELECT 
+            GRUPO.IDGRUPO,
+            DECODE(GRUPO.IDTIPOGRUPO,2,1,0) AS INCRI,
+            GRUPO.NMGRUPO
+        INTO
+            :idGrupo:i_idGrupo,
+            :inCri:i_inCri,
+            :nmGrupo:i_nmGrupo
+        FROM 
+            ACESSO.GRUPO GRUPO,
+            ATENDIMENTO.ATENDIMENTO ATENDIMENTO
+        WHERE 
+            ATENDIMENTO.IDATENDIMENTO = :idAtendimento
+        AND ATENDIMENTO.IDGRUPOATUAL = GRUPO.IDGRUPO;
+    
+    if ( 0 == sqlca.sqlcode && i_idGrupo != -1 )
+    {
+        ULOG( "idGrupoAtual=%d",idGrupo );
+
+        CONVIND(nmGrupo, i_nmGrupo);
+            
+        if ( saida )
+        {
+            saida->createTag("AtdGrupoVO");
+                saida->addItem("idGrupo",idGrupo);
+                saida->addItem("inCRI",inCri);
+                saida->addItem("nmGrupo",(char*)nmGrupo.arr);
+            saida->closeTag();
+        }
+
+        if ( idGrupoAtual )
+        {
+            *idGrupoAtual = idGrupo;
+        }
+
+        if ( nmGrupoAtual )
+        {
+            strcpy(nmGrupoAtual,(char*)nmGrupo.arr);
+        }
+
+        retorno = true;
+    }
+    else
+    {
+        // ===========================================================================================
+        // Incidência 3089
+        // ===========================================================================================
+        // Existe uma deleção de processo na tela inicial, aba atendimento, lado direito.
+        // Esta deleção se limita a apagar fisicamente o processo da tabela atendimentogrupoatual
+        // Para corrigir este problema foi implementado uma exclusao lógica. Mas para evitar problemas
+        // nos processos já apagados fisicamente, foi criada uma pesquisa que após verificar a tabela
+        // atendimentogrupoatual e não achar o processo, pega o último grupo da tabela andamento
+        //
+        retorno = proCObtemWFAtdGrAtualAndamento(sIdAtendimento,saida,idGrupoAtual,nmGrupoAtual);
+    }
+
+    ULOG_END( "proCObtemWFAtdGrAtual()" );
+
+    return retorno;
+}
+
+bool proCExisteWFAtdGrupoAtual(long sIdAtendimento)
+{
+    ULOG_START( "proCExisteWFAtdGrupoAtual()" );
+
+    EXEC SQL BEGIN DECLARE SECTION; 
+
+        long idAtendimento = sIdAtendimento;
+        int nRegistros = 0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG( "idAtendimento=%ld",idAtendimento );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    // ==> Remodelagem Atendimento--Fev/2007--Cassio 
+    // EXEC SQL 
+    //     SELECT 
+    //         COUNT(1)
+    //       INTO
+    //         :nRegistros
+    //     FROM 
+    //         ATENDIMENTO.ATENDIMENTOGRUPOATUAL AGA
+    //     WHERE 
+    //         AGA.IDATENDIMENTO = :idAtendimento;
+
+    nRegistros = 1; // esta operação é usada para decisão de INSERT/UPDATE, mas como o registro em
+                    // ATENDIMENTO.ATENDIMENTO, sempre vai existir, UPDATE é a função a ser usada.
+    ULOG( "nRegistros=%d",nRegistros );
+
+    ULOG_END( "proCExisteWFAtdGrupoAtual()" );
+
+    return nRegistros > 0 ? true : false;
+}
+
+
+bool proCExisteWFAtdGrupoAtualBKO(long sIdAtendimento)
+{
+    ULOG_START( "proCExisteWFAtdGrupoAtualBKO()" );
+   
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION; 
+
+        long idAtendimento = sIdAtendimento;
+        int nRegistros ;
+
+    EXEC SQL END DECLARE SECTION;
+
+    ULOG( "idAtendimento=%ld",idAtendimento );
+
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL 
+        SELECT 
+            COUNT(1)
+        INTO
+            :nRegistros
+        FROM 
+            ATENDIMENTO.ATENDIMENTOGRUPOBKO
+        WHERE 
+            IDATENDIMENTO = :idAtendimento;
+
+    ULOG( "nRegistros=%d",nRegistros );
+
+    ULOG_END( "proCExisteWFAtdGrupoAtualBKO()" );
+
+    return nRegistros > 0 ? true : false;
+}
+
+int proCObterWFAtdGrupoAtual(long sIdAtendimento)
+{
+    ULOG_START( "proCObterWFAtdGrupoAtual()" );
+
+    int idGrupo=0;
+    bool retorno = proCObtemWFAtdGrAtual(sIdAtendimento,0,&idGrupo,0);
+
+    ULOG_END( "proCObterWFAtdGrupoAtual()" );
+
+    return retorno ? idGrupo:0;
+}
+
+bool proCObtemWFAtdGrAtualAndamento(long sIdAtendimento,XMLGen *saida,int *idGrupoAtual,char *nmGrupoAtual)
+{
+    ULOG_START( "proCObtemWFAtdGrAtualAndamento()" );
+
+    struct sqlca sqlca;
+    bool retorno = false;
+    
+    EXEC SQL BEGIN DECLARE SECTION; 
+        //long idAtendimento = sIdAtendimento;
+		VARCHAR idAtendimento[256];
+        int  idGrupo = 0;
+        int  inCri = 0;
+        VARCHAR nmGrupo[256];
+        
+        short i_idGrupo = -1;
+        short i_inCri = -1;
+        short i_nmGrupo = -1;
+    EXEC SQL END DECLARE SECTION;
+
+	memset(&idAtendimento,0x0,sizeof(idAtendimento )); 	
+    ULOG( "sIdAtendimento[%ld]", sIdAtendimento );
+	sprintf((char *)idAtendimento.arr,"%ld", sIdAtendimento);
+	idAtendimento.len = strlen((char *)idAtendimento.arr);
+	ULOG("(char *)idAtendimento.arr=[%s]",(char *)idAtendimento.arr);
+    
+    EXEC SQL WHENEVER SQLERROR DO sql_error_WFAtendimentoGrupoAtual(&sqlca);
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    //Recupera o grupo e o nome
+    EXEC SQL 
+    SELECT
+        GRUPO.IDGRUPO, 
+        GRUPO.NMGRUPO
+    INTO
+        :idGrupo:i_idGrupo,
+        :nmGrupo:i_nmGrupo
+    FROM
+        ANDAMENTO.ANDAMENTO ANDA,
+        ACESSO.GRUPO GRUPO
+    WHERE
+        ANDA.IDGRUPO = GRUPO.IDGRUPO
+    AND
+        ANDA.DTANDAMENTO = 
+        (
+            SELECT 
+                MAX(ANDA2.DTANDAMENTO) 
+            FROM 
+                ANDAMENTO.ANDAMENTO ANDA2
+            WHERE 
+                ANDA2.IDATENDIMENTO = :idAtendimento
+        )
+	AND
+        ANDA.IDANDAMENTO = 
+        (
+            SELECT 
+                MAX(ANDA3.IDANDAMENTO) 
+            FROM 
+                ANDAMENTO.ANDAMENTO ANDA3
+            WHERE 
+                ANDA3.IDATENDIMENTO = :idAtendimento
+        )
+    AND
+        ANDA.IDATENDIMENTO = :idAtendimento
+    AND
+        ROWNUM < 2;
+    
+    if( i_idGrupo != -1 )
+    {
+        CONVIND(nmGrupo,i_nmGrupo);
+
+        ULOG( "idGrupo[%d]", idGrupo );
+        ULOG( "nmGrupo[%s]", (char*)nmGrupo.arr );
+
+        //Dado o grupo, verifica se eh ou nao CRI
+        EXEC SQL
+        SELECT
+            COUNT(1) AS INCRI
+        INTO
+            :inCri:i_inCri
+        FROM
+            ACESSO.GRUPO GRUPO
+        WHERE
+            GRUPO.IDGRUPO = :idGrupo
+        AND
+            GRUPO.IDTIPOGRUPO = ( SELECT TIPOGRUPO.IDTIPOGRUPO 
+                                    FROM APOIO.TIPOGRUPO TIPOGRUPO 
+                                   WHERE TIPOGRUPO.CDTIPOGRUPO = 'CRI' );
+
+        ULOG( "inCri[%d]", inCri );
+
+        if ( saida )
+        {
+            saida->createTag("AtdGrupoVO");
+                saida->addItem("idGrupo", idGrupo);
+                saida->addItem("inCRI", inCri);
+                saida->addItem("nmGrupo", (char*)nmGrupo.arr);
+            saida->closeTag();
+        }
+
+        if( idGrupoAtual )
+        {
+            *idGrupoAtual = idGrupo;
+        }
+
+        if( nmGrupoAtual )
+        {
+            strcpy(nmGrupoAtual,(char*)nmGrupo.arr);
+        }
+
+        retorno = true;
+    }
+
+    ULOG_END( "proCObtemWFAtdGrAtualAndamento()" );
+
+    return retorno;
+}
+
+void sql_error_WFAtendimentoGrupoAtual(sqlca*sqlca)
+{
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

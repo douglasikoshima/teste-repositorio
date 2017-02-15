@@ -1,0 +1,243 @@
+//
+// $Id: get_dethist.pcpp,v 1.1 2009/07/31 15:34:56 a5110702 Exp $
+//
+
+#include "../../negocio/fidutil/include/retencao.hpp"
+
+int get_dethist(int usuario, DOMNode*dnode, XMLGen*xml)
+{
+  char parm[255];
+  char buffer[255]="\0";
+  int existeReg = 1;
+  int existeOfer = 1;
+
+  EXEC SQL BEGIN DECLARE SECTION;
+  int     idRetencao;
+  VARCHAR dsIntencao[255];
+  VARCHAR dsDestino[255];
+  VARCHAR nmOferta[255];
+  VARCHAR dsComentario[512];
+  int     inOfertaAceita;
+  int     idOfertaRealizada;
+  int     idOfertaAceita=0;
+  VARCHAR	vlPropriedade[255];
+  VARCHAR	nmPropriedade[255];
+  int		idTipoEncerramento=-1;
+  VARCHAR dsPagamento[255];
+  int idPagamento = -1;   
+
+  EXEC SQL END DECLARE SECTION;
+  EXEC SQL WHENEVER SQLERROR DO sql_error(NULL);
+  EXEC SQL WHENEVER NOT FOUND DO break;
+
+  try{
+    //  Obtendo dados do xml
+    get_tag(parm,dnode,"idRetencao",0,0);
+    idRetencao = atoi(parm);
+
+    // Definicao dos cursores
+    EXEC SQL DECLARE crsOfrt CURSOR FOR
+	 SELECT  
+		ror.idOfertaRealizada,
+		ror.inOfertaAceita,
+		ro.nmOferta
+	  FROM    
+		retencao.retencao rr,
+		retencao.ofertaRealizada ror,
+		retencao.oferta ro,
+		questionario.resposta qr1,
+		questionario.resposta qr2
+	  WHERE   
+	  	ror.idOferta = ro.idUnidadeOferta
+	  AND     
+	  	qr1.idResposta = rr.idRespostaIntencao
+	  AND     
+	  	qr2.idResposta = rr.idRespostaDestino
+	  AND 	  
+	  	rr.idretencao=ror.IDRETENCAO
+	  and	  
+	  	rr.idretencao = :idRetencao;
+
+
+    EXEC SQL WHENEVER NOT FOUND DO cl_flag(&existeReg);
+    EXEC SQL 
+    
+	 	
+	SELECT b.dsresposta
+	into   :dsIntencao
+	FROM	retencao.retencao a,
+			questionario.resposta b
+	WHERE	a.idrespostaintencao=b.idresposta 
+	AND idretencao=:idRetencao;
+	
+	EXEC SQL 
+	SELECT b.dsresposta
+	into   :dsDestino
+	FROM retencao.retencao a,
+		 questionario.resposta b
+	WHERE a.idrespostadestino=b.idresposta 
+	AND idretencao=:idRetencao;
+
+    
+	EXEC SQL
+		SELECT nvl(dsobservacao,'Não Cadastrado'),
+			   idTipoEncerramento	
+		into :dsComentario,
+			 :idTipoEncerramento
+		FROM retencao.retencao
+		WHERE idRetencao=:idRetencao
+		and rownum<=1;
+	
+	
+	
+	if (existeReg)
+	{
+      endOraStr(dsIntencao);
+      endOraStr(dsDestino);
+	  endOraStr(dsComentario);
+		
+	  ULOG_VAR(dsIntencao);
+      ULOG_VAR(dsDestino);
+	  ULOG_VAR(dsComentario);
+
+      EXEC SQL OPEN crsOfrt;
+
+  
+      xml->addItem("intencao",(char *)dsIntencao.arr);
+
+      xml->addItem("destino",(char *)dsDestino.arr);
+	
+	  xml->createTag("tns:listaOfertaRealizadaVO");
+    for(;;) 
+		{
+			EXEC SQL WHENEVER NOT FOUND DO break;
+
+			EXEC SQL FETCH crsOfrt INTO :idOfertaRealizada,
+										:inOfertaAceita,
+										:nmOferta;
+	
+			endOraStr(nmOferta);
+			
+	
+			ULOG_INT(idOfertaRealizada);
+			ULOG_INT(inOfertaAceita);
+			ULOG_VAR(nmOferta);
+
+			ULOG_VAR(dsComentario);
+
+			if (!inOfertaAceita)
+				{
+					xml->createTag("tns:ofertaRealizadaVO");
+						xml->addItem("idDescricao",idOfertaRealizada);
+						xml->addItem("descricao",(char *)nmOferta.arr);
+					xml->closeTag();
+				}
+			else 
+				{
+					idOfertaAceita=idOfertaRealizada;
+					strcpy(buffer,(char *)nmOferta.arr);
+				}
+
+		}
+		
+	 xml->closeTag();
+
+
+	 xml->addItem("ofertaAceita",buffer);
+		
+		ULOG(buffer);		
+
+	 xml->addItem("comentario",(char *)dsComentario.arr);
+	 
+
+				//caracteristicas das ofertas
+				//identica ao detalhamento da oferta
+				// de exceção
+		if (idOfertaAceita || idTipoEncerramento==2)
+		{
+				EXEC SQL WHENEVER NOT FOUND DO break;
+				EXEC SQL DECLARE crsDetOfrt CURSOR FOR
+			
+				SELECT descricao,
+						valor
+				FROM RETENCAO.DETALHEHISTORICOV01
+				WHERE idretencao=:idRetencao;
+
+				EXEC SQL OPEN crsDetOfrt;
+
+				char buffer[32];                
+				memset( buffer,0x0,sizeof(buffer) );
+				xml->createTag("caractOfertasAceitas");
+					for(;;) 
+					{
+						  EXEC SQL FETCH crsDetOfrt INTO :nmPropriedade,
+													     :vlPropriedade;
+    
+						  endOraStr(nmPropriedade);
+						  endOraStr(vlPropriedade);
+						  ULOG_VAR(nmPropriedade);
+						  ULOG_VAR(vlPropriedade);
+
+						  xml->createTag("caracteristica");
+							  xml->addItem("nome",(char *)nmPropriedade.arr);
+							  xml->addItem("valor",(char *)vlPropriedade.arr);
+						  xml->closeTag();
+					  }
+			  
+				  EXEC SQL CLOSE crsDetOfrt;
+				  xml->closeTag();
+				}
+				else
+				{
+						xml->createTag("caractOfertasAceitas");
+						/*	xml->createTag("caracteristica");
+							 xml->addItem("nome","");
+							 xml->addItem("valor","");
+						  xml->closeTag();*/
+						xml->closeTag();
+
+				}
+    
+    
+	   }
+	else
+	{
+			
+			//Gerando a mesma estrutura
+			//com os campos nulos....
+		strcpy((char *)dsIntencao.arr," ");
+		strcpy((char *)dsDestino.arr," ");
+		strcpy((char *)nmOferta.arr," ");
+		strcpy((char *)dsComentario.arr," ");
+		idOfertaRealizada=0;
+
+
+	  xml->addItem("intencao",(char *)dsIntencao.arr);
+      xml->addItem("destino",(char *)dsDestino.arr);
+		xml->createTag("tns:listaOfertaRealizadaVO");
+			xml->createTag("tns:ofertaRealizadaVO");
+				xml->addItem("idDescricao",idOfertaRealizada);
+				xml->addItem("descricao",(char *)nmOferta.arr);
+			xml->closeTag();
+		xml->closeTag();
+		xml->addItem("ofertaAceita",buffer);
+		xml->addItem("comentario",(char *)dsComentario.arr);
+		xml->createTag("caractOfertasAceitas");
+					/*	xml->createTag("caracteristica");
+						 xml->addItem("nome","");
+						 xml->addItem("valor","");
+					  xml->closeTag();*/
+					xml->closeTag();
+		xml->closeTag();
+      xml->closeTag();
+	}
+	xml->closeTag();
+  }
+  catch(...)
+  {
+	throw;
+  }
+
+  return 1;
+}
+

@@ -1,0 +1,122 @@
+#include<stdio.h>
+#include<string.h>
+#include<iostream.h>
+#include <tuxfw.h>
+//#include "../../../negocio/commons/include/Commom.hpp"
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+short BuscaGrpAtd( char * dddPrm, char * nrLinhaPrm, XMLGen* xml_g );
+
+short BuscaGrpAtd( char * dddPrm, char * nrLinhaPrm, XMLGen* xml_g )
+{
+  ULOG_START("BuscaGrpAtd()");
+  
+  INITIALIZE_SQL;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+    char * ddd = dddPrm;
+    char * nrLinha = nrLinhaPrm;
+    
+    VARCHAR idClassificacao[256];
+    short   i_idClassificacao = -1;
+    VARCHAR vdn[256];
+    short   i_vdn = -1;
+    VARCHAR cdAdabas[256];
+    short   i_cdAdabas = -1;
+  EXEC SQL END DECLARE SECTION;
+
+  memset( &cdAdabas, 0x0, sizeof(cdAdabas) );
+  memset( &idClassificacao, 0x0, sizeof(idClassificacao) );
+  memset( &vdn, 0x0, sizeof(vdn) );
+  
+  tuxfw_getlogger()->information( "### ddd     [%s]", ddd );
+  tuxfw_getlogger()->information( "### nrLinha [%s]", nrLinha );
+
+  EXEC SQL WHENEVER SQLERROR GOTO errorSql;
+
+  EXEC SQL
+    SELECT
+       LP.IDCLASSIFICACAO ,
+       CS.CDVDN ,
+       CP.CDADABAS
+    INTO
+       :idClassificacao:i_idClassificacao ,
+       :vdn:i_vdn ,
+       :cdAdabas:i_cdAdabas
+    FROM
+       SAPOIO_OW.PARCEIRO         CP ,
+       SAPOIO_OW.CLASSIFICACAO    CS,
+       SAPOIO_OW.LINHAPARCEIRO    LP
+    WHERE
+       LP.IDCLASSIFICACAO = CS.IDCLASSIFICACAO
+    AND CP.INSTATUS = 1
+    AND CS.INSTATUS = 1
+    AND LP.IDPARCEIRO = CP.IDPARCEIRO
+    AND LP.CDAREAREGISTRO = :ddd
+    AND LP.NRLINHA = :nrLinha ;
+    
+  if (sqlca.sqlcode == 1403)
+  {
+	  EXEC SQL
+	    SELECT
+	       P.IDCLASSIFICACAO ,
+	       C.CDVDN ,
+	       P.CDADABAS
+	   INTO
+		  :idClassificacao:i_idClassificacao ,
+		  :vdn:i_vdn ,
+		  :cdAdabas:i_cdAdabas
+	    FROM
+	       SAPOIO_OW.PARCEIRO         P ,
+	       SAPOIO_OW.CLASSIFICACAO    C,
+	       SAPOIO_OW.LINHAINTERCEPTACAO    LI
+	    WHERE
+		   LI.CDAREAREGISTRO = :ddd
+	    AND LI.NRLINHA = :nrLinha
+		AND LI.IDCLASSIFICACAO = C.IDCLASSIFICACAO
+		AND C.INSTATUS = 1
+		AND C.IDCLASSIFICACAO = P.IDCLASSIFICACAO
+		AND P.INSTATUS = 1
+		AND ROWNUM < 2
+	    ;
+  }
+
+  if (sqlca.sqlcode == 1403)
+  {
+	  ULOG("Nao foram encontrados registros!");
+	  return 1;
+  }
+    
+    CONVIND( idClassificacao, i_idClassificacao );
+    CONVIND( vdn, i_vdn );
+  CONVIND( cdAdabas, i_cdAdabas );
+
+  xml_g->addItem( "grupo",(char*)idClassificacao.arr );
+  xml_g->addItem( "vdnTransferencia",(char*)vdn.arr );
+  xml_g->addItem( "cdAdabas",(char*)cdAdabas.arr );
+
+
+  ULOG_END("BuscaGrpAtd()");
+  return 0;
+
+  errorSql:
+    ULOGE(">>> ERRO ORACLE -> sqlcode = [%d],sqlerrmc = [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc );
+    ULOG_END("BuscaGrpAtd()");
+    //throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc, sqlca.sqlerrm.sqlerrml);
+    return -1;
+}
+
+

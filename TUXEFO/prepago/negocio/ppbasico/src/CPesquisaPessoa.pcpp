@@ -1,0 +1,967 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include <CPesquisaPessoa.h>
+
+CPesquisaPessoa::CPesquisaPessoa()
+{
+}
+
+CPesquisaPessoa::~CPesquisaPessoa()
+{
+}
+
+void CPesquisaPessoa::upper(char *pTok)
+{ 
+    for(; *pTok != '\0' ;pTok++)
+        *pTok = toupper(*pTok);
+}
+
+
+int CPesquisaPessoa::buscarDocPorNome( char* cnmPessoa
+									 , char* cnmNomeMeio
+									 , char* cnmSobrenome
+							         , char* cinTipoPessoa )
+{
+
+    ULOG_START("CPesquisaPessoa::buscarDocPorNome");
+
+	//Variavel de controle para a quantidade de registros retornada
+	int iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char cPesquisa[3000];
+		char cAuxnmPessoa[255+1+1];//+1 a mais por causa do %
+		char cAuxnmNomeMeio[255+1+1];//+1 a mais por causa do %
+		char cAuxnmSobrenome[255+1+1];//+1 a mais por causa do %
+		char cAuxinTipoPessoa[10+1];
+		struct
+		{
+			VARCHAR stidPessoa[21+1];
+			VARCHAR stnmPessoa[255+1];
+			VARCHAR stdsTipoPessoa[255+1];
+			VARCHAR stnrDocumento[255+1];
+			VARCHAR stdsTipoDocumento[255+1];
+		} stRegistro;
+		struct
+		{
+			short iidPessoa;
+			short inmPessoa;
+			short idsTipoPessoa;
+			short inrDocumento;
+			short idsTipoDocumento;
+		} stIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraPesquisaPessoa();
+		memset( &cAuxinTipoPessoa, 0, sizeof( cAuxinTipoPessoa ) );
+		memset( &cAuxnmPessoa, 0, sizeof( cAuxnmPessoa ) );
+		memset( &cAuxnmNomeMeio, 0, sizeof( cAuxnmNomeMeio ) );
+		memset( &cAuxnmSobrenome, 0, sizeof( cAuxnmSobrenome ) );
+		memset( &cPesquisa, 0, sizeof( cPesquisa ) );
+		//Verifica o tipo de pessoa, se for PF busca pessoa fisica. Qualquer outra coisa busca todos os tipos de pessoa
+		if( strlennull( cinTipoPessoa ) > 0 )
+		{
+			if( ( strcmp( cinTipoPessoa, "PF" ) == 0 ) || ( strcmp( cinTipoPessoa, "PJ" ) == 0 ) )
+				strcpy( cAuxinTipoPessoa, cinTipoPessoa );
+			else
+				strcpy( cAuxinTipoPessoa, "-1" );
+		}
+		else
+			strcpy( cAuxinTipoPessoa, "-1" );
+			
+		//Verifica o tamanho do nome
+		if( strlennull( cnmPessoa ) > 0 )
+		{
+			if( strlennull( cnmPessoa ) > 255 )
+			{
+				strncpy( cAuxnmPessoa, &cnmPessoa[0], 255 );
+				strcat( cAuxnmPessoa, "%" );
+			}
+			else
+			{
+				strcpy( cAuxnmPessoa, cnmPessoa );
+				strcat( cAuxnmPessoa, "%" );
+			}
+		}
+		else
+			strcpy( cAuxnmPessoa, "%" );
+
+		//Verifica o tamanho do nome do meio
+		if( strlennull( cnmNomeMeio ) > 0 )
+		{
+			if( strlennull( cnmNomeMeio ) > 255 )
+			{
+				strncpy( cAuxnmNomeMeio, &cnmNomeMeio[0], 255 );
+				strcat( cAuxnmNomeMeio, "%" );
+			}
+			else
+			{
+				strcpy( cAuxnmNomeMeio, cnmNomeMeio );
+				strcat( cAuxnmNomeMeio, "%" );
+			}
+		}
+		else
+			strcpy( cAuxnmNomeMeio, "-1" );
+
+		//Verifica o tamanho do sobrenome
+		if( strlennull( cnmSobrenome ) > 0 )
+		{
+			if( strlennull( cnmSobrenome ) > 255 )
+			{
+				strncpy( cAuxnmSobrenome, &cnmSobrenome[0], 255 );
+				strcat( cAuxnmSobrenome, "%" );
+			}
+			else
+			{
+				strcpy( cAuxnmSobrenome, cnmSobrenome );
+				strcat( cAuxnmSobrenome, "%" );
+			}
+		}
+		else
+			strcpy( cAuxnmSobrenome, "%" );
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotobuscarDocPorNome;
+		sqlca.sqlcode=0;
+		
+		strcpy( cPesquisa, 
+		  " SELECT /*+ INDEX (PESSOA PESSOAIE1)*/"
+		       "   PESSOA.IDPESSOA"
+		       " , PESSOA.NMPESSOA"
+		       " , TIPOPESSOA.SGTIPOPESSOA"
+		       " , DOCUMENTO.NRDOCUMENTO"
+		       " , TIPODOCUMENTO.DSTIPODOCUMENTO"
+		    " FROM CUSTOMER.PESSOA               PESSOA"
+		       " , CUSTOMER.PESSOADEPARA         PESSOADEPARA"
+		       " , CUSTOMER.PESSOADOCUMENTO      PESSOADOCUMENTO"
+		       " , CUSTOMER.DOCUMENTO            DOCUMENTO"
+		       " , APOIO.TIPOPESSOA              TIPOPESSOA"
+		       " , APOIO.TIPODOCUMENTO           TIPODOCUMENTO"
+		   " WHERE PESSOA.IDPESSOA                    = PESSOADOCUMENTO.IDPESSOA"
+		     " AND PESSOADOCUMENTO.IDDOCUMENTO        = DOCUMENTO.IDDOCUMENTO"
+		     " AND TIPODOCUMENTO.IDTIPODOCUMENTO      = DOCUMENTO.IDTIPODOCUMENTO"
+		     " AND "
+			 " ( "
+				 " TIPODOCUMENTO.NRPRIORIDADE         = ( SELECT MIN( TIPODOCUMENTO.NRPRIORIDADE )"
+		                                                  " FROM APOIO.TIPODOCUMENTO       TIPODOCUMENTO"
+		                                                     " , CUSTOMER.PESSOADOCUMENTO  PESSOADOCUMENTO"
+		                                                     " , CUSTOMER.DOCUMENTO        DOCUMENTO"
+		                                                 " WHERE PESSOADOCUMENTO.IDDOCUMENTO   = DOCUMENTO.IDDOCUMENTO"
+		                                                   " AND TIPODOCUMENTO.IDTIPODOCUMENTO = DOCUMENTO.IDTIPODOCUMENTO"
+		                                                   " AND PESSOADOCUMENTO.IDPESSOA      = PESSOA.IDPESSOA )"
+				" OR "
+					" TIPODOCUMENTO.NRPRIORIDADE IS NULL "
+			 " )"
+		     " AND PESSOA.IDPESSOA                    = PESSOADEPARA.IDPESSOAORIGEM"
+             " AND NOT EXISTS ( SELECT 1"
+                                " FROM LINHA.LINHATELEFONICA  LINHATELEFONICA"
+                                   " , CUSTOMER.PESSOALINHA   PESSOALINHA"
+                                   " , APOIO.TIPOLINHA        TIPOLINHA"
+                               " WHERE LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA"
+                                 " AND LINHATELEFONICA.IDTIPOLINHA       = TIPOLINHA.IDTIPOLINHA"
+                                 " AND PESSOALINHA.IDPESSOADEPARA        = PESSOADEPARA.IDPESSOADEPARA"
+                                 " AND TIPOLINHA.SGTIPOLINHA             = 'POS' )"
+			 " AND PESSOADEPARA.IDPESSOA = PESSOADEPARA.IDPESSOAORIGEM"
+		     " AND PESSOA.IDTIPOPESSOA = TIPOPESSOA.IDTIPOPESSOA"
+		     " AND UPPER(PESSOA.NMNOME) LIKE UPPER('" );
+		     strcat( cPesquisa, cAuxnmPessoa );
+		     strcat( cPesquisa, 
+		     "')"
+		     " AND "
+		     " ( "
+		     		" UPPER(PESSOA.NMNOMEMEIO) LIKE UPPER('" );
+		     strcat( cPesquisa, cAuxnmNomeMeio );
+		     strcat( cPesquisa,
+		            "') OR '" );
+		     strcat( cPesquisa, cAuxnmNomeMeio );
+		     strcat( cPesquisa,
+		     		 "' = '-1' "
+		     " )"
+		     " AND UPPER(PESSOA.NMSOBRENOME) LIKE UPPER('" );
+		     strcat( cPesquisa, cAuxnmSobrenome );
+		     strcat( cPesquisa, 
+		     "')"
+		     " AND "
+		     " ("
+		     		" ( TIPOPESSOA.SGTIPOPESSOA = '" );
+		     strcat( cPesquisa, cAuxinTipoPessoa );
+		     strcat( cPesquisa, 
+		            "') OR ('" );
+		     strcat( cPesquisa, cAuxinTipoPessoa );
+   		     strcat( cPesquisa, 
+		            "' = '-1' )"
+		     " )" );
+
+	    ULOG("Query:[%s]", cPesquisa);
+
+		EXEC SQL PREPARE qPesquisa FROM :cPesquisa;
+		EXEC SQL DECLARE CursorbuscarDocPorNome CURSOR FOR qPesquisa;
+		//Abre o cursor
+		EXEC SQL OPEN CursorbuscarDocPorNome;
+
+		//Caso inexista registros sair do loop
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			//Zera a estrutura de restorno
+			memset( &stRegistro, 0, sizeof(stRegistro) );
+			//Pega um registro no CURSOR
+			EXEC SQL FETCH CursorbuscarDocPorNome INTO :stRegistro:stIndicator;
+			//Adiciona a classe
+			Add( 	
+				(char*)stRegistro.stidPessoa.arr,
+				(char*)stRegistro.stnmPessoa.arr, 
+				(char*)stRegistro.stdsTipoPessoa.arr,
+				(char*)stRegistro.stnrDocumento.arr, 
+				(char*)stRegistro.stdsTipoDocumento.arr
+			);
+			//conta quantos existem
+			iCont++;
+		}
+		//Fecha o CURSOR
+		EXEC SQL CLOSE CursorbuscarDocPorNome;
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CPesquisaPessoa::buscarDocPorNome");
+
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotobuscarDocPorNome:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CPesquisaPessoa::buscarDocPorRazao( char* cnmPessoa
+							          , char* cinTipoPessoa )
+{
+    ULOG_START("CPesquisaPessoa::buscarDocPorRazao");
+
+	//Variavel de controle para a quantidade de registros retornada
+	int iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char cPesquisa[3000];
+		char cAuxnmPessoa[255+1+1];//+1 a mais por causa do %
+		char cAuxinTipoPessoa[10+1];
+		struct
+		{
+			VARCHAR stidPessoa[21+1];
+			VARCHAR stnmPessoa[255+1];
+			VARCHAR stdsTipoPessoa[255+1];
+			VARCHAR stnrDocumento[255+1];
+			VARCHAR stdsTipoDocumento[255+1];
+		} stRegistro;
+		struct
+		{
+			short iidPessoa;
+			short inmPessoa;
+			short idsTipoPessoa;
+			short inrDocumento;
+			short idsTipoDocumento;
+		} stIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraPesquisaPessoa();
+		memset( &cAuxinTipoPessoa, 0, sizeof( cAuxinTipoPessoa ) );
+		memset( &cAuxnmPessoa, 0, sizeof( cAuxnmPessoa ) );
+		memset( &cPesquisa, 0, sizeof( cPesquisa ) );
+		//Verifica o tipo de pessoa, se for PF busca pessoa fisica. Qualquer outra coisa busca todos os tipos de pessoa
+		if( strlennull( cinTipoPessoa ) > 0 )
+		{
+			if( ( strcmp( cinTipoPessoa, "PF" ) == 0 ) || ( strcmp( cinTipoPessoa, "PJ" ) == 0 ) )
+				strcpy( cAuxinTipoPessoa, cinTipoPessoa );
+			else
+				strcpy( cAuxinTipoPessoa, "-1" );
+		}
+		else
+			strcpy( cAuxinTipoPessoa, "-1" );
+			
+		//Verifica o tamanho do nome
+		if( strlennull( cnmPessoa ) > 0 )
+		{
+			if( strlennull( cnmPessoa ) > 255 )
+			{
+				strncpy( cAuxnmPessoa, &cnmPessoa[0], 255 );
+				strcat( cAuxnmPessoa, "%" );
+			}
+			else
+			{
+				strcpy( cAuxnmPessoa, cnmPessoa );
+				strcat( cAuxnmPessoa, "%" );
+			}
+		}
+		else
+			strcpy( cAuxnmPessoa, "%" );
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotobuscarDocPorRazao;
+		sqlca.sqlcode=0;
+
+		strcpy( cPesquisa,
+		  " SELECT /*+ INDEX (PESSOA PESSOAIE1)*/"
+		       "   PESSOA.IDPESSOA"
+		       " , PESSOAJURIDICA.NMPESSOAFILIAL"
+		       " , TIPOPESSOA.SGTIPOPESSOA"
+		       " , DOCUMENTO.NRDOCUMENTO"
+		       " , TIPODOCUMENTO.DSTIPODOCUMENTO"
+		    " FROM CUSTOMER.PESSOA               PESSOA"
+               " , CUSTOMER.PESSOAJURIDICA       PESSOAJURIDICA"
+		       " , CUSTOMER.PESSOADEPARA         PESSOADEPARA"
+		       " , CUSTOMER.PESSOADOCUMENTO      PESSOADOCUMENTO"
+		       " , CUSTOMER.DOCUMENTO            DOCUMENTO"
+		       " , APOIO.TIPOPESSOA              TIPOPESSOA"
+		       " , APOIO.TIPODOCUMENTO           TIPODOCUMENTO"
+		   " WHERE PESSOA.IDPESSOA                    = PESSOADOCUMENTO.IDPESSOA"
+		     " AND PESSOADOCUMENTO.IDDOCUMENTO        = DOCUMENTO.IDDOCUMENTO"
+		     " AND TIPODOCUMENTO.IDTIPODOCUMENTO      = DOCUMENTO.IDTIPODOCUMENTO"
+             " AND PESSOA.IDPESSOA                    = PESSOAJURIDICA.IDPESSOA"
+		     " AND "
+			 " ( "
+				 " TIPODOCUMENTO.NRPRIORIDADE         = ( SELECT MIN( TIPODOCUMENTO.NRPRIORIDADE )"
+		                                                  " FROM APOIO.TIPODOCUMENTO       TIPODOCUMENTO"
+		                                                     " , CUSTOMER.PESSOADOCUMENTO  PESSOADOCUMENTO"
+		                                                     " , CUSTOMER.DOCUMENTO        DOCUMENTO"
+		                                                 " WHERE PESSOADOCUMENTO.IDDOCUMENTO   = DOCUMENTO.IDDOCUMENTO"
+		                                                   " AND TIPODOCUMENTO.IDTIPODOCUMENTO = DOCUMENTO.IDTIPODOCUMENTO"
+		                                                   " AND PESSOADOCUMENTO.IDPESSOA      = PESSOA.IDPESSOA )"
+				" OR "
+					" TIPODOCUMENTO.NRPRIORIDADE IS NULL "
+			 " )"
+		     " AND PESSOA.IDPESSOA                    = PESSOADEPARA.IDPESSOAORIGEM"
+             " AND NOT EXISTS ( SELECT 1"
+                                " FROM LINHA.LINHATELEFONICA  LINHATELEFONICA"
+                                   " , CUSTOMER.PESSOALINHA   PESSOALINHA"
+                                   " , APOIO.TIPOLINHA        TIPOLINHA"
+                               " WHERE LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA"
+                                 " AND LINHATELEFONICA.IDTIPOLINHA       = TIPOLINHA.IDTIPOLINHA"
+                                 " AND PESSOALINHA.IDPESSOADEPARA        = PESSOADEPARA.IDPESSOADEPARA"
+                                 " AND TIPOLINHA.SGTIPOLINHA             = 'POS' )"
+		     " AND PESSOA.IDTIPOPESSOA                = TIPOPESSOA.IDTIPOPESSOA"
+		     " AND UPPER(PESSOAJURIDICA.NMPESSOAFILIAL) LIKE UPPER('" );
+		strcat( cPesquisa, cAuxnmPessoa );
+		strcat( cPesquisa, "')" );
+
+    	ULOG("Query:[%s]", cPesquisa);
+
+		EXEC SQL PREPARE qPesquisa FROM :cPesquisa;
+		EXEC SQL DECLARE CursorbuscarDocPorRazao CURSOR FOR qPesquisa;
+		//Abre o cursor
+		EXEC SQL OPEN CursorbuscarDocPorRazao;
+
+		//Caso inexista registros sair do loop
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			//Zera a estrutura de restorno
+			memset( &stRegistro, 0, sizeof(stRegistro) );
+			//Pega um registro no CURSOR
+			EXEC SQL FETCH CursorbuscarDocPorRazao INTO :stRegistro:stIndicator;
+			//Adiciona a classe
+			Add( 	
+				(char*)stRegistro.stidPessoa.arr,
+				(char*)stRegistro.stnmPessoa.arr, 
+				(char*)stRegistro.stdsTipoPessoa.arr,
+				(char*)stRegistro.stnrDocumento.arr, 
+				(char*)stRegistro.stdsTipoDocumento.arr
+			);
+			//conta quantos existem
+			iCont++;
+		}
+		//Fecha o CURSOR
+		EXEC SQL CLOSE CursorbuscarDocPorRazao;
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CPesquisaPessoa::buscarDocPorRazao");
+
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotobuscarDocPorRazao:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CPesquisaPessoa::buscarDocPorNrLinha( char* ccdAreaRegistro
+				                        , char* cnrLinha
+							            , char* cinTipoPessoa)
+{
+    ULOG_START("CPesquisaPessoa::buscarDocPorNrLinha");
+
+	//Variavel de controle para a quantidade de registros retornada
+	int iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char cPesquisa[3000];
+		char* cAuxcdAreaRegistro = ccdAreaRegistro; 
+		char* cAuxnrLinha = cnrLinha; 
+		char  cAuxinTipoPessoa[10+1];
+		struct
+		{
+			VARCHAR stidPessoa[21+1];
+			VARCHAR stnmPessoa[255+1];
+			VARCHAR stdsTipoPessoa[255+1];
+			VARCHAR stnrDocumento[255+1];
+			VARCHAR stdsTipoDocumento[255+1];
+		} stRegistro;
+		struct
+		{
+			short iidPessoa;
+			short inmPessoa;
+			short idsTipoPessoa;
+			short inrDocumento;
+			short idsTipoDocumento;
+		} stIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraPesquisaPessoa();
+		memset( &cAuxinTipoPessoa, 0, sizeof( cAuxinTipoPessoa ) );
+		memset( &cPesquisa, 0, sizeof( cPesquisa ) );
+		if( strlennull( cinTipoPessoa ) > 0 )
+		{
+			if( ( strcmp( cinTipoPessoa, "PF" ) == 0 ) || ( strcmp( cinTipoPessoa, "PJ" ) == 0 ) )
+				strcpy( cAuxinTipoPessoa, cinTipoPessoa );
+			else
+				strcpy( cAuxinTipoPessoa, "-1" );
+		}
+		else
+			strcpy( cAuxinTipoPessoa, "-1" );
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotobuscarDocPorNrLinha;
+		sqlca.sqlcode=0;
+
+		strcpy( cPesquisa, 
+		  " SELECT DISTINCT"
+		       "   PESSOA.IDPESSOA"
+		       " , PESSOA.NMPESSOA"
+		       " , TIPOPESSOA.SGTIPOPESSOA"
+		       " , DOCUMENTO.NRDOCUMENTO"
+		       " , TIPODOCUMENTO.DSTIPODOCUMENTO"
+		    " FROM CUSTOMER.PESSOA               PESSOA"
+		       " , CUSTOMER.PESSOADEPARA         PESSOADEPARA"
+		       " , CUSTOMER.PESSOADOCUMENTO      PESSOADOCUMENTO"
+		       " , CUSTOMER.DOCUMENTO            DOCUMENTO"
+		       " , CUSTOMER.PESSOALINHA          PESSOALINHA"
+		       " , LINHA.LINHATELEFONICA         LINHATELEFONICA"
+		       " , LINHA.LINHABASE               LINHABASE"
+		       " , APOIO.AREAREGISTRO            AREAREGISTRO"
+		       " , APOIO.TIPOPESSOA              TIPOPESSOA"
+		       " , APOIO.TIPODOCUMENTO           TIPODOCUMENTO"
+		       " , APOIO.TIPOLINHA               TIPOLINHA"
+		   " WHERE PESSOA.IDPESSOA                    = PESSOADOCUMENTO.IDPESSOA"
+		     " AND PESSOADOCUMENTO.DTEXPIRACAO        IS NULL"
+		     " AND PESSOADOCUMENTO.IDDOCUMENTO        = DOCUMENTO.IDDOCUMENTO"
+		     " AND TIPODOCUMENTO.IDTIPODOCUMENTO      = DOCUMENTO.IDTIPODOCUMENTO"
+		     " AND "
+			 " ( "
+				 " TIPODOCUMENTO.NRPRIORIDADE         = ( SELECT MIN( TIPODOCUMENTO.NRPRIORIDADE )"
+		                                                  " FROM APOIO.TIPODOCUMENTO       TIPODOCUMENTO"
+		                                                     " , CUSTOMER.PESSOADOCUMENTO  PESSOADOCUMENTO"
+		                                                     " , CUSTOMER.DOCUMENTO        DOCUMENTO"
+		                                                 " WHERE PESSOADOCUMENTO.IDDOCUMENTO   = DOCUMENTO.IDDOCUMENTO"
+		                                                   " AND TIPODOCUMENTO.IDTIPODOCUMENTO = DOCUMENTO.IDTIPODOCUMENTO"
+		                                                   " AND PESSOADOCUMENTO.IDPESSOA      = PESSOA.IDPESSOA )"
+				" OR "
+					" TIPODOCUMENTO.NRPRIORIDADE IS NULL "
+			 " )"
+		     " AND PESSOA.IDPESSOA                    = PESSOADEPARA.IDPESSOAORIGEM"
+		     " AND PESSOADEPARA.IDPESSOADEPARA        = PESSOALINHA.IDPESSOADEPARA"
+		     " AND LINHATELEFONICA.DTEXPIRACAO        IS NULL"
+		     " AND LINHATELEFONICA.IDLINHATELEFONICA  = PESSOALINHA.IDLINHATELEFONICA"
+		     " AND LINHATELEFONICA.IDTIPOLINHA        = TIPOLINHA.IDTIPOLINHA"
+		     " AND LINHATELEFONICA.IDLINHABASE        = LINHABASE.IDLINHABASE"
+		     " AND LINHABASE.IDAREAREGISTRO           = AREAREGISTRO.IDAREAREGISTRO"
+		     " AND ( TIPOLINHA.SGTIPOLINHA              = 'PRÉ' OR TIPOLINHA.SGTIPOLINHA              = 'PRÉCHIP')"
+		     " AND PESSOA.IDTIPOPESSOA                = TIPOPESSOA.IDTIPOPESSOA"
+		     " AND LINHABASE.NRLINHA                  = '" );
+		strcat( cPesquisa, cAuxnrLinha );
+		strcat( cPesquisa, 
+			 "'"
+		     " AND AREAREGISTRO.CDAREAREGISTRO        = '" );
+		strcat( cPesquisa, cAuxcdAreaRegistro );
+		strcat( cPesquisa, 
+			 "'"
+		     " AND "
+		     " ("
+		     		" ( TIPOPESSOA.SGTIPOPESSOA      = '" );
+		strcat( cPesquisa, cAuxinTipoPessoa );
+		strcat( cPesquisa, 
+			        "')"
+		         " OR"
+		         	" ( '" );
+		strcat( cPesquisa, cAuxinTipoPessoa );
+		strcat( cPesquisa, 
+			        "' = '-1' )"
+		     " )" );
+
+    	ULOG("Query:[%s]", cPesquisa);
+
+		EXEC SQL PREPARE qPesquisa FROM :cPesquisa;
+		EXEC SQL DECLARE CursorbuscarDocPorNrLinha CURSOR FOR qPesquisa;
+		//Abre o cursor
+		EXEC SQL OPEN CursorbuscarDocPorNrLinha;
+
+		//Caso inexista registros sair do loop
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			//Zera a estrutura de restorno
+			memset( &stRegistro, 0, sizeof(stRegistro) );
+			//Pega um registro no CURSOR
+			EXEC SQL FETCH CursorbuscarDocPorNrLinha INTO :stRegistro:stIndicator;
+			//Adiciona a classe
+			Add( 	
+				(char*)stRegistro.stidPessoa.arr,
+				(char*)stRegistro.stnmPessoa.arr, 
+				(char*)stRegistro.stdsTipoPessoa.arr,
+				(char*)stRegistro.stnrDocumento.arr, 
+				(char*)stRegistro.stdsTipoDocumento.arr
+			);
+			//conta quantos existem
+			iCont++;
+		}
+		//Fecha o CURSOR
+		EXEC SQL CLOSE CursorbuscarDocPorNrLinha;
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CPesquisaPessoa::buscarDocPorNrLinha");
+
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotobuscarDocPorNrLinha:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CPesquisaPessoa::buscarDocPorNrConta( char* ccdConta
+							            , char* cinTipoPessoa )
+{
+    ULOG_START("CPesquisaPessoa::buscarDocPorNrConta");
+
+	//Variavel de controle para a quantidade de registros retornada
+	int iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char cPesquisa[3000];
+		char* ccdContaAux = ccdConta; 
+		char  cAuxinTipoPessoa[10+1];
+		struct
+		{
+			VARCHAR stidPessoa[21+1];
+			VARCHAR stnmPessoa[255+1];
+			VARCHAR stdsTipoPessoa[255+1];
+			VARCHAR stnrDocumento[255+1];
+			VARCHAR stdsTipoDocumento[255+1];
+		} stRegistro;
+		struct
+		{
+			short iidPessoa;
+			short inmPessoa;
+			short idsTipoPessoa;
+			short inrDocumento;
+			short idsTipoDocumento;
+		} stIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraPesquisaPessoa();
+		memset( &cAuxinTipoPessoa, 0, sizeof( cAuxinTipoPessoa ) );
+		memset( &cPesquisa, 0, sizeof( cPesquisa ) );
+		if( strlennull( cinTipoPessoa ) > 0 )
+		{
+			if( ( strcmp( cinTipoPessoa, "PF" ) == 0 ) || ( strcmp( cinTipoPessoa, "PJ" ) == 0 ) )
+				strcpy( cAuxinTipoPessoa, cinTipoPessoa );
+			else
+				strcpy( cAuxinTipoPessoa, "-1" );
+		}
+		else
+			strcpy( cAuxinTipoPessoa, "-1" );
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotobuscarDocPorNrConta;
+		sqlca.sqlcode=0;
+		strcpy( cPesquisa, 
+		  " SELECT /*+ INDEX (PESSOA PESSOAIE1)*/"
+		       "   PESSOA.IDPESSOA"
+		       " , PESSOA.NMPESSOA"
+		       " , TIPOPESSOA.SGTIPOPESSOA"
+		       " , DOCUMENTO.NRDOCUMENTO"
+		       " , TIPODOCUMENTO.DSTIPODOCUMENTO"
+		    " FROM CUSTOMER.PESSOA               PESSOA"
+		       " , CUSTOMER.PESSOADEPARA         PESSOADEPARA"
+		       " , CUSTOMER.PESSOADOCUMENTO      PESSOADOCUMENTO"
+		       " , CUSTOMER.DOCUMENTO            DOCUMENTO"
+		       " , APOIO.TIPOPESSOA              TIPOPESSOA"
+		       " , APOIO.TIPODOCUMENTO           TIPODOCUMENTO"
+		   " WHERE PESSOA.IDPESSOA                    = PESSOADOCUMENTO.IDPESSOA"
+		     " AND PESSOADOCUMENTO.IDDOCUMENTO        = DOCUMENTO.IDDOCUMENTO"
+		     " AND TIPODOCUMENTO.IDTIPODOCUMENTO      = DOCUMENTO.IDTIPODOCUMENTO"
+		     " AND "
+			 " ( "
+				 " TIPODOCUMENTO.NRPRIORIDADE         = ( SELECT MIN( TIPODOCUMENTO.NRPRIORIDADE )"
+		                                                  " FROM APOIO.TIPODOCUMENTO       TIPODOCUMENTO"
+		                                                     " , CUSTOMER.PESSOADOCUMENTO  PESSOADOCUMENTO"
+		                                                     " , CUSTOMER.DOCUMENTO        DOCUMENTO"
+		                                                 " WHERE PESSOADOCUMENTO.IDDOCUMENTO   = DOCUMENTO.IDDOCUMENTO"
+		                                                   " AND TIPODOCUMENTO.IDTIPODOCUMENTO = DOCUMENTO.IDTIPODOCUMENTO"
+		                                                   " AND PESSOADOCUMENTO.IDPESSOA      = PESSOA.IDPESSOA )"
+				" OR "
+					" TIPODOCUMENTO.NRPRIORIDADE IS NULL "
+			 " )"
+		     " AND PESSOA.IDPESSOA                    = PESSOADEPARA.IDPESSOAORIGEM"
+             " AND NOT EXISTS ( SELECT 1"
+                                " FROM LINHA.LINHATELEFONICA  LINHATELEFONICA"
+                                   " , CUSTOMER.PESSOALINHA   PESSOALINHA"
+                                   " , APOIO.TIPOLINHA        TIPOLINHA"
+                               " WHERE LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA"
+                                 " AND LINHATELEFONICA.IDTIPOLINHA       = TIPOLINHA.IDTIPOLINHA"
+                                 " AND PESSOALINHA.IDPESSOADEPARA        = PESSOADEPARA.IDPESSOADEPARA"
+                                 " AND TIPOLINHA.SGTIPOLINHA             = 'POS' )"
+		     " AND PESSOA.IDTIPOPESSOA                = TIPOPESSOA.IDTIPOPESSOA"
+			 " AND PESSOADEPARA.IDPESSOA = PESSOADEPARA.IDPESSOAORIGEM"
+             " AND PESSOADEPARA.IDPESSOADEPARA IN "
+             " ( "
+                " SELECT PESSOALINHA.IDPESSOADEPARA"
+                  " FROM CUSTOMER.CONTA        CONTA"
+                     " , CUSTOMER.LINHACONTA   LINHACONTA"
+                     " , CUSTOMER.PESSOALINHA  PESSOALINHA"
+                     " , LINHA.LINHATELEFONICA LINHATELEFONICA"
+                 " WHERE CONTA.IDCONTA                 = LINHACONTA.IDCONTA"
+                   " AND LINHACONTA.IDLINHATELEFONICA  = LINHATELEFONICA.IDLINHATELEFONICA"
+                   " AND PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA"
+                   " AND CONTA.IDCONTASISTEMAORIGEM    = '" );
+		strcat( cPesquisa, ccdContaAux );
+		strcat( cPesquisa,
+             "')"
+		     " AND "
+             " ("
+                	" ( TIPOPESSOA.SGTIPOPESSOA      = '" );
+		strcat( cPesquisa, cAuxinTipoPessoa );
+		strcat( cPesquisa,
+		         "') OR ( '" );
+		strcat( cPesquisa, cAuxinTipoPessoa );
+		strcat( cPesquisa,
+		            "' = '-1' )"
+             " )" );
+
+    	ULOG("Query:[%s]", cPesquisa);
+
+		EXEC SQL PREPARE qPesquisa FROM :cPesquisa;
+		EXEC SQL DECLARE CursorbuscarDocPorNrConta CURSOR FOR qPesquisa;
+		//Abre o cursor
+		EXEC SQL OPEN CursorbuscarDocPorNrConta;
+
+		//Caso inexista registros sair do loop
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			//Zera a estrutura de restorno
+			memset( &stRegistro, 0, sizeof(stRegistro) );
+			//Pega um registro no CURSOR
+			EXEC SQL FETCH CursorbuscarDocPorNrConta INTO :stRegistro:stIndicator;
+			//Adiciona a classe
+			Add( 	
+				(char*)stRegistro.stidPessoa.arr,
+				(char*)stRegistro.stnmPessoa.arr, 
+				(char*)stRegistro.stdsTipoPessoa.arr,
+				(char*)stRegistro.stnrDocumento.arr, 
+				(char*)stRegistro.stdsTipoDocumento.arr
+			);
+			//conta quantos existem
+			iCont++;
+		}
+		//Fecha o CURSOR
+		EXEC SQL CLOSE CursorbuscarDocPorNrConta;
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CPesquisaPessoa::buscarDocPorNrConta");
+
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotobuscarDocPorNrConta:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CPesquisaPessoa::buscarDocPorTipDocumento( char* csgDocumento
+                                             , char* cnrDocumento
+							                 , char* cinTipoPessoa)
+{
+    ULOG_START("CPesquisaPessoa::buscarDocPorTipDocumento");
+
+	//Variavel de controle para a quantidade de registros retornada
+	int iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char cPesquisa[3000];
+		char* cAuxsgDocumento = csgDocumento; 
+		char* cAuxnrDocumento = cnrDocumento; 
+		char  cAuxinTipoPessoa[10+1];
+		struct
+		{
+			VARCHAR stidPessoa[21+1];
+			VARCHAR stnmPessoa[255+1];
+			VARCHAR stdsTipoPessoa[255+1];
+			VARCHAR stnrDocumento[255+1];
+			VARCHAR stdsTipoDocumento[255+1];
+		} stRegistro;
+		struct
+		{
+			short iidPessoa;
+			short inmPessoa;
+			short idsTipoPessoa;
+			short inrDocumento;
+			short idsTipoDocumento;
+		} stIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraPesquisaPessoa();
+		memset( &cAuxinTipoPessoa, 0, sizeof( cAuxinTipoPessoa ) );
+		memset( &cPesquisa, 0, sizeof( cPesquisa ) );
+		if( strlennull( cinTipoPessoa ) > 0 )
+		{
+			if( ( strcmp( cinTipoPessoa, "PF" ) == 0 ) || ( strcmp( cinTipoPessoa, "PJ" ) == 0 ) )
+				strcpy( cAuxinTipoPessoa, cinTipoPessoa );
+			else
+				strcpy( cAuxinTipoPessoa, "-1" );
+		}
+		else
+			strcpy( cAuxinTipoPessoa, "-1" );
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotobuscarDocPorTipDocumento;
+		sqlca.sqlcode=0;
+
+		strcpy( cPesquisa,
+		  " SELECT /*+ INDEX (PESSOA PESSOAIE1)*/"
+		       "   PESSOA.IDPESSOA"
+		       " , PESSOA.NMPESSOA"
+		       " , TIPOPESSOA.SGTIPOPESSOA"
+		       " , DOCUMENTO.NRDOCUMENTO"
+		       " , TIPODOCUMENTO.DSTIPODOCUMENTO"
+		    " FROM CUSTOMER.PESSOA               PESSOA"
+		       " , CUSTOMER.PESSOADEPARA         PESSOADEPARA"
+		       " , CUSTOMER.PESSOADOCUMENTO      PESSOADOCUMENTO"
+		       " , CUSTOMER.DOCUMENTO            DOCUMENTO"
+		       " , APOIO.TIPOPESSOA              TIPOPESSOA"
+		       " , APOIO.TIPODOCUMENTO           TIPODOCUMENTO"
+		   " WHERE PESSOA.IDPESSOA                    = PESSOADOCUMENTO.IDPESSOA"
+		     " AND PESSOADOCUMENTO.IDDOCUMENTO        = DOCUMENTO.IDDOCUMENTO"
+		     " AND TIPODOCUMENTO.IDTIPODOCUMENTO      = DOCUMENTO.IDTIPODOCUMENTO"
+		     " AND "
+			 " ( "
+				 " TIPODOCUMENTO.NRPRIORIDADE         = ( SELECT MIN( TIPODOCUMENTO.NRPRIORIDADE )"
+		                                                  " FROM APOIO.TIPODOCUMENTO       TIPODOCUMENTO"
+		                                                     " , CUSTOMER.PESSOADOCUMENTO  PESSOADOCUMENTO"
+		                                                     " , CUSTOMER.DOCUMENTO        DOCUMENTO"
+		                                                 " WHERE PESSOADOCUMENTO.IDDOCUMENTO   = DOCUMENTO.IDDOCUMENTO"
+		                                                   " AND TIPODOCUMENTO.IDTIPODOCUMENTO = DOCUMENTO.IDTIPODOCUMENTO"
+		                                                   " AND PESSOADOCUMENTO.IDPESSOA      = PESSOA.IDPESSOA )"
+				" OR "
+					" TIPODOCUMENTO.NRPRIORIDADE IS NULL "
+			 " )"
+		     " AND PESSOA.IDPESSOA                    = PESSOADEPARA.IDPESSOAORIGEM"
+             " AND NOT EXISTS ( SELECT 1"
+                                " FROM LINHA.LINHATELEFONICA  LINHATELEFONICA"
+                                   " , CUSTOMER.PESSOALINHA   PESSOALINHA"
+                                   " , APOIO.TIPOLINHA        TIPOLINHA"
+                               " WHERE LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA"
+                                 " AND LINHATELEFONICA.IDTIPOLINHA       = TIPOLINHA.IDTIPOLINHA"
+                                 " AND PESSOALINHA.IDPESSOADEPARA        = PESSOADEPARA.IDPESSOADEPARA"
+                                 " AND TIPOLINHA.SGTIPOLINHA             = 'POS' )"
+		     " AND PESSOA.IDTIPOPESSOA                = TIPOPESSOA.IDTIPOPESSOA"
+		     " AND UPPER(DOCUMENTO.NRDOCUMENTO)         = UPPER('" );
+		strcat( cPesquisa, cAuxnrDocumento );
+		strcat( cPesquisa, 
+		     "') AND UPPER(TIPODOCUMENTO.SGCLASSIFICACAO) = UPPER('" );
+		strcat( cPesquisa, cAuxsgDocumento );
+		strcat( cPesquisa, 
+		     "') AND "
+		     " ("
+		     		" ( TIPOPESSOA.SGTIPOPESSOA      = '" );
+		strcat( cPesquisa, cAuxinTipoPessoa );
+		strcat( cPesquisa, 
+		         "') OR ( '" );
+		strcat( cPesquisa, cAuxinTipoPessoa );
+		strcat( cPesquisa, 
+		            "' = '-1' )"
+		     " )" );
+
+    	ULOG("Query:[%s]", cPesquisa);
+
+		EXEC SQL PREPARE qPesquisa FROM :cPesquisa;
+		EXEC SQL DECLARE CursorbuscarDocPorTipDocumento CURSOR FOR qPesquisa;
+		//Abre o cursor
+		EXEC SQL OPEN CursorbuscarDocPorTipDocumento;
+
+		//Caso inexista registros sair do loop
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			//Zera a estrutura de restorno
+			memset( &stRegistro, 0, sizeof(stRegistro) );
+			//Pega um registro no CURSOR
+			EXEC SQL FETCH CursorbuscarDocPorTipDocumento INTO :stRegistro:stIndicator;
+			//Adiciona a classe
+			Add( 	
+				(char*)stRegistro.stidPessoa.arr,
+				(char*)stRegistro.stnmPessoa.arr, 
+				(char*)stRegistro.stdsTipoPessoa.arr,
+				(char*)stRegistro.stnrDocumento.arr, 
+				(char*)stRegistro.stdsTipoDocumento.arr
+			);
+			//conta quantos existem
+			iCont++;
+		}
+		//Fecha o CURSOR
+		EXEC SQL CLOSE CursorbuscarDocPorTipDocumento;
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CPesquisaPessoa::buscarDocPorTipDocumento");
+
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotobuscarDocPorTipDocumento:
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+int CPesquisaPessoa::validaSiglaDocumento( char* csgDocumento )
+{
+    ULOG_START("CPesquisaPessoa::validaSiglaDocumento");
+
+	//Variavel de controle para a quantidade de registros retornada
+	int iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxsgDocumento = csgDocumento; 
+		struct
+		{
+			VARCHAR stidTipoDocumento[21+1];
+			VARCHAR stsgTipoDocumento[255+1];
+			VARCHAR stdsTipoDocumento[255+1];
+		}stRegistro;
+		struct
+		{
+			short iidTipoDocumento;
+			short isgTipoDocumento;
+			short idsTipoDocumento;
+		}stIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraPesquisaPessoa();
+		memset( &stRegistro, 0, sizeof( stRegistro ) );
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotovalidaSiglaDocumento;
+		sqlca.sqlcode=0;
+
+		//Procura pela sigla digitada
+   		EXEC SQL 
+   			SELECT
+   				IDTIPODOCUMENTO
+   			   ,SGCLASSIFICACAO
+   			   ,DSTIPODOCUMENTO
+   			INTO
+   				:stRegistro:stIndicator
+   			FROM
+   				APOIO.TIPODOCUMENTO
+   			WHERE
+   				SGCLASSIFICACAO = TRIM(:cAuxsgDocumento)
+   			AND
+   				ROWNUM <= 1;
+   				
+   		if( stRegistro.stidTipoDocumento.len > 0 )
+   		{
+			Add( 	
+				(char*)stRegistro.stidTipoDocumento.arr,
+				(char*)stRegistro.stsgTipoDocumento.arr, 
+				(char*)stRegistro.stdsTipoDocumento.arr
+			);
+   		}
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CPesquisaPessoa::validaSiglaDocumento");
+	return Quantidade();
+	
+GotovalidaSiglaDocumento:
+	throw TuxBasicOraException(sqlca.sqlcode);
+}

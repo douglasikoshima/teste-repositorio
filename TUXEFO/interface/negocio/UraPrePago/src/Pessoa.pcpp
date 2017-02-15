@@ -1,0 +1,257 @@
+/*
+ *
+ * VAFEI-17231 - WO0000000248623 - Corrigir evento de espera read by other session causado pela query: 4wbbbgj3thtu8
+ *                                 Otimizacao da query do metodo Pessoa::getLinhasAtivas
+ *                                 Solicitacao feita pela Vivo, durante o forum de capacity. 
+ *
+ */
+
+
+// Pessoa.cpp: implementation of the Pessoa class.
+//
+//////////////////////////////////////////////////////////////////////
+
+#include "../include/Pessoa.h"
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include <string>
+using namespace std;
+
+#define CONVIND(O,I) \
+{ \
+	if (I == -1) { \
+		##O.arr[0]=0; \
+	} else { \
+		##O.arr[##O.len]=0; \
+	} \
+}
+
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+Pessoa::Pessoa()
+{
+
+}
+
+Pessoa::~Pessoa()
+{
+
+}
+
+int Pessoa::getLinhasAtivas(stParametrosUren*paramUren,ListPessoaLinha &listPessoaLinha)
+{
+	tuxfw_getlogger()->debug("Pessoa::getLinhasAtivas");
+	struct sqlca sqlca;
+   
+   string stmt;
+   char buffer[256];
+   
+	EXEC SQL BEGIN DECLARE SECTION;
+   
+      const char * query;
+      char    v_nmParticao[10];
+      VARCHAR v_dtIncl[256];
+      short   I_v_dtIncl = -1;
+      
+      VARCHAR v_Particao[3];
+      short   I_v_Particao = -1;
+      
+		struct param{
+			//VARCHAR idLinhaTelefonica[21+1];
+			VARCHAR sgTipoLinha[256+1];
+			VARCHAR idPessoa[21+1];
+			VARCHAR dtCadastro[15];
+			VARCHAR dtUltimaAlteracao[15];
+			VARCHAR sgClassificacao[256];
+		}m_param;
+		struct iparam{
+			//short idLinhaTelefonica;
+			short sgTipoLinha;
+			short idPessoa;
+			short dtCadastro;
+			short dtUltimaAlteracao;
+			short sgClassificacao;
+		}m_iparam;
+		char *cpf = paramUren->cpf;
+		char nomeCliente[256];
+		char nomeClienteFormat[256];
+	EXEC SQL END DECLARE SECTION;
+	
+	// Colocar o primeiro nome do cliente em nomeCliente formatando a cláusula LIKE
+	memset( &nomeCliente, 0  , 256 );
+   memset( &v_dtIncl   , 0x0, sizeof(v_dtIncl) );
+   
+	int len = strlen(paramUren->nomeCliente);
+	int i = 0;
+	for(i=0;i<len;i++)
+	{
+		if(i > 0 && paramUren->nomeCliente[i] == ' ')
+			break;
+		else
+			nomeCliente[i] = paramUren->nomeCliente[i];
+	}
+	nomeCliente[i] = 0;
+
+	sprintf(nomeClienteFormat,"%s",nomeCliente);
+	tuxfw_getlogger()->debug("nomeClienteFormat = %s",nomeClienteFormat);
+
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+   
+   
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+   
+/*
+    EXEC SQL DECLARE CURSOR1 CURSOR FOR
+        SELECT 
+           // --LINHATELEFONICA.IDLINHATELEFONICA,
+            TIPOLINHA.SGTIPOLINHA,               
+            PESSOADEPARA.IDPESSOA,
+            PESSOA.DTCADASTRO,
+            PESSOA.DTULTIMAALTERACAO,
+            LINHABASE.SGCLASSIFICACAO
+        FROM
+            APOIO.TIPOLINHA TIPOLINHA,
+            LINHA.LINHATELEFONICA LINHATELEFONICA,
+            CUSTOMER.PESSOALINHA PESSOALINHA,
+            CUSTOMER.PESSOADEPARA PESSOADEPARA,
+            CUSTOMER.PESSOA PESSOA,
+            (            
+                SELECT
+                    PESSOA.IDPESSOA                    
+                FROM
+                    CUSTOMER.PESSOADOCUMENTO PESSOADOCUMENTO,
+                    CUSTOMER.DOCUMENTO DOCUMENTO,
+                    CUSTOMER.PESSOA PESSOA,
+                    APOIO.TIPODOCUMENTO TIPODOCUMENTO
+                WHERE
+                    PESSOA.IDPESSOA = PESSOADOCUMENTO.IDPESSOA
+                AND TIPODOCUMENTO.SGCLASSIFICACAO = 'CPF'
+                AND DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO
+                AND PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO
+                AND DOCUMENTO.NRDOCUMENTO = :cpf
+                AND UPPER(TRIM(PESSOA.NMNOME)) = UPPER(TRIM(:nomeClienteFormat))
+            ) PESSOA2,
+            (
+                SELECT 
+                    LINHABASE.IDLINHABASE,
+                    ESTADOLINHA.SGCLASSIFICACAO
+                FROM
+                    LINHA.LINHABASE LINHABASE,APOIO.ESTADOLINHA ESTADOLINHA
+                WHERE
+                    LINHABASE.IDESTADOLINHA = ESTADOLINHA.IDESTADOLINHA
+                AND ESTADOLINHA.SGCLASSIFICACAO IN ('A','B')
+            )LINHABASE
+        WHERE
+            TIPOLINHA.IDTIPOLINHA = LINHATELEFONICA.IDTIPOLINHA
+        AND PESSOA2.IDPESSOA = PESSOA.IDPESSOA
+        AND PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA
+        AND PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA
+        AND LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE
+        AND PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+        AND PESSOALINHA.IDTIPORELACIONAMENTO = 2
+        ORDER BY
+            DTULTIMAALTERACAO DESC,
+            DTCADASTRO DESC;
+*/                 
+    EXEC SQL DECLARE CURSOR1 CURSOR FOR   // [WO0000000248623]
+        SELECT TIPOLINHA.SGTIPOLINHA, 
+               PESSOADEPARA.IDPESSOA, 
+               PESSOA1.DTCADASTRO, 
+               PESSOA1.DTULTIMAALTERACAO, 
+               LINHABASE1.SGCLASSIFICACAO 
+          FROM APOIO.TIPOLINHA TIPOLINHA, 
+               LINHA.LINHATELEFONICA LINHATELEFONICA, 
+               CUSTOMER.PESSOALINHA PESSOALINHA, 
+               CUSTOMER.PESSOADEPARA PESSOADEPARA, 
+               CUSTOMER.PESSOA PESSOA1, 
+               (SELECT /*+ INDEX_JOIN(DOCUMENTO) */ PESSOA2.IDPESSOA 
+                  FROM CUSTOMER.PESSOADOCUMENTO PESSOADOCUMENTO, 
+                       CUSTOMER.DOCUMENTO DOCUMENTO, 
+                       CUSTOMER.PESSOA PESSOA2, 
+                       APOIO.TIPODOCUMENTO TIPODOCUMENTO 
+                 WHERE PESSOA2.IDPESSOA = PESSOADOCUMENTO.IDPESSOA 
+                   AND TIPODOCUMENTO.SGCLASSIFICACAO = 'CPF' 
+                   AND DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO 
+                   AND PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO 
+                   AND DOCUMENTO.NRDOCUMENTO = :cpf 
+                   AND UPPER(TRIM(PESSOA2.NMNOME)) = UPPER(TRIM(:nomeClienteFormat))) PESSOA21, 
+               (SELECT LINHABASE2.IDLINHABASE, 
+                       ESTADOLINHA.SGCLASSIFICACAO 
+                  FROM LINHA.LINHABASE LINHABASE2, 
+                       APOIO.ESTADOLINHA ESTADOLINHA 
+                 WHERE LINHABASE2.IDESTADOLINHA = ESTADOLINHA.IDESTADOLINHA 
+                   AND ESTADOLINHA.SGCLASSIFICACAO IN ('A', 'B')) LINHABASE1 
+         WHERE TIPOLINHA.IDTIPOLINHA = LINHATELEFONICA.IDTIPOLINHA 
+           AND PESSOA21.IDPESSOA = PESSOA1.IDPESSOA 
+           AND PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA 
+           AND PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA 
+           AND LINHABASE1.IDLINHABASE = LINHATELEFONICA.IDLINHABASE 
+           AND PESSOA1.IDPESSOA = PESSOADEPARA.IDPESSOA 
+           AND PESSOALINHA.IDTIPORELACIONAMENTO = 2 
+         order by DTULTIMAALTERACAO desc, DTCADASTRO desc;
+
+
+   EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+            
+	EXEC SQL OPEN CURSOR1;
+	for(;;)
+	{
+		memset(&m_param,0,sizeof(param));
+		memset(&m_iparam,0,sizeof(m_iparam));
+		EXEC SQL FETCH CURSOR1 INTO :m_param:m_iparam;	
+		stPessoaLinha *pessoaLinha = new stPessoaLinha;
+		memset(pessoaLinha,0,sizeof(stPessoaLinha));
+		strcpy(pessoaLinha->sgTipoLinha,(char*)m_param.sgTipoLinha.arr);
+		strcpy(pessoaLinha->idPessoa,(char*)m_param.idPessoa.arr);
+		strcpy(pessoaLinha->estadoLinha,(char*)m_param.sgClassificacao.arr);
+		listPessoaLinha.add((stPessoaLinha*)pessoaLinha);
+	}
+	EXEC SQL CLOSE CURSOR1;
+
+	if(listPessoaLinha.sizeOf() > 0)
+		return 1;
+	else
+		return 0;
+Error:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int Pessoa::getDadosLinha(char*idLinhaTelefonica,char* idPessoaDepara)
+{
+	tuxfw_getlogger()->debug("Pessoa::getDadosLinha");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct param{
+			VARCHAR idPessoaDepara[256];
+		}m_param;
+		struct iparam{
+			short idPessoaDepara;
+		}m_iparam;
+		char*cidLinhaTelefonica=idLinhaTelefonica;
+	EXEC SQL END DECLARE SECTION;
+	sqlca.sqlcode = 0;
+	memset(&m_param,0,sizeof(param));
+	memset(&m_iparam,0,sizeof(iparam));
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL
+		SELECT IDPESSOADEPARA 
+		INTO :m_param:m_iparam
+		FROM
+		CUSTOMER.PESSOALINHA PESSOALINHA
+		WHERE IDLINHATELEFONICA = :cidLinhaTelefonica AND
+		IDTIPORELACIONAMENTO = 2 AND ROWNUM = 1;
+	if(sqlca.sqlcode == 1403)
+		return 0;
+	strcpy(idPessoaDepara,(char*)m_param.idPessoaDepara.arr);
+	return 1;
+Error:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}

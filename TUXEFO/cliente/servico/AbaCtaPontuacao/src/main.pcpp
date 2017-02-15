@@ -1,0 +1,213 @@
+//------------------------------------------------------------------------------------
+  //                           (c) Consorcio Indra/PT-SI.
+  //                              xxxxxxxxxxxxxxxxxxxxxxx
+  //                                  xxxxxxxxxxxxxx 
+  //----------------------------------------------------------------------------------
+  // Los contenidos de este fichero son propiedad de Telefonica Consorsio Indra/Pt-SI.
+  // titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado,
+  // em su totalidad o en parte, con el permiso escrito de Consorcio Indra/Pt-SI o de
+  // acuerdo com los terminos y condiciones establecidas em el acuerdo/contrato bajo el
+  // que se suministra.
+//----------------------------------------------------------------------------------
+//* Fonte: main.pcpp
+//* Servico: ABACTAPONTUAC
+//* Servidor: LupaCliente
+//*
+//* Ficheiro: TUXEFO/cliente/LupaCliente/AbaCtaPontuacao/src
+//*
+//* Tipo: Pro*C
+//*
+//* Autor: Jefferson Martins
+//*
+//* Fecha primeira version:07/06/2004
+//*
+//* Version actual: 01.00
+//*
+//* Purpose:
+//*//-------------------------------------------------------------------------------
+//* Purpose:
+//*
+//* Servico para gerar o arquivo XML de saida para preenchimento da AbaPontos da 
+//* Lupa Cliente.
+//*
+//*//-------------------------------------------------------------------------------
+//*  ALTERACAO  DESCRICAO
+//*    01.00    Alteracao do nome do servico internamente a pedida do equipe
+//*             de Suporte Tecnologico. 30/08/2004
+//---------------------------------------------------------------------
+//EXEC SQL INCLUDE SQLCA; 
+
+#include <tuxfw.h>
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include "../../negocio/clienteCmm/include/Exception.h"
+#include "../../negocio/clienteCmm/include/Messages.h"
+#include "../../negocio/clienteCmm/include/Funcoes.h"
+
+#include "../include/AbaCtaPontuacao.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classContaPontuacao.h";
+EXEC SQL INCLUDE "../../negocio/clienteCmm/include/classLinhaPonto.h";
+
+#define endOraStr(varstr)      varstr.arr[varstr.len]= '\0'
+#define oraToStr(bstr,vchar)   if(!bstr) strncpy(bstr,vchar.arr,vchar.len)
+#define strToOra(vchar,bstr)   vchar.len = strlen(bstr);strncpy((char *)vchar.arr,bstr,vchar.len);vchar.arr[vchar.len] = 0
+
+
+int GetDataVigencia(char *pcdArearegistro,char *pnrLinha, char* pdata);
+
+
+
+DECLARE_TUXEDO_SERVICE(ABACTAPONTUAC);
+
+void implABACTAPONTUAC::Execute(DOMNode *pDnode, XMLGen *pXmlG)
+{
+char *pParam;
+char cDDD[3];
+char cFone[16];
+
+int iNroReg = 0;
+int iAux = 0;
+char szDtVigencia[20];
+CContaPontuacao* oObjCP;
+CLinhaPonto* oObjLP;
+
+    ULOG_START( "implABACTAPONTUAC::Execute()" );
+
+    try{
+
+        pParam = walkTree(pDnode, XML_IN_NRLINHA, 0);
+        if(!pParam)
+        {
+            ERROR(NRO_NR_LINHA_NE);
+            TAG_INEXISTENTE(XML_IN_NRLINHA);
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !*pParam)
+        {
+            ERROR(NRO_NR_LINHA_VV);
+            TAG_VALOR_VAZIO(XML_IN_NRLINHA);
+
+            if (pParam) XMLString::release(&pParam);
+
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        if ( !IsNumeric(pParam) ){
+            ERROR(NRO_NR_LINHA_VI);
+            TAG_VALOR_INVALIDO(XML_IN_NRLINHA);
+
+            if (pParam) XMLString::release(&pParam);
+
+            throw new TuxBasicSvcException(sNrMsg, sMsg);
+        }
+        //
+
+	    /*
+	    strncpy(cDDD, pParam, 2);
+	    cDDD[2]='\0';
+       */
+       sprintf( cDDD, "%.2s", pParam );
+       
+	    /*
+	    strncpy(cFone, pParam+2, 8);
+	    cFone[8]='\0';
+       */
+       sprintf( cFone, "%s", (char*)&pParam[2] );
+
+        if (pParam) XMLString::release(&pParam);
+
+        pXmlG->createTag(XML_OUT_NO_ROOT);
+		pXmlG->addProp("xmlns",XML_OUT_PROP);
+
+            pXmlG->createTag(XML_OUT_NO_DADOSABA);
+		
+			
+			GetDataVigencia(cDDD,cFone,szDtVigencia);
+			pXmlG->addItem("dtVigencia", szDtVigencia);
+            
+			pXmlG->createTag(XML_OUT_CTAPONTUACAO);
+            try{
+                oObjCP = CContaPontuacao::RecuperarTodos(&iNroReg, cDDD, cFone);
+                if ( oObjCP )
+	            {
+	                for (iAux = 0; iAux < iNroReg; iAux++) 
+                    {
+                            for (int i=0; i < oObjCP[iAux].getQtdLinhaPontos() ;i++)
+                            {
+                                oObjLP = oObjCP[iAux].getLinhaPontos();
+		                        pXmlG->createTag(XML_OUT_NO_LINPONTOS);
+		                            pXmlG->addItem(XML_OUT_CODAREA, oObjLP[i].getNrCodArea());
+		                            pXmlG->addItem(XML_IN_NRLINHA, oObjLP[i].getNrLinha());
+                                pXmlG->closeTag();
+                            }
+		                    pXmlG->addItem(XML_OUT_SALDO, oObjCP[iAux].getSaldo());
+		                    pXmlG->addItem(XML_OUT_NRCONTA, oObjCP[iAux].getNrConta());
+	                }
+	            }
+            }catch(...){
+                pXmlG->addItem("erro", "Cta Pontos fora");
+            }
+
+            pXmlG->closeTag();
+
+        pXmlG->closeTag();
+
+        //Liberando memoria alocada
+        free(oObjCP);
+
+    }
+    catch(...){
+        throw;  //repassando o erro para nucleo
+    }
+
+	// Execução OK.
+	INFORMATION(NRO_OK);
+
+    ULOG_END( "implABACTAPONTUAC::Execute()" );
+	setStatusCode(sNrMsg, MSG_OK);
+}
+
+
+
+int GetDataVigencia(char *pcdArearegistro,char *pnrLinha, char* pdata)
+{
+
+ULOG_START("GetDataVigencia");
+	
+	 EXEC SQL BEGIN DECLARE SECTION;
+	 struct sqlca sqlca;
+         VARCHAR cdArearegistro[2+1];
+		 varchar nrLinha[10+1];
+		 varchar dtVigencia[14];		 
+    EXEC SQL END DECLARE SECTION;
+
+	strToOra(cdArearegistro,pcdArearegistro);
+	strToOra(nrLinha,pnrLinha);
+
+	
+	EXEC SQL
+		SELECT TO_CHAR(DTVALIDADE,'DD/MM/YYYY')
+		INTO   :dtVigencia
+		FROM RETENCAO.CLIENTEBLINDAGEM
+		WHERE CDAREAREGISTRO=:cdArearegistro
+		AND	  NRLINHA=:nrLinha;
+	
+	 endOraStr(dtVigencia);
+	
+	
+	 sprintf(pdata,"%s",(char*)dtVigencia.arr);
+
+	
+  
+ ULOG_END("GetDataVigencia");
+
+return 1;
+
+}

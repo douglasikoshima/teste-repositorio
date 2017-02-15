@@ -1,0 +1,219 @@
+/**
+ * @author  David Ramos Dominguez
+ * @version $Revision: 1.1.2.2 $
+ * @CVS     $Author: a5116174 $ - $Date: 2011/08/12 17:11:17 $
+ **/
+#include "../include/cWF_CERRAMERETPC.h"
+
+/**
+	Construtor padrão da classe.
+*/
+cWF_CERRAMERETPC::cWF_CERRAMERETPC(/*st_RegContato* origem*/)
+{
+	//dados = origem;
+}
+
+/**
+	Retorna a data atual do banco de dados para ser usada como parametro das demais chamadas.
+*/
+void cWF_CERRAMERETPC::dataAtual(char* data)
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+	VARCHAR dataAtual[256];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFGravaAtendimento(&sqlca);
+
+    EXEC SQL 
+	SELECT
+		TO_CHAR(SYSDATE, 'DD/MM/YYYY HH24:MI')
+	INTO	
+		:dataAtual
+	FROM
+		dual;
+
+    CONV(dataAtual);
+
+    strcpy(data, (char*) dataAtual.arr);
+
+    ULOG("Dados obtidos - dataAtual = [%s]", dataAtual.arr);
+}
+
+void cWF_CERRAMERETPC::dataAndamento(char* data)
+{
+
+    
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+	VARCHAR dataAtual[256];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFGravaAtendimento(&sqlca);
+
+    EXEC SQL 
+	SELECT
+		TO_CHAR(SYSDATE, 'DD/MM/YYYY HH24:MI:SS')
+	INTO	
+		:dataAtual
+	FROM
+		dual;
+
+    CONV(dataAtual);
+
+    strcpy(data, (char*) dataAtual.arr);
+
+    ULOG("Dados obtidos - dataAndamento = [%s]", dataAtual.arr);
+}
+
+/**
+	Busca no banco de dados de parametros o prazo em horas que 
+	a ANATEL estabelece para o encerramento do atendimento.
+*/
+int cWF_CERRAMERETPC::obtemPrazoANATEL()
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+	int vlPrazoANATEL;
+
+	short i_vlPrazoANATEL;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFGravaAtendimento(&sqlca);
+
+    EXEC SQL
+        SELECT
+            dsValorParametro
+	INTO
+  	    :vlPrazoANATEL:i_vlPrazoANATEL
+	FROM
+	    apoio.Parametro
+	WHERE
+	    cdParametro = 'inDiscadorAtivo';
+
+    if (i_vlPrazoANATEL == -1)
+	vlPrazoANATEL = -1;
+
+    ULOG("Dados obtidos - vlPrazoANATEL = [%i]", vlPrazoANATEL);
+
+    return vlPrazoANATEL;
+
+}
+
+
+/**
+	Inclusao da BaixaHistorico
+*/
+int cWF_CERRAMERETPC::inclusaoBaixaHistorico(long entrada)
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+	long  idPesLinha;
+	int  idTipoLinha;
+    EXEC SQL END DECLARE SECTION;
+    
+    idPesLinha=entrada;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFGravaAtendimento(&sqlca);
+
+    EXEC SQL
+    	SELECT 
+    	    LT.idTipoLinha  
+    	INTO
+    	    :idTipoLinha
+        FROM
+            CUSTOMER.PESSOALINHAHISTORICO PL, LINHA.LINHATELEFONICA LT 
+        WHERE 
+            PL.IDLINHATELEFONICA = LT.IDLINHATELEFONICA
+            AND PL.IDPESSOALINHAHISTORICO = :idPesLinha  ;          
+        
+    
+    ULOG("Tipo linha =[%i]", idTipoLinha);
+    return idTipoLinha;
+}
+
+void cWF_CERRAMERETPC::sacaridBaixaHistorico(stMensagemBaixa* datos)
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+	//long idAtendimento;
+	int  idBxa;
+	int  idMsgBxa;
+	int  idBxaMsg;
+    EXEC SQL END DECLARE SECTION;
+    
+    idMsgBxa=datos->idMsgBxa;
+    idBxa=datos->idBxa;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFGravaAtendimento(&sqlca);
+
+    EXEC SQL
+    	SELECT 
+    	    idBaixaMensagem
+    	INTO
+	    :idBxaMsg
+        FROM
+            CONTATOADM.BaixaMensagem
+        WHERE 
+            idMensagemBaixa = :idMsgBxa
+            AND IDBAIXA = :idBxa
+            AND ROWNUM < 2;
+        
+    
+    datos->idBaixaMensagem=idBxaMsg;
+ 
+    ULOG("Dados obtidos - dsMsg=[%i]", idBxaMsg);
+}
+
+
+int cWF_CERRAMERETPC::TotalAtendimentoBaixaActual(long idAtendimento)
+{
+    struct sqlca sqlca;
+    
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    	int total;
+	long idAtendimentosql;
+    EXEC SQL END DECLARE SECTION;
+    
+    idAtendimentosql=idAtendimento;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFGravaAtendimento(&sqlca);
+
+    EXEC SQL
+    	SELECT 
+    	    COUNT(idAtendimento)
+    	INTO
+    	    :total
+        FROM
+            atendimento.AtendimentoBaixaAtual
+        WHERE 
+            idAtendimento=:idAtendimentosql;
+    
+    ULOG("Count idAtendimento - =[%i]", total);
+    return total;
+}
+
+
+
+void cWF_CERRAMERETPC::sql_error_WFGravaAtendimento( sqlca * sqlca )
+{
+    ULOGE("Ocorreu um erro na execução da consulta de dados para gravação do atendimento");
+    ULOGE( "cWF_CERRAMERETPC::sql_error_WFGravaAtendimento ->sqlcode = [%d],sqlerrmc = [%.70s]"
+                              ,sqlca->sqlcode
+                              ,sqlca->sqlerrm.sqlerrmc);
+    throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

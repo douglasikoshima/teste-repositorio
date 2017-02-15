@@ -1,0 +1,167 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include"../../../commons/queryMacro.h"
+
+
+#include "../include/cWFAtendCampoValorLivre.h"
+#include "../include/stWFAtendCampoValorLivre.h"
+
+void sql_error_WFAtendimentoCampoValorLivre(sqlca*sqlca);
+
+	// Declara as estruturas compatíveis ao ProC.
+    EXEC SQL BEGIN DECLARE SECTION;
+		#include "../include/stWFAtendCampoValorLivre.h"
+    EXEC SQL END DECLARE SECTION;
+
+bool proCIncluirWFAtendimentoCampoValorLivre(st_AtendimentoCampoValorLivre* dados, st_vlAtendimentoCampoValorLivre* status, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AtendimentoCampoValorLivre   oDados;
+		struct st_vlAtendimentoCampoValorLivre oStatus;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoCampoValorLivre(&sqlca);
+
+	EXEC SQL 
+		INSERT INTO
+			atendimento.AtendimentoCampoValorLivre
+			(
+				idAtendimentoCampo,
+				dsValor
+			)
+			VALUES
+			(
+				:oDados.idAtendimentoCampo,
+				:oDados.dsValor
+			);
+
+	saida->createTag("Registro");
+		saida->addItem("idAtendimentoCampo", oDados.idAtendimentoCampo);
+	saida->closeTag();
+
+	return true;
+}
+
+bool proCAlterarWFAtendimentoCampoValorLivre(st_AtendimentoCampoValorLivre* dados, st_vlAtendimentoCampoValorLivre* status, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		struct st_AtendimentoCampoValorLivre   oDados;
+		struct st_vlAtendimentoCampoValorLivre oStatus;
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoCampoValorLivre(&sqlca);
+
+	memcpy(&oDados,  dados,  sizeof(oDados));
+	memcpy(&oStatus, status, sizeof(oStatus));
+
+	sprintf(query,"%s", "UPDATE atendimento.AtendimentoCampoValorLivre SET ");
+
+	bool separa = false;
+
+	if (status->dsValor != -1) 
+		montaUpdate("dsValor", oDados.dsValor, 2);
+
+	sprintf(query, "%s WHERE idAtendimentoCampo = %ld", query, dados->idAtendimentoCampo);
+
+	EXEC SQL EXECUTE IMMEDIATE :query;
+
+	return true;
+}
+
+bool proCExcluirWFAtendimentoCampoValorLivre(st_AtendimentoCampoValorLivre* dados, st_vlAtendimentoCampoValorLivre* status, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAtendimentoCampo = dados->idAtendimentoCampo;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoCampoValorLivre(&sqlca);
+
+	EXEC SQL 
+		DELETE
+			atendimento.AtendimentoCampoValorLivre
+		WHERE
+			idAtendimentoCampo = :idAtendimentoCampo;
+
+	return true;
+}
+
+bool proCConsultaWFAtendimentoCampoValorLivre(st_AtendimentoCampoValorLivre* dados, st_vlAtendimentoCampoValorLivre* status, char* order, XMLGen* saida)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		long idAtendimentoCampo;
+		char dsValor[256];
+
+		char query[800];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFEstado(&sqlca);
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	sprintf(query,"SELECT idAtendimentoCampo, dsValor FROM atendimento.AtendimentoCampoValorLivre ");
+
+	bool separa = false;
+
+	if (status->idAtendimentoCampo != -1) 
+		montaWhere("idAtendimentoCampo", dados->idAtendimentoCampo, 1);
+
+	if (status->dsValor != -1)
+		montaWhere("dsValor", dados->dsValor, 2);
+
+	if (strlen(order) > 0) 
+		sprintf( query, "%s ORDER BY %s ", query, order);
+
+    EXEC SQL WHENEVER SQLERROR  DO sql_error_WFAtendimentoCampoValorLivre(&sqlca);
+
+	EXEC SQL PREPARE consultaAtendimentoCampoValorLivre FROM :query;
+	EXEC SQL DECLARE consulta CURSOR FOR consultaAtendimentoCampoValorLivre;
+
+	EXEC SQL OPEN consulta;
+
+	while (true)
+	{
+		EXEC SQL FETCH consulta INTO :idAtendimentoCampo, :dsValor;
+
+		saida->createTag("WFAtendimentoCampoValorLivreVO");
+			saida->addItem("idAtendimentoCampo", idAtendimentoCampo);
+			saida->addItem("dsValor", dsValor);
+		saida->closeTag();
+	}
+
+	EXEC SQL CLOSE consulta;
+
+	return true;
+
+}
+
+void sql_error_WFAtendimentoCampoValorLivre(sqlca*sqlca)
+{
+	throw new TuxBasicOraException(sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc,sqlca->sqlerrm.sqlerrml);
+}

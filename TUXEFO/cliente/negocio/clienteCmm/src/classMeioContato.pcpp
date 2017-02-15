@@ -1,0 +1,162 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <tuxfw.h>
+#include "../include/Exception.h"
+
+#undef MSG_NONE
+#define MSG_NONE
+#include "../include/Messages.h"
+
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/Global.h"
+EXEC SQL END DECLARE SECTION;
+
+EXEC SQL INCLUDE "../include/classMeioContato.h";
+
+#define MSG_ERR_MEMORIA		"Erro de alocação de memória"
+#define NRO_ERR_MEMORIA		"24E0359"
+
+CMeioContato::CMeioContato()
+{
+    memset(&tTabela, 0x00, sizeof(tTabela));
+}
+
+
+//Set
+void CMeioContato::setId(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tTabela.iId_ora = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tTabela.sId, pDado);
+        tTabela.iId_ora = 0;
+    }
+}
+void CMeioContato::setSigla(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tTabela.iSigla_ora = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tTabela.sSigla, pDado);
+        tTabela.iSigla_ora = 0;
+    }
+}
+void CMeioContato::setDescricao(char *pDado)
+{
+    if ( pDado == NULL )
+    {
+        tTabela.iDescricao_ora = -1;
+    }
+    else
+    {
+        STRCPY_TO_ORA(tTabela.sDescricao, pDado);
+        tTabela.iDescricao_ora = 0;
+    }
+}
+
+//Get
+char* CMeioContato::getId()
+{
+    return ((char*)tTabela.sId.arr);
+}
+char* CMeioContato::getSigla()
+{
+    return ((char*)tTabela.sSigla.arr);
+}
+char* CMeioContato::getDescricao()
+{
+    return ((char*)tTabela.sDescricao.arr);
+}
+
+
+//Metodos de manipulacao com o BD
+int CMeioContato::Incluir()
+{
+    return OK;
+}
+
+int CMeioContato::Excluir()
+{
+    return OK;
+}
+
+
+int CMeioContato::Alterar()
+{
+    return OK;
+}
+
+
+CMeioContato* CMeioContato::RecuperarTodos(int* iNroObjetos)
+{
+    ULOG_START("CMeioContato::RecuperarTodos()");
+    struct sqlca sqlca;
+
+	CMeioContato* oMContato = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+        TAPOIO tSt;
+	EXEC SQL END DECLARE SECTION;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	// Declara e abre o cursor
+	EXEC SQL DECLARE cMContato CURSOR FOR
+            SELECT idmeiocontato
+                  ,sgmeiocontato
+                  ,dsmeiocontato
+             FROM apoio.meiocontato
+            WHERE idmeiocontato > 0;
+
+	EXEC SQL OPEN cMContato;
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	for (;; iNroObjLocal++) 
+    {
+        memset(&tSt, 0x00, sizeof(tSt));
+		EXEC SQL FETCH cMContato 
+                  INTO :tSt.sId:tSt.iId_ora,
+                       :tSt.sSigla:tSt.iSigla_ora,
+                       :tSt.sDescricao:tSt.iDescricao_ora;
+
+		// Aloca memória para o objeto atual.
+		if ((oMContato = (CMeioContato*) realloc((void *)oMContato, (sizeof(CMeioContato) * iNroObjLocal))) != NULL)
+        {
+			oMContato[iNroObjLocal-1].setId((char*)tSt.sId.arr);
+			oMContato[iNroObjLocal-1].setSigla((char*)tSt.sSigla.arr);
+			oMContato[iNroObjLocal-1].setDescricao((char*)tSt.sDescricao.arr);
+		} 
+        else 
+        {
+			if (oMContato) free(oMContato);
+			throw TuxBasicSvcException(NRO_ERR_MEMORIA,MSG_ERR_MEMORIA);
+            EXEC SQL CLOSE cMContato;
+		}
+	}
+
+    EXEC SQL CLOSE cMContato;
+
+	*iNroObjetos = iNroObjLocal - 1;
+
+	ULOG_END("CMeioContato::RecuperarTodos()");
+	return oMContato;
+
+	// Tratamento de erro - Lança excessão com o código oracle do erro.
+	sqlErrorLista:
+	    ULOGE("ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		ULOG_END("CMeioContato::RecuperarTodos()");
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
