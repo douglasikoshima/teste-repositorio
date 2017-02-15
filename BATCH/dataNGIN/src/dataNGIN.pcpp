@@ -1,0 +1,436 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <unistd.h>
+#include <ctype.h>
+
+#include <dataNGIN.h>
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+
+EXEC SQL INCLUDE SQLCA;
+
+char szAux[4096 + 1];
+Log oLog;
+int iSignalProcessa=1;
+
+int main(void)
+{
+    TParamConf tParamConf;
+
+    int iDeclaraCursor=1;
+
+    char szIdFilaSetClientInfo[21 + 1];
+    char szXML1[2000 + 1];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdFilaSetClientInfo[21];
+        VARCHAR oszXML1[2000];
+        short oiIdFilaSetClientInfo = 0;
+        short oiXML1 = 0;
+    EXEC SQL END DECLARE SECTION;
+
+    // Acertando o nivel de logs
+    oLog.setNivel(2);
+    oLog.logDebug(">>>dataNGIN\n");
+
+    ArmaSinal(SIGTERM);
+
+    if(ObtemParamConf(&tParamConf)) {
+        oLog.logError("Erro obtendo parametros de configuracao\n");
+        return -1;
+    }
+
+    oLog.logDebug("Conectando na BD...");
+    /* Conecta no banco de dados */
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst)) {
+        oLog.logError("Erro conectando no banco de dados\n");
+        return -1;
+    } 
+    oLog.logDebug("Conectado na BD com sucesso...\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+
+    while(iSignalProcessa == 1) {
+
+        /* tratamento para interromper o processamento via sinal (complemento da saida acima) */
+        if(iSignalProcessa == 0) {
+            oLog.logDebug("2.Tratamento de sinal de termino dentro do loop\n");
+            break;
+        }
+        
+        if(iDeclaraCursor == 1)
+        {
+            /* declara cursor para busca dos xml´s a serem reprocessados */
+            EXEC SQL DECLARE Legado CURSOR FOR
+                SELECT
+                    a.idfilasetclientinfo,
+                    a.xml1
+                FROM
+                    infra.filasetclientinfo a
+                WHERE
+                    a.cderro = '145006'
+                ORDER BY
+                    a.dttimestamp;
+
+            sprintf(szAux, "Declarando cursor...\n\n"); oLog.logDebug(szAux);
+            iDeclaraCursor=0;
+        }
+
+        oLog.logDebug("Abrindo cursor...\n");
+        EXEC SQL OPEN Legado;
+
+        for(;;)
+        {
+            if(iSignalProcessa == 0) {
+                oLog.logDebug("3.Tratamento de sinal de termino dentro do loop\n");
+                break;
+            }
+
+            EXEC SQL
+                FETCH Legado
+                INTO
+                    :oszIdFilaSetClientInfo:oiIdFilaSetClientInfo,
+                    :oszXML1:oiXML1;
+
+            sprintf(szAux, "FETCH ->sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+            if(sqlca.sqlcode == 1403) {
+                iSignalProcessa=0;
+                break;
+            }
+
+            memset(szIdFilaSetClientInfo, 0x00, sizeof(szIdFilaSetClientInfo));
+            memset(szXML1, 0x00, sizeof(szXML1));
+            if(oiIdFilaSetClientInfo != -1 ) { STRCPY_FROM_ORA(szIdFilaSetClientInfo, oszIdFilaSetClientInfo); }
+            if(oiXML1 != -1) { STRCPY_FROM_ORA(szXML1, oszXML1); }
+
+            sprintf(szAux, "szIdFilaSetClientInfo[%s]\n", szIdFilaSetClientInfo); oLog.logDebug(szAux);
+
+            sprintf(szAux, "1 Entrada <dataNascimento> szXML1[%s]\n", szXML1); oLog.logDebug(szAux);
+            formataXML(szXML1, "dataNascimento", 8);
+            sprintf(szAux, "1.Saida <dataNascimento> szXML1[%s]\n", szXML1); oLog.logDebug(szAux);
+
+            sprintf(szAux, "2. Entrada <dataExpiracao> szXML1[%s]\n", szXML1); oLog.logDebug(szAux);
+            formataXML(szXML1, "dataExpiracao", 8);
+            sprintf(szAux, "2. Saida <dataExpiracao> szXML1[%s]\n", szXML1); oLog.logDebug(szAux);
+
+
+            if(AtualizaRegistro(szIdFilaSetClientInfo, szXML1) == false) {
+                sprintf(szAux, "Erro atualizando [%s]\n", szIdFilaSetClientInfo); oLog.logDebug(szAux);
+            }
+
+            EXEC SQL COMMIT;
+
+        }// for(;;)
+    } // while
+
+    oLog.logDebug("Fechando cursor...");
+    EXEC SQL CLOSE Legado;
+
+    oLog.logDebug("Desconectando da BD...\n");
+    DBDesconect();
+
+    oLog.logDebug("Processamento encerrado com sucesso...\n");
+    oLog.logDebug("<<<dataNGIN\n");
+
+    return 0;
+
+    sqlError:
+        sprintf(szAux, "Finalizando processo com erro ORACLE (%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return -1;
+}
+/************************************************************************************************************/
+void formataXML(char *pszXML1, char *pszTag, int iLenDadosTag)
+{
+    char szDataHoraIn[14 + 1];
+    char szDataHoraOut[14 + 1];
+    int iLen, iLenTag, iIndex;
+    char szTmp[14 + 1];
+    char szXMLTmp[2000 + 1];
+    char *pPointer=NULL;
+
+    memset(szXMLTmp, 0x00, sizeof(szXMLTmp));
+
+    pPointer = ObtemValorTag(pszXML1, pszTag);
+    sprintf(szAux, "pPointer[%s]\n", pPointer?pPointer:"..NULL.."); oLog.logDebug(szAux);
+    if(pPointer == NULL)
+        return;
+
+    iLen=strlen(pPointer);
+    for(iIndex=0; iIndex < iLen; iIndex++)
+    {
+        if(pPointer[iIndex] == '/')
+            return;
+    }
+
+    strcpy(szDataHoraIn, pPointer);
+
+
+    sprintf(szAux, "szDataHoraIn[%s]\n", szDataHoraIn); oLog.logDebug(szAux);
+    sprintf(szDataHoraOut, "%.*s%c%.*s%c%.*s", 
+                                2, szDataHoraIn+6, '/',
+                                2, szDataHoraIn+4, '/',
+                                4, szDataHoraIn);
+    sprintf(szAux, "szDataHoraOut[%s]\n", szDataHoraOut); oLog.logDebug(szAux);
+
+    iLen=strlen(pszXML1);
+    iLenTag=strlen(pszTag);
+    sprintf(szAux, "iLen(%d)iLenTag(%d)\n", iLen, iLenTag); oLog.logDebug(szAux);
+    for(iIndex=0; iIndex < iLen; iIndex++)
+    {
+        memset(szTmp, 0x00, sizeof(szTmp));
+        memcpy(szTmp, pszXML1 + iIndex, iLenTag);
+
+        if(!memcmp(szTmp, pszTag, iLenTag))
+        {
+            memcpy(szXMLTmp, pszXML1, iIndex+iLenTag+1);
+            strcat(szXMLTmp, szDataHoraOut);
+            strcat(szXMLTmp, pszXML1+iIndex+iLenTag+1+iLenDadosTag);
+
+            break;
+        }
+    }
+
+    strcpy(pszXML1, szXMLTmp);
+    return;
+}
+
+/************************************************************************************************************/
+char *ObtemValorTag(char *pXml, char *pTag)
+{
+    static char szValue[255 + 1];
+    char szXmlAux[2000 + 1];
+    char *pTok;
+    int iFlag=0;
+
+    /* copia string a ser analisada para buffer local (strtok altera o ponteiro de entrada) */
+    strcpy(szXmlAux, pXml);
+
+    for(pTok = strtok(szXmlAux, "<>"); pTok != NULL; pTok = strtok(NULL, "<>")) {
+        if(iFlag) {
+            strcpy(szValue, pTok);
+            iFlag=0;
+
+            return szValue;
+        }
+
+        if(!strcmp(pTag, pTok)) {
+            iFlag=1;
+        }
+    }
+
+    return NULL;
+}
+
+/************************************************************************************************************/
+void ArmaSinal(int iSignal) {
+    sprintf(szAux, "Armando tratamento para Signal(%d)\n", iSignal); oLog.logInformation(szAux);
+
+    if(signal((iSignal), ProcessaSignal) == SIG_ERR) {
+        fprintf(stderr, "ERRO ARMANDO SINAL!!!\n");
+        exit(-1);
+    }
+}
+
+/************************************************************************************************************/
+void ProcessaSignal(int iSig)
+{
+    oLog.logInformation(">>>ProcessaSignal\n");
+    sprintf(szAux, "iSig(%d)\n", iSig); oLog.logInformation(szAux);
+
+    /* rearma o mesmo sinal lancado */
+    ArmaSinal(iSig);
+
+    if(iSig == SIGTERM) {
+        oLog.logInformation("Finalizando processamento via sinal....\n");
+        iSignalProcessa=0;
+    }
+
+    oLog.logInformation(">>>ProcessaSignal\n");
+}
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[81];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug("Obtendo parametros de configuracao...\n");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("dataNGIN.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir()) {
+        oLog.logError("Erro abrindo arquivo de configuração!\n");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, 20);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, 10);
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, 10);
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    sprintf(szAux, "ptParamConf->szPws[%s]\n", ptParamConf->szPws); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]\n", ptParamConf->szUsr); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]\n", ptParamConf->szInst); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szPwsTux[%s]\n", ptParamConf->szPwsTux); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUsrTux[%s]\n", ptParamConf->szUsrTux); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]\n", ptParamConf->szPwsTuxGen); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szCltTux[%s]\n", ptParamConf->szCltTux); oLog.logDebug(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0 )
+    {
+        oLog.logError("Dados incompletos!\n");
+        return -1;
+    }
+
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...\n");
+    return 0;
+}
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logInformation(">>>DBConnect\n");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    oLog.logInformation("<<<DBConnect\n");
+
+    return (sqlca.sqlcode);
+    
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]\n");
+    return -1;
+}
+
+/************************************************************************************************************/
+void DBDesconect(void)
+{
+    oLog.logInformation(">>>DBDesconect\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    // EXEC SQL COMMIT WORK RELEASE;
+
+    oLog.logInformation("<<<DBDesconect\n");
+    return;
+
+Error:
+    sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return;
+}
+
+/************************************************************************************************************/
+bool AtualizaRegistro(char *pszIdFilaSetClientInfo, char *pszXML1)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdFilaSetClientInfo[21];
+        VARCHAR oszXML1[2000];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    sprintf(szAux, "Inicio AtualizaRegistro pszIdFilaSetClientInfo[%s]\n", pszIdFilaSetClientInfo); oLog.logDebug(szAux);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszIdFilaSetClientInfo, pszIdFilaSetClientInfo);
+    STRCPY_TO_ORA(oszXML1, pszXML1);
+    
+    EXEC SQL
+        UPDATE infra.filasetclientinfo SET
+            cderro = NULL,
+            dserro = NULL,
+            dterro = NULL,
+            xml1 = :oszXML1
+        WHERE
+            idfilasetclientinfo = :oszIdFilaSetClientInfo;
+
+    sprintf(szAux, "Finalizando AtualizaRegistro OK\n"); oLog.logDebug(szAux);
+    return true;
+
+    erro:
+        sprintf(szAux, "Finalizando AtualizaRegistro com erro\n"); oLog.logDebug(szAux);
+	    sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+        return false;
+
+    naoexiste:
+        sprintf(szAux, "IdRelatorioTMA nao encontrado[%s]\n", pszIdFilaSetClientInfo); oLog.logDebug(szAux);
+        return false;
+}
+

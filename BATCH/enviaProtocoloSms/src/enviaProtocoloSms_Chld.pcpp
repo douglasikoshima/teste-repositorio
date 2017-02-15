@@ -1,0 +1,1560 @@
+/**
+ * @modulo  Batch
+ * @usecase Batch
+ * @author
+ * @version $Revision: 1.1.6.1.2.2.12.1 $
+ * @CVS     $Author: a5114878 $ - $Date: 2016/06/14 19:01:38 $
+ **/
+
+
+
+#include <sys/time.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <ctype.h>
+
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+
+#ifndef WIN32
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/socketvar.h>
+#include  <sys/types.h>
+#include  <netinet/in.h>
+#include <arpa/inet.h>
+#endif // AIX
+
+#ifndef WIN32
+#include <unistd.h>
+#endif
+
+#include "../include/enviaProtocoloSms.h"
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+
+#include <string>
+using namespace std;
+
+EXEC SQL INCLUDE SQLCA;
+
+#define TOKEN_B0 0xB0   // = hexToString("B0", CHARSET_ISO_8859_1); //byte -80, Token °, char 176
+#define TOKEN_B1 0xB1   // = hexToString("B1", CHARSET_ISO_8859_1); //byte -79, Token ±, char 177
+#define TOKEN_B2 0xB2   // = hexToString("B2", CHARSET_ISO_8859_1); //byte -78, Token ², char 178
+
+//==============================================================================
+// Globals
+char szAux[1024 + 1];   // Usado nas linhas de LOG
+Log oLog;
+//==============================================================================
+// Run
+int main( int argc, char *argv[] )
+{
+    double startTime, endTime;
+    char UsedTime[16];
+    memset(UsedTime, 0x0, sizeof(UsedTime));
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+
+    TParamConf tParamConf;
+    char nrMaxRegs[16];
+    int  MaximoRegistros = 0;
+    char idControleFilaSMS[256];
+    char sHost[32];
+    char sPorta[16];
+    char sParticao[8];
+    
+    memset( sHost, 0x0, sizeof( sHost ));
+    memset( sPorta, 0x0, sizeof( sPorta ));
+    memset( sParticao, 0x0, sizeof( sParticao ));
+    
+    oLog.setNivel(2);
+    oLog.logDebug(">>> enviaProtocoloSms_Chld");
+
+    memset ( nrMaxRegs        , 0x0, sizeof(nrMaxRegs) ) ;
+    memset ( idControleFilaSMS, 0x0, sizeof(idControleFilaSMS) ) ;
+
+    if (argc < 4)
+    {
+        oLog.logDebug("*** FALTA ARGUMENTOS DE EXECUCAO ***");
+        sprintf( szAux, "Uso %s [host] [porta] [Particao] <NrMaximoRegistros>\n", argv[0] ); oLog.logDebug(szAux);
+        endTime = getRealTime();   // Finaliza Cronometro de Operacao
+        ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+        sprintf( szAux, "### Tempo Total de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+        oLog.logDebug("<<< enviaProtocoloSms_Chld");
+        exit(1);
+    }
+    if (argc == 4)   // Foi passado Host da Torpedeira e Porta de acesso
+    {
+        strcpy (sHost, argv[1]);
+        strcpy (sPorta, argv[2]);
+        strcpy (sParticao, argv[3]);
+    }
+    if (argc == 5)   // foi passado argumento com Nro. Maximo de Registros a ler
+    {
+        strcpy (sHost, argv[1]);
+        strcpy (sPorta, argv[2]);
+        strcpy (sParticao, argv[3]);
+        strcpy (nrMaxRegs, argv[4]);
+        if (atoi(nrMaxRegs) < 0 || atoi(nrMaxRegs) > 500000 ) // argumento passado com valor invalido, assume
+            nrMaxRegs[0] = 0x0;                               // valor parametrizado no banco
+    }
+
+    //==========================================================================
+    // Parâmetros de configuração
+    if(ObtemParamConf(&tParamConf))
+    {
+        oLog.logError("*** ERRO AO OBTER PARAMETROS DE CONFIGURACAO ***");
+        endTime = getRealTime();   // Finaliza Cronometro de Operacao
+        ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+        sprintf( szAux, "### Tempo Total de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+        oLog.logDebug( "<<< enviaProtocoloSms_Chld" );
+        exit(1);
+    }
+
+    //==========================================================================
+    // Conecta ao banco
+    oLog.logDebug("### Conectando com Banco de Dados. ###");
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst))
+    {
+        oLog.logError("*** ERRO DE CONEXAO AO BANCO DE DADOS ***");
+        endTime = getRealTime();   // Finaliza Cronometro de Operacao
+        ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS&&& Vai Executar [.FFFF em UsedTime - Tempo Gasto 
+        sprintf( szAux, "### Tempo Total de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+        oLog.logDebug( "<<< enviaProtocoloSms_Chld" );
+        exit(1);
+    }
+    
+    if ( nrMaxRegs[0] == 0x0 )   // Nao foi informado por linha de comando a Qtde. de Maxima de Registros
+    {
+        MaximoRegistros = ObterParamMaxRegistros();   // Sendo assim, busca parametrizacao no banco
+        sprintf (nrMaxRegs, "%d", MaximoRegistros);
+    }
+    
+    sprintf(szAux,"--- Parametrizado Para Leitura Maxima de %s Registros --- ", nrMaxRegs);oLog.logDebug(szAux);
+    sprintf(szAux,">>> Parametrizado Para Leitura na Particao %s --- ", sParticao );oLog.logDebug(szAux);
+    
+    ReservaLoteRegistros (idControleFilaSMS, nrMaxRegs, sParticao );
+    sprintf( szAux, "idControleFilaSMS: [%s] ", idControleFilaSMS ); oLog.logDebug(szAux);
+
+    ProcessaRegistros (idControleFilaSMS, sHost, sPorta, sParticao );
+    
+    DBDisconnect();
+    
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    sprintf( szAux, "### Tempo Total de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+
+    oLog.logDebug( "<<< enviaProtocoloSms_Chld" );
+    exit(0);
+    
+}
+
+
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[101];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug(">>> Obtendo parametros de configuracao...");
+
+    // Zera variáveis
+    memset(ptParamConf, 0, sizeof(TParamConf));
+    memset(szLinha, 0, sizeof(szLinha));
+    memset(szDivArq, 0, sizeof(szDivArq));
+    memset(szDivPre, 0, sizeof(szDivPre));
+
+    // Define o arquivo de configuração
+    mfConfig.setPath("enviaProtocoloSms.cfg");
+
+    // Verificar se conseguiu abrir o arquivo
+    if(!mfConfig.abrir())
+    {
+        oLog.logError("!!! ERRO AO ABRIR ARQUIVO DE CONFIGURACAO !!!");
+        return -1;
+    }
+
+    // Capturando usuario, senha, path e instance de banco do arquivo
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        // Verifica qual parâmetro foi encontrado.
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, TAM_BD_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, TAM_BD_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, TAM_BD_INST);
+        }
+/*         else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, TAM_TX_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, TAM_TX_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, TAM_TX_GEN);
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, TAM_TX_CLT);
+        }
+        else if (strcmp(szDivPre, "QueueName")==0)
+        {
+            strncpy(ptParamConf->szQueueName, szDivArq, TAM_SZ_QUEUE_NAME);
+        }
+        else if (strcmp(szDivPre, "ServerUrl")==0)
+        {
+            strncpy(ptParamConf->szServerUrl, szDivArq, TAM_SZ_SERVER_URL);
+        }
+        else if (strcmp(szDivPre, "UserName")==0)
+        {
+            strncpy(ptParamConf->szUserName, szDivArq, TAM_SZ_USERNAME);
+        }
+        else if (strcmp(szDivPre, "Password")==0)
+        {
+            strncpy(ptParamConf->szPassword, szDivArq, TAM_SZ_PASSWORD);
+        }
+        else if (strcmp(szDivPre, "Pk_password")==0)
+        {
+            strncpy(ptParamConf->szPk_password, szDivArq, TAM_SZ_PKPASSWD);
+        }
+ */
+        memset(szLinha,  0, sizeof(szLinha));
+        memset(szDivPre, 0, sizeof(szDivPre));
+        memset(szDivArq, 0, sizeof(szDivArq));
+    }
+
+    // Fechando o arquivo de configuracao aberto
+    mfConfig.fechar();
+
+    sprintf(szAux, "ptParamConf->szUsr[%s]", ptParamConf->szUsr); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]", ptParamConf->szInst); oLog.logDebug(szAux);
+    /*
+    sprintf(szAux, "ptParamConf->szUsrTux[%s]", ptParamConf->szUsrTux); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szCltTux[%s]", ptParamConf->szCltTux); oLog.logDebug(szAux);
+
+    sprintf(szAux, "ptParamConf->szQueueName[%s]", ptParamConf->szQueueName); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szServerUrl[%s]", ptParamConf->szServerUrl); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUserName[%s]", ptParamConf->szUserName); oLog.logDebug(szAux);
+    */
+
+    // Verifica se todos os dados foram recuperados do arquivo de configuração.
+    if (strlen(ptParamConf->szInst) == 0)
+    {
+        oLog.logError("!!! CONFIGURACAO INCOMPLETA !!!");
+        return -1;
+    }
+
+    oLog.logDebug("### Sucesso na Configuracao ###");
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[64];
+    EXEC SQL END DECLARE SECTION;
+
+    // String de conexao
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    // Marca ponto de erro
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    // Conecta
+    EXEC SQL CONNECT :connString;
+
+    return 0;
+
+errConn:
+    sprintf(szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return -1;
+}
+
+
+
+/************************************************************************************************************/
+int DBDisconnect(void)
+{
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    EXEC SQL COMMIT WORK RELEASE;
+    return 0;
+
+Error:
+    oLog.logDebug("*** ERRO AO DESCONECTAR DO BANCO ***");
+    sprintf(szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return -1;
+}
+
+
+
+/************************************************************************************************************/
+int ObterParamMaxRegistros(void)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        int MaxRegs=0;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    EXEC SQL
+        SELECT
+            TO_NUMBER(NVL(DSVALORPARAMETRO,10000))
+        INTO
+            :MaxRegs
+        FROM
+            APOIO.PARAMETRO
+        WHERE
+            CDPARAMETRO = 'NR_MAX_PROTOCOLO';
+
+    if ( MaxRegs <= 0 )
+    {
+        oLog.logDebug("### Parametro 'NR_MAX_PROTOCOLO' com valor inválido, assumindo valor default [10000]. ###");
+        MaxRegs = 10000;
+    }
+
+    return MaxRegs;
+
+erro:
+    oLog.logDebug("*** ERRO AO OBTER VALOR MAXIMO DE REGISTROS A PROCESSAR ***");
+    sprintf(szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    oLog.logDebug("*** ASSUMINDO VALOR DEFAULT [10000] ***");
+    return 10000;
+
+naoexiste:
+    oLog.logDebug("*** PARAMETRO 'NR_MAX_PROTOCOLO' NAO ENCONTRADO. ASSUMINDO DEFAULT [10000]. ***");
+    return 10000;
+}
+
+
+
+/************************************************************************************************************/
+void ObterParamMsgParse(TParamConf *tParamConf)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR varOraDsValorParametro[256];
+        short statOraDsValorParametro = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erroParse;
+    EXEC SQL WHENEVER NOT FOUND goto naoexisteParse;
+
+    EXEC SQL
+        SELECT
+            NVL(DSVALORPARAMETRO,'S')
+        INTO
+            :varOraDsValorParametro:statOraDsValorParametro
+        FROM
+            APOIO.PARAMETRO
+        WHERE
+            CDPARAMETRO = 'SMS_PROTO_MSGPARSE';
+
+    CONVIND(varOraDsValorParametro,statOraDsValorParametro);
+    SAFE_STRNCPY(tParamConf->szMessageParse,(char*)varOraDsValorParametro.arr);
+
+    return;
+
+erroParse:
+    sprintf(szAux,"Erro %d na busca do parametro 'SMS_PROTO_MSGPARSE'. Assumindo 'S'.",sqlca.sqlcode);
+    oLog.logDebug(szAux);
+    SAFE_STRNCPY(tParamConf->szMessageParse,"S");
+
+naoexisteParse:
+    sprintf(szAux,"Parametro 'SMS_PROTO_MSGPARSE' nao encontrado. Assumindo 'S'.");
+    oLog.logDebug(szAux);
+    SAFE_STRNCPY(tParamConf->szMessageParse,"S");
+}
+
+
+
+/************************************************************************************************************/
+void ObterParamMsgLog(TParamConf *tParamConf)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR varOraDsValorParametro[256];
+        short statOraDsValorParametro = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erroLog;
+    EXEC SQL WHENEVER NOT FOUND goto naoexisteLog;
+
+    EXEC SQL
+        SELECT
+            NVL(DSVALORPARAMETRO,'N')
+        INTO
+            :varOraDsValorParametro:statOraDsValorParametro
+        FROM
+            APOIO.PARAMETRO
+        WHERE
+            CDPARAMETRO = 'SMS_PROTO_MSGLOG';
+
+    CONVIND(varOraDsValorParametro,statOraDsValorParametro);
+    SAFE_STRNCPY(tParamConf->szMessageLog,(char*)varOraDsValorParametro.arr);
+
+    return;
+
+erroLog:
+    sprintf(szAux,"Erro %d na busca do parametro 'SMS_PROTO_MSGLOG'. Assumindo 'N'.",sqlca.sqlcode);
+    oLog.logDebug(szAux);
+    SAFE_STRNCPY(tParamConf->szMessageLog,"N");
+
+naoexisteLog:
+    sprintf(szAux,"Parametro 'SMS_PROTO_MSGLOG' nao encontrado. Assumindo 'N'.");
+    oLog.logDebug(szAux);
+    SAFE_STRNCPY(tParamConf->szMessageLog,"N");
+}
+
+
+
+int ReservaLoteRegistros( char * idControleFilaSMS, char * nrMaxRegistros_PRM, char * vPartc )
+{
+    string stmt;
+    char bf[8];
+    
+    double startTime, endTime;
+    char UsedTime[16];
+    memset(UsedTime, 0x0, sizeof(UsedTime));
+
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    
+        const char * queryChar;
+        VARCHAR idCtlFilaSMS[256];
+        short i_idCtlFilaSMS = -1;
+        char * nrMaxRegistros = nrMaxRegistros_PRM;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logDebug( ">>> ReservaLoteRegistros()" );
+    sprintf( szAux, "Nro. Maximo de Registros: [%s] ", nrMaxRegistros ); oLog.logDebug(szAux);
+    struct sqlca sqlca;
+    
+    memset ( &idCtlFilaSMS, 0x0, sizeof(idCtlFilaSMS) ) ;
+
+    EXEC SQL WHENEVER SQLERROR goto erroLog;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+
+    EXEC SQL
+    SELECT atendimento.CONTROLEFILASMSSEQ.NEXTVAL
+      INTO :idCtlFilaSMS
+      FROM DUAL;
+    
+    endOraStr( idCtlFilaSMS );
+    
+    EXEC SQL
+    INSERT INTO ATENDIMENTO.CONTROLEFILASMS  
+    (
+      IDCONTROLEFILASMS ,
+      DTINICIO ,
+      INPROCESSADO 
+    )
+    Values
+    (
+       :idCtlFilaSMS ,
+       SYSTIMESTAMP ,
+       0
+    );
+    
+    EXEC SQL COMMIT;
+
+    /*
+    EXEC SQL
+    UPDATE ATENDIMENTO.FILASMSPROTOCOLO FILASMSPROTOCOLO
+    SET IDCONTROLEFILASMS = :idCtlFilaSMS
+    WHERE
+       ROWNUM <= :nrMaxRegistros
+    AND FILASMSPROTOCOLO.IDCONTROLEFILASMS IS NULL
+    AND FILASMSPROTOCOLO.TPENVIO = 1
+    AND FILASMSPROTOCOLO.DTENCERRAMENTO < SYSTIMESTAMP ;
+    */
+
+    stmt =
+    " UPDATE ATENDIMENTO.FILASMSPROTOCOLO PARTITION(";
+    
+    sprintf( bf, "%s", vPartc );
+    stmt += bf;
+    
+    stmt +=
+    ") FILASMSPROTOCOLO "
+    " SET IDCONTROLEFILASMS = ";
+    
+    sprintf( bf, "%s", (char*)idCtlFilaSMS.arr );
+    stmt += bf;
+    
+    stmt +=
+    " WHERE "
+    " ROWNUM <= ";
+    
+    sprintf( bf, "%s", nrMaxRegistros );
+    stmt += bf;
+    
+    stmt +=
+    " AND FILASMSPROTOCOLO.IDCONTROLEFILASMS IS NULL "
+    " AND FILASMSPROTOCOLO.TPENVIO = 1 "
+    " AND FILASMSPROTOCOLO.DTENCERRAMENTO < SYSTIMESTAMP ";
+
+    queryChar = stmt.c_str();
+    sprintf( szAux, "queryChar [%s]", queryChar ); oLog.logDebug(szAux);
+    EXEC SQL EXECUTE IMMEDIATE :queryChar ;
+    
+    EXEC SQL COMMIT;
+    
+    sprintf( idControleFilaSMS, "%s", (char*)idCtlFilaSMS.arr );
+
+    AtualizaEstadoProcesso( idControleFilaSMS, "1" );   // Ajusta Controle para: "DISPONIVEL"
+
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    
+    sprintf( szAux, "### [ReservaLoteRegistros()] Tempo de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+
+    oLog.logDebug( "<<< ReservaLoteRegistros()" );
+    return 0;
+
+erroLog:
+    sprintf(szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    oLog.logDebug( "<<< ReservaLoteRegistros()" );
+    return -1;
+}
+
+
+
+int ProcessaRegistros ( char * idControleFilaSMS, char * host, char * porta, char * vPartic )
+{
+
+    oLog.logDebug( ">>> ProcessaRegistros()" );
+    
+    double startTime, endTime;
+    char UsedTime[16];
+    memset(UsedTime, 0x0, sizeof(UsedTime));
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+    
+    TParamConf tParamConf;
+    char szDsValorParametro[256];
+    char szDsMsg[1001];
+    char szDtAtual[20];
+    long iIdAtendimentoProtocolo;
+    char szIdAtendimentoProtocolo[256];
+    char ddd[3];
+    char linha[32];
+    char dgInicLinha[2];
+    char MsgLinhaFixa[256];
+    char bf[8];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const char *queryChar;
+        char * idCtlFilaSMS = idControleFilaSMS ;
+        int linhas_processadas;
+        VARCHAR PlanoB[2];
+        short i_PlanoB = -1;
+
+        VARCHAR lstDadoOraIdAtendimentoProtocolo[39];
+        VARCHAR lstDadoOraCdAreaRegistro[4];
+        VARCHAR lstDadoOraNrLinha[11];
+        VARCHAR lstDadoOraDsMensagemEnvio[1001];
+        VARCHAR lstDadoOraDsMotivoNaoEnvio[256];
+        int lstDadoOraInEnvioSMS;
+        int lstDadoOraTpEnvio;
+        VARCHAR idUsuarioAlteracao[256];   
+        VARCHAR cdOrigem[256];
+        VARCHAR idLinhaTelefonica[256];
+        short lstStatOraIdAtendimentoProtocolo;
+        short lstStatOraCdAreaRegistro;
+        short lstStatOraNrLinha;
+        short lstStatOraDsMensagemEnvio;
+        short lstStatOraDsMotivoNaoEnvio;
+        short lstStatOraInEnvioSMS;
+        short lstStatOraTpEnvio;
+        short i_cdOrigem;
+        short i_idLinhaTelefonica;
+        VARCHAR DSVALORPARAMETRO[256];
+        short iDSVALORPARAMETRO=0;
+        VARCHAR DTATUAL[256];
+        short i_DTATUAL = -1;
+        VARCHAR prmMsgProtMovelPros[256];
+        short i_prmMsgProtMovelPros = -1;
+        VARCHAR prmMsgProtFixaClie[256];
+        short i_prmMsgProtFixaClie = -1;
+        VARCHAR prmMsgProtFixaPros[256];
+        short i_prmMsgProtFixaPros = -1;
+        short i_idUsuarioAlteracao = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    int fdSocket;
+    int ctCommit = 0;
+    string stmt;
+
+    int  iStatusEnvioSMS;
+    char szDsMensagemEnvio[601];
+    char sDestinoSMS[16];
+    char szDsListaClassificacao[601] = {0};
+    char szidClassificacaoSMS[40];
+    bool ConnectSMS = false;  // Ainda nao Conectou com a Torpedeira
+    int qtEnviadas = 0;
+                linhas_processadas = 0;
+    int iQtdContatoZero = 0;
+    
+    int iqtdlinhasErroEnvio = 0;  // INCLUIDO NA ALTERACAO DE PERFORMANCE
+    int iqtdlinhasFixo = 0;
+    int iqtdlinhasNaoIdent = 0;
+
+    
+    // Trata mensagem?
+    ObterParamMsgParse(&tParamConf);
+    sprintf(szAux,"Tratamento da Mensagem=%s",tParamConf.szMessageParse);oLog.logDebug(szAux);
+
+    //==========================================================================
+    // Logar mensagem ?
+    ObterParamMsgLog(&tParamConf);
+    sprintf(szAux,"Log da Mensagem=%s",tParamConf.szMessageLog);oLog.logDebug(szAux);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    // a mensagem de envio DSMENSAGEMENVIO somada com o complemento deve conter 140 caracteres.
+    // Se a primeira parte for superior a 72, devemos enviar apenas a primeira parte da mensagem.
+
+/*
+    EXEC SQL DECLARE cProtocolos CURSOR FOR
+    SELECT  
+        FILASMSPROTOCOLO.IDATENDIMENTOPROTOCOLO,
+        FILASMSPROTOCOLO.CDAREAREGISTRO,
+        FILASMSPROTOCOLO.NRLINHA,
+        (CASE WHEN (LENGTH(FILASMSPROTOCOLO.DSMENSAGEMENVIO) + 69 <= 140) THEN
+        FILASMSPROTOCOLO.DSMENSAGEMENVIO || '. ' || NVL(COMPLEMENTOSMS.DSCOMPLEMENTO,'FALE CONOSCO TAMBEM PELO VIVO.COM.BR/MEUVIVO OU ENVIE SMS PARA 1058') ELSE
+        FILASMSPROTOCOLO.DSMENSAGEMENVIO||'.' END)DSMENSAGEMENVIO,
+        FILASMSPROTOCOLO.INENVIOSMS,
+        FILASMSPROTOCOLO.TPENVIO,
+        FILASMSPROTOCOLO.IDUSUARIOALTERACAO ,
+        (CASE WHEN FILASMSPROTOCOLO.IDTIPOLINHA<9 THEN 'MOVEL' 
+              WHEN FILASMSPROTOCOLO.IDTIPOLINHA>=9 THEN 'FIXO'
+              ELSE NULL END)CDORIGEM,
+              TO_CHAR(DTENCERRAMENTO,'DD/MM/RRRR')||' AS '||TO_CHAR(DTENCERRAMENTO-1/24,'HH24:MI') AS DTATUAL,
+        FILASMSPROTOCOLO.IDTIPOLINHA
+    FROM
+        ATENDIMENTO.FILASMSPROTOCOLO FILASMSPROTOCOLO ,
+        ATENDIMENTO.COMPLEMENTOSMS   COMPLEMENTOSMS
+    WHERE
+        FILASMSPROTOCOLO.CDAREAREGISTRO = COMPLEMENTOSMS.CDAREAREGISTRO(+)
+    AND FILASMSPROTOCOLO.IDTIPOLINHA = COMPLEMENTOSMS.IDTIPOLINHA(+)
+    AND FILASMSPROTOCOLO.SGTIPOPESSOA = COMPLEMENTOSMS.SGTIPOPESSOA(+)
+    AND FILASMSPROTOCOLO.SGUF = COMPLEMENTOSMS.SGUF(+)
+    AND NVL(COMPLEMENTOSMS.STATUS,1) = 1
+    AND FILASMSPROTOCOLO.TPENVIO = 1
+	AND ((FILASMSPROTOCOLO.IDSISTEMAORIGEM = COMPLEMENTOSMS.IDSISTEMAORIGEM) OR (COMPLEMENTOSMS.IDSISTEMAORIGEM IS NULL)) //ALTERACAO DEMANDA 1019956 - Adequação de Legado - Convivência Vivo360 e Beatrix
+    AND FILASMSPROTOCOLO.IDCONTROLEFILASMS = :idCtlFilaSMS ;
+*/    
+    
+    memset( &PlanoB, 0x0, sizeof(PlanoB));
+    
+    EXEC SQL
+    SELECT DSVALORPARAMETRO INTO :PlanoB:i_PlanoB FROM Apoio.Parametro Where CDPARAMETRO = 'CHAVE_PROTO_SMS';
+    CONVIND( PlanoB, i_PlanoB );
+    
+    if ( atoi((char*)PlanoB.arr) == 1 )  // Caso a query correta apresente problemas  ?!?@$
+    {
+        stmt =
+        "SELECT "
+        "    FILASMSPROTOCOLO.IDATENDIMENTOPROTOCOLO, "
+        "    FILASMSPROTOCOLO.CDAREAREGISTRO, "
+        "    FILASMSPROTOCOLO.NRLINHA, "
+        "    (CASE WHEN (LENGTH(FILASMSPROTOCOLO.DSMENSAGEMENVIO) + 69 <= 140) THEN "
+        "    FILASMSPROTOCOLO.DSMENSAGEMENVIO || '. ' || NVL(COMPLEMENTOSMS.DSCOMPLEMENTO,'FALE CONOSCO TAMBEM PELO VIVO.COM.BR/MEUVIVO OU ENVIE SMS PARA 1058') ELSE "
+        "    FILASMSPROTOCOLO.DSMENSAGEMENVIO||'.' END)DSMENSAGEMENVIO, "
+        "    FILASMSPROTOCOLO.INENVIOSMS, "
+        "    FILASMSPROTOCOLO.TPENVIO, "
+        "    FILASMSPROTOCOLO.IDUSUARIOALTERACAO , "
+        "    (CASE WHEN FILASMSPROTOCOLO.IDTIPOLINHA<9 THEN 'MOVEL' "
+        "          WHEN FILASMSPROTOCOLO.IDTIPOLINHA>=9 THEN 'FIXO' "
+        "          ELSE NULL END)CDORIGEM, "
+        "          TO_CHAR(DTENCERRAMENTO,'DD/MM/RRRR')||' AS '||TO_CHAR(DTENCERRAMENTO-1/24,'HH24:MI') AS DTATUAL, "
+        " FILASMSPROTOCOLO.IDTIPOLINHA "
+        "FROM "
+        " ATENDIMENTO.FILASMSPROTOCOLO PARTITION (";
+        
+        sprintf( bf, "%s", vPartic );
+        stmt += bf;
+        
+        stmt += 
+        ") FILASMSPROTOCOLO , "
+        " ATENDIMENTO.COMPLEMENTOSMS   COMPLEMENTOSMS "
+        " WHERE "
+        " FILASMSPROTOCOLO.CDAREAREGISTRO = COMPLEMENTOSMS.CDAREAREGISTRO(+) "
+        " AND FILASMSPROTOCOLO.IDTIPOLINHA = COMPLEMENTOSMS.IDTIPOLINHA(+) "
+        " AND FILASMSPROTOCOLO.SGTIPOPESSOA = COMPLEMENTOSMS.SGTIPOPESSOA(+) "
+        " AND FILASMSPROTOCOLO.SGUF = COMPLEMENTOSMS.SGUF(+) "
+        " AND NVL(COMPLEMENTOSMS.STATUS,1) = 1 "
+        " AND FILASMSPROTOCOLO.TPENVIO = 1 "            // PLANO B
+        " AND COMPLEMENTOSMS.IDSISTEMAORIGEM IS NULL "  // ALTERACAO DEMANDA 1019956 - Adequação de Legado - Convivência Vivo360 e Beatrix
+        " AND FILASMSPROTOCOLO.IDCONTROLEFILASMS = ";  
+    
+    }
+    else
+    {
+        
+        stmt =
+           "SELECT "
+                  "FILASMSPROTOCOLO.IDATENDIMENTOPROTOCOLO, "
+                  "FILASMSPROTOCOLO.CDAREAREGISTRO, "
+                  "FILASMSPROTOCOLO.NRLINHA, "
+                  "(CASE "
+                  "WHEN (LENGTH (FILASMSPROTOCOLO.DSMENSAGEMENVIO) + 69 <= 140) "
+                      "THEN FILASMSPROTOCOLO.DSMENSAGEMENVIO "
+                      "|| '. ' "
+                      "|| NVL "
+                         "(COMPLEMENTOSMS.DSCOMPLEMENTO, "
+                          "'FALE CONOSCO TAMBEM PELO VIVO.COM.BR/MEUVIVO OU ENVIE SMS PARA 1058' "
+                         ") "
+                      "ELSE FILASMSPROTOCOLO.DSMENSAGEMENVIO || '.' "
+                  "END "
+                  ") DSMENSAGEMENVIO, "
+                  "FILASMSPROTOCOLO.INENVIOSMS, "
+                  "FILASMSPROTOCOLO.TPENVIO, "
+                  "FILASMSPROTOCOLO.IDUSUARIOALTERACAO, "
+                  "(CASE "
+                       "WHEN FILASMSPROTOCOLO.IDTIPOLINHA < 9 "
+                          "THEN 'MOVEL' "
+                       "WHEN FILASMSPROTOCOLO.IDTIPOLINHA >= 9 "
+                          "THEN 'FIXO' "
+                       "ELSE NULL "
+                  "END "
+                  ") CDORIGEM, "
+                  "TO_CHAR (DTENCERRAMENTO, 'DD/MM/RRRR') "
+                  "|| ' AS ' "
+                  "|| TO_CHAR (DTENCERRAMENTO - 1 / 24, 'HH24:MI') AS DTATUAL, "
+                  "FILASMSPROTOCOLO.IDTIPOLINHA "
+           "FROM ATENDIMENTO.FILASMSPROTOCOLO PARTITION (";
+
+        sprintf( bf, "%s", vPartic );
+        stmt += bf;
+           
+        stmt += 
+           ") FILASMSPROTOCOLO, "
+             "(SELECT NVL (C.IDSISTEMAORIGEM, 0) IDSISO2, C.* "
+                 "FROM ATENDIMENTO.COMPLEMENTOSMS C) COMPLEMENTOSMS "
+                "WHERE FILASMSPROTOCOLO.CDAREAREGISTRO = COMPLEMENTOSMS.CDAREAREGISTRO(+) "
+            "AND FILASMSPROTOCOLO.IDTIPOLINHA = COMPLEMENTOSMS.IDTIPOLINHA(+) "
+            "AND FILASMSPROTOCOLO.SGTIPOPESSOA = COMPLEMENTOSMS.SGTIPOPESSOA(+) "
+            "AND FILASMSPROTOCOLO.SGUF = COMPLEMENTOSMS.SGUF(+) "
+            "AND NVL (COMPLEMENTOSMS.STATUS, 1) = 1 "
+            "AND FILASMSPROTOCOLO.TPENVIO = 1 "
+            "AND DECODE (FILASMSPROTOCOLO.IDSISTEMAORIGEM, 333, 333, 0) = IDSISO2(+) "
+            "AND FILASMSPROTOCOLO.IDCONTROLEFILASMS = ";
+
+    }
+    
+    sprintf( bf, "%s", idCtlFilaSMS );
+    stmt += bf ;
+
+    queryChar = stmt.c_str();
+    sprintf( szAux, "queryChar [%s]", queryChar ); oLog.logDebug(szAux);
+
+    EXEC SQL PREPARE comandoSql FROM :queryChar;
+    EXEC SQL DECLARE cProtocolos CURSOR FOR comandoSql;
+   
+
+    memset(&lstDadoOraIdAtendimentoProtocolo,0,sizeof(lstDadoOraIdAtendimentoProtocolo));
+    memset(&lstDadoOraCdAreaRegistro,0,sizeof(lstDadoOraCdAreaRegistro));
+    memset(&lstDadoOraNrLinha,0,sizeof(lstDadoOraNrLinha));
+    memset(&lstDadoOraDsMensagemEnvio,0,sizeof(lstDadoOraDsMensagemEnvio));
+    memset(&lstDadoOraDsMotivoNaoEnvio,0,sizeof(lstDadoOraDsMotivoNaoEnvio));
+    memset(&lstDadoOraInEnvioSMS,0,sizeof(lstDadoOraInEnvioSMS));
+    memset(&lstDadoOraTpEnvio,0,sizeof(lstDadoOraTpEnvio));
+    memset(&lstStatOraIdAtendimentoProtocolo,-1,sizeof(lstStatOraIdAtendimentoProtocolo));
+    memset(&lstStatOraCdAreaRegistro,-1,sizeof(lstStatOraCdAreaRegistro));
+    memset(&lstStatOraNrLinha,-1,sizeof(lstStatOraNrLinha));
+    memset(&lstStatOraDsMensagemEnvio,-1,sizeof(lstStatOraDsMensagemEnvio));
+    memset(&lstStatOraDsMotivoNaoEnvio,-1,sizeof(lstStatOraDsMotivoNaoEnvio));
+    memset(&lstStatOraInEnvioSMS,-1,sizeof(lstStatOraInEnvioSMS));
+    memset(&lstStatOraTpEnvio,-1,sizeof(lstStatOraTpEnvio));
+    memset( ddd  , 0x0, sizeof(ddd) );
+    memset( linha, 0x0, sizeof(linha) );
+    memset( &prmMsgProtMovelPros, 0x0, sizeof(prmMsgProtMovelPros) );
+    memset( &prmMsgProtFixaClie,  0x0, sizeof(prmMsgProtFixaClie) );
+    memset( &prmMsgProtFixaPros,  0x0, sizeof(prmMsgProtFixaPros) );
+    memset( &idUsuarioAlteracao,  0x0, sizeof(idUsuarioAlteracao) );
+    
+    //==========================================================================
+    // Processa
+
+    oLog.logDebug("Enviando SMS's...");
+    AtualizaEstadoProcesso( idControleFilaSMS, "2" );   // Ajusta Controle para: "EM CONSUMO"
+
+    //======================================================================
+    // Envia os SMS's que tiverem de ser enviados...
+    
+    i_prmMsgProtMovelPros = -1;
+    EXEC SQL
+    SELECT 
+       PARM.DSVALORPARAMETRO
+    INTO
+       :prmMsgProtMovelPros:i_prmMsgProtMovelPros
+    FROM 
+       APOIO.PARAMETRO PARM
+    WHERE
+       PARM.CDPARAMETRO = 'MSG_PROT_MOVEL_PROS' ;
+    
+    i_prmMsgProtMovelPros = -1;
+    EXEC SQL
+    SELECT 
+       PARM.DSVALORPARAMETRO
+    INTO
+       :prmMsgProtFixaClie:i_prmMsgProtFixaClie
+    FROM 
+       APOIO.PARAMETRO PARM
+    WHERE
+       PARM.CDPARAMETRO = 'MSG_PROT_FIXA_CLIE' ;
+
+    i_prmMsgProtMovelPros = -1;
+    EXEC SQL
+    SELECT 
+       PARM.DSVALORPARAMETRO
+    INTO
+       :prmMsgProtFixaPros:i_prmMsgProtFixaPros
+    FROM 
+       APOIO.PARAMETRO PARM
+    WHERE
+       PARM.CDPARAMETRO = 'MSG_PROT_FIXA_PROS' ;
+
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+    EXEC SQL OPEN cProtocolos;
+
+    for( ; ; linhas_processadas++ )
+    {
+        i_idUsuarioAlteracao = i_DTATUAL = iStatusEnvioSMS = i_idLinhaTelefonica = i_cdOrigem = -1;
+
+        memset(&lstDadoOraIdAtendimentoProtocolo,0,sizeof(lstDadoOraIdAtendimentoProtocolo));
+        memset(&lstDadoOraCdAreaRegistro,0,sizeof(lstDadoOraCdAreaRegistro));
+        memset(&lstDadoOraNrLinha,0,sizeof(lstDadoOraNrLinha));
+        memset(&lstDadoOraDsMensagemEnvio,0,sizeof(lstDadoOraDsMensagemEnvio));
+        memset(&lstDadoOraDsMotivoNaoEnvio,0,sizeof(lstDadoOraDsMotivoNaoEnvio));
+        memset(&lstDadoOraInEnvioSMS,0,sizeof(lstDadoOraInEnvioSMS));
+        memset(&lstDadoOraTpEnvio,0,sizeof(lstDadoOraTpEnvio));
+        memset(&lstStatOraIdAtendimentoProtocolo,-1,sizeof(lstStatOraIdAtendimentoProtocolo));
+        memset(&lstStatOraCdAreaRegistro,-1,sizeof(lstStatOraCdAreaRegistro));
+        memset(&lstStatOraNrLinha,-1,sizeof(lstStatOraNrLinha));
+        memset(&lstStatOraDsMensagemEnvio,-1,sizeof(lstStatOraDsMensagemEnvio));
+        memset(&lstStatOraDsMotivoNaoEnvio,-1,sizeof(lstStatOraDsMotivoNaoEnvio));
+        memset(&lstStatOraInEnvioSMS,-1,sizeof(lstStatOraInEnvioSMS));
+        memset(&lstStatOraTpEnvio,-1,sizeof(lstStatOraTpEnvio));
+        memset( ddd  , 0x0, sizeof(ddd) );
+        memset( linha, 0x0, sizeof(linha) );
+        memset( &idUsuarioAlteracao, 0x0, sizeof(idUsuarioAlteracao) );
+
+        EXEC SQL FETCH cProtocolos
+        INTO
+            :lstDadoOraIdAtendimentoProtocolo:lstStatOraIdAtendimentoProtocolo,
+            :lstDadoOraCdAreaRegistro:lstStatOraCdAreaRegistro,
+            :lstDadoOraNrLinha:lstStatOraNrLinha,
+            :lstDadoOraDsMensagemEnvio:lstStatOraDsMensagemEnvio,
+            :lstDadoOraInEnvioSMS:lstStatOraInEnvioSMS,
+            :lstDadoOraTpEnvio:lstStatOraTpEnvio,
+            :idUsuarioAlteracao:i_idUsuarioAlteracao ,
+            :cdOrigem:i_cdOrigem,
+            :DTATUAL:i_DTATUAL,
+            :idLinhaTelefonica:i_idLinhaTelefonica ;
+
+        CONVIND( lstDadoOraIdAtendimentoProtocolo,lstStatOraIdAtendimentoProtocolo );
+        CONVIND( lstDadoOraCdAreaRegistro,lstStatOraCdAreaRegistro );
+        CONVIND( lstDadoOraNrLinha,lstStatOraNrLinha );
+        CONVIND( lstDadoOraDsMensagemEnvio,lstStatOraDsMensagemEnvio );
+        CONVIND( idUsuarioAlteracao, i_idUsuarioAlteracao );
+        CONVIND( cdOrigem,i_cdOrigem );
+        CONVIND( DTATUAL, i_DTATUAL );
+        CONVIND( idLinhaTelefonica, i_idLinhaTelefonica );
+        
+        /*
+         *
+         *   Abre conexao com a Torpedeira
+         *   Fiz a chamada aqui pelo timeout que eh muito curto. 500 milisec
+         *
+         *   Marcelo Nunes - Desligue Tibco - Fevereiro/2016
+         *
+        */
+         if ( ConnectSMS == false )
+         {
+            fdSocket = ConectaTorpedeira( host, porta );
+            if ( fdSocket < 0 )
+            {
+                oLog.logDebug( "!!! ERRO COM A TORPEDEIRA !!!" );
+                oLog.logDebug( "---> Desfazendo Reserva de Registros, voltando ao Estado Original da Fila <---" );
+                VoltaEstadoOriginal( idCtlFilaSMS, vPartic );
+                EXEC SQL CLOSE cProtocolos;
+                return -1;
+            }
+            oLog.logDebug( "---> Conexao com a Torpedeira OK!!!" );
+            ConnectSMS = true;
+        } 
+        
+        // Se existir suspeita de mensagem com lixo, podemos habilitar tratamento
+        if ( 'S' == tParamConf.szMessageParse[0] )
+        {
+            int lenMensagem = strlen((char*)lstDadoOraDsMensagemEnvio.arr);
+
+            char *p = strstr((char*)lstDadoOraDsMensagemEnvio.arr," as ");
+            if ( p==0 ) { p = strstr((char*)lstDadoOraDsMensagemEnvio.arr," AS "); }
+            int posIni = p - (char*)lstDadoOraDsMensagemEnvio.arr + 12; // 12 = tam de " as hh:mm - ";
+            if ( posIni < 0 || posIni > lenMensagem ) { posIni=0; }
+
+            for( int j=posIni;j<lenMensagem;j++ )
+            {
+                if ( lstDadoOraDsMensagemEnvio.arr[j] < 32 || lstDadoOraDsMensagemEnvio.arr[j] > 125 )
+                {
+                     lstDadoOraDsMensagemEnvio.arr[j] = ' ';
+                }
+            }
+        } // if ( 'S' == tParamConf.szMessageParse[0] )
+
+        if ( 1 == lstDadoOraInEnvioSMS )
+        {
+            //oLog.logDebug( "Tratando MSG para Prospect / Fixo..." );
+            
+            //sprintf(szAux, "*** CDORIGEM                    [%s]",(const char*)cdOrigem.arr); oLog.logDebug(szAux);
+            //sprintf(szAux, "*** Indicator CDORIGEM          [%d]",i_cdOrigem); oLog.logDebug(szAux);
+            //sprintf(szAux, "*** Indicator idLinhaTelefonica [%d]",i_idLinhaTelefonica); oLog.logDebug(szAux);
+            
+            if ( (!strcmp((const char*)cdOrigem.arr, "MOVEL") || i_cdOrigem == -1) && i_idLinhaTelefonica == -1 || !strcmp((const char*)cdOrigem.arr, "FIXO") )
+            {
+                if ( (!strcmp((const char*)cdOrigem.arr, "MOVEL") || i_cdOrigem == -1) && i_idLinhaTelefonica == -1 && i_prmMsgProtMovelPros != -1 )
+                {
+                    //oLog.logDebug( "Movel -> Prospect..." );
+                    STRCPY_FROM_ORA(szDsValorParametro, prmMsgProtMovelPros );
+                    STRCPY_FROM_ORA(szDtAtual, DTATUAL);
+                    STRCPY_FROM_ORA(szIdAtendimentoProtocolo,lstDadoOraIdAtendimentoProtocolo);
+                    iIdAtendimentoProtocolo = atol(szIdAtendimentoProtocolo);
+                    memset(szDsMsg,0,sizeof(szDsMsg));
+                    sprintf(szDsMsg, szDsValorParametro, iIdAtendimentoProtocolo, szDtAtual);
+                    memset(lstDadoOraDsMensagemEnvio.arr,0,sizeof(lstDadoOraDsMensagemEnvio.arr));
+                    STRCPY_TO_ORA(lstDadoOraDsMensagemEnvio, szDsMsg);
+                }
+                else if ( !strcmp((const char*)cdOrigem.arr, "FIXO") && i_idLinhaTelefonica != -1 && i_prmMsgProtFixaClie != -1 )
+                {
+                    //oLog.logDebug( "Fixo -> Cliente..." );
+                    STRCPY_FROM_ORA(szDsValorParametro, prmMsgProtFixaClie );
+                    STRCPY_FROM_ORA(szDtAtual, DTATUAL);
+                    STRCPY_FROM_ORA(szIdAtendimentoProtocolo,lstDadoOraIdAtendimentoProtocolo);
+                    iIdAtendimentoProtocolo = atol(szIdAtendimentoProtocolo);
+                    memset(szDsMsg,0,sizeof(szDsMsg));
+                    sprintf(szDsMsg, szDsValorParametro, iIdAtendimentoProtocolo, szDtAtual);
+                    memset(lstDadoOraDsMensagemEnvio.arr,0,sizeof(lstDadoOraDsMensagemEnvio.arr));
+                    STRCPY_TO_ORA(lstDadoOraDsMensagemEnvio, szDsMsg);
+                }
+                else
+                {
+                    if ( i_prmMsgProtFixaPros != -1 )
+                    {
+                        //oLog.logDebug( "Fixo -> Prospect..." );
+                        STRCPY_FROM_ORA(szDsValorParametro, prmMsgProtFixaPros );
+                        STRCPY_FROM_ORA(szDtAtual, DTATUAL);
+                        STRCPY_FROM_ORA(szIdAtendimentoProtocolo,lstDadoOraIdAtendimentoProtocolo);
+                        iIdAtendimentoProtocolo = atol(szIdAtendimentoProtocolo);
+                        memset(szDsMsg,0,sizeof(szDsMsg));
+                        sprintf(szDsMsg, szDsValorParametro, iIdAtendimentoProtocolo, szDtAtual);
+                        memset(lstDadoOraDsMensagemEnvio.arr,0,sizeof(lstDadoOraDsMensagemEnvio.arr));
+                        STRCPY_TO_ORA(lstDadoOraDsMensagemEnvio, szDsMsg);
+                    }
+                }
+            }
+
+            sprintf( ddd, "%s",(const char*)lstDadoOraCdAreaRegistro.arr );
+            sprintf( linha, "%s",(const char*)lstDadoOraNrLinha.arr );
+            
+            if ( atoi(ddd) > 0 )
+            {
+                if ( atoi(linha) > 0 )
+                {
+                    memset( dgInicLinha, 0x0, sizeof(dgInicLinha) );
+                    dgInicLinha[0] = linha[0]; // atribui o primeiro digito da linha para identificacao de movel ou fixo
+                    
+                    if ( atoi(dgInicLinha) < 5 )  // Considerado Linha de Fixo, nao sera enviado SMS
+                    {
+                        memset( MsgLinhaFixa, 0x0, sizeof(MsgLinhaFixa) );
+                        sprintf( MsgLinhaFixa, "SMS não enviado para linha fixa: (%s) %.4s-%.4s", (const char*)ddd, (const char*)linha, (const char*)&linha[4] );
+                        strcpy((char*)lstDadoOraDsMotivoNaoEnvio.arr,
+                            MsgLinhaFixa );
+                        lstDadoOraDsMotivoNaoEnvio.len =
+                            strlen((char*)lstDadoOraDsMotivoNaoEnvio.arr);
+                        lstStatOraDsMotivoNaoEnvio = 1;
+
+/*                         sprintf( szAux,">>> SMS NÃO ENVIADO: Linha de Fixo - idAtdProtocolo=[%s] DDD=[%s] linha=[%s] "
+                                      ,(const char*)lstDadoOraIdAtendimentoProtocolo.arr
+                                      ,(const char*)lstDadoOraCdAreaRegistro.arr
+                                      ,(const char*)lstDadoOraNrLinha.arr);
+                        oLog.logDebug(szAux); */
+                        iqtdlinhasErroEnvio++;
+                        iqtdlinhasFixo++;
+                    }
+                    else   // Considerado linha movel, pode enviar SMS
+                    {
+                        
+                        sprintf( sDestinoSMS, "%s%s", (const char*)lstDadoOraCdAreaRegistro.arr, (const char*)lstDadoOraNrLinha.arr );
+                        sprintf( szDsMensagemEnvio, "%s", (const char*)lstDadoOraDsMensagemEnvio.arr );
+                        
+                        iStatusEnvioSMS = EnviaSMS( fdSocket, sDestinoSMS, szDsMensagemEnvio );
+                        iStatusEnvioSMS = 0;
+                        if ( iStatusEnvioSMS < 0 )
+                        {
+                            iqtdlinhasErroEnvio++;
+                            oLog.logDebug( "---> Desfazendo Reserva de Registros, voltando ao Estado Original da Fila <---" );
+                            VoltaEstadoOriginal( idCtlFilaSMS, vPartic );
+                            EXEC SQL CLOSE cProtocolos;
+                            return -1;
+                        }
+                        if ( iStatusEnvioSMS == 0 )
+                        {
+                            qtEnviadas++;
+                        }
+
+/*                         sprintf( szAux,"SMS ENVIADO - idAtdProtocolo [%s] DDD [%s] linha [%s] - MSG [%s]"
+                                      ,(const char*)lstDadoOraIdAtendimentoProtocolo.arr
+                                      ,(const char*)lstDadoOraCdAreaRegistro.arr
+                                      ,(const char*)lstDadoOraNrLinha.arr
+                                      ,(const char*)lstDadoOraDsMensagemEnvio.arr );
+                        oLog.logDebug(szAux);
+ */                    }
+                }
+                else
+                {
+                    memset( MsgLinhaFixa, 0x0, sizeof(MsgLinhaFixa) );
+                    sprintf( MsgLinhaFixa, "Linha inválida para o envio de SMS: (%s) %.4s-%.4s", (const char*)ddd, (const char*)linha, (const char*)&linha[4] );
+                    strcpy( (char*)lstDadoOraDsMotivoNaoEnvio.arr,
+                        MsgLinhaFixa );
+                    lstDadoOraDsMotivoNaoEnvio.len =
+                        strlen((char*)lstDadoOraDsMotivoNaoEnvio.arr);
+                    lstStatOraDsMotivoNaoEnvio = 1;
+
+/*                     sprintf( szAux,">>> SMS NÃO ENVIADO - idAtdProtocolo=[%s] DDD=[%s] linha=[%s] "
+                                  ,(const char*)lstDadoOraIdAtendimentoProtocolo.arr
+                                  ,(const char*)lstDadoOraCdAreaRegistro.arr
+                                  ,(const char*)lstDadoOraNrLinha.arr);
+                    oLog.logDebug(szAux); */
+                    iqtdlinhasErroEnvio++;
+                    iqtdlinhasNaoIdent++;
+                }
+            }
+            else
+            {
+                memset( MsgLinhaFixa, 0x0, sizeof(MsgLinhaFixa) );
+                sprintf( MsgLinhaFixa, "Linha inválida para o envio de SMS: (%s) %.4s-%.4s", (const char*)ddd, (const char*)linha, (const char*)&linha[4] );
+                strcpy( (char*)lstDadoOraDsMotivoNaoEnvio.arr,
+                    MsgLinhaFixa );
+                lstDadoOraDsMotivoNaoEnvio.len =
+                    strlen((char*)lstDadoOraDsMotivoNaoEnvio.arr);
+                lstStatOraDsMotivoNaoEnvio = 1;
+
+/*                 sprintf( szAux,"SMS NÃO ENVIADO - idAtdProtocolo=[%s] DDD=[%s] linha=[%s] " 
+                              ,(const char*)lstDadoOraIdAtendimentoProtocolo.arr
+                              ,(const char*)lstDadoOraCdAreaRegistro.arr
+                              ,(const char*)lstDadoOraNrLinha.arr);
+                oLog.logDebug(szAux);
+ */                
+                iqtdlinhasErroEnvio++;
+                iqtdlinhasNaoIdent++;
+            }
+
+/*             sprintf( szAux,"MSG ENVIADA [%s]"
+                               ,(const char*)lstDadoOraDsMensagemEnvio.arr );
+            oLog.logDebug(szAux); */
+        }
+        else
+        {
+            strcpy((char*)lstDadoOraDsMotivoNaoEnvio.arr,
+                "SMS não enviado para este protocolo pois todas folhas "
+                                    "de contato foram configuradas com INSMS=0");
+            lstDadoOraDsMotivoNaoEnvio.len =
+                strlen((char*)lstDadoOraDsMotivoNaoEnvio.arr);
+            lstStatOraDsMotivoNaoEnvio = 1;
+
+/*             sprintf( szAux,"SMS NÃO ENVIADO - idAtdProtocolo=[%s] DDD=[%s] linha=[%s] "
+                          ,(const char*)lstDadoOraIdAtendimentoProtocolo.arr
+                          ,(const char*)lstDadoOraCdAreaRegistro.arr
+                          ,(const char*)lstDadoOraNrLinha.arr);
+            oLog.logDebug(szAux); */
+            iqtdlinhasErroEnvio++;
+            iQtdContatoZero++;
+        }
+
+    } // for(;;)
+    
+        
+    close(fdSocket);   // Fecha Conexao com a Torpedeira
+
+    AtualizaEstadoProcesso( idControleFilaSMS, "9" );   // Ajusta coluna DTFIMCONSUMO com timestamp final
+    
+    EXEC SQL CLOSE cProtocolos;
+
+    sprintf(szAux, "Qtd de linhas processadas................[%05d]",linhas_processadas); oLog.logDebug(szAux);
+    sprintf(szAux, "Qtd de linhas enviadas...................[%05d]",qtEnviadas); oLog.logDebug(szAux);
+    sprintf(szAux, "Qtd de linhas não processadas............[%05d]",iqtdlinhasErroEnvio); oLog.logDebug(szAux);
+    sprintf(szAux, "Qtd de linhas de fixo....................[%05d]",iqtdlinhasFixo); oLog.logDebug(szAux);
+    sprintf(szAux, "Qtd de linhas com DDD = 0 e Telefone = 0 [%05d]",iqtdlinhasNaoIdent); oLog.logDebug(szAux);
+    sprintf(szAux, "Qtd de protocolos abertos por contato ajustado para NAO envio de SMS [%05d]",iQtdContatoZero); oLog.logDebug(szAux);
+    
+    
+    oLog.logDebug("*** Fim do procedimento de envio de SMS ***");
+    AtualizaEstadoProcesso( idControleFilaSMS, "3" );   // Ajusta Controle para: "FINALIZADO"
+
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    
+    sprintf( szAux, "### [ProcessaRegistros()] Tempo de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+
+    
+    oLog.logDebug("<<< ProcessaRegistros");
+
+    return 0;
+
+    sqlError:
+        sprintf(szAux, "Finalizando processo com erro ORACLE (%s)",
+                    sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+
+        endTime = getRealTime();   // Finaliza Cronometro de Operacao
+        ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+        
+        sprintf( szAux, "### [ProcessaRegistros()] Tempo de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+        oLog.logDebug("<<< ProcessaRegistros");
+
+        return -1;
+}
+
+
+
+int ConectaTorpedeira( char * host, char * porta )
+{
+    int len;
+    char strConnect[32];
+    char codRetorno[5];
+    char buffer[32];
+    int fdSocket;
+
+    memset( buffer, 0x0, sizeof(buffer) );
+    sprintf( strConnect, "%cSMS_SENDER_HDR%cfrontoffice%cfrontoffice123%c\r\n" , TOKEN_B0, TOKEN_B1, TOKEN_B1, TOKEN_B2 );
+
+    fdSocket = socket ( AF_INET, SOCK_STREAM, 0 ) ;
+    if ( fdSocket < 0 )
+    {
+        sprintf ( szAux, "*** Conexao Socket: [%s]\n", strerror(errno) );oLog.logDebug(szAux);
+        return - 1;
+    }
+    //Socket address information
+    sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = inet_addr( host );
+    addr.sin_port = htons(atoi(porta));
+    /*==========Addressing finished==========*/
+
+    //Now we connect
+    int conn=connect ( fdSocket,(struct  sockaddr*)&addr,sizeof(addr) );
+    if ( conn < 0 )
+    {
+        sprintf ( szAux, "*** Conexao Socket: [%s]\n", strerror(errno) );oLog.logDebug(szAux);
+        close ( fdSocket );
+        return -1;
+    }
+    
+    len = send ( fdSocket, strConnect, strlen(strConnect),0 );
+    if ( len < 0 )
+    {
+        sprintf ( szAux, "*** Envio Socket: [%s]\n", strerror(errno) );oLog.logDebug(szAux);
+        return -1;
+    }
+
+    len = recv ( fdSocket, buffer, sizeof(buffer), 0 );
+    if ( len < 0 )
+    {
+        sprintf ( szAux, "*** Envio Socket: [%s]\n", strerror(errno) );oLog.logDebug(szAux);
+        return -1;
+    }
+
+    sprintf( codRetorno, "%.4s", (char*)&buffer[1] );
+    if ( atoi(codRetorno) != 0 )
+    {
+        sprintf ( szAux, "*** ERRO CONEXAO TORPEDEIRA: *** ERRO CONEXAO TORPEDEIRA: [%s] - [%s]\n", codRetorno, tratamentoErro(atoi(codRetorno)) );oLog.logDebug(szAux);
+        return -1;
+    }
+
+    return fdSocket;
+}
+
+
+
+int EnviaSMS( int fdSocket, char * Destino, char * Msg )
+{
+    time_t      rawtime;
+    struct tm * timeinfo;
+
+    int len;
+    char strEnvio[256];
+    char keepAliveNoop[64];
+    char codRetorno[5];
+    char buffer[32];
+    char PeriodoValido[32];
+
+    memset( buffer, 0x0, sizeof(buffer) );
+
+    time ( &rawtime );
+    timeinfo = localtime ( &rawtime );
+    timeinfo->tm_mday = timeinfo->tm_mday + 5 ;   // Sempre 5 dias a mais para o DIA
+    mktime( timeinfo );
+
+    strftime( PeriodoValido, 17, "%y%m%d%H%M%S000R", timeinfo );
+
+    //sprintf ( szAux,  "Periodo Valido [%.16s]\n", PeriodoValido  );oLog.logDebug(szAux);
+
+    //sprintf( strEnvio, "%cSMS_SENDER_DTA%c|*8486|11996637203|Teste de Envio SMS|S|160209121212000R%c\r\n" , TOKEN_B0, TOKEN_B1, TOKEN_B2 );
+
+    sprintf( strEnvio, "%cSMS_SENDER_DTA%c|2004|%s|%s|S|%.16s%c\r\n" , TOKEN_B0, TOKEN_B1, Destino, Msg, PeriodoValido, TOKEN_B2 );
+    //sprintf ( szAux, "Enviando [%s]\n", strEnvio );oLog.logDebug(szAux);
+    //sprintf ( szAux, "Destino [%s]\n", Destino );oLog.logDebug(szAux);
+
+    len = send(fdSocket, strEnvio, strlen(strEnvio),0);
+    if ( len < 0 )
+    {
+        sprintf ( szAux, "*** ERRO ESCRITA SOCKET: Msg Envio [%s]\n", strerror(errno) );oLog.logDebug(szAux);
+        return -1;
+    }
+
+    len = recv(fdSocket, buffer, 32, 0);
+    if ( len < 0 )
+    {
+        sprintf ( szAux, "*** ERRO LEITURA SOCKET: Msg Envio [%s]\n", strerror(errno) );oLog.logDebug(szAux);
+        return -1;
+    }
+
+    sprintf( codRetorno, "%.4s", (char*)&buffer[1] );
+    if ( atoi(codRetorno) != 0 )
+    {
+        sprintf ( szAux, "*** ERRO CONEXAO TORPEDEIRA: Msg Envio [%s] - [%s]\n", codRetorno, tratamentoErro(atoi(codRetorno)) );oLog.logDebug(szAux);
+        return -1;
+    }
+
+    //KeepAlive( fdSocket );   // Mantem a conexao ativa para a proxima mensagem
+    /*
+     * A principio fiz uma rotina de Keep a live, porem por questoes de performance
+     * achei melhor chamar inline no codigo.
+     *
+     * Marcelo Nunes - Feb/2016
+     */
+    
+    sprintf( keepAliveNoop, "%cSMS_SENDER_NOOP%c\r\n" , TOKEN_B0, TOKEN_B2 );
+    
+    len = send(fdSocket, keepAliveNoop, strlen(keepAliveNoop),0);
+    if ( len < 0 )
+    {
+        sprintf ( szAux, "*** ERRO ESCRITA SOCKET: Keep A Live [%s]\n", strerror(errno) );oLog.logDebug(szAux);
+        return -1;
+    }
+
+    len = recv(fdSocket, buffer, sizeof(buffer), 0);
+    if ( len < 0 )
+    {
+        sprintf ( szAux, "*** ERRO LEITURA SOCKET: Keep A Live [%s]\n", strerror(errno) );oLog.logDebug(szAux);
+        return -1;
+    }
+
+    sprintf( codRetorno, "%.4s", (char*)&buffer[1] );
+    if ( atoi(codRetorno) != 0 )
+    {
+        sprintf ( szAux, "*** ERRO CONEXAO TORPEDEIRA: Keep A Live [%s] - [%s]\n", codRetorno, tratamentoErro(atoi(codRetorno)) );oLog.logDebug(szAux);
+        return -1;
+    }
+    return 0;
+}
+
+
+
+/**
+ * Returns the real time, in seconds, or -1.0 if an error occurred.
+ *
+ * Time is measured since an arbitrary and OS-dependent start time.
+ * The returned real time is only useful for computing an elapsed time
+ * between two calls to this function.
+ */
+double getRealTime(void)
+{
+    /* AIX, BSD, Cygwin, HP-UX, Linux, OSX, POSIX, Solaris. ----- */
+    struct timeval tm;
+    gettimeofday( &tm, NULL );
+    return (double)tm.tv_sec + (double)tm.tv_usec / 1000000.0;
+}
+
+
+
+/*
+ *   Retorna Tempo Usado
+ *   StartTime - Tempo Inicial
+ *   EndTime - Tempo Final
+ *   UsedTime - Tempo Gasto
+ */
+void ElapsedTime(double StartTime, double EndTime, char * UsedTime)
+{
+    int hora, minuto, segundo;
+
+    char Tempo[16];
+    char Segundos[8];
+    char Miliseg[4];
+    char * Result = NULL;
+
+    sprintf ( Tempo, "%lf.", (EndTime - StartTime) );
+    Result = strtok(Tempo,".");
+    sprintf(Segundos,"%s", Result);
+    //printf("Segundos [%s]\n",Segundos);
+    Result = strtok(NULL,".");
+    sprintf(Miliseg, "%.4s", Result);
+    //printf("Miliseg [%s]\n",Miliseg);
+
+    hora = (atoi(Segundos)/3600);
+    minuto = (atoi(Segundos)-(3600*hora))/60;
+    segundo = (atoi(Segundos)-(3600*hora)-(minuto*60));
+    sprintf( UsedTime, "%02d:%02d:%02d.%s", hora, minuto, segundo, Miliseg );
+
+}
+
+
+
+int AtualizaEstadoProcesso ( char * idCtlFilaSMS_PRM, char * Status_Prm )
+{
+    double startTime, endTime;
+    char UsedTime[16];
+    memset(UsedTime, 0x0, sizeof(UsedTime));
+
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+    
+    string pSQL;
+    char   buffer[128];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    
+        char* stmt;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logDebug( ">>> AtualizaEstadoProcesso()" );
+    
+    //sprintf(szAux, "*** idCtlFilaSMS_PRM [%s]", idCtlFilaSMS_PRM ); oLog.logDebug(szAux);
+    //sprintf(szAux, "*** Status_Prm       [%s]", Status_Prm ); oLog.logDebug(szAux);
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erroStatus;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    /* 
+     *
+     * Onde INPROCESSADO admite os seguintes valores:
+     *
+     * 0 - EM PROCESSAMENTO
+     * 1 - DISPONIVEL
+     * 2 - EM CONSUMO
+     * 3 - FINALIZADO
+     *
+     */
+    if ( atoi(Status_Prm) == 1 )
+    {
+        pSQL = 
+        "UPDATE ATENDIMENTO.CONTROLEFILASMS "
+        "SET INPROCESSADO = " ;
+        pSQL += Status_Prm ;
+        pSQL +=
+        " WHERE IDCONTROLEFILASMS = ";
+        sprintf ( buffer, "%s", idCtlFilaSMS_PRM );
+        pSQL += buffer ;
+    }
+    if ( atoi(Status_Prm) == 2 )
+    {
+        pSQL = 
+        "UPDATE ATENDIMENTO.CONTROLEFILASMS "
+        "SET INPROCESSADO = " ;
+        pSQL += Status_Prm ;
+        pSQL +=
+        " , DTINICIOCONSUMO = SYSTIMESTAMP "
+        " WHERE IDCONTROLEFILASMS = ";
+        sprintf ( buffer, "%s", idCtlFilaSMS_PRM );
+        pSQL += buffer ;
+    }
+    if ( atoi(Status_Prm) == 3 )
+    {
+        pSQL = 
+        "UPDATE ATENDIMENTO.CONTROLEFILASMS "
+        "SET INPROCESSADO = " ;
+        pSQL += Status_Prm ;
+        pSQL +=
+        " , DTFIM = SYSTIMESTAMP "
+        " WHERE IDCONTROLEFILASMS = ";
+        sprintf ( buffer, "%s", idCtlFilaSMS_PRM );
+        pSQL += buffer ;
+    }
+    if ( atoi(Status_Prm) == 9 )  // Este Status nao existe, eh usado apenas para marcar o tempo final do consumo
+    {
+        pSQL = 
+        "UPDATE ATENDIMENTO.CONTROLEFILASMS "
+        "SET DTFIMCONSUMO = SYSTIMESTAMP " 
+        " WHERE IDCONTROLEFILASMS = ";
+        sprintf ( buffer, "%s", idCtlFilaSMS_PRM );
+        pSQL += buffer ;
+    }
+
+    stmt = (char *)pSQL.c_str();
+    sprintf( szAux, "&&& Vai Executar [%s]", stmt ); oLog.logDebug(szAux);
+    
+    EXEC SQL EXECUTE IMMEDIATE :stmt ;
+    
+    EXEC SQL COMMIT;
+    
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    
+    sprintf( szAux, "### [AtualizaEstadoProcesso()] Tempo de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+
+    oLog.logDebug( "<<< AtualizaEstadoProcesso()" );
+    return 0;
+
+erroStatus:
+    sprintf(szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    oLog.logDebug( "<<< AtualizaEstadoProcesso()" );
+    return -1;
+}
+
+
+
+int VoltaEstadoOriginal( char * idControleFilaSMS, char * sParticao )
+{
+    double startTime, endTime;
+    char UsedTime[16];
+    memset(UsedTime, 0x0, sizeof(UsedTime));
+
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    
+        const char * queryChar;
+        char* idCtlFilaSMS = idControleFilaSMS ;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logDebug( ">>> VoltaEstadoOriginal()" );
+    struct sqlca sqlca;
+    string stmt;
+    char bf[8];
+    
+    memset( bf, 0x0, sizeof(bf) );
+    
+    EXEC SQL WHENEVER SQLERROR goto erroRollBack;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+    /*
+    EXEC SQL
+    UPDATE ATENDIMENTO.FILASMSPROTOCOLO
+       SET IDCONTROLEFILASMS = NULL
+    WHERE IDCONTROLEFILASMS = :idCtlFilaSMS ;
+    */
+    
+    stmt =
+    " UPDATE ATENDIMENTO.FILASMSPROTOCOLO PARTITION(";
+
+    sprintf( bf, "%s", sParticao );
+    stmt += bf;
+
+    stmt +=
+    ") "
+       " SET IDCONTROLEFILASMS = NULL "
+    " WHERE IDCONTROLEFILASMS = ";
+    
+    sprintf( bf, "%s", idCtlFilaSMS );
+    stmt += bf;
+
+    queryChar = stmt.c_str();
+    sprintf( szAux, "queryChar [%s]", queryChar ); oLog.logDebug(szAux);
+    EXEC SQL EXECUTE IMMEDIATE :queryChar ;
+    
+    EXEC SQL COMMIT;
+
+    EXEC SQL
+    DELETE FROM ATENDIMENTO.CONTROLEFILASMS  
+    WHERE IDCONTROLEFILASMS = :idCtlFilaSMS ;
+    
+    EXEC SQL COMMIT;
+    
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    
+    sprintf( szAux, "### [VoltaEstadoOriginal()] Tempo de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+
+    oLog.logDebug( "<<< VoltaEstadoOriginal()" );
+    return 0;
+
+erroRollBack:
+    sprintf(szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    oLog.logDebug( "<<< VoltaEstadoOriginal()" );
+    return -1;
+}
+
+
+
+char* tratamentoErro(int cdErro)
+{
+    switch (cdErro)
+    {
+    case 0:
+        return "Sucesso";
+    case 1:
+        return "Aplicação ou senha inválida";
+    case 2:
+        return "Aplicação não cadastrada";
+    case 3:
+        return "Aplicação cadastrada sem plugin";
+    case 4:
+        return "Pacote inválido ( ID esperado SMS_SENDER_HDR )";
+    case 5:
+        return "Pacote inválido (ID esperado  SMS_SENDER_DTA )";
+    case 6:
+        return "Numero de campos inválido";
+    case 7:
+        return "Erro retornado pelo plugin";
+    case 8:
+        return "Erro enviando para fila IPC";
+    case 9:
+        return "Delimitador (inicio ou fim) invalido";
+    case 10:
+        return "Tentativa de execução fora da faixa de horário";
+    default:
+        return "Erro não cadastrado (geral)!";
+    }
+}

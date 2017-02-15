@@ -1,0 +1,92 @@
+SET TERMOUT ON;
+SET SQLPROMPT '';
+SET FEEDBACK OFF;
+SET ECHO OFF;
+SET AUTOTRACE OFF;
+SET FLUSH ON;
+SET HEADING OFF;
+SET SERVEROUTPUT ON SIZE 1000000;
+SET TIME OFF;
+SET TRIMOUT ON;
+SET TRIMSPOOL ON;
+SET PAUSE OFF;
+SET SHOWMODE OFF;
+SET SQLBLANKLINES OFF;
+SET SQLNUMBER OFF;
+SET TAB OFF;
+SET VERIFY OFF;
+SET WRAP OFF;
+SET FEED OFF;
+SET NEWPAGE NONE;
+SET LINESIZE 32767;
+SET TIMING OFF;
+
+WHENEVER SQLERROR EXIT SQL.SQLCODE
+WHENEVER OSERROR EXIT FAILURE 
+
+VARIABLE VO_CDERRO NUMBER
+VARIABLE VO_DSERRO VARCHAR2(512)
+VARIABLE VO_COUNT NUMBER
+
+declare
+  VI_IDUSUARIOALTERACAO NUMBER := &1;
+  VI_NUMREGCOMMIT NUMBER := &2;
+
+  v_UltimoProcessadoInfancia DATE;
+  v_TotalDiasExpurgo NUMBER;
+
+begin
+  DBMS_APPLICATION_INFO.SET_MODULE('expurgoPlanoServicoLinhaPessoa', 'INICIO PROCESSAMENTO'); 
+  
+  -- Recupera o valor do parametro UltimoProcessadoInfancia da tabela APOIO.PARAMETRO
+  SELECT TRUNC(TO_DATE(DSVALORPARAMETRO, 'YYYYMMDDHH24MISS')) 
+  INTO v_UltimoProcessadoInfancia
+  FROM APOIO.PARAMETRO
+  WHERE CDPARAMETRO = 'UltimoProcessadoInfancia';
+  
+  -- Recupera o valor do parametro TotalDiasExpurgoClassificacaoInfancia da tabela APOIO.PARAMETRO
+  SELECT TO_NUMBER(DSVALORPARAMETRO) 
+  INTO v_TotalDiasExpurgo
+  FROM APOIO.PARAMETRO
+  WHERE CDPARAMETRO = 'TotalDiasExpurgoClassificacaoInfancia';
+  
+  DBMS_APPLICATION_INFO.SET_ACTION('DELETANDO REGISTROS LOG '); 
+  
+  -- Deletando registros
+  delete /*+ parallel(8) */     
+	from LOAD.CLASSIFICACAOINFANCIAERRO
+   where DTERRO <= (v_UltimoProcessadoInfancia - v_TotalDiasExpurgo);	
+  
+  DBMS_APPLICATION_INFO.SET_ACTION('DELETANDO REGISTROS'); 
+  
+  -- Deletando registros
+  delete /*+ parallel(8) */     
+	from LINHA.PLANOSERVLINHAPESSOASUBSEG
+   where DTULTIMAALTERACAOPLANO <= (v_UltimoProcessadoInfancia - v_TotalDiasExpurgo);
+
+  :VO_COUNT := SQL%ROWCOUNT;
+  
+  DBMS_APPLICATION_INFO.SET_ACTION('COMMIT: '||:VO_COUNT);
+
+  COMMIT;
+  
+  :VO_CDERRO := 0;
+  :VO_DSERRO := 'Sucesso';
+  
+  DBMS_APPLICATION_INFO.SET_MODULE(NULL, NULL); 
+EXCEPTION
+	WHEN OTHERS THEN
+		:VO_CDERRO := 99;
+		:VO_DSERRO := 'ERRO NR.: ' || SQLCODE || ' - DESCRICAO DO ERRO: ' || SQLERRM;
+    	ROLLBACK;
+
+end;
+/
+
+select CHR(10) from dual;
+select 'VO_CDERRO', :VO_CDERRO from dual;
+select 'VO_DSERRO', :VO_DSERRO from dual;
+select 'VO_COUNT', :VO_COUNT from dual;
+
+exit :VO_CDERRO
+

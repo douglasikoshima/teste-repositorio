@@ -1,0 +1,886 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <dirent.h>
+
+#include <statusUsuario.h>
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+
+extern errno;
+
+EXEC SQL INCLUDE SQLCA;
+
+char szAux[4096 + 1];
+Log oLog;
+int iSignalProcessa=1;
+
+
+int main(void)
+{
+    TParamConf tParamConf;
+    TDadosSaida tDadosSaida;
+    TDadosEntrada tDadosEntrada;
+    char szPathEntrada[]="../entrada";
+    char szPathEntradaProcessados[]="../processados";
+    char szPathSaida[]="../saida";
+
+    char *pArquivoEntrada=NULL;
+    char *pLinhaArquivo=NULL;
+    char szPathArq[255 + 1];
+    int iStatusProcessamento=0;
+    char szSgStatusUsuario[255 + 1];
+    char szLoginExecutor[255 + 1];
+
+    oLog.setNivel(2);
+    oLog.logDebug(">>> statusUsuario");
+
+    ArmaSinal(SIGTERM);
+
+    if(ObtemParamConf(&tParamConf)) {
+        oLog.logError("Erro obtendo parametros de configuracao");
+        exit(-1);
+    }
+
+    oLog.logInformation("Conectando na BD");
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst)) {
+        oLog.logError("Erro conectando no banco de dados");
+        exit(-1);
+    } 
+    oLog.logInformation("Conectado na BD com sucesso");
+
+    oLog.logInformation("Inicializacao efetuada com sucesso");
+
+    sprintf(szAux, "Path dos arquivos de entrada[%s]", szPathEntrada); oLog.logInformation(szAux);
+    sprintf(szAux, "Path dos arquivos de entrada processados[%s]", szPathEntradaProcessados); oLog.logInformation(szAux);
+    sprintf(szAux, "Path dos arquivos de saida[%s]", szPathSaida); oLog.logInformation(szAux);
+
+
+    while((pArquivoEntrada = OpenDir(szPathEntrada)) != NULL)
+    {
+        /* obtem o IdStatusUsuario e o IdUsuarioAlteracao que vem junto com o nome do arquivo */
+        ObtemValoresArqEntrada(pArquivoEntrada, &tDadosEntrada);
+
+        /* busca na base a Sigla do status do usuario */
+        if(ObtemSgStatusUsuario(tDadosEntrada.szIdStatusUsuario, szSgStatusUsuario) == false)
+            exit(-1);
+
+        /* busca na base o nome de login do usuario executor */
+        if(ObtemLoginUsuarioExecutor(tDadosEntrada.szIdUsuarioAlteracao, szLoginExecutor) == false)
+            exit(-1);
+        
+        /* monta path inteiro do arquivo de entrada */
+        sprintf(szPathArq, "%s%c%s", szPathEntrada, '/', pArquivoEntrada);
+        oLog.logInformation("=====================================================================");
+        sprintf(szAux, "Processando arquivo [%s]", szPathArq); oLog.logInformation(szAux);
+
+        while((pLinhaArquivo = ObtemLinhaArquivo(szPathArq)) != NULL)
+        {
+            sprintf(szAux, "Linha Obtida[%s](%d)", pLinhaArquivo, strlen(pLinhaArquivo)); oLog.logDebug(szAux);
+            sprintf(szAux, "Processando linha do arquivo [%s]", pLinhaArquivo); oLog.logInformation(szAux);
+
+            memset(&tDadosSaida, 0x00, sizeof(TDadosSaida));
+            strcpy(tDadosSaida.szLoginExecutor, szLoginExecutor);
+            strcpy(tDadosSaida.szCPF, pLinhaArquivo);
+            strcpy(tDadosSaida.szDataOperacao, ObtemDataHora());
+            strcpy(tDadosSaida.szStatus, szSgStatusUsuario);
+
+            if(ValidaCPF(&tDadosSaida) == true)
+            {
+                /* busca dados na base para formatar arquivo de saida */
+                if(ObtemDadosSaida(&tDadosSaida) == false)
+                {
+                    sprintf(szAux, "Erro processando CPF [%s] [%s]", tDadosSaida.szCPF, tDadosSaida.szNomeUsuario); oLog.logInformation(szAux);
+                    iStatusProcessamento=1;
+                }
+                else
+                {
+                    AtualizaUsuario(tDadosSaida.szIdPessoaUsuario, tDadosEntrada.szIdStatusUsuario, tDadosEntrada.szIdUsuarioAlteracao);
+    
+                    sprintf(szAux, "CPF processado com sucesso [%s]", tDadosSaida.szCPF); oLog.logInformation(szAux);
+    
+                    oLog.logInformation("Efetuando commit na BD");
+                    EXEC SQL COMMIT;
+                }
+            }
+            else
+            {
+                sprintf(szAux, "CPF com tamanho invalido[%s] [%s]", tDadosSaida.szCPF, tDadosSaida.szNomeUsuario); oLog.logInformation(szAux);
+                iStatusProcessamento=1;
+            }
+
+            GravaArqSaida(szPathSaida, pArquivoEntrada, &tDadosSaida, 0);
+        }
+
+        GravaArqSaida(szPathSaida, pArquivoEntrada, NULL, iStatusProcessamento);
+        iStatusProcessamento=0;
+
+        MoveArqSaida(szPathEntradaProcessados, szPathEntrada, pArquivoEntrada);
+
+        /* tratamento de interrupcao via sinal */
+        if(!iSignalProcessa)
+        {
+            oLog.logInformation("Parada de processamento via sinal");
+            break;
+        }
+    }
+
+    oLog.logInformation("Desconectando da BD");
+    DBDesconect();
+
+    oLog.logInformation("Processamento encerrado com sucesso");
+    oLog.logDebug("<<< statusUsuario");
+
+    return 0;
+}
+
+/************************************************************************************************************/
+bool ValidaCPF(TDadosSaida *ptDadosSaida)
+{
+    if(strlen(ptDadosSaida->szCPF) != 11)
+    {
+        strcpy(ptDadosSaida->szNomeUsuario, "CPF com tamanho invalido");
+        ptDadosSaida->szStatus[0]=0x00;
+
+        return false;
+    }
+
+    return true;
+}
+
+/************************************************************************************************************/
+void MoveArqSaida(char *pszPathEntradaProcessados, char *pszPathEntrada, char *pszArquivoEntrada)
+{
+    char szNomeArqEntrada[255 + 1];
+    char szNomeArqEntradaProcessados[255 + 1];
+    FILE *pFileIn, *pFileOut;
+    char szBuffer[256 + 1];
+    int iRet;
+
+    oLog.logDebug(">>> MoveArqSaida");
+
+    /* monta path + nome do arquivo de entrada */
+    sprintf(szNomeArqEntrada, "%s%c%s", pszPathEntrada, '/', pszArquivoEntrada);
+    sprintf(szAux, "szNomeArqEntrada[%s]", szNomeArqEntrada); oLog.logDebug(szAux);
+
+    /* monta path + nome do arquivo de entrada processados */
+    sprintf(szNomeArqEntradaProcessados, "%s%c%s%s", pszPathEntradaProcessados, '/', ObtemNomeArqSaida(pszArquivoEntrada), ".TXT");
+    sprintf(szAux, "szNomeArqEntradaProcessados[%s]", szNomeArqEntradaProcessados); oLog.logDebug(szAux);
+
+    sprintf(szAux, "Movendo arquivo de entrada processado"); oLog.logInformation(szAux);
+    sprintf(szAux, "de [%s]", szNomeArqEntrada); oLog.logInformation(szAux);
+    sprintf(szAux, "para [%s]", szNomeArqEntradaProcessados); oLog.logInformation(szAux);
+    /* abre o arquivo de entrada */
+    if((pFileIn = fopen(szNomeArqEntrada, "r")) == NULL)
+    {
+        sprintf(szAux, "Erro abrindo arquivo [%s]. errno(%d) strerror[%s]", szNomeArqEntrada, errno, strerror(errno)); oLog.logError(szAux);
+        exit(-1);
+    }
+
+    /* abre o arquivo de saida */
+    if((pFileOut = fopen(szNomeArqEntradaProcessados, "w")) == NULL)
+    {
+        sprintf(szAux, "Erro criando arquivo [%s]. errno(%d) strerror[%s]", szNomeArqEntradaProcessados, errno, strerror(errno)); oLog.logError(szAux);
+        exit(-1);
+    }
+
+    while((fgets(szBuffer, sizeof(szBuffer), pFileIn)) != NULL)
+    {
+        sprintf(szAux, "IN -> szBuffer[%s]", szBuffer); oLog.logDebug(szAux);
+        iRet = fputs(szBuffer, pFileOut);
+        sprintf(szAux, "OUT -> iRet(%d)strlen(szBuffer)(%d)", iRet, strlen(szBuffer)); oLog.logDebug(szAux);
+        if(iRet != strlen(szBuffer))
+        {
+            sprintf(szAux, "Erro escrevendo no arquivo [%s]. errno(%d) strerror[%s]", szNomeArqEntrada, errno, strerror(errno)); oLog.logError(szAux);
+            exit(-1);
+        }
+    }
+
+    fclose(pFileIn);
+    fclose(pFileOut);
+
+    /* apaga o arquivo de origem */
+    sprintf(szAux, "szNomeArqEntrada[%s]", szNomeArqEntrada); oLog.logDebug(szAux);
+    iRet = remove(szNomeArqEntrada);
+    sprintf(szAux, "remove -> iRet(%d)", iRet); oLog.logDebug(szAux);
+
+    if(iRet)
+    {
+        sprintf(szAux, "Erro apagando arquivo [%s]. errno(%d) strerror[%s]", szNomeArqEntrada, errno, strerror(errno)); oLog.logError(szAux);
+        exit(-1);
+    }
+    sprintf(szAux, "Arquivo movido com sucesso"); oLog.logInformation(szAux);
+
+    oLog.logDebug("<<< MoveArqSaida");
+}
+
+/************************************************************************************************************/
+void GravaArqSaida(char *pszPathSaida, char *pszArquivoEntrada, TDadosSaida *ptDadosSaida, int iStatusProcessamento)
+{
+    static FILE *pOutFile = NULL;
+    char szNomeArqSaida[255 + 1];
+    static char szPathNomeArqSaida[255 + 1];
+    char szPathNomeArqSaidaRename[255 + 1];
+    int iRet=0;
+    char szBuffer[512 + 1];
+
+    oLog.logDebug(">>> GravaArqSaida");
+
+    if(ptDadosSaida == NULL)
+    {
+        if(pOutFile != NULL)
+        {
+            sprintf(szAux, "Fechando arquivo de saida [%s]", szPathNomeArqSaida); oLog.logInformation(szAux);
+            fclose(pOutFile);
+            pOutFile = NULL;
+
+
+            /* formata o nome final do arquivo de saida */
+            strcpy(szPathNomeArqSaidaRename, szPathNomeArqSaida);
+            szPathNomeArqSaidaRename[strlen(szPathNomeArqSaidaRename) - strlen(ID_STATUS_ARQ_SAIDA_PROCESSAMENTO)] = 0x00;
+            if(iStatusProcessamento == 0)
+            {
+                strcat(szPathNomeArqSaidaRename, ID_STATUS_ARQ_SAIDA_CONCLUIDO);
+            }
+            else
+            {
+                strcat(szPathNomeArqSaidaRename, ID_STATUS_ARQ_SAIDA_PENDENTE);
+            }
+            sprintf(szAux,"Renomeando arquivo de saida"); oLog.logInformation(szAux);
+            sprintf(szAux,"de [%s]", szPathNomeArqSaida); oLog.logInformation(szAux);
+            sprintf(szAux,"para [%s]", szPathNomeArqSaidaRename); oLog.logInformation(szAux);
+
+            iRet = rename(szPathNomeArqSaida, szPathNomeArqSaidaRename); sprintf(szAux,"iRet(%d)", iRet); oLog.logDebug(szAux);
+            if(iRet)
+            {
+                sprintf(szAux, "Erro renomeando arquivo. errno(%d) strerror[%s]", errno, strerror(errno)); oLog.logError(szAux);
+                exit(-1);
+            }
+        }
+
+        oLog.logDebug("<<< GravaArqSaida");
+        return;
+    }
+
+    if(pOutFile == NULL)
+    {
+        /* formata nome do arquivo de saida */
+        strcpy(szNomeArqSaida, ObtemNomeArqSaida(pszArquivoEntrada));
+        strcat(szNomeArqSaida, ".OUT");
+        strcat(szNomeArqSaida, ID_STATUS_ARQ_SAIDA_PROCESSAMENTO);
+        sprintf(szAux, "2.szNomeArqSaida[%s]", szNomeArqSaida); oLog.logDebug(szAux);
+
+        sprintf(szPathNomeArqSaida, "%s%c%s", pszPathSaida, '/', szNomeArqSaida);
+        sprintf(szAux, "szPathNomeArqSaida[%s]", szPathNomeArqSaida); oLog.logDebug(szAux);
+
+        if((pOutFile = fopen(szPathNomeArqSaida, "w")) == NULL)
+        {
+            sprintf(szAux, "Erro criando arquivo[%s]. errno(%d) strerror[%s]", szPathNomeArqSaida, errno, strerror(errno)); oLog.logError(szAux);
+            exit(-1);
+        }
+    }
+
+    sprintf(szBuffer, "%s%c%s%c%s%c%s%c%s\n",
+            ptDadosSaida->szCPF, 0x09,
+            ptDadosSaida->szNomeUsuario, 0x09,
+            ptDadosSaida->szStatus, 0x09,
+            ptDadosSaida->szLoginExecutor, 0x09,
+            ptDadosSaida->szDataOperacao);
+
+    sprintf(szAux, "szBuffer[%.*s]", (strlen(szBuffer) -1), szBuffer); oLog.logDebug(szAux);
+
+    iRet = fputs(szBuffer, pOutFile);
+    sprintf(szAux, "iRet(%d) strlen(szBuffer)(%d)", iRet, strlen(szBuffer)); oLog.logDebug(szAux);
+
+    if(iRet != strlen(szBuffer))
+    {
+        sprintf(szAux, "Erro escrevendo em arquivo[%s]. errno(%d) strerror[%s]", szPathNomeArqSaida, errno, strerror(errno)); oLog.logError(szAux);
+    }
+
+    oLog.logDebug("<<< GravaArqSaida");
+}
+
+/************************************************************************************************************/
+char *ObtemLinhaArquivo(char *pszPathArq)
+{
+    static FILE *pFile=NULL;
+    static char szBuffer[512 + 1];
+    char *p=NULL;
+
+    oLog.logDebug(">>> ObtemLinhaArquivo");
+    sprintf(szAux, "pszPathArq[%s]", pszPathArq); oLog.logDebug(szAux);
+
+    if(pFile == NULL)
+    {
+        if((pFile = fopen(pszPathArq, "r")) == NULL)
+        {
+            sprintf(szAux,"Erro abrindo arquivo[%s]. errno(%d) strerror[%s]", pszPathArq, errno, strerror(errno)); oLog.logError(szAux);
+            exit(-1);
+        }
+        oLog.logDebug("ObtemLinhaArquivo pFile setado");
+    }
+
+    memset(szBuffer, 0x00, sizeof(szBuffer));
+    p = fgets(szBuffer, sizeof(szBuffer), pFile);
+    sprintf(szAux, "fgets[%p]HEXA[%X]", p, szBuffer[0]); oLog.logDebug(szAux);
+
+    if(p != NULL)
+        TrataFormatoDOS(szBuffer);
+
+    if(p == NULL || szBuffer[0] == 0x0A)
+    {
+        if((ferror(pFile)))
+        {
+            sprintf(szAux, "Erro lendo arquivo[%s]. errno(%d) strerror[%s]", pszPathArq, errno, strerror(errno)); oLog.logError(szAux);
+            exit(-1);
+        }
+        else
+        {
+            sprintf(szAux, "Final do arquivo de entrada[%s]", pszPathArq); oLog.logInformation(szAux);
+            fclose(pFile);
+            pFile=NULL;
+
+            oLog.logDebug(">>> ObtemLinhaArquivo <NULL>");
+            return NULL;
+        }
+    }
+
+    sprintf(szAux, "szBuffer[strlen(szBuffer)-1][%X]", szBuffer[strlen(szBuffer)-1]); oLog.logDebug(szAux);
+    /* retira o enter do final da linha se precisar*/
+    if(szBuffer[strlen(szBuffer)-1] == 0x0A)
+        szBuffer[strlen(szBuffer)-1]=0x00;
+
+    sprintf(szAux, "szBuffer[%s]", szBuffer); oLog.logDebug(szAux);
+
+    oLog.logDebug(">>> ObtemLinhaArquivo <NOT NULL>");
+    return szBuffer;
+}
+/************************************************************************************************************/
+void TrataFormatoDOS(char *pszBuffer)
+{
+    register int iOrig, iDest;
+    int iLen;
+    char *pAlloc=NULL;
+
+    oLog.logDebug(">>> TrataFormatoDOS");
+
+    iLen = strlen(pszBuffer);
+    sprintf(szAux, "iLen(%d)", iLen); oLog.logDebug(szAux);
+
+    if((pAlloc = (char *)malloc(iLen + 1)) == NULL)
+    {
+        sprintf(szAux, "Erro alocando memoria. errno(%d) strerror[%s]", errno, strerror(errno)); oLog.logError(szAux);
+        exit(-1);
+    }
+
+    memset(pAlloc, 0x00, iLen+1);
+
+    for(iOrig=iDest=0; iOrig<iLen; iOrig++)
+        if(pszBuffer[iOrig] != 0x0D)
+            pAlloc[iDest++] = pszBuffer[iOrig];
+        
+
+    sprintf(szAux, "1.pAlloc(%d)", strlen(pAlloc)); oLog.logDebug(szAux);
+    sprintf(szAux, "1.pszBuffer(%d)", strlen(pszBuffer)); oLog.logDebug(szAux);
+
+    strcpy(pszBuffer, pAlloc);
+    sprintf(szAux, "2.pszBuffer(%d)", strlen(pszBuffer)); oLog.logDebug(szAux);
+
+    free(pAlloc); pAlloc=NULL;
+    
+    oLog.logDebug("<<< TrataFormatoDOS");
+}
+
+/************************************************************************************************************/
+char *OpenDir(char *pszDiretorio)
+{
+    static DIR *pDir;
+    static struct dirent *pDirent;
+    static char szArq[255 + 1];
+    static int iFlag=1;
+
+    oLog.logDebug(">>> OpenDir");
+    sprintf(szAux, "pszDiretorio[%s]", pszDiretorio); oLog.logDebug(szAux);
+
+    if(iFlag == 1)
+    {
+        /* Abre diretorio e verifica sucesso */
+        if( (pDir = opendir(pszDiretorio)) == NULL)
+        {
+            sprintf(szAux, "Erro abrindo diretorio [%s]. errno(%d) strerror[%s]", pszDiretorio, errno, strerror(errno)); oLog.logError(szAux);
+            exit(-1);
+        }
+
+        iFlag=0;
+        oLog.logDebug("OpenDir iFlag setado");
+    }
+
+    /* Efetua a leitura dos nomes dos arquivos do diretorio */
+    while((pDirent = readdir(pDir)) != NULL )
+    {
+        sprintf(szAux, "Arquivo obtido[%s]", pDirent->d_name); oLog.logDebug(szAux);
+
+        /* valida arquivo */
+        if((!memcmp(pDirent->d_name, "VIVONETSDU", 10)) && (!memcmp(pDirent->d_name+strlen(pDirent->d_name)-4, ".TXT", 4)))
+        {
+            /* Monta path + nome do arquivo a ser processado */
+            strcpy(szArq, pDirent->d_name);
+            sprintf(szAux, "Arquivo validado [%s]", szArq); oLog.logDebug(szAux);
+
+            oLog.logDebug("<<< OpenDir <NOT NULL>");
+            return szArq;
+        }
+    }
+
+    closedir(pDir);
+    iFlag=1;
+    oLog.logDebug("<<< OpenDir <NULL>");
+    return NULL;
+}
+
+/************************************************************************************************************/
+char *ObtemNomeArqSaida(char *pszStringIn)
+{
+    char szStringInAux[255 + 1];
+    static char szNomeSaida[255 + 1];
+    char *pTok;
+
+    oLog.logDebug(">>> ObtemNomeArqSaida");
+
+    /* copia string a ser analisada para buffer local (strtok altera o ponteiro de entrada) */
+    strcpy(szStringInAux, pszStringIn);
+
+    pTok = strtok(szStringInAux, ".");
+    sprintf(szAux, "pTok[%s]", pTok?pTok:"...NULL..."); oLog.logDebug(szAux);
+    strcpy(szNomeSaida, pTok?pTok:"");
+
+    sprintf(szAux, "szNomeSaida[%s]", szNomeSaida); oLog.logDebug(szAux);
+    oLog.logDebug("<<< ObtemNomeArqSaida");
+    return (pTok?szNomeSaida:NULL);
+}
+
+/************************************************************************************************************/
+void ObtemValoresArqEntrada(char *pszStringIn, TDadosEntrada *ptDadosEntrada)
+{
+    char szStringInAux[255 + 1];
+    char *pTok;
+    int iCount;
+
+    oLog.logDebug(">>> ObtemValoresArqEntrada");
+
+    memset(ptDadosEntrada, 0x00, sizeof(TDadosEntrada));
+
+    /* copia string a ser analisada para buffer local (strtok altera o ponteiro de entrada) */
+    strcpy(szStringInAux, pszStringIn);
+
+    for(iCount=0, pTok = strtok(szStringInAux, "."); pTok != NULL && iCount < 3; pTok = strtok(NULL, "."), iCount++)
+    {
+        sprintf(szAux, "pTok[%s] iCount(%d)", pTok, iCount); oLog.logDebug(szAux);
+
+        /* obtem o idStatusUsuario */
+        if(iCount == 1)
+        {
+            strcpy(ptDadosEntrada->szIdStatusUsuario, pTok);
+        }
+        else if(iCount == 2) /* obtem o IdUsuarioAlteracao */
+        {
+            strcpy(ptDadosEntrada->szIdUsuarioAlteracao, pTok);
+        }
+    }
+
+    oLog.logDebug("<<< ObtemValoresArqEntrada");
+}
+
+/************************************************************************************************************/
+char *ObtemDataHora(void)
+{
+    struct tm *ptTime;
+    time_t tTimeNow;
+    static char szDataHora[19 + 1];
+
+    oLog.logDebug(">>> ObtemDataHora");
+
+	time(&tTimeNow);
+	ptTime=localtime(&tTimeNow);
+	sprintf(szDataHora, "%02d/%02d/%04d %02d:%02d:%02d", 
+						ptTime->tm_mday, 			
+						ptTime->tm_mon + 1, 
+						ptTime->tm_year + 1900, 
+						ptTime->tm_hour, 
+						ptTime->tm_min, 
+						ptTime->tm_sec );
+
+    sprintf(szAux, "szDataHora[%s]", szDataHora); oLog.logDebug(szAux);
+    oLog.logDebug("<<< ObtemDataHora");
+    return szDataHora;
+}
+
+/************************************************************************************************************/
+void ArmaSinal(int iSignal)
+{
+    oLog.logDebug(">>> ArmaSinal");
+    sprintf(szAux, "Armando tratamento para Signal(%d)", iSignal); oLog.logInformation(szAux);
+
+    if(signal((iSignal), ProcessaSignal) == SIG_ERR)
+    {
+        sprintf(szAux, "Erro armando sinal (%d). errno(%d) strerror[%s]", iSignal, errno, strerror(errno)); oLog.logError(szAux);
+        exit(-1);
+    }
+
+    oLog.logDebug("<<< ArmaSinal");
+}
+
+/************************************************************************************************************/
+void ProcessaSignal(int iSig)
+{
+    oLog.logDebug(">>>ProcessaSignal");
+    sprintf(szAux, "Sinal(%d)", iSig); oLog.logInformation(szAux);
+
+    /* rearma o mesmo sinal lancado */
+    ArmaSinal(iSig);
+
+    if(iSig == SIGTERM)
+    {
+        iSignalProcessa=0;
+    }
+
+    oLog.logDebug(">>>ProcessaSignal");
+}
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[81];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug(">>> ObtemParamConf");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("statusUsuario.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir()) {
+        oLog.logError("Erro abrindo arquivo de configuração!");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, 20);
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    sprintf(szAux, "ptParamConf->szPws[%s]", ptParamConf->szPws); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]", ptParamConf->szUsr); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]", ptParamConf->szInst); oLog.logDebug(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0)
+    {
+        oLog.logError("Dados incompletos!");
+        oLog.logDebug("<<< ObtemParamConf");
+        return -1;
+    }
+
+    oLog.logDebug("<<< ObtemParamConf");
+    return 0;
+}
+
+/************************************************************************************************************/
+void AtualizaUsuario(char *pszIdPessoaUsuario, char *pszStatusUsuario, char *pszIdUsuarioAlteracao)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoaUsuario[21];
+        VARCHAR oszStatusUsuario[21];
+        VARCHAR oszIdUsuarioAlteracao[21];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    oLog.logDebug(">>> AtualizaUsuario");
+    sprintf(szAux, "pszIdPessoaUsuario[%s]pszStatusUsuario[%s]pszIdUsuarioAlteracao[%s]", pszIdPessoaUsuario, pszStatusUsuario, pszIdUsuarioAlteracao); oLog.logDebug(szAux);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszIdPessoaUsuario, pszIdPessoaUsuario);
+    STRCPY_TO_ORA(oszStatusUsuario, pszStatusUsuario);
+    STRCPY_TO_ORA(oszIdUsuarioAlteracao, pszIdUsuarioAlteracao);
+    
+    EXEC SQL
+        UPDATE
+            acesso.usuario
+        SET
+            idstatususuario = :oszStatusUsuario,
+            idusuarioalteracao = :oszIdUsuarioAlteracao,
+            dtultimaalteracao = SYSDATE
+        WHERE
+            idpessoausuario = :oszIdPessoaUsuario;
+
+    oLog.logDebug("<<< AtualizaUsuario <FOUND>");
+    return;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)", sqlca.sqlcode); oLog.logError(szAux);
+        oLog.logDebug("<<< AtualizaUsuario <ERROR>");
+        exit(-1);
+
+    naoexiste:
+        sprintf(szAux, "IdPessoaUsuario nao encontrado[%s]", pszIdPessoaUsuario); oLog.logError(szAux);
+        oLog.logDebug("<<< AtualizaUsuario <NOT FOUND>");
+        exit(-1);
+}
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logDebug(">>> DBConnect");
+
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    EXEC SQL CONNECT :connString;
+
+    oLog.logDebug("<<< DBConnect <OK>");
+    return (sqlca.sqlcode);
+    
+errConn:
+    oLog.logError("<<< DBConnect <ERROR>");
+    return -1;
+}
+
+/************************************************************************************************************/
+void DBDesconect(void)
+{
+    oLog.logDebug(">>> DBDesconect");
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+
+    EXEC SQL COMMIT WORK;
+
+    oLog.logDebug("<<< DBDesconect");
+    return;
+
+Error:
+    sprintf(szAux, "Erro. sqlca.sqlcode (%d)", sqlca.sqlcode); oLog.logError(szAux);
+    return;
+}
+
+/************************************************************************************************************/
+bool ObtemLoginUsuarioExecutor(char *pszIdPessoaUsuario, char *pszLoginExecutor)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoaUsuario[21];
+        VARCHAR oszNmLoginUsuario[255];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    oLog.logDebug(">>> ObtemLoginUsuarioExecutor");
+    sprintf(szAux, "pszIdPessoaUsuario[%s]", pszIdPessoaUsuario); oLog.logDebug(szAux);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszIdPessoaUsuario, pszIdPessoaUsuario);
+
+    EXEC SQL 
+        SELECT
+            nmloginusuario
+        INTO
+            :oszNmLoginUsuario
+        FROM
+            acesso.usuario
+        WHERE
+            idpessoausuario = :oszIdPessoaUsuario;
+
+    STRCPY_FROM_ORA(pszLoginExecutor, oszNmLoginUsuario);
+
+    sprintf(szAux, "pszLoginExecutor[%s]", pszLoginExecutor); oLog.logDebug(szAux);
+    oLog.logDebug("<<< ObtemLoginUsuarioExecutor <NOT NULL>");
+    return true;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)", sqlca.sqlcode); oLog.logError(szAux);
+        oLog.logDebug("<<< ObtemLoginUsuarioExecutor <ERROR>");
+        exit(-1);
+
+    naoexiste:
+        sprintf(szAux, "Chave pesquisada nao encontrada[%s]", pszIdPessoaUsuario); oLog.logDebug(szAux);
+        oLog.logDebug("<<< ObtemLoginUsuarioExecutor <NULL>");
+        return false;
+}
+
+/************************************************************************************************************/
+bool ObtemDadosSaida(TDadosSaida *ptDadosSaida)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszNrDocumento[255];
+
+        VARCHAR oszIdPessoaUsuario[21];
+        VARCHAR oszNmPessoa[255];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    oLog.logDebug(">>> ObtemDadosSaida");
+    sprintf(szAux, "ptDadosSaida->szCPF[%s]", ptDadosSaida->szCPF); oLog.logDebug(szAux);
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszNrDocumento, ptDadosSaida->szCPF);
+
+    EXEC SQL 
+        SELECT
+            idpessoausuario,
+            nmpessoa
+        INTO
+            :oszIdPessoaUsuario,
+            :oszNmPessoa
+        FROM
+        (
+            SELECT
+                au.idpessoausuario,
+                cp.nmpessoa
+            FROM
+                acesso.usuario au,
+                apoio.statususuario asu,
+                apoio.tipodocumento atd,
+                customer.pessoa cp,
+                customer.pessoadocumento cpd,
+                customer.documento cd
+            WHERE
+                au.idpessoausuario = cp.idpessoa
+            AND
+                au.idstatususuario = asu.idstatususuario
+            AND
+                cp.idpessoa = cpd.idpessoa
+            AND
+                cpd.iddocumento = cd.iddocumento
+            AND
+                cd.idtipodocumento = atd.idtipodocumento
+            AND
+                atd.sgclassificacao = 'CPF'
+            AND
+                cd.nrdocumento = :oszNrDocumento
+            ORDER BY
+                cd.dtultimaalteracao DESC
+        )
+        WHERE
+            ROWNUM < 2;
+
+    STRCPY_FROM_ORA(ptDadosSaida->szIdPessoaUsuario, oszIdPessoaUsuario);
+    STRCPY_FROM_ORA(ptDadosSaida->szNomeUsuario, oszNmPessoa);
+
+    sprintf(szAux, "ptDadosSaida->szIdPessoaUsuario[%s]", ptDadosSaida->szIdPessoaUsuario); oLog.logDebug(szAux);
+    sprintf(szAux, "ptDadosSaida->szNomeUsuario[%s]", ptDadosSaida->szNomeUsuario); oLog.logDebug(szAux);
+    oLog.logDebug("<<< ObtemDadosSaida <FOUND>");
+    return true;
+
+    erro:
+        sprintf(szAux, "Erro sqlca.sqlcode(%d) sqlca.sqlerrm.sqlerrmc[%.*s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc); oLog.logError(szAux);
+        sprintf(ptDadosSaida->szNomeUsuario, "Erro oracle(%d) Mensagem[%.*s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc);
+        ptDadosSaida->szStatus[0]=0x00;
+        oLog.logDebug("<<< ObtemDadosSaida <ERROR>");
+        return false;
+
+    naoexiste:
+        sprintf(szAux, "Chave pesquisada nao encontrada[%s]", ptDadosSaida->szCPF); oLog.logDebug(szAux);
+        strcpy(ptDadosSaida->szNomeUsuario, "Usuario nao encontrado");
+        ptDadosSaida->szStatus[0]=0x00;
+        oLog.logDebug("<<< ObtemDadosSaida <NOT FOUND>");
+        return false;
+}
+
+/************************************************************************************************************/
+bool ObtemSgStatusUsuario(char *pszIdStatusUsuario, char *pszSgStatusUsuario)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdStatusUsuario[21];
+
+        VARCHAR oszSgStatusUsuario[255];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    oLog.logDebug(">>> ObtemSgStatusUsuario");
+    sprintf(szAux, "pszIdStatusUsuario[%s]", pszIdStatusUsuario); oLog.logDebug(szAux);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszIdStatusUsuario, pszIdStatusUsuario);
+
+    EXEC SQL 
+        SELECT
+            sgstatususuario
+        INTO
+            :oszSgStatusUsuario
+        FROM
+            apoio.statususuario
+        WHERE
+            idstatususuario = :oszIdStatusUsuario;
+
+    STRCPY_FROM_ORA(pszSgStatusUsuario, oszSgStatusUsuario);
+
+    sprintf(szAux, "pszSgStatusUsuario[%s]", pszSgStatusUsuario); oLog.logDebug(szAux);
+    oLog.logDebug("<<< ObtemSgStatusUsuario <FOUND>");
+    return true;
+
+    erro:
+        sprintf(szAux, "Erro sqlca.sqlcode(%d) sqlca.sqlerrm.sqlerrmc[%.*s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc); oLog.logError(szAux);
+        oLog.logDebug("<<< ObtemSgStatusUsuario <ERROR>");
+        exit(-1);
+
+    naoexiste:
+        sprintf(szAux, "Chave pesquisada nao encontrada[%s]", pszIdStatusUsuario); oLog.logDebug(szAux);
+        oLog.logDebug("<<< ObtemSgStatusUsuario <NOT FOUND>");
+        return false;
+}

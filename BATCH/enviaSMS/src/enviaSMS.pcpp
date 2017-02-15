@@ -1,0 +1,369 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include "atmi.h"
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/SplitLine.h"
+#include "../../commons/Log/include/Log.h"
+
+EXEC SQL INCLUDE SQLCA;
+
+#define VIVO_GENERIC_PASSWORD   "vivo"
+#define VIVO_APP_PASSWORD   "vivo"
+#define TUX_USRNAME     "demoapp"
+#define TUX_CLTNAME     "tester"
+#define MSG_VIVO        "Voce tem correspondencias devolvidas. Favor entrar em contato com a central de atendimento VIVO."
+
+#define TAG_ROOT        "msg"
+#define TAG_BODY        "msgBody"
+#define TAG_HEADER      "msgHdr"
+#define TAG_SMS         "data"
+#define TAG_AREA_CODE   "cdArea"
+#define TAG_SUBJECT     "recipient"
+#define TAG_PHONE       "destinatario"
+#define TAG_MSG         "message"
+#define TAG_ENCODING    "?xml version='1.0' encoding='ISO-8859-1'?"
+#define TAG_OPERACAO    "tipoOperacao"
+
+/* Prototipos */
+void XMLadd(int iArea, long iFone, char *pszMessage);
+int TUXinit(void);
+int DBConnect(char*, char*, char*);
+int sendXML(void);
+
+Log oLog;
+
+/* Variaveis globais */
+char szXmlSaida[1024 + 1];
+char szAux[1024 + 1];
+
+EXEC SQL BEGIN DECLARE SECTION;
+    VARCHAR cMsg[255];
+EXEC SQL END DECLARE SECTION;
+
+int main(char** argv, int argc) {
+    int iErrorMem = 0;
+    char szPws[11];
+    char szUsr[11];
+    char szPwsTux[11];
+    char szPwsTuxGen[11];
+    char szUsrTux[11];
+    char szCltTux[11];
+    char szInst[21];
+    char szLinha[81];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int iIdCorr;
+        int iCdArea;
+        long lNrFone;
+    EXEC SQL END DECLARE SECTION;
+
+    MFile mfConfig;
+    SplitLine NewLinha;
+
+    long lQtdReg;
+    char szMessage[255 + 1];
+
+    // Acertando o nivel de logs
+    oLog.setNivel(2);
+
+    /* Zera variáveis */
+    memset(szPws, 0, 11);
+    memset(szUsr, 0, 11);
+    memset(szInst, 0, 21);
+    memset(szLinha, 0, 81);
+    memset(szDivArq, 0, 256);
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("sms.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir()) {
+        oLog.logError("Erro abrindo arquivo de configuração!\n");
+        exit(1);
+    }
+   
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db")) {
+            strncpy(szPws, szDivArq, 10);
+/*          printf("Senha: %s\n", szPws);*/
+        } else if (!strcmp(szDivPre, "usr_db")) {
+            strncpy(szUsr, szDivArq, 10);
+/*          printf("Usuário: %s\n", szUsr);*/
+        } else if (!strcmp(szDivPre, "inst_db")) {
+            strncpy(szInst, szDivArq, 10);
+/*          printf("Instance Oracle: %s\n", szInst);*/
+        }else if (!strcmp(szDivPre, "pwd_tux")) {
+            strncpy(szPwsTux, szDivArq, 10);
+/*          printf("Senha_Tux: %s\n", szPwsTux);*/
+        } else if (!strcmp(szDivPre, "usr_tux")) {
+            strncpy(szUsrTux, szDivArq, 10);
+/*          printf("Usuário_Tux: %s\n", szUsrTux);*/
+        }else if (!strcmp(szDivPre, "pwd_tux_gen")) {
+            strncpy(szPwsTuxGen, szDivArq, 10);
+/*          printf("Senha_Tux_Gen: %s\n", szPwsTuxGen);*/
+        }else if (strcmp(szDivPre, "clt_tux")==0) {
+            strncpy(szCltTux, szDivArq, 10);
+/*          printf("Clt_Tux: %s\n", szCltTux);*/
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (!*szInst || !*szPwsTux ||!*szUsrTux ||!*szPwsTuxGen ||!*szCltTux ) {
+        oLog.logError("Dados incompletos!\n");
+        exit(1);
+    }
+
+    /* Conecta no banco de dados */
+    if (DBConnect(szUsr, szPws, szInst)) {
+        fprintf(stderr, "Erro conectando no banco de dados\n");
+        oLog.logError("Erro conectando no banco de dados\n");
+        exit(1);
+    } 
+    /* Inicializa o TUXEDO */
+    if(TUXinit()) {
+        fprintf(stderr, "Erro inicializando TUXEDO\n");
+        oLog.logError("Erro inicializando TUXEDO\n");
+        exit(1);
+    }   
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErr;
+	EXEC SQL WHENEVER NOT FOUND goto sqlNotFound;
+
+    /* Obtendo a mensagem que será enviada ao usuário */
+    EXEC SQL 
+        SELECT dsvalorparametro
+          INTO :cMsg
+          FROM apoio.parametro
+         WHERE parametro.cdparametro = 'MSG_SMS';
+
+
+    /* Copia a mensagem obtida */
+    memset(szMessage, 0x00, sizeof(szMessage));
+    memcpy(szMessage, cMsg.arr, cMsg.len);
+
+    sprintf(szAux, "szMessage[%s]", szMessage);
+    oLog.logDebug(szAux);
+
+    /* Declara e abre o cursor com as correspondencias */
+    EXEC SQL DECLARE correspondencias CURSOR FOR
+      SELECT /*+ FIRST_ROWS (cost-based) */ 
+             corr.IdCorrespondenciaDevolvida,
+             arearegistro.cdAreaRegistro,
+             linhabase.nrLinha
+        FROM Correspondencia.CorrespondenciaDevolvida corr,
+             Correspondencia.HistoricoStatusAtual     histAtu,
+             Correspondencia.HistoricoStatus          hist,
+             Customer.Pessoa                          pess,
+             customer.pessoadepara                    pessoadepara,
+             customer.pessoalinha                     pessoalinha,
+             linha.linhatelefonica                    linhatelefonica,
+             linha.linhabase                          linhabase,
+             apoio.arearegistro                       arearegistro
+       WHERE corr.idPessoa                     = pess.IdPessoa
+         AND corr.idCorrespondenciaDevolvida   = hist.IdCorrespondenciaDevolvida
+         AND hist.idHistorioStatus             = histAtu.IdHistorioStatus
+         AND pess.idpessoa                     = pessoadepara.idpessoa
+         AND pessoadepara.idpessoadepara       = pessoalinha.idpessoadepara
+         AND linhatelefonica.idlinhatelefonica = pessoalinha.idlinhatelefonica
+         AND linhabase.idlinhabase             = linhatelefonica.idlinhabase
+         AND linhabase.idarearegistro          = arearegistro.idarearegistro
+         AND pess.IdTipoPessoa                 = 1
+         AND hist.idStatusCorrespondencia      = 1
+         AND linhabase.IdEstadoLinha           = 1
+         AND pessoalinha.idtiporelacionamento  = 2
+         AND corr.dtEnvioSMS                   IS NULL;
+
+    EXEC SQL WHENEVER NOT FOUND do break;
+    EXEC SQL OPEN correspondencias;
+
+    for(lQtdReg=0;;lQtdReg++)
+    {
+        EXEC SQL
+            FETCH correspondencias
+            INTO    :iIdCorr,
+                    :iCdArea,
+                    :lNrFone;
+    
+        sprintf(szAux, "sqlca.sqlcode(%d)", sqlca.sqlcode); oLog.logDebug(szAux);
+        sprintf(szAux, "iIdCorr(%d)", iIdCorr); oLog.logDebug(szAux);
+        sprintf(szAux, "iCdArea(%d)", iCdArea); oLog.logDebug(szAux);
+        sprintf(szAux, "lNrFone(%ld)", lNrFone); oLog.logDebug(szAux);
+
+        /* formata os dados obtidos para XML */
+        XMLadd(iCdArea, lNrFone, szMessage); 
+        
+        /* Dispara o servico TUXEDO */
+        if(sendXML()) {
+            fprintf(stderr, "Erro enviando dados para o TUXEDO\n");
+            oLog.logError("Erro enviando dados para o TUXEDO\n");
+            EXEC SQL ROLLBACK;
+            exit(1);
+        }
+
+        sprintf(szAux, "Atualizando em Correspondencia.correspondenciaDevolvida com IdCorrespondenciaDevolvida (%d)", iIdCorr); oLog.logDebug(szAux);
+
+        /* Atualiza as correspondencias que tiveram SMS enviados. */
+        EXEC SQL
+            UPDATE Correspondencia.correspondenciaDevolvida
+                SET dtEnvioSMS = SYSDATE 
+                WHERE IdCorrespondenciaDevolvida = :iIdCorr;
+    }
+
+    /* Fechando o cursor */
+    EXEC SQL CLOSE correspondencias;
+
+    /* Executa COMMIT */
+    EXEC SQL COMMIT;
+
+    sprintf(szAux, "Enviado(s) %04d SMS\n", lQtdReg);
+    oLog.logInformation(szAux);
+
+    tpterm(); 
+    exit(0);
+
+    sqlNotFound:
+        oLog.logError("Busca para mensagem SMS nao achada!");
+        exit(1);
+
+    /* Tratamento de erro */
+    sqlErr:
+        sprintf(szAux, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode);
+        oLog.logError(szAux);
+        EXEC SQL ROLLBACK;
+        exit(1);
+
+}
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst) {
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    return sqlca.sqlcode;
+    
+    /* Retorna erro */
+    errConn:
+    return -1;
+}
+
+/************************************************************************************************************/
+int TUXinit(){
+    TPINIT *tpInitInfo;
+    int i;
+
+        if((tpInitInfo = (TPINIT *)tpalloc("TPINIT", (char *)NULL, TPINITNEED(strlen(VIVO_GENERIC_PASSWORD) - 1) )) == (TPINIT *)NULL)
+        return tperrno;
+
+        strcpy(tpInitInfo->usrname, TUX_USRNAME);
+        strcpy(tpInitInfo->cltname, TUX_CLTNAME);
+        strcpy(tpInitInfo->passwd, VIVO_APP_PASSWORD);
+        strcpy((char *)&tpInitInfo->data,VIVO_GENERIC_PASSWORD);
+
+        i = tpinit(tpInitInfo);
+        sprintf(szAux, "TPINIT: %i, TPERRNO: %i\n", i, tperrno);
+        oLog.logInformation(szAux);
+
+        if (i == -1)
+            return 1;
+        else  
+            return 0;
+}
+
+/************************************************************************************************************/
+void XMLadd(int iArea, long iFone, char *pszMessage) {
+
+
+
+    sprintf(szXmlSaida, "<%s><%s><msgHdr><service>SMSSend</service><topic>VIVO.DSV.FO.SMS.SEND</topic><timeout>3</timeout></msgHdr>" \
+                        "<%s><%s>%s</%s><%s>%d%d</%s></%s></%s>",
+        TAG_ENCODING,
+        TAG_ROOT,
+        TAG_BODY,
+        TAG_MSG,
+        pszMessage,
+        TAG_MSG,
+        TAG_SUBJECT,
+        iArea,
+        iFone,
+        TAG_SUBJECT,
+        TAG_BODY, TAG_ROOT);
+
+    sprintf(szAux, "XML[%s]", szXmlSaida);
+    oLog.logDebug(szAux);
+
+}
+
+/************************************************************************************************************/
+int sendXML() {
+
+    char *sendbuf, *rcvbuf;
+    long sendlen, rcvlen;
+
+    sendlen = strlen(szXmlSaida);
+
+    sprintf(szAux, "Tamanho da msg = %d\n", sendlen);
+    oLog.logInformation(szAux);
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        fprintf(stderr,"Error allocating send buffer\n");
+        oLog.logError("Error allocating send buffer\n");
+        tpterm();
+        return 1;
+    }
+
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        fprintf(stderr,"Error allocating receive buffer\n");
+        oLog.logError("Error allocating receive buffer\n");
+        tpfree(sendbuf);
+        tpterm();
+        return 1;
+    }
+
+    strcpy(sendbuf, szXmlSaida);
+
+    if(tpcall("SMSSend", (char *)sendbuf, sendlen, (char **)&rcvbuf, &rcvlen, (long)0) == -1) {
+        fprintf(stderr, "Tperrno = %d\n", tperrno);
+        sprintf(szAux, "Tperrno = %d\n", tperrno);
+        oLog.logError(szAux);
+        tpfree(sendbuf);
+        tpfree(rcvbuf);
+        tpterm();
+        return 1;
+    }
+
+    tpfree(sendbuf);
+    tpfree(rcvbuf);
+
+    return 0;
+}

@@ -1,0 +1,385 @@
+#include <sys/time.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <ctype.h>
+
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+
+#ifndef WIN32
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/socketvar.h>
+#include  <sys/types.h>
+#include  <netinet/in.h>
+#include <arpa/inet.h>
+#endif // AIX
+
+#ifndef WIN32
+#include <unistd.h>
+#endif
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+#include "../include/sittelMonitor.h"
+
+#include <string>
+using namespace std;
+
+EXEC SQL INCLUDE SQLCA;
+
+//---  Prototypes ---
+int AtualizaServico ( char * sPid_Prm, char * sCodReq_Prm, char * sFragmento_Prm );
+int GeraRelatorio ( char * sCodReq_Prm, char * sFragmento_Prm, char * sPid_Prm );
+int FinalizaServico ( char * sPid_Prm, char * sCodReq_Prm, char * sFragmento_Prm );
+void ErroOracle ( struct sqlca * sqlca );
+
+//==============================================================================
+// Globals
+char szAux[1024 + 1];   // Usado nas linhas de LOG
+Log oLog;
+//==============================================================================
+// Run
+int main( int argc, char *argv[] )
+{
+    char sPid[64];
+    int  iPid;
+    char sCodReq[128];
+    char sFragmento[128];
+    double startTime, endTime;
+    char UsedTime[16];
+    memset(UsedTime, 0x0, sizeof(UsedTime));
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+
+    TParamConf tParamConf;
+    
+    oLog.setNivel(2);
+    oLog.logDebug(">>> sittel_Chld");
+
+    if ( argc < 3 )
+    {
+        oLog.logDebug("*** FALTA ARGUMENTOS DE EXECUCAO ***");
+        sprintf( szAux, "Uso %s [CodigoRequisicao] [Fragmento]\n", argv[0] ); oLog.logDebug(szAux);
+        endTime = getRealTime();   // Finaliza Cronometro de Operacao
+        ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+        sprintf( szAux, "### Tempo Total de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+        oLog.logDebug( "<<< sittel_Chld" );
+        exit(1);
+    }
+    strcpy( sCodReq   , argv[1] );
+    strcpy( sFragmento, argv[2] );
+
+    //==========================================================================
+    // Parâmetros de configuração
+    if ( ObtemParamConf(&tParamConf) )
+    {
+        oLog.logError("*** ERRO AO OBTER PARAMETROS DE CONFIGURACAO ***");
+        endTime = getRealTime();   // Finaliza Cronometro de Operacao
+        ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+        sprintf( szAux, "### Tempo Total de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+        oLog.logDebug( "<<< sittel_Chld" );
+        exit(1);
+    }
+
+    //==========================================================================
+    // Conecta ao banco
+    oLog.logDebug("### Conectando com Banco de Dados. ###");
+    if ( DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst) )
+    {
+        oLog.logError("*** ERRO DE CONEXAO AO BANCO DE DADOS ***");
+        endTime = getRealTime();   // Finaliza Cronometro de Operacao
+        ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS&&& Vai Executar [.FFFF em UsedTime - Tempo Gasto 
+        sprintf( szAux, "### Tempo Total de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+        oLog.logDebug( "<<< sittel_Chld" );
+        exit(1);
+    }
+    
+    iPid = getpid();
+    sprintf( sPid, "%d", iPid );
+    
+    AtualizaServico ( sPid, sCodReq, sFragmento );
+    GeraRelatorio ( sCodReq, sFragmento, sPid );
+    FinalizaServico ( sPid, sCodReq, sFragmento );
+    
+    DBDisconnect();
+    
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    sprintf( szAux, "### Tempo Total de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+
+    oLog.logDebug( "<<< sittel_Chld" );
+    exit( 0 );
+    
+}
+
+
+
+/************************************************************************************************************/
+int ObtemParamConf( TParamConf * ptParamConf )
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[101];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug(">>> Obtendo parametros de configuracao...");
+
+    // Zera variáveis
+    memset(ptParamConf, 0, sizeof(TParamConf));
+    memset(szLinha, 0, sizeof(szLinha));
+    memset(szDivArq, 0, sizeof(szDivArq));
+    memset(szDivPre, 0, sizeof(szDivPre));
+
+    // Define o arquivo de configuração
+    mfConfig.setPath("sittel.cfg");
+
+    // Verificar se conseguiu abrir o arquivo
+    if(!mfConfig.abrir())
+    {
+        oLog.logError("!!! ERRO AO ABRIR ARQUIVO DE CONFIGURACAO !!!");
+        return -1;
+    }
+
+    // Capturando usuario, senha, path e instance de banco do arquivo
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        // Verifica qual parâmetro foi encontrado.
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, TAM_BD_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, TAM_BD_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, TAM_BD_INST);
+        }
+
+        memset(szLinha,  0, sizeof(szLinha));
+        memset(szDivPre, 0, sizeof(szDivPre));
+        memset(szDivArq, 0, sizeof(szDivArq));
+    }
+
+    // Fechando o arquivo de configuracao aberto
+    mfConfig.fechar();
+
+    sprintf(szAux, "ptParamConf->szUsr[%s]", ptParamConf->szUsr); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]", ptParamConf->szInst); oLog.logDebug(szAux);
+
+    // Verifica se todos os dados foram recuperados do arquivo de configuração.
+    if (strlen(ptParamConf->szInst) == 0)
+    {
+        oLog.logError("!!! CONFIGURACAO INCOMPLETA !!!");
+        return -1;
+    }
+
+    oLog.logDebug("### Sucesso na Configuracao ###");
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[64];
+    EXEC SQL END DECLARE SECTION;
+
+    // String de conexao
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    // Marca ponto de erro
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    // Conecta
+    EXEC SQL CONNECT :connString;
+
+    return 0;
+
+errConn:
+    sprintf(szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return -1;
+}
+
+
+
+/************************************************************************************************************/
+int DBDisconnect(void)
+{
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    EXEC SQL COMMIT WORK RELEASE;
+    return 0;
+
+Error:
+    oLog.logDebug("*** ERRO AO DESCONECTAR DO BANCO ***");
+    sprintf(szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return -1;
+}
+
+
+
+/**
+ * Returns the real time, in seconds, or -1.0 if an error occurred.
+ *
+ * Time is measured since an arbitrary and OS-dependent start time.
+ * The returned real time is only useful for computing an elapsed time
+ * between two calls to this function.
+ */
+double getRealTime(void)
+{
+    /* AIX, BSD, Cygwin, HP-UX, Linux, OSX, POSIX, Solaris. ----- */
+    struct timeval tm;
+    gettimeofday( &tm, NULL );
+    return (double)tm.tv_sec + (double)tm.tv_usec / 1000000.0;
+}
+
+
+
+/*
+ *   Retorna Tempo Usado
+ *   StartTime - Tempo Inicial
+ *   EndTime - Tempo Final
+ *   UsedTime - Tempo Gasto
+ */
+void ElapsedTime(double StartTime, double EndTime, char * UsedTime)
+{
+    int hora, minuto, segundo;
+
+    char Tempo[16];
+    char Segundos[8];
+    char Miliseg[5];
+    char * Result = NULL;
+
+    sprintf ( Tempo, "%lf.", (EndTime - StartTime) );
+    Result = strtok(Tempo,".");
+    sprintf(Segundos,"%s", Result);
+    //printf("Segundos [%s]\n",Segundos);
+    Result = strtok(NULL,".");
+    sprintf(Miliseg, "%.4s", Result);
+    //printf("Miliseg [%s]\n",Miliseg);
+
+    hora = (atoi(Segundos)/3600);
+    minuto = (atoi(Segundos)-(3600*hora))/60;
+    segundo = (atoi(Segundos)-(3600*hora)-(minuto*60));
+    sprintf( UsedTime, "%02d:%02d:%02d.%s", hora, minuto, segundo, Miliseg );
+
+}
+
+
+
+int GeraRelatorio ( char * sCodReq, char * sFragmento, char * sPid )
+{
+    oLog.logDebug( ">>> GeraRelatorio()" );
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+       char szProcedure[256];
+    EXEC SQL END DECLARE SECTION;
+    
+    memset ( szProcedure, 0x0, sizeof(szProcedure) );
+    
+    EXEC SQL WHENEVER SQLERROR DO ErroOracle( &sqlca );
+
+    
+    sprintf(szProcedure, "BEGIN CUSTOMER.SITTEL.GERAR_RELATORIO( \'%s\', \'%s\', \'%s\' ); END;", sCodReq, sFragmento, sPid );
+    sprintf( szAux, "Vai executar [%s]", szProcedure ); oLog.logDebug(szAux);
+    EXEC SQL PREPARE CALLPROC FROM :szProcedure;
+    EXEC SQL EXECUTE CALLPROC;
+
+    oLog.logDebug( "<<< GeraRelatorio()" );
+
+    return 0;
+}
+
+
+
+int AtualizaServico ( char * sPid_Prm, char * sCodReq_Prm, char * sFragmento_Prm )
+{
+    oLog.logDebug( ">>> AtualizaServico()" );
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+       char * sPid = sPid_Prm;
+       char * sCodReq = sCodReq_Prm;
+       char * sFragmento = sFragmento_Prm;
+    EXEC SQL END DECLARE SECTION;
+    
+    EXEC SQL WHENEVER SQLERROR DO ErroOracle( &sqlca );
+    
+    EXEC SQL
+    INSERT INTO CUSTOMER.SITTELPRC
+    (
+       IDPROCESSO ,
+       CODREQ ,
+       NRFRAGMENTO ,
+       INESTADO
+    )
+    VALUES
+    (
+       :sPid ,
+       :sCodReq ,
+       :sFragmento ,
+       'P'   /*   Processando   */
+    );
+
+    EXEC SQL COMMIT;
+    oLog.logDebug( "<<< AtualizaServico()" );
+
+    return 0;
+}
+
+
+
+int FinalizaServico ( char * sPid_Prm, char * sCodReq_Prm, char * sFragmento_Prm )
+{
+    oLog.logDebug( ">>> AtualizaServico()" );
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+       char * sPid = sPid_Prm;
+       char * sCodReq = sCodReq_Prm;
+       char * sFragmento = sFragmento_Prm;
+    EXEC SQL END DECLARE SECTION;
+    
+    EXEC SQL WHENEVER SQLERROR DO ErroOracle( &sqlca );
+    
+    EXEC SQL
+    UPDATE CUSTOMER.SITTELPRC
+      SET INESTADO = 'F' ,
+          DTFINAL = SYSTIMESTAMP
+    WHERE
+       IDPROCESSO = :sPid 
+    AND CODREQ = :sCodReq 
+    AND NRFRAGMENTO = :sFragmento 
+    AND INESTADO = 'P' ;
+
+    EXEC SQL COMMIT;
+    oLog.logDebug( "<<< AtualizaServico()" );
+
+    return 0;
+}
+
+
+
+void ErroOracle ( struct sqlca * sqlca )
+{
+    sprintf( szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca->sqlcode, sqlca->sqlerrm.sqlerrmc ); oLog.logDebug(szAux);
+    exit( 1 );
+}

@@ -1,0 +1,794 @@
+/**
+ * @modulo  Batch
+ * @usecase Batch
+ * @author
+ * @version $Revision: 1.1.6.9 $
+ * @CVS     $Author: jones $ - $Date: 2013/12/19 15:31:29 $
+ **/
+
+#include <iostream>
+#include <vector>
+#include <map>
+#include <string>
+#include <sstream>
+#include <fstream>
+
+#include "../include/relatorioDescontoConvergente.h"
+#include "../../commons/Log/include/Log.h"
+
+/*Old Libs from C*/
+#include <stdlib.h>
+#include <sys/sem.h>
+#include <unistd.h>
+
+using namespace std;
+
+EXEC SQL INCLUDE SQLCA;
+
+#define MAX_RETRIES 			10
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+void UnLockSemaphore(int semid);
+void LockSemaphore(int semid);
+int InitSemaphore(key_t key, int nsems);
+char* convertStringToCharPointer(string str);
+int listBadFiles(string errDir);
+int obterParameters();
+int DBConnect();
+int DBDisconnect();
+
+//Globais
+Log oLog;
+map<string,string> tParamConf;
+stringstream strAux;
+
+int main(int argc, char* argv[])
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		int i_Count;
+
+		short i_NRDocumento;
+		VARCHAR szNRDocumento[255];
+
+		short i_Indacao;
+		VARCHAR szIndacao[255];
+
+		short i_IdPreAtivacao;
+		VARCHAR szIdPreAtivacao[255];
+
+		int i_CdAreaRegistro;
+
+		short i_NRLinha;
+		VARCHAR szNRLinha[255];
+
+		short i_SVCTypeCD;
+		VARCHAR szSVCTypeCD[255];
+
+		short i_SVCTypeName;
+		VARCHAR szSVCName[255];
+
+	EXEC SQL END DECLARE SECTION;
+
+    oLog.setNivel(2); //Nivel 2 = Debug
+
+    oLog.logDebug(">>>relatorioDescontoConvergente");
+
+    oLog.logDebug("Obtendo Parametros...");
+	if(obterParameters() == -1)
+	{
+		oLog.logError("Erro obtendo parametros de configuracao!");
+		return -1;
+	}
+	oLog.logDebug("Parametros Obtidos...");
+
+	oLog.logDebug("Conectando na BD...");
+	if (DBConnect() == -1)
+	{
+		oLog.logError("Erro conectando no banco de dados!");
+		return -1;
+	}
+	oLog.logDebug("Conectado na BD com sucesso...");
+
+	oLog.logDebug("Inicio da carga...");
+
+	oLog.logDebug(">>>Processamento dos Dados");
+
+	string file = "BULK_SERVICE_EXPIRATION_";
+
+	time_t rawtime;
+	struct tm * timeinfo;
+
+	time (&rawtime);
+	timeinfo = localtime (&rawtime);
+
+	char data[25];
+	strftime(data, 25, "%Y%m%d%H%M%S", timeinfo);
+	file = file + data;
+
+	ofstream outfile;
+	outfile.open(convertStringToCharPointer(tParamConf["path"] + file + ".txt"), ofstream::out | ofstream::app);
+
+
+	stringstream command;
+	long outfilepos=0;
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+
+	/************************************************************************************************/
+	/**************************** RS05 - 1 e 2 ******************************************************/
+
+	EXEC SQL
+	DECLARE docsLF CURSOR FOR
+		SELECT  DOC.NRDOCUMENTO
+		FROM    CUSTOMER.DOCUMENTO DOC,
+				APOIO.TIPODOCUMENTO TD,
+				CUSTOMER.PESSOADOCUMENTO PD,
+				CUSTOMER.PESSOADEPARA PDP,
+				CUSTOMER.PESSOALINHA PL,
+				LINHA.LINHATELEFONICA LT
+		WHERE   DOC.IDDOCUMENTO         = PD.IDDOCUMENTO
+		AND     TD.IDTIPODOCUMENTO      = DOC.IDTIPODOCUMENTO
+		AND     PD.IDPESSOA             = PDP.IDPESSOA
+		AND     PDP.IDPESSOADEPARA      = PL.IDPESSOADEPARA
+		AND     PL.IDLINHATELEFONICA    = LT.IDLINHATELEFONICA
+		AND     TD.SGTIPODOCUMENTO      = 'CPF'
+		AND     PL.IDTIPORELACIONAMENTO = 2
+		AND     ((LT.DTEXPIRACAO >= TRUNC(SYSDATE - 1)) OR (LT.DTULTIMAALTERACAO BETWEEN TRUNC(sysdate -1) AND TRUNC(sysdate)))
+		AND 	LT.DTEXPIRACAO < TRUNC(SYSDATE)
+		AND     LT.IDSISTEMAORIGEM  IN (SELECT SO.IDSISTEMAORIGEM FROM APOIO.SISTEMAORIGEM SO WHERE SO.SGSISTEMAORIGEM IN ('CSO', 'ATS'));
+
+	oLog.logDebug("Abrindo cursor docsLF");
+	EXEC SQL OPEN docsLF;
+
+	for(;;)
+	{
+		EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+		memset(&szNRDocumento, 0x0, sizeof(szNRDocumento));
+		i_NRDocumento = -1;
+		i_Count = 0;
+
+		EXEC SQL
+		FETCH docsLF INTO :szNRDocumento:i_NRDocumento;
+
+		CONVIND(szNRDocumento, i_NRDocumento);
+
+		strAux.str("");strAux << "NRDOCUMENTO = " << szNRDocumento.arr; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+
+		if(i_NRDocumento < 0)
+		{
+			//oLog.logDebug("Não há clientes que perderam Linhas Fixas / FWTs no dia anterior!");
+		}
+		else
+		{
+			EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+			oLog.logDebug("Executando SQL: SELECT COUNT(1) INTO	:i_Count FROM CUSTOMER.DOCUMENTO DOC...");
+			EXEC SQL
+			SELECT  COUNT(1)
+			INTO	:i_Count
+			FROM    CUSTOMER.DOCUMENTO DOC,
+					APOIO.TIPODOCUMENTO TD,
+					CUSTOMER.PESSOADOCUMENTO PD,
+					CUSTOMER.PESSOADEPARA PDP,
+					CUSTOMER.PESSOALINHA PL,
+					LINHA.LINHATELEFONICA LT
+			WHERE   DOC.IDDOCUMENTO         = PD.IDDOCUMENTO
+			AND     TD.IDTIPODOCUMENTO      = DOC.IDTIPODOCUMENTO
+			AND     PD.IDPESSOA             = PDP.IDPESSOA
+			AND     PDP.IDPESSOADEPARA      = PL.IDPESSOADEPARA
+			AND     PL.IDLINHATELEFONICA    = LT.IDLINHATELEFONICA
+			AND     DOC.NRDOCUMENTO         = :szNRDocumento
+			AND     TD.SGTIPODOCUMENTO      = 'CPF'
+			AND     PL.IDTIPORELACIONAMENTO = 2
+			AND     (LT.DTEXPIRACAO IS NULL OR LT.DTEXPIRACAO > SYSDATE)
+			AND     LT.IDSISTEMAORIGEM  IN (SELECT SO.IDSISTEMAORIGEM FROM APOIO.SISTEMAORIGEM SO WHERE SO.SGSISTEMAORIGEM IN ('CSO', 'ATS'));
+			oLog.logDebug("FIM Execucao SQL...");
+
+			if(i_Count == 0)
+			{
+				strAux.str("");strAux << "RETORNO = " << szNRDocumento.arr << "|DJ|E"; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+				outfile << szNRDocumento.arr << "|DJ|E" << endl;
+			}
+		}
+	}
+
+	EXEC SQL CLOSE docsLF;
+	oLog.logDebug("Cursor docsLF fechado");
+
+
+
+	/******************************************************************************************************/
+	/**************************** RS05 - 3, 4, 5 e 6 ******************************************************/
+
+	EXEC SQL
+	DECLARE docsBLS CURSOR FOR
+		SELECT  DOC.NRDOCUMENTO
+		FROM    CUSTOMER.DOCUMENTO DOC,
+				APOIO.TIPODOCUMENTO TD,
+				CUSTOMER.PESSOADOCUMENTO PD,
+				CUSTOMER.PESSOADEPARA PDP,
+				CUSTOMER.PESSOALINHA PL,
+				LINHA.PLANOSERVICOLINHA PSL,
+				LINHA.PLANOSERVICO PS
+		WHERE   DOC.IDDOCUMENTO         = PD.IDDOCUMENTO
+		AND     TD.IDTIPODOCUMENTO      = DOC.IDTIPODOCUMENTO
+		AND     PD.IDPESSOA             = PDP.IDPESSOA
+		AND     PDP.IDPESSOADEPARA      = PL.IDPESSOADEPARA
+		AND     PL.IDLINHATELEFONICA    = PSL.IDLINHATELEFONICA
+		AND     PSL.IDSERVICO           = PS.IDSERVICO
+		AND     TD.SGTIPODOCUMENTO      = 'CPF'
+		AND     PL.IDTIPORELACIONAMENTO = 2
+		AND     (PSL.INPLANO             = 0 OR PSL.INPLANO  IS NULL) 
+		AND     ((PSL.DTEXPIRACAO >= TRUNC(SYSDATE - 1)) OR (PSL.DTULTIMAALTERACAO BETWEEN TRUNC(sysdate -1) AND TRUNC(sysdate)))
+		AND 	PSL.DTEXPIRACAO < TRUNC(SYSDATE)
+		AND     PS.CDTIPOPLANOSERVICO   = '16'
+		AND     PS.IDSISTEMAORIGEM IN (SELECT SO.IDSISTEMAORIGEM FROM APOIO.SISTEMAORIGEM SO WHERE SO.SGSISTEMAORIGEM IN ('CSO', 'ATS'))
+		UNION
+		SELECT      DA.NRDOCUMENTO
+		FROM        CUSTOMER.DADOSAJATOSIA DA
+		WHERE       DA.INDACAO = 'E'
+		AND         TRUNC(DA.DTULTIMAALTERACAO) = TRUNC(SYSDATE);
+
+	oLog.logDebug("Abrindo cursor docsBLS");
+	EXEC SQL OPEN docsBLS;
+
+	for(;;)
+	{
+		EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+		memset(&szNRDocumento, 0x0, sizeof(szNRDocumento));
+		i_NRDocumento = -1;
+
+		memset(&szIndacao, 0x0, sizeof(szIndacao));
+		i_Indacao = -1;
+		i_Count = 0;
+
+		EXEC SQL
+		FETCH docsBLS INTO :szNRDocumento:i_NRDocumento;
+
+		CONVIND(szNRDocumento, i_NRDocumento);
+
+		strAux.str("");strAux << "NRDOCUMENTO = " << szNRDocumento.arr; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+
+
+
+		if(i_NRDocumento < 0)
+		{
+			//oLog.logDebug("Não há clientes que perderam a Banda Larga Speedy no dia anterior!");
+		}
+		else
+		{
+			EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+			oLog.logDebug("Executando SQL: EXEC SQL SELECT INDACAO INTO :szIndacao:i_Indacao FROM ( SELECT DA.INDACAO...");
+			EXEC SQL
+			SELECT  INDACAO
+			INTO	:szIndacao:i_Indacao
+			FROM
+			(
+				SELECT  DA.INDACAO
+				FROM    CUSTOMER.DADOSAJATOSIA DA
+				WHERE   DA.NRDOCUMENTO = :szNRDocumento
+				ORDER BY DA.DTULTIMAALTERACAO DESC
+			)
+			WHERE ROWNUM <= 1;
+			oLog.logDebug("FIM Execucao SQL...");
+
+			CONVIND(szIndacao, i_Indacao);
+
+			if(i_Indacao < 0 || strcmp((char *) szIndacao.arr, "E") == 0)
+			{
+				oLog.logDebug("Executando SQL: SELECT COUNT(1) INTO	:i_Count FROM CUSTOMER.DOCUMENTO DOC...");
+				EXEC SQL
+				SELECT  COUNT(1)
+				INTO	:i_Count
+				FROM    CUSTOMER.DOCUMENTO DOC,
+						CUSTOMER.PESSOADOCUMENTO PD,
+						CUSTOMER.PESSOADEPARA PDP,
+						CUSTOMER.PESSOALINHA PL,
+						LINHA.PLANOSERVICOLINHA PSL,
+						LINHA.PLANOSERVICO PS
+				WHERE   DOC.IDDOCUMENTO         = PD.IDDOCUMENTO
+				AND     PD.IDPESSOA             = PDP.IDPESSOA
+				AND     PDP.IDPESSOADEPARA      = PL.IDPESSOADEPARA
+				AND     PL.IDLINHATELEFONICA    = PSL.IDLINHATELEFONICA
+				AND     PSL.IDSERVICO           = PS.IDSERVICO
+				AND     DOC.NRDOCUMENTO         = :szNRDocumento
+				AND     PL.IDTIPORELACIONAMENTO = 2
+				AND     (PSL.INPLANO             = 0 OR PSL.INPLANO  IS NULL) 
+				AND     PS.CDTIPOPLANOSERVICO   = '16'
+				AND     (PSL.DTEXPIRACAO IS NULL OR PSL.DTEXPIRACAO > SYSDATE)
+				AND     PS.IDSISTEMAORIGEM IN (SELECT SO.IDSISTEMAORIGEM FROM APOIO.SISTEMAORIGEM SO WHERE SO.SGSISTEMAORIGEM IN ('CSO', 'ATS'));
+				oLog.logDebug("FIM Execucao SQ...");
+
+				if(i_Count == 0)
+				{
+					strAux.str("");strAux << "RETORNO = " << szNRDocumento.arr << "|DI|E"; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+					outfile << szNRDocumento.arr << "|DI|E" << endl;
+				}
+			}
+
+		}
+	}
+
+	EXEC SQL CLOSE docsBLS;
+	oLog.logDebug("Cursor docsBLS fechado");
+
+
+
+	/********************************************************************************************/
+	/**************************** RS06 - 1 ******************************************************/
+
+	EXEC SQL
+	DECLARE clientesDC CURSOR FOR
+		SELECT  IDPREATIVACAO, NRDOCUMENTO, CDAREAREGISTRO, NRLINHA, SVCTYPECD, SVCNAME
+		FROM    CUSTOMER.PREATIVACAODESCONTO;
+
+	oLog.logDebug("Abrindo cursor clientesDC");
+	EXEC SQL OPEN clientesDC;
+
+	for(;;)
+	{
+		EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+		memset(&szIdPreAtivacao, 0x0, sizeof(szIdPreAtivacao));
+		i_IdPreAtivacao = -1;
+
+		memset(&szNRDocumento, 0x0, sizeof(szNRDocumento));
+		i_NRDocumento = -1;
+
+		i_CdAreaRegistro = -1;
+
+		memset(&szNRLinha, 0x0, sizeof(szNRLinha));
+		i_NRLinha = -1;
+
+		memset(&szSVCTypeCD, 0x0, sizeof(szSVCTypeCD));
+		i_SVCTypeCD = -1;
+
+		memset(&szSVCName, 0x0, sizeof(szSVCName));
+		i_SVCTypeName = -1;
+
+		memset(&szIndacao, 0x0, sizeof(szIndacao));
+		i_Indacao = -1;
+
+		i_Count = 0;
+
+		EXEC SQL
+		FETCH clientesDC INTO :szIdPreAtivacao:i_IdPreAtivacao, :szNRDocumento:i_NRDocumento, :i_CdAreaRegistro, :szNRLinha:i_NRLinha, :szSVCTypeCD:i_SVCTypeCD, :szSVCName:i_SVCTypeName;
+
+
+		CONVIND(szIdPreAtivacao, i_IdPreAtivacao);
+		CONVIND(szNRDocumento, i_NRDocumento);
+		CONVIND(szNRLinha, i_NRLinha);
+		CONVIND(szSVCTypeCD, i_SVCTypeCD);
+		CONVIND(szSVCName, i_SVCTypeName);
+
+		strAux.str("");strAux << "IDPREATIVACAO = " << szIdPreAtivacao.arr; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+		strAux.str("");strAux << "NRDOCUMENTO = " << szNRDocumento.arr; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+		strAux.str("");strAux << "CDAREAREGISTRO = " << i_CdAreaRegistro; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+		strAux.str("");strAux << "NRLINHA = " << szNRLinha.arr; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+		strAux.str("");strAux << "SVCTYPECD = " << szSVCTypeCD.arr; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+		strAux.str("");strAux << "SVCNAME = " << szSVCName.arr; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+
+		if(i_IdPreAtivacao < 0 || i_NRDocumento < 0 || i_CdAreaRegistro < 0 || i_NRLinha < 0 || i_SVCTypeCD < 0 || i_SVCTypeName < 0)
+		{
+			//oLog.logDebug("Não há clientes que podem receber o Desconto Convergente!");
+		}
+		else
+		{
+			EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+			if(strcmp((char *) szSVCTypeCD.arr, "DJ") == 0)
+			{
+				oLog.logDebug("Executando SQL: SELECT  COUNT(1) INTO :i_Count FROM CUSTOMER.DOCUMENTO DOC...");
+				EXEC SQL
+				SELECT  COUNT(1)
+				INTO	:i_Count
+				FROM    CUSTOMER.DOCUMENTO DOC,
+						CUSTOMER.PESSOADOCUMENTO PD,
+						CUSTOMER.PESSOADEPARA PDP,
+						CUSTOMER.PESSOALINHA PL,
+						LINHA.LINHATELEFONICA LT
+				WHERE   DOC.IDDOCUMENTO         = PD.IDDOCUMENTO
+				AND     PD.IDPESSOA             = PDP.IDPESSOA
+				AND     PDP.IDPESSOADEPARA      = PL.IDPESSOADEPARA
+				AND     PL.IDLINHATELEFONICA    = LT.IDLINHATELEFONICA
+				AND     DOC.NRDOCUMENTO         = :szNRDocumento
+				AND 	DOC.IDTIPODOCUMENTO     = 1
+				AND     PL.IDTIPORELACIONAMENTO = 2
+				AND     (LT.DTEXPIRACAO IS NULL OR LT.DTEXPIRACAO > SYSDATE)
+				AND     LT.IDSISTEMAORIGEM  IN (SELECT SO.IDSISTEMAORIGEM FROM APOIO.SISTEMAORIGEM SO WHERE SO.SGSISTEMAORIGEM IN ('CSO', 'ATS'));
+				oLog.logDebug("FIM Execucao SQL...");
+
+				if(i_Count > 0)
+				{
+					oLog.logDebug("Executando SQL: DELETE FROM CUSTOMER.PREATIVACAODESCONTO...");
+					EXEC SQL
+					DELETE FROM CUSTOMER.PREATIVACAODESCONTO WHERE IDPREATIVACAO = :szIdPreAtivacao;
+					oLog.logDebug("FIM Execucao SQL...");
+
+					strAux.str("");strAux << "RETORNO = " << szNRDocumento.arr << "|DJ|A|" << i_CdAreaRegistro << szNRLinha.arr << "|" << szSVCName.arr; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+					outfile << szNRDocumento.arr << "|DJ|A|" << i_CdAreaRegistro << szNRLinha.arr << "|" << szSVCName.arr << endl;
+				}
+			}
+			else if(strcmp((char *) szSVCTypeCD.arr, "DI") == 0)
+			{
+				oLog.logDebug("Executando SQL: SELECT INDACAO INTO :szIndacao:i_Indacao FROM ( SELECT DA.INDACAO...");
+				EXEC SQL
+				SELECT  INDACAO
+				INTO	:szIndacao:i_Indacao
+				FROM
+				(
+					SELECT  DA.INDACAO
+					FROM    CUSTOMER.DADOSAJATOSIA DA
+					WHERE   DA.NRDOCUMENTO = :szNRDocumento
+					ORDER BY DA.DTULTIMAALTERACAO DESC
+				)
+				WHERE ROWNUM <= 1;
+				oLog.logDebug("FIM Execucao SQL...");
+
+				if(i_Indacao < 0 || strcmp((char *) szIndacao.arr, "E") == 0)
+				{
+					oLog.logDebug("Executando SQL: SELECT COUNT(1) INTO	:i_Count FROM CUSTOMER.DOCUMENTO DO...");
+					EXEC SQL
+					SELECT  COUNT(1)
+					INTO	:i_Count
+					FROM    CUSTOMER.DOCUMENTO DOC,
+							CUSTOMER.PESSOADOCUMENTO PD,
+							CUSTOMER.PESSOADEPARA PDP,
+							CUSTOMER.PESSOALINHA PL,
+							LINHA.PLANOSERVICOLINHA PSL,
+							LINHA.PLANOSERVICO PS
+					WHERE   DOC.IDDOCUMENTO         = PD.IDDOCUMENTO
+					AND     PD.IDPESSOA             = PDP.IDPESSOA
+					AND     PDP.IDPESSOADEPARA      = PL.IDPESSOADEPARA
+					AND     PL.IDLINHATELEFONICA    = PSL.IDLINHATELEFONICA
+					AND     PSL.IDSERVICO           = PS.IDSERVICO
+					AND     DOC.NRDOCUMENTO         = :szNRDocumento
+					AND     DOC.IDTIPODOCUMENTO     = 1
+					AND     PL.IDTIPORELACIONAMENTO = 2
+					AND     (PSL.INPLANO             = 0 OR PSL.INPLANO  IS NULL) 
+					
+					AND     (PSL.DTEXPIRACAO IS NULL OR PSL.DTEXPIRACAO > SYSDATE)
+					AND     PS.CDTIPOPLANOSERVICO   = '16'
+					AND     PS.IDSISTEMAORIGEM IN (SELECT SO.IDSISTEMAORIGEM FROM APOIO.SISTEMAORIGEM SO WHERE SO.SGSISTEMAORIGEM IN ('CSO', 'ATS'));
+					oLog.logDebug("FIM Execucao SQL...");
+
+					if(i_Count > 0)
+					{
+						oLog.logDebug("Executando SQL: DELETE FROM CUSTOMER.PREATIVACAODESCONTO...");
+						EXEC SQL
+						DELETE FROM CUSTOMER.PREATIVACAODESCONTO WHERE IDPREATIVACAO = :szIdPreAtivacao;
+						oLog.logDebug("FIM Execucao SQL...");
+
+						strAux.str("");strAux << "RETORNO = " << szNRDocumento.arr << "|DI|A|" << i_CdAreaRegistro << szNRLinha.arr << "|" << szSVCName.arr; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+						outfile << szNRDocumento.arr << "|DI|A|" << i_CdAreaRegistro << szNRLinha.arr << "|" << szSVCName.arr << endl;
+					}
+				}
+				else if (strcmp((char *) szIndacao.arr, "A") == 0)
+				{
+					oLog.logDebug("Executando SQL: DELETE FROM CUSTOMER.PREATIVACAODESCONTO...");
+					EXEC SQL
+					DELETE FROM CUSTOMER.PREATIVACAODESCONTO WHERE IDPREATIVACAO = :szIdPreAtivacao;
+					oLog.logDebug("FIM Execucao SQL...");
+
+					strAux.str("");strAux << "RETORNO = " << szNRDocumento.arr << "|DI|A|" << i_CdAreaRegistro << szNRLinha.arr << "|" << szSVCName.arr; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+					outfile << szNRDocumento.arr << "|DI|A|" << i_CdAreaRegistro << szNRLinha.arr << "|" << szSVCName.arr << endl;
+				}
+			}
+		}
+	}
+
+
+	EXEC SQL CLOSE clientesDC;
+	oLog.logDebug("Cursor clientesDC fechado");
+
+	outfilepos = outfile.tellp();
+
+	outfile.close();
+
+	if (outfilepos) {
+	oLog.logDebug("Dados salvos com Sucesso!");
+
+	command << "cp -f " << tParamConf["path"] << "/" << file << ".txt " <<  tParamConf["path_env"] << "/" << file << ".txt";
+	system( command.str().c_str() );
+	}
+	else {
+		oLog.logDebug("Arquivo vazio, descartando..!");
+
+		command << "rm -f " << tParamConf["path"] << "/" << file << ".txt";
+		system( command.str().c_str() );
+	}
+
+	oLog.logDebug("<<<Processamento dos Dados");
+
+	oLog.logDebug("Desconectando da BD...");
+	DBDisconnect();
+
+	oLog.logDebug("Processamento encerrado");
+    oLog.logDebug("<<<relatorioDescontoConvergente");
+
+    return 0;
+
+    sqlError:
+		strAux.str("");strAux << "MAIN > Finalizando processo com erro ORACLE (" << sqlca.sqlcode << "-" << sqlca.sqlerrm.sqlerrmc; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+        return -1;
+}
+
+/********************************************************************************************/
+vector<string> listFiles(string dir, string ext)
+{
+	oLog.logDebug(">>>listFiles");
+
+	string file;
+	string data;
+	stringstream command;
+	vector<string> files;
+
+	command.str("");command << "cd " << dir << " ; ls *." << ext << " > files.tmp";
+	system(convertStringToCharPointer(command.str()));
+
+	file = dir + "files.tmp";
+	ifstream infile;
+	infile.open(convertStringToCharPointer(file));
+	if(infile)
+	{
+		while(true)
+		{
+			infile >> data;
+			if(infile.eof()){
+				break;
+			}
+			else{
+				unsigned found = data.rfind("." + dir);
+				if(found != string::npos)
+				{
+					files.push_back(data);
+				}
+			}
+		}
+	}
+	else
+	{
+		oLog.logDebug("Erro na verificação de Arquivos!");
+	}
+	infile.close();
+
+	command.str("");command << "rm " << file << " ; cd -";
+	system(convertStringToCharPointer(command.str()));
+
+	oLog.logDebug("<<<listFiles");
+
+	return files;
+}
+
+/********************************************************************************************/
+int listBadFiles(string errDir)
+{
+	oLog.logDebug(">>>listBadFiles");
+
+	string file;
+	string data;
+	stringstream command;
+
+	bool ret;
+
+	file = errDir + "dadosRejeitados.bad";
+	ifstream infile;
+	infile.open(convertStringToCharPointer(file));
+	if(infile)
+	{
+		ret = 1;
+	}
+	else
+	{
+		ret = 0;
+	}
+	infile.close();
+
+	oLog.logDebug("<<<listBadFiles");
+
+	return ret;
+}
+
+/********************************************************************************************/
+int obterParameters()
+{
+	string data;
+
+	ifstream infile("relatorioDescontoConvergente.cfg");
+	if(infile)
+	{
+		while(true)
+		{
+			if(infile.eof()) break;
+
+			infile >> data;
+			string key = data.substr(0, data.find("="));
+			string val = data.substr(data.find("=") + 1, data.size());
+			tParamConf.insert(pair<string,string>(key,val));
+		}
+	}
+	else
+	{
+		oLog.logDebug("Erro na verificação de Arquivos!");
+		return -1;
+	}
+	infile.close();
+
+	map<string,string>::iterator it = tParamConf.begin();
+	for(it = tParamConf.begin(); it != tParamConf.end(); ++it)
+	{
+		strAux.str("");strAux << "tParamConf[" << it->first << "] = " << it->second; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+	}
+
+	return 0;
+}
+
+/********************************************************************************************/
+int DBConnect()
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    // String de conexao
+    stringstream conn;
+    conn.str("");conn << tParamConf["usr_db"] << "/" << tParamConf["pwd_db"] << "@" << tParamConf["inst_db"];
+    strcpy(connString, convertStringToCharPointer(conn.str()));
+
+    // Marca ponto de erro
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    // Conecta
+    EXEC SQL CONNECT :connString;
+
+    return (sqlca.sqlcode);
+
+	errConn:
+		oLog.logInformation("<<<DBConnect [ERROR]");
+		return -1;
+}
+
+/************************************************************************************************************/
+int DBDisconnect()
+{
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL COMMIT WORK RELEASE;
+
+    return 0;
+
+	Error:
+		strAux.str("");strAux << "ERRO ORACLE -> sqlcode = " << sqlca.sqlcode << ", sqlerrmc = " << sqlca.sqlerrm.sqlerrmc; oLog.logDebug(convertStringToCharPointer(strAux.str()));
+		return -1;
+}
+
+/************************************************************************************************************/
+void UnLockSemaphore(int semid)
+{
+    struct sembuf sb;
+
+    sb.sem_num = 0;
+    sb.sem_op = 1; // free resource
+    sb.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &sb, 1) == -1)
+    {
+        perror("semop");
+        exit(1);
+    }
+}
+
+/********************************************************************************************/
+void LockSemaphore(int semid)
+{
+    struct sembuf sb;
+
+    sb.sem_num = 0;
+    sb.sem_op = -1;  // set to allocate resource
+    sb.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &sb, 1) == -1)
+    {
+        perror("semop");
+        exit(1);
+    }
+}
+
+/********************************************************************************************/
+int InitSemaphore(key_t key, int nsems)
+{
+    union semun
+    {
+        int val;
+        struct semid_ds *buf;
+        ushort *array;
+    } arg;
+
+    struct semid_ds buf;
+    struct sembuf sb;
+    int semid;
+
+    semid = semget(key, nsems, IPC_CREAT | IPC_EXCL | 0666);
+    if (semid >= 0)
+    { // we got it first
+        sb.sem_op = 1;
+        sb.sem_flg = 0;
+        arg.val = 1;
+
+        for(sb.sem_num = 0; sb.sem_num < nsems; sb.sem_num++)
+        {
+            // do a semop() to "free" the semaphores.
+            // this sets the sem_otime field, as needed below.
+            if (semop(semid, &sb, 1) == -1)
+            {
+                int e = errno;
+                semctl(semid, 0, IPC_RMID); // clean up
+                errno = e;
+                return -1; // error, check errno
+            }
+        }
+    }
+    else if (errno == EEXIST)
+    {
+        int ready = 0;
+
+        semid = semget(key, nsems, 0); // get the id
+        if (semid < 0)
+            return semid; // error, check errno
+
+        // wait for other process to initialize the semaphore:
+        arg.buf = &buf;
+
+        for(int i = 0; i < MAX_RETRIES && !ready; i++)
+        {
+            semctl(semid, nsems-1, IPC_STAT, arg);
+
+            if (arg.buf->sem_otime != 0)
+            {
+                ready = 1;
+            }
+            else
+            {
+                sleep(1);
+            }
+        }
+        if(!ready)
+        {
+            errno = ETIME;
+            return -1;
+        }
+    }
+    else
+    {
+        return semid; // error, check errno
+    }
+
+    return semid;
+}
+
+/********************************************************************************************/
+char* convertStringToCharPointer(string str)
+{
+	/* leak & not needed
+	char *c = new char[str.length() + 1];
+	strcpy(c, str.c_str());
+	return c;
+	*/
+
+	return const_cast<char*>(str.c_str());
+}

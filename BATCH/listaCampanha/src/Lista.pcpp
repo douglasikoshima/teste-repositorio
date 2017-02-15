@@ -1,0 +1,475 @@
+/* Lista.pcpp: Modela uma lista de campanha
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+EXEC SQL INCLUDE "Lista.h";
+
+#include "MFile.h"
+
+/* Funcoes de apoio */
+char *rtrim(char *pStr)
+{
+	int rInd;
+
+	if (pStr == NULL) return NULL;
+
+	rInd = strlen(pStr) - 1;
+
+	if (!isspace(pStr[rInd])) return pStr;
+
+	while ( isspace(pStr[rInd]) && rInd >= 0)
+			rInd--;
+	
+	pStr[rInd + 1] = '\0';
+	return pStr;
+}
+
+/* Construtor e Destrutor */
+CLista::CLista() 
+{
+
+}
+
+CLista::CLista(int iIdListaACarregar) 
+{
+	struct sqlca sqlca;
+	iIdLista = iIdListaACarregar;
+
+	/* Marca ponto de controle de erro */
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL SELECT  nmlista,
+					 instatuscarga,
+					 qttetntativas
+			 INTO
+					 :cNmLista,
+					 :iInStatusCarga,
+					 :iQtTentativas
+			FROM	 campanha.Lista
+			WHERE	 IdLista = :iIdLista;
+
+	/* ID não existe. Seta o ID para -1. */
+	if (sqlca.sqlcode == 1403)	iIdLista = -1;
+
+	return;
+	sqlErrorConstrutor:
+	iIdLista = -1;
+}
+
+/*CLista::~CLista() {
+}*/
+
+/* Usuário de alteração */
+void CLista::setUsuarioAlteracao(char* value) 
+{
+	if (value != NULL) 
+		{
+			strncpy(sIdUsuarioAlteracao,value, 255);
+			sIdUsuarioAlteracao[255]='\0';
+		}
+}
+
+/* Metodos getter */
+int CLista::getIdLista()
+{
+	return iIdLista;
+}
+
+char* CLista::getNmLista()
+{
+	return cNmLista;
+}
+
+int CLista::getInStatusCarga()
+{
+	return iInStatusCarga;
+}
+
+int CLista::getQtTentativas()
+{
+	return iQtTentativas;
+}
+
+/* Metodos setter */
+void CLista::setIdLista(int value)
+{
+	iIdLista = value;
+}
+
+void CLista::setNmLista(char* value)
+{
+	strncpy(cNmLista, value, sizeof(cNmLista));
+	cNmLista[sizeof(cNmLista)-1]='\0';
+}
+
+void CLista::setInStatusCarga(int value){
+	iInStatusCarga = value;
+}
+
+void CLista::setQtTentativas(int value){
+	iQtTentativas = value;
+}
+
+/* Métodos de acesso a banco de dados */
+CLista* CLista::recuperaAProcessar(int* iNroObjetos)
+{
+
+	struct sqlca sqlca;
+	CLista* listaLista = NULL;
+	int iNroObjLocal = 1;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdLista;
+	char cNmLista[21];
+
+	int iInStatusCarga;
+	int iQtTentativas;
+	EXEC SQL END DECLARE SECTION;
+
+	/* Marca ponto de controle de erro */
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorLista;
+
+	/* Declara e abre o cursor */
+	EXEC SQL DECLARE listas CURSOR FOR
+	SELECT
+	 IdLista,
+	 nmpath,
+	 nvl(InStatusCarga, 0),
+	 nvl(QtTetntativas, 0)
+	FROM
+	 campanha.Lista
+	WHERE
+	 InStatusCarga = 0 OR
+	 (QtTetntativas < 3 AND InStatusCarga = 2);
+
+	EXEC SQL OPEN listas;
+
+	/* Corre os dados e monta a lista de objetos */
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for (;; iNroObjLocal++) 
+	{
+		
+		EXEC SQL FETCH listas INTO
+					 :iIdLista,
+					 :cNmLista,
+					 :iInStatusCarga,
+					 :iQtTentativas;
+
+		/* Aloca memória para o objeto atual. */
+		if ((listaLista = (CLista*) realloc((void *)listaLista, (sizeof(CLista) * iNroObjLocal))) != NULL) 
+			{
+			
+			/* Coloca os dados do objeto atual. */
+			listaLista[iNroObjLocal-1].setIdLista(iIdLista);
+			listaLista[iNroObjLocal-1].setNmLista(rtrim(cNmLista));
+			listaLista[iNroObjLocal-1].setInStatusCarga(iInStatusCarga);
+			listaLista[iNroObjLocal-1].setQtTentativas(iQtTentativas);
+
+			} 
+		else 
+			{
+				if (listaLista)	free(listaLista);
+			
+				EXEC SQL CLOSE listas;
+				*iNroObjetos = -1;
+				return NULL;
+			}
+	}
+
+	*iNroObjetos = iNroObjLocal - 1;
+	return listaLista;
+
+	/* Tratamento de erro - Lança excessão com o código oracle do erro. */
+	sqlErrorLista:
+		*iNroObjetos = -1;
+	
+	return NULL;		
+}
+
+int CLista::processaLista(char* path)
+	{
+
+	struct sqlca sqlca;
+	MFile oArqLista;
+	char szLinha[81];
+	char pcFullPath[2048];
+	memset(szLinha, 0, 81);
+	
+	/* Determina o path. */
+	memset(pcFullPath, 0, 2048);
+	sprintf(pcFullPath, "%s/%s", path,  cNmLista);
+	oArqLista.setPath(pcFullPath);
+
+	/* Abre o arquivo */
+	if (!oArqLista.abrir())
+		{
+		printf("Erro abrindo arquivo %s.\n", oArqLista.getPath());
+		marcaFalha("Erro abrindo arquivo");
+		return 0;
+	}
+
+	/* Garante que não existam dados de cargas anteriores. */
+	if(!desfazProcessamento()) {
+		printf("Não foi possível garantir que não existem resíduos de processamentos anteriores para a lista %i. Cancelando processamento deste arquivo.\n", iIdLista);
+		oArqLista.fechar();
+		marcaFalha("Não foi possível garantir que não existem resíduos de processamentos anteriores");
+		return 0;
+	}
+
+	/* Processa enquanto existirem linhas no arquivo. */
+	int iLnNbr = 0;
+	int iLnVal = 0;
+	while(oArqLista.getLine(szLinha)!=0)
+	{
+		EXEC SQL BEGIN DECLARE SECTION;
+			char sNome[21];
+			char sTelefone[11];
+			char sDocumento[21];
+			int iIdListaConteudo;
+			int iIdPessoaDePara;
+			char sFone[16];
+			char sDDD[3];
+		EXEC SQL END DECLARE SECTION;
+
+		iLnNbr++;
+
+		/* Zera variáveis. */
+		memset(sNome, 0, 21);
+		memset(sTelefone, 0, 11);
+		memset(sDocumento, 0, 21);
+
+		/* Checa se tamanho dos dados é válido. */
+		if (strlen(szLinha) != 50) {
+			printf("Linha %d inválida! Tamanho encontrado: %i.\n", iLnNbr, strlen(szLinha));
+			continue;
+		}
+
+		/* Separa os dados nas variáveis. */
+		memcpy(sNome, szLinha, 20);
+		memcpy(sTelefone, szLinha + 20, 10);
+		memcpy(sDocumento, szLinha + 30, 20);
+
+		/* Retira os espaços em branco depois do texto */
+		rtrim(sNome);
+		rtrim(sTelefone);
+		rtrim(sDocumento);
+
+		/* Insere os dados na tabela ListaCampanha. Usa usuário 0 pois é aplicação batch */
+		EXEC SQL WHENEVER SQLERROR CONTINUE;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL 
+		INSERT INTO campanha.ListaConteudo
+		(idListaConteudo,
+		 idLista,
+		 nrTelefone,
+		 nmContato,
+		 idUsuarioAlteracao,
+		 dtUltimaAlteracao)
+		VALUES
+		(campanha.listaconteudosq.nextval,
+		:iIdLista,
+		:sTelefone,
+		ltrim(:sNome),
+		0,
+		SYSDATE)
+		RETURNING idListaConteudo
+		INTO :iIdListaConteudo;
+
+		if (sqlca.sqlcode) {
+			char sMsg[2048];
+			memset(sMsg, 0, 2048);
+
+			sprintf(sMsg, "Erro oracle nro %d processando linha %d. Cancelando processamento deste arquivo.\n", sqlca.sqlcode, iLnNbr);
+			printf(sMsg);
+
+			EXEC SQL ROLLBACK;
+			desfazProcessamento();
+			marcaFalha(sMsg);
+			EXEC SQL COMMIT;
+			return 0;
+		}
+
+		/* Procura a pessoadepara a partir da linha telefônica
+		*/
+		memset( sFone, 0x0, sizeof(sFone) );
+		memset(sDDD, 0, 3);
+
+		memcpy(sDDD, sTelefone, 2);
+		memcpy(sFone, sTelefone + 2, 8);
+
+		/*
+		EXEC SQL 
+		SELECT 
+		 idpessoadepara
+		INTO
+		 :iIdPessoaDePara
+		FROM 
+		 customer.pessoalinhab01 
+		WHERE 
+		 nrlinha = :sFone AND 
+		 cdarearegistro = :sDDD AND
+		 sgtiporelacionamento = 'U'
+		 AND (dtexpiracao is null OR dtexpiracao > SYSDATE);
+		*/
+		
+		EXEC SQL 
+        SELECT idpessoadepara
+          INTO :iIdPessoaDePara          
+          FROM linha.linhabase linhabase,
+               customer.pessoalinha pessoalinha,
+               customer.tiporelacionamento tiporelacionamento,
+               linha.linhatelefonica linhatelefonica,
+               apoio.arearegistro arearegistro
+         WHERE linhatelefonica.idlinhatelefonica = pessoalinha.idlinhatelefonica
+           AND linhatelefonica.idlinhabase = linhabase.idlinhabase
+           AND linhabase.nrlinha = :sFone
+           AND linhabase.idarearegistro = arearegistro.idarearegistro
+           AND linhabase.idsistemaorigem = linhatelefonica.idsistemaorigem
+           AND arearegistro.cdarearegistro = :sDDD
+           AND tiporelacionamento.sgtiporelacionamento = 'U'
+           AND pessoalinha.idlinhatelefonica = linhatelefonica.idlinhatelefonica
+           AND pessoalinha.idtiporelacionamento =
+                                               tiporelacionamento.idtiporelacionamento
+           AND (   linhatelefonica.dtexpiracao IS NULL
+                OR linhatelefonica.dtexpiracao > SYSDATE
+               );
+
+		/* Se encontrou a pessoa, insere. Se o erro não for 1403 aborta. */
+		if (sqlca.sqlcode != 0 && sqlca.sqlcode != 1403) {
+			char sMsg[2048];
+			memset(sMsg, 0, 2048);
+
+			sprintf(sMsg, "Erro oracle nro %d processando linha %d. Cancelando processamento deste arquivo.\n", sqlca.sqlcode, iLnNbr);
+			printf(sMsg);
+
+			EXEC SQL ROLLBACK;
+			desfazProcessamento();
+			marcaFalha(sMsg);
+			EXEC SQL COMMIT;
+			return 0;
+		} else if (sqlca.sqlcode != 1403) {
+			/* Tem pessoa associada. Insere na tabela */
+			EXEC SQL 
+			INSERT INTO campanha.pessoalista
+			(IdListaConteudo,
+			 IdPessoaDePara,
+			 IdUsuarioAlteracao,
+			 DtUltimaAlteracao)
+			VALUES
+			(:iIdListaConteudo,
+			 :iIdPessoaDePara,
+			 0,
+			 SYSDATE);
+
+			if (sqlca.sqlcode) {
+				char sMsg[2048];
+				memset(sMsg, 0, 2048);
+
+				sprintf(sMsg, "Erro oracle nro %d processando linha %d. Cancelando processamento deste arquivo.\n", sqlca.sqlcode, iLnNbr);
+				printf(sMsg);
+
+				EXEC SQL ROLLBACK;
+				desfazProcessamento();
+				marcaFalha(sMsg);
+				EXEC SQL COMMIT;
+				return 0;
+			}
+		}
+		
+		/* Faz Commit de 5000 em 5000 linhas. */
+		if (!(iLnNbr%5000))
+			EXEC SQL COMMIT;
+
+		iLnVal++;
+	}
+
+	/* Finaliza */
+	EXEC SQL COMMIT;
+
+	/* Fecha arquivo */
+	oArqLista.fechar();
+    
+	/* Finaliza processamento com sucesso */
+	EXEC SQL WHENEVER SQLERROR CONTINUE;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL 
+	UPDATE 
+	 campanha.lista
+	SET 
+	 instatuscarga=1, 
+	 qttetntativas = :iQtTentativas + 1,
+ 	 dserrocarga = null
+	WHERE
+	 idLista = :iIdLista;
+
+	/* Checa se conseguiu finalizar. */
+	if (sqlca.sqlcode) {
+		printf("Erro oracle nro %d ao marcar lista %d como processado. Cancelando processamento deste arquivo.\n", sqlca.sqlcode, iIdLista, iLnNbr);
+		EXEC SQL ROLLBACK;
+		if (desfazProcessamento())
+			return 0;
+		else
+			return iLnNbr;
+	}
+
+	return iLnVal;
+}
+
+int CLista::desfazProcessamento() {
+
+	struct sqlca sqlca;
+	/* Remove todas as linhas da tabela de conteúdo que sejam dessa lista. */
+	EXEC SQL WHENEVER SQLERROR CONTINUE;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	EXEC SQL DELETE FROM campanha.ListaConteudo where idLista = :iIdLista;
+	if (sqlca.sqlcode < 0) {
+		printf("Erro desfazendo processamento da lista %d. Erro Oracle %d.\n", iIdLista, sqlca.sqlcode);
+		return 0;
+	}
+
+	return 1;
+}
+
+int CLista::marcaFalha(char* motivo) {
+
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* oraMotivo;
+	EXEC SQL END DECLARE SECTION;
+
+	oraMotivo = motivo;
+
+	/* Remove todas as linhas da tabela de conteúdo que sejam dessa lista. */
+	EXEC SQL WHENEVER SQLERROR CONTINUE;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL 
+	UPDATE 
+	 campanha.lista
+	SET 
+	 instatuscarga = 2,
+	 qttetntativas = :iQtTentativas + 1,
+	 dserrocarga = :oraMotivo
+	WHERE
+	 idLista = :iIdLista;
+
+	if (sqlca.sqlcode) {
+		printf("Erro marcando falha no processamento da lista %d. Erro Oracle %d.\n", iIdLista, sqlca.sqlcode);
+		return 0;
+	}
+
+	return 1;
+}
+
+/* Construtor e Destrutor */
+/*CLista::Remove() 
+{
+unlink(
+}*/

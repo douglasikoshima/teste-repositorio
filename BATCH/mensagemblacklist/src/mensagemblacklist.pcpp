@@ -1,0 +1,508 @@
+/*
+ * mensagemblacklist.pcpp
+ *
+ *  Created on: 03/01/2013
+ *      Author: Jones Randis
+ */
+
+
+#include <exception>
+#include <iostream>
+#include <string>
+#include <sstream>
+#include <fstream>
+#include <memory>
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cerrno>
+using namespace std;
+
+extern "C" {
+#include <libgen.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <sqlca.h>
+#include <sys/file.h>
+#include <sys/mode.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <regex.h>
+#include <fcntl.h>
+}
+
+#include "mensagemblacklist.h"
+
+int main(int argC, char *argV[])
+{
+	char* me = basename(argV[0]);
+
+	try
+	{
+		string configFile = me + string(".cfg");
+
+		CMensagemBlacklist::log() << ">>>" << me << endl;
+		CMensagemBlacklist MB(configFile);
+		MB.Run();
+		CMensagemBlacklist::log() << "<<<" << me << endl;
+	}
+	catch(exception& e)
+	{
+		CMensagemBlacklist::log() << "Processo finalizado com erro: " << e.what() << endl;
+		CMensagemBlacklist::log() << "<<<" << me << endl;
+		return EXIT_FAILURE;
+	}
+	catch(...)
+	{
+		CMensagemBlacklist::log() << "Processo finalizado com erro!" << endl;
+		CMensagemBlacklist::log() << "<<<" << me << endl;
+		return EXIT_FAILURE;
+	}
+
+	return EXIT_SUCCESS;
+}
+
+
+CMensagemBlacklist::CMensagemBlacklist(string& configFile) :
+	ExceptionConfigFile("Erro ao ler arquivo de configuracao!"),
+	ExceptionConfigParam("Parametros incompletos!"),
+	ExceptionParamDatabase("Parametro usr_db e/ou pwd_db invalido!"),
+	ExceptionParamControlFile("Parametro control_file invalido!"),
+	ExceptionPathDir("Erro ao ler diretorio!"),
+	ExceptionStatFile("Erro ao obter informacao do arquivo de dados!"),
+	ExceptionRemoveFile("Erro ao remover arquivo de dados!"),
+	ExceptionRenameFile("Erro ao renomear arquivo de dados!"),
+	ExceptionControlFile("Erro ao ler arquivo de controle!"),
+	ExceptionSqlldrExec("Erro ao executar sqlldr!"),
+	ExceptionDatabaseConnect("Erro ao conectar no banco de dados!"),
+	ExceptionDatabaseDisonnect("Erro ao desconectar do banco de dados!"),
+	ExceptionDatabaseSqlError("Erro ao executar query SQL!"),
+	connected(false)
+{
+	GetParamConf(configFile);
+}
+
+CMensagemBlacklist::~CMensagemBlacklist()
+{
+	DBDisconnect();
+}
+
+void CMensagemBlacklist::GetParamConf(string& configFile)
+{
+	log() << "Obtendo parametros de configuracao..." << endl;
+
+	ifstream file(configFile.c_str());
+	if (file.fail()) {
+		log() << "ERRO ifstream: " << configFile << " - " << strerror(errno) << endl;
+		throw ExceptionConfigFile;
+	}
+
+	string buff;
+	while( file.good() )
+	{
+		getline(file, buff);
+
+		if (buff.empty() && file.eof())
+			break;
+
+		if (!buff.empty() && *buff.rbegin() == '\r')
+				buff.resize(buff.size() - 1);
+
+		istringstream line(buff);
+		string key, val;
+		getline(line, key, '=');
+		getline(line, val);
+
+		if (key == "usr_db")
+			ParamConf.usr_db = auto_ptr<string> (new string(val));
+
+		if (key == "pwd_db")
+			ParamConf.pwd_db = auto_ptr<string> (new string(val));
+
+		if (key == "inst_db")
+			ParamConf.inst_db = auto_ptr<string> (new string(val));
+
+		if (key == "path")
+			ParamConf.path = auto_ptr<string> (new string(val));
+
+		if (key == "control_file")
+			ParamConf.control_file = auto_ptr<string> (new string(val));
+
+		if (key == "path_prc")
+			ParamConf.path_prc = auto_ptr<string> (new string(val));
+	}
+	file.close();
+
+	if ( !ParamConf.verify() )
+		throw ExceptionConfigParam;
+
+	//if ( ParamConf.usr_db.get()->empty() || ParamConf.pwd_db.get()->empty() )
+	//	throw ExceptionParamDatabase;
+
+	if ( ParamConf.control_file.get()->empty() )
+		throw ExceptionParamControlFile;
+
+	if ( access(ParamConf.control_file.get()->c_str(), R_OK) ) {
+		log() << "ERRO access: " << *ParamConf.control_file << " - " << strerror(errno) << endl;
+		throw ExceptionControlFile;
+	}
+
+	stringstream conn_str;
+	//if ( !ParamConf.usr_db.get()->empty() && !ParamConf.pwd_db.get()->empty() )
+		conn_str << *ParamConf.usr_db << "/" << *ParamConf.pwd_db;
+
+	if ( !ParamConf.inst_db.get()->empty() )
+		conn_str << "@" << *ParamConf.inst_db; 	// ,setenv("TWO_TASK", ParamConf.inst_db.get()->c_str(), 1);
+
+	this->conn_str = conn_str.str();
+}
+
+void CMensagemBlacklist::Run()
+{
+	log() << "Executando..." << endl;
+
+	int plockfile = open(".lock", O_WRONLY|O_CREAT|O_NONBLOCK|O_NDELAY|O_NSHARE, S_ISGID|S_ENFMT|S_IWUSR|S_IWGRP|S_IWOTH);
+	if (plockfile == -1) {
+		log() << "open: .lock - " << strerror(errno);
+		throw CException("Ja existe outro processo em execucao!");
+	}
+
+	OpenDir(*ParamConf.path);
+
+	if ( !data_files.size() ) {
+		log() << "Nao ha arquivos *" << DATAFILE_EXT << " para carga em " << *ParamConf.path << endl;
+		return;
+	}
+
+	DBConnect();
+	LoadFiles();
+
+	close(plockfile);
+}
+
+void CMensagemBlacklist::OpenDir(string& dataDir)
+{
+	DIR* pathdir = opendir(dataDir.c_str());
+	if ( !pathdir ) {
+		log() << "ERRO opendir: " << dataDir << " - " << strerror(errno) << endl;
+		throw ExceptionPathDir;
+	}
+
+	string ext(DATAFILE_EXT);
+	std::transform( ext.begin(), ext.end(), ext.begin(), ::toupper );
+
+	struct dirent* pdir;
+	while ( (pdir = readdir(pathdir)) ) {
+		string ent(pdir->d_name);
+		std::transform( ent.begin(), ent.end(), ent.begin(), ::toupper );
+
+		size_t found = ent.rfind(ext);
+		if ( found != string::npos && (ent.size() - int(found)) == ext.size() )
+		{
+			string file = dataDir + string("/") + pdir->d_name;
+			struct stat stfile;
+
+			if ( stat(file.c_str(), &stfile) ) {
+				log() << "ERRO stat: " << file << " - " << strerror(errno) << endl;
+				throw ExceptionStatFile;
+			}
+
+			data_files.push_back( pair<int, string>(stfile.st_mtime, file) );
+		}
+	}
+	closedir( pathdir );
+
+	sort(data_files.begin(), data_files.end());
+}
+
+void CMensagemBlacklist::DBConnect()
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+	char connString[256];
+	EXEC SQL END DECLARE SECTION;
+
+	strncpy(connString, conn_str.c_str(), sizeof(connString));
+
+	log() << "Conectando em " << *ParamConf.usr_db << "@" << *ParamConf.inst_db << endl;
+
+	EXEC SQL WHENEVER SQLERROR GOTO ERRCONN;
+	EXEC SQL CONNECT :connString;
+	connected = true;
+
+	log() << "Conectado com sucesso!" << endl;
+
+	return;
+	ERRCONN:
+		log() << "ERRO ORACLE: sqlcode=" << sqlca.sqlcode << ", sqlerrmc=" << sqlca.sqlerrm.sqlerrmc << endl;
+		throw ExceptionDatabaseConnect;
+}
+
+void CMensagemBlacklist::DBDisconnect()
+{
+	if ( !connected )
+		return;
+
+	EXEC SQL WHENEVER SQLERROR GOTO ERRDISCONN;
+    EXEC SQL COMMIT WORK RELEASE;
+    connected = false;
+
+    return;
+    ERRDISCONN:
+    	log() << "ERRO ORACLE: sqlcode=" << sqlca.sqlcode << ", sqlerrmc=" << sqlca.sqlerrm.sqlerrmc << endl;
+    	throw ExceptionDatabaseDisonnect;
+}
+
+void CMensagemBlacklist::LoadFiles()
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		int reg_count=0;
+		char nm_arquivo[256];
+		char DSERROPROCESSAMENTO[256];
+		int QTREGISTROSPROCESSADOS=0;
+		int QTREGISTROSDESCARTADOS=0;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR GOTO ERRSQL;
+
+	int retcd;
+	string datafile_ext(DATAFILE_EXT);
+	string logfile;
+	string badfile;
+	string sread;
+	string srejected;
+
+	if ( !data_files.size() )
+		return;
+
+	string datafile = data_files.back().second;
+	string datafilename = basename( (char*)datafile.c_str() );
+	data_files.pop_back();
+
+	// SQLLDR
+	stringstream sqlldr;
+	sqlldr << "sqlldr ";
+	sqlldr << conn_str;
+	sqlldr << " CONTROL=" << *ParamConf.control_file;
+
+	// DATA=
+	sqlldr << " DATA=" << datafile;
+
+	// LOG=
+	logfile = datafile;
+	logfile.resize(logfile.size() - datafile_ext.size());
+	logfile.append(LOGFILE_EXT);
+	sqlldr << " LOG=" << logfile;
+
+	// BAD=
+	badfile = datafile;
+	badfile.resize(badfile.size() - datafile_ext.size());
+	badfile.append(BADFILE_EXT);
+	sqlldr << " BAD=" << badfile;
+
+	log() << "Executando CUSTOMER.SP_TRUNCMENSAGEMBLACKLIST..." << endl;
+	EXEC SQL EXECUTE IMMEDIATE 'CALL CUSTOMER.SP_TRUNCMENSAGEMBLACKLIST()';
+
+	log() << "Carregando arquivo " << datafile << endl;
+
+	log() << "Executando SQL*Loader..." << endl;
+	retcd = system( sqlldr.str().c_str() );
+
+	strcpy(DSERROPROCESSAMENTO, "SUCESSO");
+
+	if (retcd && (retcd & 127)) {
+		log() << "SQL*Loader: morto com sinal " << (retcd & 127) << ", " << (retcd & 128 ? "com" : "sem") << " arquivo de coredump!" << endl;
+		strcpy(DSERROPROCESSAMENTO, "FALHA");
+	} else {
+		switch(retcd >> 8) {
+		case EX_SUCC:
+			log() << "SQL*Loader: executado com sucesso." << endl;
+			break;
+		case EX_FAIL:
+			log() << "SQL*Loader: executado com EX_FAIL, verifique o arquivo de log " << basename((char*)logfile.c_str()) << endl;
+			strcpy(DSERROPROCESSAMENTO, "FALHA");
+			break;
+		case EX_WARN:
+			log() << "SQL*Loader: executado com EX_WARN, verifique o arquivo de log " << basename((char*)logfile.c_str()) << endl;
+			strcpy(DSERROPROCESSAMENTO, "INFO");
+			break;
+		case EX_FTL:
+			log() << "SQL*Loader: executado com erro fatal!" << endl;
+			strcpy(DSERROPROCESSAMENTO, "FALHA");
+			break;
+		default:
+			log() << "SQL*Loader: codigo de retorno desconhecido!" << endl;
+			strcpy(DSERROPROCESSAMENTO, "FALHA");
+			break;
+		}
+	}
+
+	EXEC SQL SELECT COUNT(1) INTO :reg_count FROM CUSTOMER.MENSAGEMBLOQUEIOBLACKLIST;
+
+	if ( !reg_count ) {
+		log() << "Nao ha registros validos para carga em " << datafile << endl;
+		return;
+	}
+
+	log() << "Arquivo " << datafile << ": " << reg_count << " registros carregados." << endl;
+
+	// arquivofuncionalidade
+	if (CtlInfo(logfile, sread, srejected)) {
+		QTREGISTROSPROCESSADOS = atoi(sread.c_str());
+		QTREGISTROSDESCARTADOS = atoi(srejected.c_str());
+		strcpy(nm_arquivo, datafilename.c_str());
+		EXEC SQL UPDATE infra.arquivofuncionalidade
+			SET dtprocessamento = sysdate,
+				DSERROPROCESSAMENTO = :DSERROPROCESSAMENTO,
+				QTREGISTROSPROCESSADOS = :QTREGISTROSPROCESSADOS,
+				QTREGISTROSDESCARTADOS = :QTREGISTROSDESCARTADOS,
+				INCONTROLEPROCESSAMENTO = 3
+			WHERE NMARQUIVO = :nm_arquivo
+			AND SGFUNCIONALIDADE = 'MSBLK';
+
+		if ( !sqlca.sqlerrd[2] ) {
+			EXEC SQL INSERT INTO infra.arquivofuncionalidade (
+				SGFUNCIONALIDADE,
+				NMARQUIVO,
+				IDUSUARIOINCLUSAO,
+				DTINCLUSAO,
+				INCONTROLEPROCESSAMENTO,
+				DTPROCESSAMENTO,
+				QTREGISTROSPROCESSADOS,
+				QTREGISTROSDESCARTADOS,
+				DSERROPROCESSAMENTO
+			) VALUES (
+				'MSBLK',
+				:nm_arquivo,
+				602,
+				SYSDATE,
+				3,
+				SYSDATE,
+				:QTREGISTROSPROCESSADOS,
+				:QTREGISTROSDESCARTADOS,
+				:DSERROPROCESSAMENTO
+			);
+		}
+
+		EXEC SQL COMMIT;
+	}
+
+	while( !data_files.empty() ) {
+		log() << "Excluindo arquivo " << data_files.back().second << endl;
+		if ( remove(data_files.back().second.c_str()) ) {
+			log() << "ERRO remove: " << data_files.back().second.c_str() << " - " << strerror(errno) << endl;
+			throw ExceptionRemoveFile;
+		}
+		data_files.pop_back();
+	}
+
+	OpenDir(*ParamConf.path_prc);
+
+	while ( data_files.size() >= PRCFILE_MAX ) {
+		log() << "Excluindo arquivo " << data_files.front().second << endl;
+		if ( remove(data_files.front().second.c_str()) ) {
+			log() << "ERRO remove: " << data_files.front().second.c_str() << " - " << strerror(errno) << endl;
+			throw ExceptionRemoveFile;
+		}
+
+		string logfile = data_files.front().second;
+		logfile.resize(logfile.size() - datafile_ext.size());
+		logfile.append(LOGFILE_EXT);
+		remove(logfile.c_str());
+
+		string badfile = data_files.front().second;
+		badfile.resize(badfile.size() - datafile_ext.size());
+		badfile.append(BADFILE_EXT);
+		remove(badfile.c_str());
+
+		data_files.erase(data_files.begin());
+	}
+
+
+	if ( data_files.size() < PRCFILE_MAX)
+	{
+		string sourcefile = datafile;
+		string destfile = *ParamConf.path_prc + string("/") + basename((char*)datafile.c_str());
+
+		log() << "Movendo arquivo " << sourcefile << " para " << destfile << endl;
+		if ( rename(sourcefile.c_str(), destfile.c_str()) ) {
+			log() << "Erro rename: " << sourcefile << " to " << destfile << " - " << strerror(errno) <<  endl;
+			throw ExceptionRenameFile;
+		}
+
+		sourcefile = logfile;
+		destfile = *ParamConf.path_prc + string("/") + basename((char*)logfile.c_str());
+
+		if ( rename(sourcefile.c_str(), destfile.c_str()) ) {
+			log() << "Erro rename: " << sourcefile << " to " << destfile << " - " << strerror(errno) <<  endl;
+			throw ExceptionRenameFile;
+		}
+
+		sourcefile = badfile;
+		destfile = *ParamConf.path_prc + string("/") + basename((char*)badfile.c_str());
+		rename(sourcefile.c_str(), destfile.c_str());
+	}
+
+
+	return;
+	ERRSQL:
+		log() << "ERRO ORACLE: sqlcode=" << sqlca.sqlcode << ", sqlerrmc=" << sqlca.sqlerrm.sqlerrmc << endl;
+		throw ExceptionDatabaseSqlError;
+}
+
+bool CMensagemBlacklist::CtlInfo(string& logfile, string& sread, string& srejected)
+{
+	struct stat sbuf;
+	if (stat(logfile.c_str(), &sbuf) == -1) {
+		perror("stat");
+		return false;
+	}
+
+	int fd = open(logfile.c_str(), O_RDONLY);
+	if (fd == -1) {
+		perror("open");
+		return false;
+	}
+
+	char* data = (char*) mmap((caddr_t)0, sbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+	if (data == (caddr_t)(-1)) {
+		perror("mmap");
+		close(fd);
+		return false;
+	}
+
+	regex_t regex;
+    if( regcomp(&regex, "read: +([0-9]+).+rejected: +([0-9]+)", REG_EXTENDED) ) {
+    	perror("regcomp");
+    	munmap(data, sbuf.st_size);
+    	close(fd);
+    	return false;
+    }
+
+    bool retb = true;
+    size_t nmatch=3;
+    regmatch_t pmatch[nmatch];
+    int ret = regexec(&regex, data, (size_t)nmatch, pmatch, 0);
+    switch(ret) {
+    case 0:
+    	sread.assign(data, pmatch[1].rm_so, (pmatch[1].rm_eo - pmatch[1].rm_so));
+    	srejected.assign(data, pmatch[2].rm_so, (pmatch[2].rm_eo - pmatch[2].rm_so));
+    	break;
+    case REG_NOMATCH:
+    	retb = false;
+    	break;
+    default:
+    	retb = false;
+		char msgbuf[256];
+		regerror(ret, &regex, msgbuf, sizeof(msgbuf));
+		printf("regerror: %s\n", msgbuf);
+    	break;
+    }
+
+    regfree(&regex);
+	munmap(data, sbuf.st_size);
+	close(fd);
+	return retb;
+}
+

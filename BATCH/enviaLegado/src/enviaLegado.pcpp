@@ -1,0 +1,1403 @@
+/**
+ * 
+ * @modulo  BATCH
+ * @usecase envia clientes ao legado
+ * @author  Renato S. Russo
+ * @version $Revision: 1.23.6.16.74.1 $
+ * @CVS     $Author: a5114878 $ - $Date: 2015/02/05 18:05:46 $
+ **/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+
+#include <tuxfw.h>
+
+#include <enviaLegado.h>
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+
+EXEC SQL INCLUDE SQLCA;
+
+#define MAX_RETRIES     10
+#define LOCK            1
+#define UNLOCK          0
+#define KILL            2
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+bool semaphoreExists;
+char *argvGlobal;
+char szAux[4096 + 1];
+char szDataHoraGlobal[30 + 1];
+char szDataHoraGlobalFormatada[30 + 1];
+int iDeclaraCursor=1;
+int iSignalProcessa=1;
+Log oLog;
+long iErrorNumber=0;
+
+//==============================================================================
+// Protótipos
+bool killSemaforoSimNao();
+int InitSemaphore(key_t key, int nsems,bool &semaphoreExists);
+int Process(char *pszFileName, int iFlagLock,bool &semaphoreExists);
+void LockSemaphore(int semid);
+void UnLockSemaphore(int semid);
+
+int main(int argc, char* argv[])
+{
+    char *pPointer;
+    char szDtTimeStampCursor[20 + 1];
+    char szDtTimeStampSelect[20 + 1];
+    char szIdLinhaTelefonica[38 + 1];
+    char szRetMsg[2000 + 1];
+    char szStatusCode[255 + 1];
+    char szStatusText[255 + 1];
+    char szXml[4000 + 1];
+    char szXmlTmp[4000 + 1];
+    
+    int iCursor=0;
+    int iFechaCursor=0;
+    int iFlagEOF=0; // esse flag evita que o processo durma enquanto existam registros para processar.
+    int iRetSendXML;
+    int iSleep=0;
+
+    TParamConf tParamConf;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLinhaTelefonica[38+1];
+        VARCHAR oszXML1[4000+1];
+        VARCHAR oszDtTimeStamp[20+1];
+        int oiRownum;
+        int oiQtRetriesMax;
+        int oiTpSleep;
+    EXEC SQL END DECLARE SECTION;
+
+    argvGlobal = argv[0];
+
+    // Acertando o nivel de logs
+    oLog.setNivel(2);
+    oLog.logDebug(">>>EnviaLegado\n");
+
+    ArmaSinal(SIGTERM);
+
+    /* Obtem a data e hora atual e armazena em variavel global */
+    strcpy(szDataHoraGlobal, ObtemDataHora());
+    sprintf(szDataHoraGlobalFormatada, "%.2s/%.2s/%.4s %.2s:%.2s:%.2s",
+                            szDataHoraGlobal+6,
+                            szDataHoraGlobal+4,
+                            szDataHoraGlobal,
+                            szDataHoraGlobal+8,
+                            szDataHoraGlobal+10,
+                            szDataHoraGlobal+12);
+
+
+    if(ObtemParamConf(&tParamConf)) {
+        oLog.logError("Erro obtendo parametros de configuracao\n");
+        exit(1);
+    }
+
+    //==========================================================================
+    // Conecta
+    oLog.logDebug("Conectando na BD...");
+    /* Conecta no banco de dados */
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst)) {
+        oLog.logError("Erro conectando no banco de dados\n");
+        //Process(argvGlobal,UNLOCK,semaphoreExists);
+        //Process(argvGlobal,KILL,semaphoreExists);
+        //oLog.logDebug("Semaforo foi liberado.");
+        exit(1);
+    }
+    oLog.logDebug("Conectado na BD com sucesso...\n");
+
+
+    oLog.logDebug("Inicializando TUXEDO...\n");
+    /* Inicializa o TUXEDO */
+    if(TUXinit(&tParamConf)) {
+        oLog.logError("Erro inicializando TUXEDO\n");
+        //Process(argvGlobal,UNLOCK,semaphoreExists);
+        //Process(argvGlobal,KILL,semaphoreExists);
+        //oLog.logDebug("Semaforo foi liberado.");
+        exit(1);
+    }
+    oLog.logDebug("Inicializado com sucesso...\n");
+
+    //==========================================================================
+    // Lock
+    sprintf(szAux,"Vai locar fila de processamento para semente='%s'...\n",argvGlobal);
+    oLog.logDebug(szAux);
+    
+    int semid = Process(argvGlobal,LOCK,semaphoreExists);
+    sprintf(szAux,"semid=%d\n",semid);oLog.logDebug(szAux);
+
+    if(semid < 0)
+    {
+        oLog.logInformation("Não foi possível obter semáforo para execução.");
+        exit(1);
+    }
+
+    if(semaphoreExists)
+    {
+        oLog.logInformation("Processo já esta em execução.");
+        exit(1);
+    }
+    oLog.logDebug("Locou fila de processamento.");
+
+    //==========================================================================
+    // Processa
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    oiQtRetriesMax = ObtemParamQtRetriesMax();
+
+    while(iSignalProcessa == 1) {
+
+        //oLog.logDebug("Verificando se ha pausa no processamento...\n");
+        while(ContinuaProcessamento(&iCursor, &iSleep) == false) {
+            sleep(5); /* aguarda para nao bombardear a base */
+
+            /* tratamento para nao fechar cursor sem estar aberto quando o processo eh startado com a flag de processamento desabilitada */
+            if(iDeclaraCursor == 1)
+                iFechaCursor=0;
+            else
+                iFechaCursor=1;
+
+            /* tratamento para interromper o processamento via sinal (complemento abaixo)*/
+            if(iSignalProcessa == 0) {
+                oLog.logDebug("1.Tratamento de sinal de termino dentro do loop\n");
+                break;
+            }
+        }
+
+        /* tratamento para interromper o processamento via sinal (complemento da saida acima) */
+        if(iSignalProcessa == 0) {
+            oLog.logDebug("2.Tratamento de sinal de termino dentro do loop\n");
+            break;
+        }
+
+
+        if(iDeclaraCursor == 1) {
+            oiTpSleep = iSleep;
+            oiRownum=iCursor;
+
+            /* declara cursor para busca dos xml´s a serem enviados */
+            //sprintf(szAux, "Vai declarar cursor de %d registros...\n\n", oiRownum);oLog.logDebug(szAux);
+
+            EXEC SQL DECLARE Legado CURSOR FOR
+                SELECT
+                    idlinhatelefonica,
+                    xml1,
+                    TO_CHAR(dttimestamp, 'YYYYMMDDHH24MISS') as dttimestamp
+                FROM
+                (
+                    SELECT
+                        idlinhatelefonica,
+                        xml1,
+                        dttimestamp
+                    FROM
+                        infra.filasetclientinfo
+                    WHERE
+                        --//cderro IS NULL
+                        interceptado = 1
+                    AND qtretry < :oiQtRetriesMax
+                    AND (dterro IS NULL                                --\  Aguardar o tempo configurado
+                     OR SIGN(:oiTpSleep/86400-(SYSDATE-dterro)) < 0 )  -- > antes de tentar reprocessar algo
+                    ORDER BY                                           --/  que tenha dado erro recentemente.
+                        dttimestamp
+                )
+                WHERE
+                  ROWNUM <= :oiRownum;
+
+            iDeclaraCursor=0;
+        }
+
+        //oLog.logDebug("local1\n");
+
+        /* tratamento para fechar cursor e redeclarar */
+        if(iFechaCursor == 1) {
+
+            iFechaCursor=0;
+            iDeclaraCursor=1;
+
+            //oLog.logDebug("Fechando cursor...");
+            EXEC SQL CLOSE Legado;
+
+            continue;
+        }
+
+        //oLog.logDebug("Abrindo cursor...\n");
+        EXEC SQL OPEN Legado;
+                
+        for(;;Sumariza(0, 0, 0, 0, 0, 1)) {
+
+            if(iSignalProcessa == 0) {
+                oLog.logDebug("3.Tratamento de sinal de termino dentro do loop\n");
+                break;
+            }
+
+            EXEC SQL
+                FETCH Legado
+                INTO    :oszIdLinhaTelefonica,
+                        :oszXML1,
+                        :oszDtTimeStamp;
+
+            //sprintf(szAux, "FETCH ->sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+            if(sqlca.sqlcode == 1403) {
+                if(iFlagEOF == 0) {
+                    //sprintf(szAux, "Dormindo por (%d) segundos por nao haver registros para enviar...\n\n", iSleep); oLog.logDebug(szAux);
+                    sleep(iSleep);
+                    //oLog.logDebug("Acordou...\n");
+                }
+
+                iFlagEOF=0;
+                break;
+            }
+
+            iFlagEOF=1;
+
+            // sprintf(szAux, "oszDtTimeStamp[%.*s]\n", oszDtTimeStamp.len, oszDtTimeStamp.arr ); oLog.logDebug(szAux);
+
+            STRCPY_FROM_ORA(szXmlTmp, oszXML1);
+            STRCPY_FROM_ORA(szDtTimeStampCursor, oszDtTimeStamp);
+            STRCPY_FROM_ORA(szIdLinhaTelefonica, oszIdLinhaTelefonica);
+
+            //sprintf(szAux, "szIdLinhaTelefonica[%s]\n", szIdLinhaTelefonica); oLog.logDebug(szAux);
+
+            /* verifica se nao houve alteracao enquanto batch processa result set obtido na abertura do cursor */
+            pPointer = ObtemDtTimeStamp(szIdLinhaTelefonica);
+            //sprintf(szAux, "pPointer[%s]\n", pPointer?pPointer:"...NULL..."); oLog.logDebug(szAux);
+            if(pPointer == NULL) {
+                oLog.logDebug("IdLinhaTelefonica nao encontrado\n");
+                goto finalizaProcess;
+            }
+            strcpy(szDtTimeStampSelect, pPointer);
+
+            //sprintf(szAux, "szDtTimeStampSelect[%s] szDtTimeStampCursor[%s]\n", szDtTimeStampSelect, szDtTimeStampCursor); oLog.logDebug(szAux);
+
+            /* se DtTimeStamp nao for igual, houve uma atualizacao na base entre o momento da abertura do cursor e o seu efetivo processamento
+               nesta condicao, eh ignorado o registro para ser processado no proximo loop */
+            if(strcmp(szDtTimeStampSelect, szDtTimeStampCursor)) {
+                sprintf(szAux, "IdLinhaTelefonica[%s] serah REPROCESSADO pq o registro foi atualizado!!!\n", szIdLinhaTelefonica); oLog.logDebug(szAux);
+                Sumariza(1, 0, 0, 0, 1, 0);
+                continue;
+            }
+
+            /* reformata o XML para envio */
+            memset(szXml, 0x00, sizeof(szXml));
+            strcpy(szXml, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>");
+            strcat(szXml, "<msg><msgHdr><user>1</user><service>TUXPREPAGOBE</service></msgHdr><msgBody>");
+            strcat(szXml, szXmlTmp+5);
+            szXml[strlen(szXml)-6]=0x00;
+            strcat(szXml, "</msgBody></msg>");
+            sprintf(szAux, "szXml[%s]", szXml); oLog.logDebug(szAux);
+
+            memset(szRetMsg, 0x00, sizeof(szRetMsg));
+            iRetSendXML = sendXML(szXml, szRetMsg);
+
+            sprintf(szAux, "iRetSendXML(%d)iErrorNumber(%d)szRetMsg[%s]\n", iRetSendXML, iErrorNumber, szRetMsg); oLog.logDebug(szAux);
+
+            /* Verifica status do envio do XML e retorno da conexao */
+            //if(iErrorNumber == TPESYSTEM) {
+            //    sprintf(szAux, "Erro TUXEFO retornado(%d)\n", iErrorNumber); oLog.logDebug(szAux);
+            //    goto finalizaProcess;
+            //}
+
+            /* Obtem os valores das tags de retorno do XML */    
+            SAFE_STRNCPY(szStatusCode,ObtemValorTag(szRetMsg, "statusCode"));
+            sprintf(szAux, "statusCode=[%s]\n",szStatusCode);
+            oLog.logDebug(szAux);
+
+            SAFE_STRNCPY(szStatusText,ObtemValorTag(szRetMsg, "statusText"));
+            sprintf(szAux, "statusText=[%s]\n",szStatusText);
+            oLog.logDebug(szAux);
+
+            if ( iErrorNumber )
+            {
+                if ( 0 == szStatusCode[0] ) {
+                    switch (iErrorNumber) {
+                        case TPEABORT     : strcpy(szStatusCode,"TPEABORT");strcpy(szStatusText,"TPEABORT"); break;
+                        case TPEBADDESC   : strcpy(szStatusCode,"TPEBADDESC");strcpy(szStatusText,"TPEBADDESC"); break;
+                        case TPEBLOCK     : strcpy(szStatusCode,"TPEBLOCK");strcpy(szStatusText,"TPEBLOCK"); break;
+                        case TPEINVAL     : strcpy(szStatusCode,"TPEINVAL");strcpy(szStatusText,"TPEINVAL"); break;
+                        case TPELIMIT     : strcpy(szStatusCode,"TPELIMIT");strcpy(szStatusText,"TPELIMIT"); break;
+                        case TPENOENT     : strcpy(szStatusCode,"TPENOENT");strcpy(szStatusText,"TPENOENT"); break;
+                        case TPEOS        : strcpy(szStatusCode,"TPEOS");strcpy(szStatusText,"TPEOS"); break;
+                        case TPEPERM      : strcpy(szStatusCode,"TPEPERM");strcpy(szStatusText,"TPEPERM"); break;
+                        case TPEPROTO     : strcpy(szStatusCode,"TPEPROTO");strcpy(szStatusText,"TPEPROTO"); break;
+                        case TPESVCERR    : strcpy(szStatusCode,"TPESVCERR");strcpy(szStatusText,"TPESVCERR"); break;
+                        case TPESVCFAIL   : strcpy(szStatusCode,"TPESVCFAIL");strcpy(szStatusText,"TPESVCFAIL"); break;
+                        case TPESYSTEM    : strcpy(szStatusCode,"TPESYSTEM");strcpy(szStatusText,"TPESYSTEM"); break;
+                        case TPETIME      : strcpy(szStatusCode,"TPETIME");strcpy(szStatusText,"TPETIME"); break;
+                        case TPETRAN      : strcpy(szStatusCode,"TPETRAN");strcpy(szStatusText,"TPETRAN"); break;
+                        case TPGOTSIG     : strcpy(szStatusCode,"TPGOTSIG");strcpy(szStatusText,"TPGOTSIG"); break;
+                        case TPERMERR     : strcpy(szStatusCode,"TPERMERR");strcpy(szStatusText,"TPERMERR"); break;
+                        case TPEITYPE     : strcpy(szStatusCode,"TPEITYPE");strcpy(szStatusText,"TPEITYPE"); break;
+                        case TPEOTYPE     : strcpy(szStatusCode,"TPEOTYPE");strcpy(szStatusText,"TPEOTYPE"); break;
+                        case TPERELEASE   : strcpy(szStatusCode,"TPERELEASE");strcpy(szStatusText,"TPERELEASE"); break;
+                        case TPEHAZARD    : strcpy(szStatusCode,"TPEHAZARD");strcpy(szStatusText,"TPEHAZARD"); break;
+                        case TPEHEURISTIC : strcpy(szStatusCode,"TPEHEURISTIC");strcpy(szStatusText,"TPEHEURISTIC"); break;
+                        case TPEEVENT     : strcpy(szStatusCode,"TPEEVENT");strcpy(szStatusText,"TPEEVENT"); break;
+                        case TPEMATCH     : strcpy(szStatusCode,"TPEMATCH");strcpy(szStatusText,"TPEMATCH"); break;
+                        case TPEDIAGNOSTIC: strcpy(szStatusCode,"TPEDIAGNOSTIC");strcpy(szStatusText,"TPEDIAGNOSTIC"); break;
+                        case TPEMIB       : strcpy(szStatusCode,"TPEMIB");strcpy(szStatusText,"TPEMIB"); break;
+                        default           : strcpy(szStatusCode,"ERRDESCONHECIDO");strcpy(szStatusText,"ERRDESCONHECIDO"); break;
+                    } // switch (iErrorNumber)
+                } // if ( 0 == szStatusCode[0] )
+            }
+
+            /* Se sucesso grava o XML em disco e apaga o registro */
+            if(szStatusCode[2] == 'I' && 0 == iErrorNumber) {
+                sprintf(szAux, "Deletando registro enviado com sucesso:\nidlinhatelefonica[%.*s]\n[%.*s]\n", 
+                    oszIdLinhaTelefonica.len, oszIdLinhaTelefonica.arr, oszXML1.len, oszXML1.arr); oLog.logDebug(szAux);
+
+                if(DeletaRegistro(szIdLinhaTelefonica) == false) {
+                    goto finalizaProcess;
+                }
+
+                Sumariza(0, 0, 1, 0, 0, 0);
+            }
+            else /* Grava Codigo de erro e mensagem */
+            {
+
+                /* Verifica se eh erro NGIN */
+                if(!memcmp(szStatusCode, "46E0000", 8)) {
+                    oLog.logDebug("Inicio tratamento de erro NGIN...");
+
+                    sprintf(szAux, "Mensagem original -> szStatusCode[%s] szStatusText[%s]\n", szStatusCode, szStatusText); oLog.logDebug(szAux);
+                    strcpy(szStatusCode, TrataErroNGIN(szStatusText));
+                    sprintf(szAux, "Mensagem tratada -> szStatusCode[%s] szStatusText[%s]\n", szStatusCode, szStatusText); oLog.logDebug(szAux);
+
+                    oLog.logDebug("Final tratamento de erro NGIN...");
+                }
+
+                oLog.logDebug("Atualizando registro com erro...");
+
+                if(AtualizaRegistro(szIdLinhaTelefonica, szStatusCode, szStatusText,oiQtRetriesMax) == false) {
+                    goto finalizaProcess;
+                }
+
+                Sumariza(0, 0, 0, 1, 0, 0);
+            }
+
+            Sumariza(1, 0, 0, 0, 0, 0);
+
+            //oLog.logDebug("Efetuando commit na BD...");
+            EXEC SQL COMMIT;
+            //oLog.logDebug("Commit efetuado com sucesso na BD...");
+        }// for(;;)
+
+        Sumariza(0, 1, 0, 0, 0, 0);
+        Sumariza(0, 0, 0, 0, 0, 0);
+
+        //oLog.logDebug("Fechando cursor...");
+        EXEC SQL CLOSE Legado;
+
+    } // while
+
+    oLog.logDebug("Desconectando da BD...\n");
+    DBDisconnect();
+
+    oLog.logDebug("Finalizando conexao TUXEDO...\n");
+    tpterm(); 
+
+    Process(argvGlobal,UNLOCK,semaphoreExists);
+    Process(argvGlobal,KILL,semaphoreExists);
+    oLog.logDebug("Semaforo foi liberado.");
+
+    oLog.logDebug("Processamento encerrado com sucesso...\n");
+    oLog.logDebug("<<<EnviaLegado\n");
+
+    exit(0);
+
+    sqlError:
+        Process(argvGlobal,UNLOCK,semaphoreExists);
+        Process(argvGlobal,KILL,semaphoreExists);
+        oLog.logDebug("Semaforo foi liberado.");
+        sprintf(szAux, "Finalizando processo com erro ORACLE (%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        exit(1);
+
+    /* Tratamento de erro de processamento */
+    finalizaProcess:
+        oLog.logDebug("Finalizando processo...\n");
+        oLog.logDebug("Fechando cursor...\n");
+        EXEC SQL CLOSE Legado;
+
+        oLog.logDebug("Desconectando da BD...\n");
+        DBDisconnect();
+
+        Process(argvGlobal,UNLOCK,semaphoreExists);
+        Process(argvGlobal,KILL,semaphoreExists);
+        oLog.logDebug("Semaforo foi liberado.");
+
+        oLog.logDebug("Finalizando conexao TUXEDO...\n");
+        tpterm(); 
+
+        oLog.logDebug("<<<EnviaLegado\n");
+        exit(1);
+}
+
+/************************************************************************************************************/
+void ObtemParamBase(int *piCursor, int *piSleep)
+{
+    sprintf(szAux, "Antes->*piCursor(%d) *piSleep(%d)\n", *piCursor, *piSleep); oLog.logDebug(szAux);
+
+    *piCursor=ObtemTamanhoCursor();
+    *piSleep=ObtemTempoSleep();
+
+    sprintf(szAux, "Depois->*piCursor(%d) *piSleep(%d)\n", *piCursor, *piSleep); oLog.logDebug(szAux);
+}
+
+/************************************************************************************************************/
+int ObtemParamQtRetriesMax(void)
+{
+    char *pPointer= ObtemParametro("FILASETCLIENTINFO_QTRETRYMAX");
+    if(pPointer == NULL) {
+        oLog.logDebug("Parametro de configuracao 'FILASETCLIENTINFO_QTRETRYMAX' nao encontrado\n");
+        pPointer = "10"; // qtde máxima de retries
+    }
+
+    sprintf(szAux, "Retries Max=%s\n", pPointer);oLog.logDebug(szAux);
+
+    return (atoi(pPointer));
+}
+
+/************************************************************************************************************/
+int ObtemTamanhoCursor(void)
+{
+    char *pPointer= ObtemParametro("ENVIA_LEGADO_CURSOR");
+    if(pPointer == NULL) {
+        oLog.logDebug("Parametro de configuracao 'ENVIA_LEGADO_CURSOR' nao encontrado\n");
+
+        Process(argvGlobal,UNLOCK,semaphoreExists);
+        Process(argvGlobal,KILL,semaphoreExists);
+        oLog.logDebug("Semaforo foi liberado.");
+
+        exit(-1);
+    }
+
+    return (atoi(pPointer));
+}
+/************************************************************************************************************/
+int ObtemTempoSleep(void)
+{
+    char *pPointer = ObtemParametro("ENVIA_LEGADO_SLEEP_EOF");
+    if(pPointer == NULL) {
+        oLog.logDebug("Parametro de configuracao 'ENVIA_LEGADO_SLEEP_EOF' nao encontrado\n");
+
+        Process(argvGlobal,UNLOCK,semaphoreExists);
+        Process(argvGlobal,KILL,semaphoreExists);
+        oLog.logDebug("Semaforo foi liberado.");
+
+        exit(-1);
+    }
+
+    return (atoi(pPointer));
+}
+
+/************************************************************************************************************/
+bool ContinuaProcessamento(int *piCursor, int *piSleep)
+{
+    static int iCtrl=1;
+
+    char *pPointer = ObtemParametro("ENVIA_LEGADO_ATIVO");
+    if(pPointer == NULL) {
+        oLog.logDebug("Parametro de configuracao 'ENVIA_LEGADO_ATIVO' nao encontrado\n");
+
+        Process(argvGlobal,UNLOCK,semaphoreExists);
+        Process(argvGlobal,KILL,semaphoreExists);
+        oLog.logDebug("Semaforo foi liberado.");
+
+        exit(-1);
+    }
+
+    if(atoi(pPointer) == 0) {
+        iCtrl=1;
+        oLog.logDebug("Parametro de configuracao 'ENVIA_LEGADO_ATIVO'=0\n");
+        //oLog.logDebug(">>> FALSE");
+        return false;
+    }
+    else {
+        if(iCtrl == 1) {
+            ObtemParamBase(piCursor, piSleep);
+            iCtrl=0;
+        }
+    
+        //oLog.logDebug(">>> TRUE");
+        return true;
+    }
+}
+
+/************************************************************************************************************/
+char *TrataErroNGIN(char *pStatusText)
+{
+    char szStatusTextAux[255 + 1];
+    static char szCdErro[255 + 1];
+    register int iCont;
+    int iLen;
+
+    /* copia string a ser analisada para buffer local (strtok altera o ponteiro de entrada) */
+    strcpy(szStatusTextAux, pStatusText);
+
+    memset(szCdErro, 0x00, sizeof(szCdErro));
+    iLen=strlen(szStatusTextAux);
+    for(iCont=0; iCont < iLen && szStatusTextAux[iCont] != '.'; iCont++) {
+        szCdErro[iCont] = szStatusTextAux[iCont];
+    }
+
+    strcpy(pStatusText, szStatusTextAux+iCont+1);
+
+    return szCdErro;
+}
+
+/************************************************************************************************************/
+void Sumariza(int iQtdRegCursor, int iQtdLoops, int iQtdTotalRegOK, int iQtdTotalRegErro, int iQtdTotalRegReProc, int iQtdTotalReg)
+{
+    static int _iQtdRegCursor=0;
+    static int _iQtdLoops=0;
+    static int _iQtdTotalRegOK=0;
+    static int _iQtdTotalRegErro=0;
+    static int _iQtdTotalRegReProc=0;
+    static int _iQtdTotalReg=0;
+
+    static int _iQtdRegCursorAnt=1;
+    static int _iQtdLoopsAnt=0;
+    static int _iQtdTotalRegOKAnt=0;
+    static int _iQtdTotalRegErroAnt=0;
+    static int _iQtdTotalRegReProcAnt=0;
+    static int _iQtdTotalRegAnt=0;
+
+    if(!iQtdRegCursor && !iQtdLoops && !iQtdTotalRegOK && !iQtdTotalRegErro && !iQtdTotalRegReProc && !iQtdTotalReg) {
+
+        // só exibe se mudou algo de relevante em relação a passada anterior...
+        if ( _iQtdRegCursor != _iQtdRegCursorAnt || _iQtdTotalRegOK != _iQtdTotalRegOKAnt
+                || _iQtdTotalRegErro != _iQtdTotalRegErroAnt || _iQtdTotalRegReProc != _iQtdTotalRegReProcAnt 
+                        || _iQtdTotalReg != _iQtdTotalRegAnt ) {
+            sprintf(szAux, "***************** START  %s  **********************\n", szDataHoraGlobalFormatada); oLog.logDebug(szAux);
+            sprintf(szAux, "Total de verificacoes efetuadas...................(%06d)\n", _iQtdLoops);           oLog.logDebug(szAux);
+            sprintf(szAux, "Total de registros processados por cursor.........(%06d)\n", _iQtdRegCursor);       oLog.logDebug(szAux);
+            sprintf(szAux, "Total de registros processados com sucesso........(%06d)\n", _iQtdTotalRegOK);      oLog.logDebug(szAux);
+            sprintf(szAux, "Total de registros processados com erro...........(%06d)\n", _iQtdTotalRegErro);    oLog.logDebug(szAux);
+            sprintf(szAux, "Total de registros ignorados para reprocessamento.(%06d)\n", _iQtdTotalRegReProc);  oLog.logDebug(szAux);
+            sprintf(szAux, "Total de registros processados....................(%06d)\n", _iQtdTotalReg);        oLog.logDebug(szAux);
+            sprintf(szAux, "********************************************************************\n");           oLog.logDebug(szAux);
+
+            _iQtdRegCursorAnt = _iQtdRegCursor;
+            _iQtdLoopsAnt = _iQtdLoops;
+            _iQtdTotalRegOKAnt = _iQtdTotalRegOK;
+            _iQtdTotalRegErroAnt = _iQtdTotalRegErro;
+            _iQtdTotalRegReProcAnt = _iQtdTotalRegReProc;
+            _iQtdTotalRegAnt = _iQtdTotalReg;
+        }
+
+        _iQtdRegCursor=0;
+
+        return;
+    }
+
+    if(iQtdRegCursor)       _iQtdRegCursor++;
+    if(iQtdLoops)           _iQtdLoops++;
+    if(iQtdTotalRegOK)      _iQtdTotalRegOK++;
+    if(iQtdTotalRegErro)    _iQtdTotalRegErro++;
+    if(iQtdTotalRegReProc)  _iQtdTotalRegReProc++;
+    if(iQtdTotalReg)        _iQtdTotalReg++;
+}
+
+/************************************************************************************************************/
+char *ObtemDataHora(void)
+{
+    struct tm *ptTime;
+    time_t tTimeNow;
+    static char szDataHora[14 + 1];
+
+    time(&tTimeNow);
+    ptTime=localtime(&tTimeNow);
+    sprintf(szDataHora, "%04d%02d%02d%02d%02d%02d", 
+                        ptTime->tm_year + 1900, 
+                        ptTime->tm_mon + 1, 
+                        ptTime->tm_mday, 
+                        ptTime->tm_hour, 
+                        ptTime->tm_min, 
+                        ptTime->tm_sec );
+
+    return szDataHora;
+}
+
+/************************************************************************************************************/
+char *ObtemValorTag(char *pXml, char *pTag)
+{
+    static char szValue[255 + 1];
+
+    szValue[0] = 0;
+    if ( pXml )
+    {
+        if ( *pXml )
+        {
+            char *p0 = strstr(pXml,pTag) + strlen(pTag) + 1;
+            if ( p0 )
+            {
+                char *p1 = strstr(p0,pTag) - 2;
+                if ( p1 )
+                {
+                    if ( p1 > p0 )
+                    {
+                        int tam = p1-p0;
+                        if (tam > 255) tam = 255;
+                        strncpy(szValue,p0,tam);
+                        szValue[tam]=0;
+                    }
+                }
+            }
+        }
+    }
+
+    return szValue;
+}
+
+// char *ObtemValorTag(char *pXml, char *pTag)
+// {
+//     static char szValue[255 + 1];
+//     char szXmlAux[255 + 1];
+//     char *pTok;
+//     int iFlag=0;
+// 
+//     /* copia string a ser analisada para buffer local (strtok altera o ponteiro de entrada) */
+//     strcpy(szXmlAux, pXml);
+// 
+//     for(pTok = strtok(szXmlAux, "<>"); pTok != NULL; pTok = strtok(NULL, "<>")) {
+//         if(iFlag) {
+//             strcpy(szValue, pTok);
+//             iFlag=0;
+// 
+//             return szValue;
+//         }
+// 
+//         if(!strcmp(pTag, pTok)) {
+//             iFlag=1;
+//         }
+//     }
+// 
+//     return NULL;
+// }
+
+/************************************************************************************************************/
+int TUXinit(TParamConf *ptParamConf)
+{
+    TPINIT *tpInitInfo;
+    int i;
+
+    oLog.logInformation(">>>TUXinit\n");
+
+    if((tpInitInfo = (TPINIT *)tpalloc("TPINIT", (char *)NULL, TPINITNEED(strlen(VIVO_GENERIC_PASSWORD) - 1) )) == (TPINIT *)NULL)
+    return tperrno;
+
+    strcpy(tpInitInfo->usrname, ptParamConf->szUsrTux);
+    strcpy(tpInitInfo->cltname, ptParamConf->szCltTux);
+    strcpy(tpInitInfo->passwd, ptParamConf->szPwsTux);
+    strcpy((char *)&tpInitInfo->data, ptParamConf->szPwsTuxGen);
+
+    i = tpinit(tpInitInfo);
+    sprintf(szAux, "TPINIT: %i, TPERRNO: %i\n", i, tperrno); oLog.logDebug(szAux);
+
+    oLog.logInformation("<<<TUXinit\n");
+
+//    printf("TUX_USRNAME[%s]\n", TUX_USRNAME);
+//    printf("TUX_CLTNAME[%s]\n", TUX_CLTNAME);
+//    printf("VIVO_APP_PASSWORD[%s]\n", VIVO_APP_PASSWORD);
+//    printf("VIVO_GENERIC_PASSWORD[%s]\n", VIVO_GENERIC_PASSWORD);
+
+    if (i == -1)
+        return 1;
+    else  
+        return 0;
+}
+
+
+/************************************************************************************************************/
+int sendXML(char *pXmlSaida, char *pRetMsg) {
+
+    char *sendbuf, *rcvbuf;
+    long sendlen, rcvlen;
+
+    sendlen = strlen(pXmlSaida);
+
+    // sprintf(szAux, "Tamanho da msg = (%d)\n", sendlen); oLog.logInformation(szAux);
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        oLog.logError("Error allocating send buffer\n");
+        tpterm();
+
+        return -1;
+    }
+
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        oLog.logError("Error allocating receive buffer\n");
+        tpfree(sendbuf);
+        tpterm();
+
+        return -1;
+    }
+
+    strcpy(sendbuf, pXmlSaida);
+
+    if(tpcall("TUXPREPAGOBE", (char *)sendbuf, sendlen, (char **)&rcvbuf, &rcvlen, (long)0) == -1) {
+        sprintf(szAux, "Tperrno = %d\n", tperrno); oLog.logError(szAux);
+        sprintf(szAux, "rcvbuf[%s]\n", rcvbuf); oLog.logError(szAux);
+
+        iErrorNumber=tperrno;
+        strcpy(pRetMsg, rcvbuf);
+
+        tpfree(sendbuf);
+        tpfree(rcvbuf);
+
+        return 1;
+    }
+
+    iErrorNumber=0;
+    strcpy(pRetMsg, rcvbuf);
+
+    tpfree(sendbuf);
+    tpfree(rcvbuf);
+
+    return 0;
+}
+
+/************************************************************************************************************/
+void ArmaSinal(int iSignal) {
+    sprintf(szAux, "Armando tratamento para Signal(%d)\n", iSignal); oLog.logInformation(szAux);
+
+    if(signal((iSignal), ProcessaSignal) == SIG_ERR) {
+        fprintf(stderr, "ERRO ARMANDO SINAL!!!\n");
+        exit(-1);
+    }
+}
+
+/************************************************************************************************************/
+void ProcessaSignal(int iSig)
+{
+    oLog.logInformation(">>>ProcessaSignal\n");
+    sprintf(szAux, "iSig(%d)\n", iSig); oLog.logInformation(szAux);
+
+    /* rearma o mesmo sinal lancado */
+    ArmaSinal(iSig);
+
+    if(iSig == SIGTERM) {
+        oLog.logInformation("Finalizando processamento via sinal....\n");
+        iSignalProcessa=0;
+    }
+
+    oLog.logInformation(">>>ProcessaSignal\n");
+}
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[81];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug("Obtendo parametros de configuracao...\n");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("legado.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir()) {
+        oLog.logError("Erro abrindo arquivo de configuração!\n");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, 20);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, 10);
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, 10);
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    //sprintf(szAux, "ptParamConf->szPws[%s]\n", ptParamConf->szPws); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]\n", ptParamConf->szUsr); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]\n", ptParamConf->szInst); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTux[%s]\n", ptParamConf->szPwsTux); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szUsrTux[%s]\n", ptParamConf->szUsrTux); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]\n", ptParamConf->szPwsTuxGen); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szCltTux[%s]\n", ptParamConf->szCltTux); oLog.logInformation(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0 )
+    {
+        oLog.logError("Dados incompletos!\n");
+        return -1;
+    }
+
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...\n");
+    return 0;
+}
+
+/************************************************************************************************************/
+bool AtualizaRegistro(char *pszIdLinhaTelefonica, char *pszStatusCode, char *pszStatusText,int qtRetriesMax)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        //VARCHAR oszIdLinhaTelefonica[21];
+        //VARCHAR oszCdErro[255];
+        //VARCHAR oszDsErro[255];
+
+        char *oszIdLinhaTelefonica = pszIdLinhaTelefonica;
+        char *oszCdErro = pszStatusCode;
+        char *oszDsErro = pszStatusText;
+        int oiQtRetriesMax = qtRetriesMax;
+
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    //STRCPY_TO_ORA(oszIdLinhaTelefonica, pszIdLinhaTelefonica);
+    //STRCPY_TO_ORA(oszCdErro, pszStatusCode);
+    //STRCPY_TO_ORA(oszDsErro, pszStatusText);
+    
+    /* atualiza base com código de erro da transacao de envio para legado */
+    EXEC SQL
+        UPDATE
+            infra.filasetclientinfo
+        SET
+            cderro = :oszCdErro,
+            dserro = SUBSTR(TRIM(:oszDsErro),1,150),
+            dterro = SYSDATE,
+            inerro = 1,
+            qtretry = qtretry + DECODE(SIGN(qtretry-:oiQtRetriesMax),-1,1,0)
+        WHERE
+            idlinhatelefonica = :oszIdLinhaTelefonica;
+
+    return true;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+
+    naoexiste:
+        sprintf(szAux, "IdLinhaTelefonica nao encontrado[%s]\n", pszIdLinhaTelefonica); oLog.logDebug(szAux);
+        return false;
+}
+
+/************************************************************************************************************/
+bool DeletaRegistro(char *pszIdLinhaTelefonica)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        //VARCHAR oszIdLinhaTelefonica[21];
+        char * oszIdLinhaTelefonica = pszIdLinhaTelefonica;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    //STRCPY_TO_ORA(oszIdLinhaTelefonica, pszIdLinhaTelefonica);
+
+    EXEC SQL
+        DELETE
+            FROM infra.filasetclientinfo
+        WHERE
+            idlinhatelefonica = :oszIdLinhaTelefonica;
+
+    return true;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+
+    naoexiste:
+        sprintf(szAux, "IdLinhaTelefonica nao encontrado[%s]\n", pszIdLinhaTelefonica); oLog.logDebug(szAux);
+        return false;
+}
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logInformation(">>>DBConnect\n");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    oLog.logInformation("<<<DBConnect\n");
+
+    return (sqlca.sqlcode);
+    
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]\n");
+    return -1;
+}
+
+/************************************************************************************************************/
+void DBDisconnect(void)
+{
+    oLog.logInformation(">>>DBDisconnect\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    // EXEC SQL COMMIT WORK RELEASE;
+
+    oLog.logInformation("<<<DBDisconnect\n");
+    return;
+
+Error:
+    sprintf(szAux, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); oLog.logError(szAux);
+    return;
+}
+
+/************************************************************************************************************/
+char *ObtemDtTimeStamp(char *pszIdLinhaTelefonica)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        //VARCHAR oszIdLinhaTelefonica[21];
+        char *oszIdLinhaTelefonica = pszIdLinhaTelefonica;
+        VARCHAR oszDtTimeStamp[20];
+    EXEC SQL END DECLARE SECTION;
+
+    static char szDtTimeStamp[20];
+    struct sqlca sqlca;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    //STRCPY_TO_ORA(oszIdLinhaTelefonica, pszIdLinhaTelefonica);
+
+    EXEC SQL 
+        SELECT TO_CHAR(dttimestamp, 'YYYYMMDDHH24MISS')
+          INTO :oszDtTimeStamp
+          FROM infra.filasetclientinfo
+         WHERE idlinhatelefonica = :oszIdLinhaTelefonica;
+
+    STRCPY_FROM_ORA(szDtTimeStamp, oszDtTimeStamp);
+
+    return szDtTimeStamp;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return NULL;
+
+    naoexiste:
+        sprintf(szAux, "IdLinhaTelefonica nao encontrado[%s]\n", pszIdLinhaTelefonica); oLog.logDebug(szAux);
+        return NULL;
+}
+
+/************************************************************************************************************/
+char *ObtemParametro(char *pCdParametro)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        //VARCHAR oszCdParametro[255];
+        char *oszCdParametro = pCdParametro;
+        VARCHAR oszDsValorParametro[255+1];
+    EXEC SQL END DECLARE SECTION;
+
+    static char szDsValorParametro[255 + 1];
+    struct sqlca sqlca;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    //STRCPY_TO_ORA(oszCdParametro, pCdParametro);
+
+    EXEC SQL 
+        SELECT dsvalorparametro
+          INTO :oszDsValorParametro
+          FROM apoio.parametro
+         WHERE parametro.cdparametro = :oszCdParametro;
+
+    STRCPY_FROM_ORA(szDsValorParametro, oszDsValorParametro);
+
+    return szDsValorParametro;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+
+        Process(argvGlobal,UNLOCK,semaphoreExists);
+        Process(argvGlobal,KILL,semaphoreExists);
+        oLog.logDebug("Semaforo foi liberado.");
+
+        exit(-1);
+
+    naoexiste:
+        sprintf(szAux, "Chave pesquisada nao encontrada[%s]\n", pCdParametro); oLog.logDebug(szAux);
+        return NULL;
+}
+/************************************************************************************************************/
+bool killSemaforoSimNao()
+{
+    sprintf(szAux,">> killSemaforoSimNao\n");oLog.logDebug(szAux);
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR varOraDsValorParametro[256];
+        short statOraDsValorParametro=-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erroPrimVez;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    sprintf(szAux,"vai obter configuração de inicialização de semáforo.\n");oLog.logDebug(szAux);
+
+    EXEC SQL
+        SELECT dsvalorparametro
+          INTO :varOraDsValorParametro:statOraDsValorParametro
+          FROM apoio.parametro
+         WHERE cdparametro = 'ENVIA_LEGADO_KILLSEMONOFF';
+
+    if ( sqlca.sqlcode == 0 )
+    {
+        CONVIND(varOraDsValorParametro,statOraDsValorParametro);
+
+        sprintf(szAux,"vai atualizar configuração de inicialização de semáforo.\n");oLog.logDebug(szAux);
+        sprintf(szAux,"UPDATE apoio.parametro...\n");
+        oLog.logDebug(szAux);
+
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL 
+            UPDATE apoio.parametro SET
+                dsvalorparametro = 'SIM',
+                idusuarioalteracao = -99,
+                dtultimaalteracao = SYSDATE
+             WHERE
+                cdparametro = 'ENVIA_LEGADO_KILLSEMONOFF';
+
+        sprintf(szAux, "UPDATE sqlca.sqlcode=%d\n", sqlca.sqlcode); oLog.logDebug(szAux); //@cassio
+
+        EXEC SQL COMMIT;
+
+        //sprintf(szAux,"(1) ENVIA_LEGADO_KILLSEMONOFF(1)='%s'\n",varOraDsValorParametro.arr);
+        //oLog.logDebug(szAux);
+
+        if ( stricmp((char*)varOraDsValorParametro.arr,"SIM") == 0 )
+        {
+            sprintf(szAux,"<< killSemaforoSimNao --> SIM\n");oLog.logDebug(szAux);
+            return true;
+        }
+
+        sprintf(szAux,"<< killSemaforoSimNao --> NÃO\n");oLog.logDebug(szAux);
+        return false;
+    }
+    else
+    {
+        sprintf(szAux,"vai criar configuração de inicialização de semáforo.\n");
+        oLog.logDebug(szAux);
+
+        sprintf(szAux,"INSERT INTO apoio.parametro...\n");
+        oLog.logDebug(szAux);
+
+        EXEC SQL 
+            INSERT INTO
+                apoio.parametro(idparametro
+                               ,cdparametro
+                               ,dsparametro
+                               ,dsvalorparametro
+                               ,idusuarioalteracao
+                               ,dtultimaalteracao)
+                VALUES(apoio.parametrosq.nextval
+                      ,'ENVIA_LEGADO_KILLSEMONOFF'
+                      ,'Controle de criação de semáforo enviaLegado'
+                      ,'NÃO'
+                      ,-99
+                      ,SYSDATE);
+
+        sprintf(szAux, "INSERT sqlca.sqlcode=%d\n", sqlca.sqlcode); oLog.logDebug(szAux); //@cassio
+
+        EXEC SQL COMMIT;
+
+        //sprintf(szAux,"(2) ENVIA_LEGADO_KILLSEMONOFF='SIM'\n");
+        //oLog.logDebug(szAux);
+        sprintf(szAux,"<< killSemaforoSimNao --> NÃO (INSERIDO)\n");oLog.logDebug(szAux);
+        return true;
+    }
+
+erroPrimVez:
+    sprintf(szAux, "<< killSemaforoSimNao finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+    Process(argvGlobal,UNLOCK,semaphoreExists);
+    Process(argvGlobal,KILL,semaphoreExists);
+    return false;
+    //exit(-1);
+}
+
+/********************************************************************************************/
+int Process(char *pszFileName, int iFlagLock,bool &semaphoreExists)
+{
+    static int semid=-1;
+    time_t tStart, tEnd;
+    key_t key;
+
+    if(iFlagLock == UNLOCK)
+    {
+        if ( semid >=0 )
+            UnLockSemaphore(semid);
+    }
+    else if(iFlagLock == LOCK)
+    {
+        if((key = ftok(pszFileName, 'a')) == (key_t) -1)
+        {
+            perror("IPC error: ftok");
+            exit(-1);
+        }
+        sprintf(szAux, "key=%d\n",key);oLog.logDebug(szAux);
+
+        semid = InitSemaphore(key, 1,semaphoreExists);
+        if(semid < 0 )
+        {
+            perror("InitSemaphore");
+            exit(-1);
+        }
+        
+        sprintf(szAux, "semaphoreExists=%d\n",semaphoreExists);oLog.logDebug(szAux); //@cassio
+
+        if ( semaphoreExists )
+        {
+            if ( killSemaforoSimNao() == true )
+            {
+                sprintf(szAux, "vai desalocar semaforo %d\n",semid);oLog.logDebug(szAux);
+                UnLockSemaphore(semid);
+                sprintf(szAux, "vai deletar semaforo %d\n",semid);oLog.logDebug(szAux);
+                semctl(semid, 0, IPC_RMID); // deleta o semaforo
+                sprintf(szAux, "semaforo %d deletado\n",semid);oLog.logDebug(szAux);
+                semid = InitSemaphore(key, 1,semaphoreExists);
+                if(semid < 0 )
+                {
+                    perror("InitSemaphore");
+                    exit(-1);
+                }
+            }
+        }
+
+        if ( semaphoreExists == false )
+        {
+            sprintf(szAux, "vai locar semaforo %d\n",semid);oLog.logDebug(szAux); //@cassio
+            time(&tStart);
+            LockSemaphore(semid);
+            sprintf(szAux, "locou semaforo %d\n",semid);oLog.logDebug(szAux); //@cassio
+            time(&tEnd);
+
+            double tDiff = difftime(tEnd, tStart);
+
+            // tempo limite para espera de processamento
+            if(tDiff > (double)0)
+                return -1;
+        }
+    }
+    else if(iFlagLock == KILL)
+    {
+        if ( semid >=0 )
+            semctl(semid, 0, IPC_RMID); // deleta o semaforo
+    }
+    else
+    {
+        exit(-1);
+    }
+
+    return semid;
+}
+
+/********************************************************************************************/
+void UnLockSemaphore(int semid)
+{
+    struct sembuf sb;
+
+    sb.sem_num = 0;
+    sb.sem_op = 1; // free resource
+    sb.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &sb, 1) == -1)
+    {
+        perror("semop");
+        exit(1);
+    }
+}
+
+/********************************************************************************************/
+void LockSemaphore(int semid)
+{
+    struct sembuf sb;
+
+    sb.sem_num = 0;
+    sb.sem_op = -1;  // set to allocate resource
+    sb.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &sb, 1) == -1)
+    {
+        perror("semop");
+        exit(1);
+    }
+}
+
+/********************************************************************************************/
+/*
+** InitSemaphore() -- more-than-inspired by W. Richard Stevens' UNIX Network
+** Programming 2nd edition, volume 2, lockvsem.c, page 295.
+*/
+int InitSemaphore(key_t key, int nsems,bool &semaphoreExists)
+{
+    union semun
+    {
+        int val;
+        struct semid_ds *buf;
+        ushort *array;
+    } arg;
+
+    struct semid_ds buf;
+    struct sembuf sb;
+    int semid;
+
+    semid = semget(key, nsems, IPC_CREAT | IPC_EXCL | 0666);
+    sprintf(szAux, "@cassio: semget,semid=%d\n",semid);oLog.logDebug(szAux); //@cassio
+    
+    if (semid >= 0)
+    { // we got it first
+        sb.sem_op = 1;
+        sb.sem_flg = 0;
+        arg.val = 1;
+        semaphoreExists = false;
+        sprintf(szAux, "@cassio: executando semop\n");oLog.logDebug(szAux); //@cassio
+
+        for(sb.sem_num = 0; sb.sem_num < nsems; sb.sem_num++)
+        {
+            // do a semop() to "free" the semaphores.
+            // this sets the sem_otime field, as needed below.
+            if (semop(semid, &sb, 1) == -1)
+            {
+                int e = errno;
+                semctl(semid, 0, IPC_RMID); // clean up
+                errno = e;
+                return -1; // error, check errno
+            }
+        }
+    }
+    else if (errno == EEXIST)
+    {
+        semid = semget(key, nsems, 0); // get the id
+        sprintf(szAux, "@cassio: (2) semget,semid=%d\n",semid);oLog.logDebug(szAux); //@cassio
+        if (semid < 0)
+        {
+            sprintf(szAux, "InitSemaphore: erro %d obtendo semaforo existente\n",semid);
+            oLog.logDebug(szAux);
+            return semid; // error, check errno
+        }
+
+        semaphoreExists = true;
+        sprintf(szAux, "@cassio: semaphoreExists=%d\n",semaphoreExists );oLog.logDebug(szAux); //@cassio
+
+        return semid; //semaforo já existe
+
+        /*
+        int ready = 0;
+
+        // wait for other process to initialize the semaphore:
+        arg.buf = &buf;
+
+        for(int i = 0; i < MAX_RETRIES && !ready; i++)
+        {
+            semctl(semid, nsems-1, IPC_STAT, arg);
+
+            if (arg.buf->sem_otime != 0)
+            {
+                ready = 1;
+            }
+            else
+            {
+                sleep(1);
+            }
+        }
+        if(!ready)
+        {
+            errno = ETIME;
+            return -1;
+        }
+        */
+    }
+    else
+    {
+        return semid; // error, check errno
+    }
+
+    return semid;
+}

@@ -1,0 +1,695 @@
+/**
+ * 
+ * @modulo  Batch
+ * @usecase Batch
+ * @author  Cassio
+ * @version $Revision: 1.1.6.1 $
+ * @CVS     $Author: a5110702 $ - $Date: 2009/10/22 20:32:50 $
+ **/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#ifndef WIN32
+#include <unistd.h>
+#endif
+#include <ctype.h>
+
+#include "../include/copiaArvore.h"
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+
+EXEC SQL INCLUDE SQLCA;
+
+char szAux[512];
+Log oLog;
+int iSignalProcessa=1;
+
+#define TAM_BUFFER 1024*20
+#define NOME_ARQUIVO_SAIDA "contatos"
+#define EXTENSAO_ARQUIVO_SAIDA "txt"
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+int main(void)
+{
+    TParamConf tParamConf;
+    int retorno = 0;
+
+	char sComando[255];
+    
+	char idContatoTemplate[39];
+	char idContatoDestino[39];
+
+    char szNomeArquivo[_MAX_PATH+9];
+    char szNomeArquivoDestino[_MAX_PATH+9];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int rows_fetched = 0;
+
+        VARCHAR listaIdContatosDestino[500][39];
+        VARCHAR listaIdContatosTemplate[500][39];
+
+        short listaStatIdContatosDestino[500];
+        short listaStatIdContatosTemplate[500];
+        char szLinha[100];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.setNivel(2);
+    oLog.logDebug(">>>copiaArvore");
+
+#ifndef WIN32
+    ArmaSinal(SIGTERM);
+#endif
+
+    // parametros de configuração
+    if(ObtemParamConf(&tParamConf))
+    {
+        oLog.logError("Erro obtendo parametros de configuracao");
+        oLog.logDebug("<<<copiaArvore");
+        return -1;
+    }
+
+    oLog.logDebug("Conectando na BD...");
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst))
+    {
+        oLog.logError("Erro conectando no banco de dados");
+        oLog.logDebug("<<<copiaArvore");
+        return -1;
+    }
+    oLog.logDebug("Conectado na BD com sucesso...");
+
+	strcpy(szNomeArquivo,NOME_ARQUIVO_SAIDA"."EXTENSAO_ARQUIVO_SAIDA);
+	strcpy(szNomeArquivoDestino,NOME_ARQUIVO_SAIDA"."EXTENSAO_ARQUIVO_SAIDA".PROCESSADO");
+
+	//layout do arquivo
+	//idcontatopai;idcontatofilho
+
+	sprintf(szAux, "Inicio do processamento abrindo arquivo[%s]", szNomeArquivo); oLog.logDebug(szAux);
+
+    FILE *pFile=0;
+    pFile=fopen(szNomeArquivo,"r");
+	if( pFile == NULL )
+    {
+        sprintf(szAux, "arquivo %s não encontrado", szNomeArquivo); oLog.logDebug(szAux);
+        return -1;
+    }
+	
+	sprintf(szAux, "Layout do arquivo deve ser:[idcontatopai;idcontatofilho]"); oLog.logDebug(szAux);
+
+    //feof(pFile)
+    memset(listaStatIdContatosTemplate,-1,sizeof(listaStatIdContatosTemplate));
+    memset(listaStatIdContatosDestino,-1,sizeof(listaStatIdContatosDestino));
+
+    while (fgets(szLinha,512,pFile) )
+    {
+        oLog.logDebug(szLinha);
+
+        char *p = strstr(szLinha,";");
+
+        if ( p )
+        {
+            int x = p-szLinha;
+
+            memcpy(idContatoTemplate,szLinha,x);
+            idContatoTemplate[x]=0;
+
+            strcpy(idContatoDestino,p+1);
+            idContatoDestino[strlen(idContatoDestino)-1]=0;
+
+	        //sprintf(szAux,"idContatoTemplate='%s'",idContatoTemplate); oLog.logDebug(szAux);
+	        //sprintf(szAux," idContatoDestino='%s'",idContatoDestino); oLog.logDebug(szAux);
+
+            strcpy((char*)listaIdContatosTemplate[rows_fetched].arr,idContatoTemplate);
+            listaIdContatosTemplate[rows_fetched].len = strlen(idContatoTemplate);
+            listaStatIdContatosTemplate[rows_fetched]=1;
+
+            strcpy((char*)listaIdContatosDestino[rows_fetched].arr,idContatoDestino);
+            listaIdContatosDestino[rows_fetched].len = strlen(idContatoDestino);
+            listaStatIdContatosDestino[rows_fetched]=1;
+
+            rows_fetched++;
+        }
+        else
+        {
+            oLog.logDebug("linha inválida");
+        }
+    } // while (fgets(szLinha,512,pFile) )
+
+    fclose (pFile);
+
+	sprintf(szAux, "rows_fetched=%d", rows_fetched); oLog.logDebug(szAux);
+
+    if ( rows_fetched>0 )
+    {
+        EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+        sprintf(szAux, "Insert em FASEGRUPOFECHAMENTO...");oLog.logDebug(szAux);
+
+        EXEC SQL FOR :rows_fetched 
+		    INSERT INTO CONTATOADM.FASEGRUPOFECHAMENTO(IDFASEGRUPOFECHAMENTO,IDCONTATO,IDGRUPO,IDTIPOFECHAMENTOCONTATO)
+            SELECT 
+                FASEGRUPOFECHAMENTOSQ.NEXTVAL,
+                CONTATOGRUPO.IDCONTATO,
+                FASEGRUPOFECHAMENTO.IDGRUPO,
+                FASEGRUPOFECHAMENTO.IDTIPOFECHAMENTOCONTATO
+            FROM
+                CONTATOADM.CONTATOGRUPO CONTATOGRUPO,
+                CONTATOADM.SEQUENCIA SEQUENCIA,
+                CONTATOADM.FASEGRUPOFECHAMENTO FASEGRUPOFECHAMENTO
+            WHERE
+                CONTATOGRUPO.IDCONTATO IN (:listaIdContatosDestino:listaStatIdContatosDestino)
+            AND CONTATOGRUPO.IDGRUPO = FASEGRUPOFECHAMENTO.IDGRUPO
+            AND CONTATOGRUPO.IDCONTATOGRUPO = SEQUENCIA.IDCONTATOGRUPO
+            AND SEQUENCIA.IDTIPOSEQUENCIA = 1
+            AND FASEGRUPOFECHAMENTO.IDCONTATO IN (:listaIdContatosTemplate:listaStatIdContatosTemplate);
+
+        //****************//
+        sprintf(szAux, "Insert em FECHAMENTOTIPOPESSOA...");oLog.logDebug(szAux);
+
+        EXEC SQL FOR :rows_fetched 
+            INSERT INTO CONTATOADM.FECHAMENTOTIPOPESSOA(IDFECHAMENTOTIPOPESSOA,IDFASEGRUPOFECHAMENTO,IDTIPOPESSOA)
+            SELECT
+                FECHAMENTOTIPOPESSOASQ.NEXTVAL,
+                FASE.IDFASEGRUPOFECHAMENTO,
+                FECHAMENTOTIPOPESSOA.IDTIPOPESSOA
+            FROM
+                CONTATOADM.FASEGRUPOFECHAMENTO FASEGRUPOFECHAMENTO,
+                CONTATOADM.FECHAMENTOTIPOPESSOA FECHAMENTOTIPOPESSOA,
+                (
+                    SELECT
+                        FASEGRUPOFECHAMENTO.IDCONTATO,
+                        FASEGRUPOFECHAMENTO.IDGRUPO,
+                        FASEGRUPOFECHAMENTO.IDFASEGRUPOFECHAMENTO
+                    FROM
+                        CONTATOADM.FASEGRUPOFECHAMENTO FASEGRUPOFECHAMENTO
+                    WHERE
+                        FASEGRUPOFECHAMENTO.IDCONTATO IN (:listaIdContatosDestino:listaStatIdContatosDestino)
+                ) FASE
+            WHERE
+                FASEGRUPOFECHAMENTO.IDCONTATO IN (:listaIdContatosTemplate:listaStatIdContatosTemplate)
+            AND FASEGRUPOFECHAMENTO.IDFASEGRUPOFECHAMENTO = FECHAMENTOTIPOPESSOA.IDFASEGRUPOFECHAMENTO
+            AND FASEGRUPOFECHAMENTO.IDGRUPO = FASE.IDGRUPO;
+
+        //****************//
+        sprintf(szAux, "Insert em FECHAMENTOSEGMENTACAO...");oLog.logDebug(szAux);
+
+        EXEC SQL FOR :rows_fetched 
+            INSERT INTO CONTATOADM.FECHAMENTOSEGMENTACAO(IDFECHAMENTOSEGMENTACAO,IDFASEGRUPOFECHAMENTO,IDSEGMENTACAO)
+            SELECT
+                FECHAMENTOSEGMENTACAOSQ.NEXTVAL,
+                FASE.IDFASEGRUPOFECHAMENTO,
+                FECHAMENTOSEGMENTACAO.IDSEGMENTACAO
+            FROM
+                CONTATOADM.FASEGRUPOFECHAMENTO FASEGRUPOFECHAMENTO,
+                CONTATOADM.FECHAMENTOSEGMENTACAO FECHAMENTOSEGMENTACAO,
+                (
+                    SELECT
+                        FASEGRUPOFECHAMENTO.IDCONTATO,
+                        FASEGRUPOFECHAMENTO.IDGRUPO,
+                        FASEGRUPOFECHAMENTO.IDFASEGRUPOFECHAMENTO
+                    FROM
+                        CONTATOADM.FASEGRUPOFECHAMENTO FASEGRUPOFECHAMENTO
+                    WHERE
+                        FASEGRUPOFECHAMENTO.IDCONTATO IN (:listaIdContatosDestino:listaStatIdContatosDestino)
+                ) FASE
+            WHERE
+                FASEGRUPOFECHAMENTO.IDCONTATO IN (:listaIdContatosTemplate:listaStatIdContatosTemplate)
+            AND FASEGRUPOFECHAMENTO.IDFASEGRUPOFECHAMENTO = FECHAMENTOSEGMENTACAO.IDFASEGRUPOFECHAMENTO
+            AND FASEGRUPOFECHAMENTO.IDGRUPO = FASE.IDGRUPO;
+
+        //****************//
+        sprintf(szAux, "Insert em FECHAMENTOTIPOLINHA...");oLog.logDebug(szAux);
+
+        EXEC SQL FOR :rows_fetched 
+            INSERT INTO CONTATOADM.FECHAMENTOTIPOLINHA(IDFECHAMENTOTIPOLINHA,IDFASEGRUPOFECHAMENTO,IDTIPOLINHA)
+            SELECT
+                FECHAMENTOTIPOLINHASQ.NEXTVAL,
+                FASE.IDFASEGRUPOFECHAMENTO,
+                FECHAMENTOTIPOLINHA.IDTIPOLINHA
+            FROM
+                CONTATOADM.FASEGRUPOFECHAMENTO FASEGRUPOFECHAMENTO,
+                CONTATOADM.FECHAMENTOTIPOLINHA FECHAMENTOTIPOLINHA,
+                (
+                    SELECT
+                        FASEGRUPOFECHAMENTO.IDCONTATO,
+                        FASEGRUPOFECHAMENTO.IDGRUPO,
+                        FASEGRUPOFECHAMENTO.IDFASEGRUPOFECHAMENTO
+                    FROM
+                        CONTATOADM.FASEGRUPOFECHAMENTO FASEGRUPOFECHAMENTO
+                    WHERE
+                        FASEGRUPOFECHAMENTO.IDCONTATO IN (:listaIdContatosDestino:listaStatIdContatosDestino)
+                ) FASE
+            WHERE
+                FASEGRUPOFECHAMENTO.IDCONTATO IN (:listaIdContatosTemplate:listaStatIdContatosTemplate)
+            AND FASEGRUPOFECHAMENTO.IDFASEGRUPOFECHAMENTO = FECHAMENTOTIPOLINHA.IDFASEGRUPOFECHAMENTO
+            AND FASEGRUPOFECHAMENTO.IDGRUPO = FASE.IDGRUPO;
+               
+        //****************//
+        sprintf(szAux, "Insert em FECHAMENTOTPCARTEIRA...");oLog.logDebug(szAux);
+
+        EXEC SQL FOR :rows_fetched 
+            INSERT INTO CONTATOADM.FECHAMENTOTPCARTEIRA(IDFECHAMENTOTPCARTEIRA,IDFASEGRUPOFECHAMENTO,IDTIPOCARTEIRA)
+            SELECT
+                FECHAMENTOTPCARTEIRASQ.NEXTVAL,
+                FASE.IDFASEGRUPOFECHAMENTO,
+                FECHAMENTOTPCARTEIRA.IDTIPOCARTEIRA
+            FROM
+                CONTATOADM.FASEGRUPOFECHAMENTO FASEGRUPOFECHAMENTO,
+                CONTATOADM.FECHAMENTOTPCARTEIRA FECHAMENTOTPCARTEIRA,
+                (
+                    SELECT
+                        FASEGRUPOFECHAMENTO.IDCONTATO,
+                        FASEGRUPOFECHAMENTO.IDGRUPO,
+                        FASEGRUPOFECHAMENTO.IDFASEGRUPOFECHAMENTO
+                    FROM
+                        CONTATOADM.FASEGRUPOFECHAMENTO FASEGRUPOFECHAMENTO
+                    WHERE
+                        FASEGRUPOFECHAMENTO.IDCONTATO IN (:listaIdContatosDestino:listaStatIdContatosDestino)
+                ) FASE
+            WHERE
+                FASEGRUPOFECHAMENTO.IDCONTATO IN (:listaIdContatosTemplate:listaStatIdContatosTemplate)
+            AND FASEGRUPOFECHAMENTO.IDFASEGRUPOFECHAMENTO = FECHAMENTOTPCARTEIRA.IDFASEGRUPOFECHAMENTO
+            AND FASEGRUPOFECHAMENTO.IDGRUPO = FASE.IDGRUPO;
+
+        //****************//
+        sprintf(szAux, "Insert em FECHAMENTOTPRELACIONAMENTO...");oLog.logDebug(szAux);
+
+        EXEC SQL FOR :rows_fetched 
+            INSERT INTO CONTATOADM.FECHAMENTOTPRELACIONAMENTO(IDFECHAMENTOTPRELACIONAMENTO,IDFASEGRUPOFECHAMENTO,IDTIPORELACIONAMENTO)
+            SELECT
+                FECHAMENTOTPRELACIONAMENTOSQ.NEXTVAL,
+                FASE.IDFASEGRUPOFECHAMENTO,
+                FECHAMENTOTPRELACIONAMENTO.IDTIPORELACIONAMENTO
+            FROM
+                CONTATOADM.FASEGRUPOFECHAMENTO FASEGRUPOFECHAMENTO,
+                CONTATOADM.FECHAMENTOTPRELACIONAMENTO FECHAMENTOTPRELACIONAMENTO,
+                (
+                    SELECT
+                        FASEGRUPOFECHAMENTO.IDCONTATO,
+                        FASEGRUPOFECHAMENTO.IDGRUPO,
+                        FASEGRUPOFECHAMENTO.IDFASEGRUPOFECHAMENTO
+                    FROM
+                        CONTATOADM.FASEGRUPOFECHAMENTO FASEGRUPOFECHAMENTO
+                    WHERE
+                        FASEGRUPOFECHAMENTO.IDCONTATO IN (:listaIdContatosDestino:listaStatIdContatosDestino)
+                ) FASE
+            WHERE
+                FASEGRUPOFECHAMENTO.IDCONTATO IN (:listaIdContatosTemplate:listaStatIdContatosTemplate)
+            AND FASEGRUPOFECHAMENTO.IDFASEGRUPOFECHAMENTO = FECHAMENTOTPRELACIONAMENTO.IDFASEGRUPOFECHAMENTO
+            AND FASEGRUPOFECHAMENTO.IDGRUPO = FASE.IDGRUPO;
+	    
+        EXEC SQL COMMIT;
+
+        oLog.logDebug("Finalizando processo...");
+        moverArquivo(szNomeArquivo,szNomeArquivoDestino);
+    }
+    else
+    {
+	    oLog.logDebug("Lista para processamento vazia!");	
+    }
+
+	DBDisconnect();
+
+    if ( 0 == retorno )
+    {
+        oLog.logDebug("Processamento encerrado com sucesso...");
+    }
+    else
+    {
+        oLog.logDebug("Processamento encerrado com ERRO!");
+    }
+
+    oLog.logDebug("<<<copiaArvore");
+
+    return retorno;
+
+    sqlError:
+        sprintf(szAux,"ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+        EXEC SQL ROLLBACK;
+	    DBDisconnect();
+        return -1;
+}
+
+/************************************************************************************************************/
+void enviarEmail(int acao,char *pszNomeArquivo,char *pszNomeArquivoZip,const char *mensagem,const char *listaEnderecos,const char *szDataProcessamento,const char *szHoraProcessamento)
+{
+    oLog.logDebug("enviando e-mail ...");
+
+    char comando[12000];
+    char subject[] = "Relatorio IMEI - DIARIO";
+    char texto[2048];
+    char dataHoraProcessamento[64];
+
+    // compacta o arquivo antes de enviar
+   // compactarArquivo(pszNomeArquivo);
+
+    sprintf(dataHoraProcessamento,"%s as %s",szDataProcessamento,szHoraProcessamento);
+
+    if ( STATUS_SUCESSO == acao )
+    {
+        strcpy(texto,"Srs,\n\n\tPrezados segue o relatório de processos do VIVONET com os IMEIS para bloqueios no sistema SICS");
+        //strcat(texto,dataHoraProcessamento);
+
+        sprintf(comando,"(echo \"%s\";uuencode %s \"relatorioIMEI.txt\")|mailx -s \"%s\" %.11800s"
+                    ,texto,pszNomeArquivoZip,subject,listaEnderecos);
+    }
+    else if ( STATUS_VAZIO == acao )
+    {
+        strcpy(texto,"Srs,\n\n\tNão foram encontrados IMEIS para desbloqueio nesta data. ");
+        strcat(texto,dataHoraProcessamento);
+
+        sprintf(comando,"echo \"%s\"|mailx -s \"%s\" %.11800s"
+                    ,texto,subject,listaEnderecos);
+    }
+    else if ( STATUS_ERRO == acao )
+    {
+        strcpy(texto,"Srs,\n\n\tErro no processamento dos IMEIS de ");
+        strcat(texto,dataHoraProcessamento);
+        strcat(texto," ");
+        strcat(texto,"\n\tO erro foi \"");
+        strcat(texto,mensagem?mensagem:"**ERRO DESCONHECIDO**");
+        strcat(texto,"\"");
+
+        sprintf(comando,"echo \"%s\"|mailx -s \"%s\" %.11400s"
+                    ,texto,subject,listaEnderecos);
+    }
+
+    oLog.logDebug(comando);
+    system(comando);
+
+}
+
+/************************************************************************************************************/
+void removerArquivo(char *pszNomeArquivo)
+{
+    sprintf(szAux, "Vai remover o arquivo [%s]", pszNomeArquivo); oLog.logDebug(szAux);
+    remove(pszNomeArquivo);
+}
+
+/************************************************************************************************************/
+void montarNomeArquivo(char *pszNomeArquivo,char *pszNomeArquivoZip,const char *pszPath)
+{
+    strcpy(pszNomeArquivo, pszPath);
+    strcat(pszNomeArquivo, "/"NOME_ARQUIVO_SAIDA"."EXTENSAO_ARQUIVO_SAIDA);
+
+    strcpy(pszNomeArquivoZip, pszPath);
+    strcat(pszNomeArquivoZip, "/"NOME_ARQUIVO_SAIDA"."EXTENSAO_ARQUIVO_SAIDA".gz");
+
+    sprintf(szAux, "    Nome do arquivo = [%s]", pszNomeArquivo); oLog.logDebug(szAux);
+    sprintf(szAux, "Nome do arquivo zip = [%s]", pszNomeArquivoZip); oLog.logDebug(szAux);
+}
+
+/************************************************************************************************************/
+void compactarArquivo(const char *pszNomeArquivo)
+{
+    char sComando[512];
+
+    strcpy(sComando,"gzip -f ");
+    strcat(sComando,pszNomeArquivo);
+
+    sprintf(szAux,"Comando [%s]", sComando); oLog.logDebug(szAux);
+	
+    system(sComando);
+
+	sprintf(sComando,"mv relatorioIMEI.txt.gz relatorioIMEI.zip");
+
+	system(sComando);
+}
+
+/************************************************************************************************************/
+void moverArquivo(const char *pszNomeArquivoOrigem,const char *pszNomeArquivoDestino)
+{
+    char sComando[_MAX_PATH*2+16];
+
+    sprintf(sComando,"/usr/bin/mv -f %s %s", pszNomeArquivoOrigem, pszNomeArquivoDestino);
+
+    oLog.logDebug(" Vai mover o arquivo");
+    sprintf(szAux," Arquivo Origem [%s]", pszNomeArquivoOrigem); oLog.logDebug(szAux);
+    sprintf(szAux,"Arquivo Destino [%s]", pszNomeArquivoDestino); oLog.logDebug(szAux);
+    sprintf(szAux,"        Comando [%s]", sComando); oLog.logDebug(szAux);
+
+    system(sComando);
+}
+
+/************************************************************************************************************/
+int abrirArquivo(FILE **pFile,const char *pszNomeArquivo)
+{
+    sprintf(szAux, "Vai criar e abrir o arquivo [%s]", pszNomeArquivo); oLog.logDebug(szAux);
+
+    *pFile = fopen(pszNomeArquivo, "r");
+
+    if( pFile == NULL )
+    {
+        sprintf(szAux, "Erro criando arquivo[%s]", pszNomeArquivo); oLog.logDebug(szAux);
+        return -1;
+    }
+
+    sprintf(szAux, "Arquivo [%s] disponível", pszNomeArquivo); oLog.logDebug(szAux);
+
+    return 0;
+}
+
+/************************************************************************************************************/
+int gravarRegistro(FILE *pFile,char *pszRegistro)
+{
+  char szPog[1000];
+ 
+  //sprintf (szPog,"%s\n",pszRegistro);
+	if( pszRegistro )
+    {
+        if(fputs(pszRegistro, pFile) <= 0)
+        {
+            oLog.logDebug("Erro na gravação de registro no arquivo "NOME_ARQUIVO_SAIDA"."EXTENSAO_ARQUIVO_SAIDA);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+void fecharArquivo(FILE *pFile)
+{
+    fclose(pFile);
+    oLog.logDebug("Fechou o arquivo "NOME_ARQUIVO_SAIDA"."EXTENSAO_ARQUIVO_SAIDA".");
+}
+
+/************************************************************************************************************/
+#ifndef WIN32
+void ArmaSinal(int iSignal)
+{
+    sprintf(szAux, "Armando tratamento para Signal(%d)", iSignal); oLog.logInformation(szAux);
+
+    if(signal((iSignal), ProcessaSignal) == SIG_ERR)
+	{
+        fprintf(stderr, "ERRO ARMANDO SINAL!!!\n");
+        exit(-1);
+    }
+}
+/************************************************************************************************************/
+void ProcessaSignal(int iSig)
+{
+    oLog.logInformation(">>>ProcessaSignal");
+    sprintf(szAux, "iSig(%d)", iSig); oLog.logInformation(szAux);
+
+    /* rearma o mesmo sinal lancado */
+    ArmaSinal(iSig);
+
+    if(iSig == SIGTERM)
+	{
+        oLog.logInformation("Finalizando processamento via sinal....");
+        iSignalProcessa=0;
+    }
+
+    oLog.logInformation(">>>ProcessaSignal");
+}
+#endif
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[100 + 1];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug("Obtendo parametros de configuracao...");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("copiaArvore.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir())
+	{
+        oLog.logError("Erro abrindo arquivo de configuração!");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, TAM_BD_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, TAM_BD_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, TAM_BD_INST);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, TAM_TX_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, TAM_TX_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, TAM_TX_GEN);
+        }
+        else if (!strcmp(szDivPre, "clt_tux"))
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, TAM_TX_CLT);
+        }
+        else if (!strcmp(szDivPre, "path"))
+        {
+            strncpy(ptParamConf->szPath, szDivArq, _MAX_PATH);
+        }
+        else if (!strcmp(szDivPre, "path_togo"))
+        {
+            strncpy(ptParamConf->szPathToGo, szDivArq, _MAX_PATH);
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    sprintf(szAux, "ptParamConf->szPws[%s]", ptParamConf->szPws); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]", ptParamConf->szUsr); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]", ptParamConf->szInst); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szPwsTux[%s]", ptParamConf->szPwsTux); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUsrTux[%s]", ptParamConf->szUsrTux); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]", ptParamConf->szPwsTuxGen); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szCltTux[%s]", ptParamConf->szCltTux); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szPath[%s]", ptParamConf->szPath); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szPathToGo[%s]", ptParamConf->szPathToGo); oLog.logDebug(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szPath) == 0 ||
+        //strlen(ptParamConf->szPathToGo) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0)
+    {
+        oLog.logError("Dados incompletos!");
+        return -1;
+    }
+
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...");
+    return 0;
+}
+
+/************************************************************************************************************/
+bool ObterListaEmail(char *pszListaEnderecos,int sizeofszListaEnderecos)
+{
+    oLog.logDebug("Obtendo lista de endereços...");
+
+    FILE *file = fopen(".//ListaEnderecos.txt","r");
+
+    if( 0==file )
+	{
+        oLog.logError("Erro abrindo arquivo de endereços");
+        return false;
+    }
+
+    fgets(pszListaEnderecos,sizeofszListaEnderecos-1,file);
+
+    fclose(file);
+
+    oLog.logDebug("lista de endereços obtida com sucesso...");
+
+    return true;
+}
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logInformation(">>>DBConnect");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    oLog.logInformation("<<<DBConnect");
+
+    return (sqlca.sqlcode);
+
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]");
+    return -1;
+}
+
+/************************************************************************************************************/
+void DBDisconnect(void)
+{
+    oLog.logInformation(">>>DBDisconnect");
+
+    EXEC SQL WHENEVER SQLERROR GOTO DBDisconnectError;
+    EXEC SQL COMMIT WORK RELEASE;
+
+    oLog.logInformation("<<<DBDisconnect");
+    return;
+
+DBDisconnectError:
+    sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+}

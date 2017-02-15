@@ -1,0 +1,34 @@
+/***********************************************************
+  BATCH......: meuVivoDW
+  Criado por.: Eder Jani Martins (11/02/2015)
+  Alterado por: Lucas Gomes(03/09/2015)
+  Funcional..: Marcia Santana Silva
+***********************************************************/
+SET PAGESIZE 0
+SET FEEDBACK OFF
+SET VERIFY OFF
+SET HEADING OFF
+SET ECHO OFF
+SET TAB OFF
+SET PAGESIZE 0
+SET TRIMS ON
+SET WRAP OFF
+SET SERVEROUTPUT OFF
+WHENEVER OSERROR EXIT 9
+WHENEVER SQLERROR EXIT SQL.SQLCODE
+	
+DECLARE
+	V_NUMERO_TABELA VARCHAR(10);
+
+BEGIN
+	V_NUMERO_TABELA := '&1';
+	
+	LOAD.PRC_MEUVIVODW_TRUNCA_TABELA(V_NUMERO_TABELA);
+END;
+/
+
+SPOOL OFF
+SET ECHO OFF
+SET TIMI OFF
+SET TIME OFF
+EXIT

@@ -1,0 +1,23 @@
+set timi on
+set echo on
+spool A_L1117.log
+
+CREATE SEQUENCE ATENDIMENTO.ATENDIMENTOANATELSQ
+START WITH 1
+INCREMENT BY 1
+MINVALUE 0
+NOCACHE 
+NOCYCLE 
+NOORDER;
+
+
+
+
+
+
+
+spool off
+set echo off
+set timi off
+
+

@@ -1,0 +1,1454 @@
+    /**
+ * @modulo  Batch
+ * @usecase Batch
+ * @author
+ * @version $Revision: 1.1.4.6.6.2 $
+ * @CVS     $Author: a5114878 $ - $Date: 2012/07/12 22:42:56 $
+ **/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <ctype.h>
+
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+
+#define MAX_RETRIES     10
+
+#define LOCK            1
+#define UNLOCK          0
+#define KILL            2
+
+#ifndef WIN32
+#include <unistd.h>
+#endif
+
+#include <libxml/xpath.h>
+#include <libxml/tree.h>
+#include <libxml/parser.h>
+#include <libxml/debugXML.h>
+#include <libxml/xmlmemory.h>
+#include <libxml/tree.h>
+#include <libxml/parser.h>
+#include <libxml/uri.h>
+#include <libxml/entities.h>
+#include <libxml/valid.h>
+#include <libxml/xmlerror.h>
+#include <libxml/parserInternals.h>
+#include <libxml/globals.h>
+#include <libxml/xpathInternals.h>
+
+#include <tibems/tibems.h>
+
+#include "../include/vinculoRecargaSMS.h"
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+
+#include <string>
+using namespace std;
+
+EXEC SQL INCLUDE SQLCA;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+//==============================================================================
+// Globais
+char szAux[1024 + 1];
+Log oLog;
+int iSignalProcessa = 1;
+
+//==============================================================================
+// Protótipos
+int ObterParamMaxRegistros(int LimMax);
+int Process(char *pszFileName, int iFlagLock);
+void UnLockSemaphore(int semid);
+void LockSemaphore(int semid);
+int InitSemaphore(key_t key, int nsems);
+void ObterVariavelApoioParametro(char *szChave, string &strVariavel);
+
+//==============================================================================
+// Run
+int main(int argc, char* argv[])
+{
+    char szNrProtocoloAnt[38];
+    char szNrLinhaAnt[20];
+    char szDtAberturaAnt[15];
+    char szHrAberturaAnt[15];
+
+    TParamConf tParamConf;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        const int MAX_REGS = 20000;
+
+        int maxRegs;
+        int linhas_retornadas_P;
+		int linhas_retornadas_P24h;
+		int linhas_retornadas_Ativa;
+        const char *pOraQuery;
+
+        VARCHAR lstOraIdVinculo_P[MAX_REGS][39];
+        VARCHAR lstOraCdAreaRegistro1_P[MAX_REGS][4];
+        VARCHAR lsOraNrLinha1_P[MAX_REGS][11];
+        VARCHAR lstOraCdAreaRegistro2_P[MAX_REGS][4];
+        VARCHAR lsOraNrLinha2_P[MAX_REGS][11];
+
+        short lstStatOraIdVinculo_P[MAX_REGS];
+        short lstStatOraCdAreaRegistro1_P[MAX_REGS];
+        short lstStatOraNrLinha1_P[MAX_REGS];
+        short lstStatOraCdAreaRegistro2_P[MAX_REGS];
+        short lstStatOraNrLinha2_P[MAX_REGS];
+
+        VARCHAR lstOraIdVinculo_P24h[MAX_REGS][39];
+        VARCHAR lstOraCdAreaRegistro1_P24h[MAX_REGS][4];
+        VARCHAR lsOraNrLinha1_P24h[MAX_REGS][11];
+        VARCHAR lstOraCdAreaRegistro2_P24h[MAX_REGS][4];
+        VARCHAR lsOraNrLinha2_P24h[MAX_REGS][11];
+
+        short lstStatOraIdVinculo_P24h[MAX_REGS];
+        short lstStatOraCdAreaRegistro1_P24h[MAX_REGS];
+        short lstStatOraNrLinha1_P24h[MAX_REGS];
+        short lstStatOraCdAreaRegistro2_P24h[MAX_REGS];
+        short lstStatOraNrLinha2_P24h[MAX_REGS];
+
+        VARCHAR lstOraIdVinculo_Ativa[MAX_REGS][39];
+        VARCHAR lstOraCdAreaRegistro1_Ativa[MAX_REGS][4];
+        VARCHAR lsOraNrLinha1_Ativa[MAX_REGS][11];
+        VARCHAR lstOraCdAreaRegistro2_Ativa[MAX_REGS][4];
+        VARCHAR lsOraNrLinha2_Ativa[MAX_REGS][11];
+
+        short lstStatOraIdVinculo_Ativa[MAX_REGS];
+        short lstStatOraCdAreaRegistro1_Ativa[MAX_REGS];
+        short lstStatOraNrLinha1_Ativa[MAX_REGS];
+        short lstStatOraCdAreaRegistro2_Ativa[MAX_REGS];
+        short lstStatOraNrLinha2_Ativa[MAX_REGS];
+
+    EXEC SQL END DECLARE SECTION;
+
+    tibemsSSLParams sslParams = NULL;
+    //tibemsTextMsg msg = NULL;
+    tibemsQueueConnection queueConnection = NULL;
+    tibemsQueue queue = NULL;
+    tibemsQueueSession queueSession = NULL;
+    tibemsQueueSender queueSender = NULL;
+    tibems_status status = TIBEMS_OK;
+
+    char szDsMensagemEnvio[601];
+    char szDsListaClassificacao[601] = {0};
+    char szidClassificacaoSMS[40];
+
+    oLog.setNivel(2);
+
+    oLog.logDebug(">>>vinculoRecargaSMS");
+
+    ArmaSinal(SIGTERM);
+
+    //==========================================================================
+    // Parâmetros de configuração
+    if(ObtemParamConf(&tParamConf))
+    {
+        oLog.logError("Erro obtendo parametros de configuracao");
+        return -1;
+    }
+
+    //==========================================================================
+    // Lock
+    oLog.logDebug("Vai locar fila de processamento...");
+    int iRet = Process(argv[0],LOCK);
+
+    if(iRet)
+    {
+    	oLog.logInformation("Saida por TIMEOUT");
+        return -1;
+    }
+    oLog.logDebug("Locou fila de processamento");
+
+    //==========================================================================
+    // Conecta ao banco
+    oLog.logDebug("Conectando na BD...");
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst))
+    {
+        oLog.logError("Erro conectando no banco de dados");
+        Process(argv[0], UNLOCK);
+        oLog.logDebug("unlock executado");
+        return -1;
+    }
+    oLog.logDebug("Conectado na BD com sucesso...");
+
+    //==========================================================================
+    // Limite máximo de registros
+    sprintf(szAux,"Limite maximo permitido=%d",MAX_REGS);oLog.logDebug(szAux);
+    maxRegs = ObterParamMaxRegistros(MAX_REGS);
+    sprintf(szAux,"Limite parametrizado=%d",maxRegs);oLog.logDebug(szAux);
+
+    //==========================================================================
+    // Logar mensagem ?
+    ObterParamMsgLog(&tParamConf);
+    sprintf(szAux,"Log da Mensagem=%s",tParamConf.szMessageLog);oLog.logDebug(szAux);
+
+    if ( maxRegs > 0 )
+    {
+		string strMsgAtivaPosPendente;
+		string strMsgAtivaPos24h;
+		string strMsgAtivaPos;
+		string strMsgAtivaPre;
+		
+		ObterVariavelApoioParametro((char *)"VINCULO_SMS_PENDENTE_POS", strMsgAtivaPosPendente);
+		ObterVariavelApoioParametro((char *)"VINCULO_SMS_CONF24H_POS", strMsgAtivaPos24h);
+		ObterVariavelApoioParametro((char *)"VINCULO_SMS_CONF_POS", strMsgAtivaPos);
+		ObterVariavelApoioParametro((char *)"VINCULO_SMS_CONF_PRECONTROLE", strMsgAtivaPre);
+		
+		
+	
+		
+	
+        //==========================================================================
+        // Cursor
+
+        EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	/*
+        EXEC SQL DECLARE curvinculoRecargaSMS CURSOR FOR 
+            SELECT IDATENDIMENTOPROTOCOLO,CDAREAREGISTRO,NRLINHA,DSMENSAGEMENVIO,INENVIOSMS
+            FROM
+            ( 
+                SELECT 
+                    FILASMSPROTOCOLO.IDATENDIMENTOPROTOCOLO,
+                    FILASMSPROTOCOLO.CDAREAREGISTRO,
+                    FILASMSPROTOCOLO.NRLINHA,
+                    FILASMSPROTOCOLO.DSMENSAGEMENVIO,
+                    FILASMSPROTOCOLO.INENVIOSMS
+                FROM
+                    ATENDIMENTO.FILASMSPROTOCOLO FILASMSPROTOCOLO
+                WHERE
+                    FILASMSPROTOCOLO.DTENCERRAMENTO < SYSTIMESTAMP
+                ORDER BY
+                    FILASMSPROTOCOLO.DTULTIMAALTERACAO
+            )
+            WHERE ROWNUM <= :maxRegs;
+	*/
+	
+
+
+        EXEC SQL DECLARE curvinculoRecargaSMS_Pendente CURSOR FOR 
+            SELECT RET.IDVINCULORECARGA,RET.CDAREAREGISTROPOS,RET.NRLINHAPOS, RET.CDAREAREGISTROPRE_CTRL,RET.NRLINHAPRE_CTRL
+            FROM
+            ( 
+                SELECT 
+                    VR.IDVINCULORECARGA AS IDVINCULORECARGA,
+					SUBSTR(VES.NRLINHAPOS,1,2) AS CDAREAREGISTROPOS, 
+					SUBSTR(VES.NRLINHAPOS,3) AS NRLINHAPOS, 
+					SUBSTR(VES.NRLINHAPRE_CTRL,1,2) AS CDAREAREGISTROPRE_CTRL, 
+					SUBSTR(VES.NRLINHAPRE_CTRL,3) AS NRLINHAPRE_CTRL
+                FROM
+                    CUSTOMER.VINCULORECARGA VR,
+					CUSTOMER.VINCULO_ENVIAR_SMS VES
+                WHERE
+                    ( ( VR.NRLINHAPOS = VES.NRLINHAPOS ) AND ( VR.NRLINHAPRE_CTRL = VES.NRLINHAPRE_CTRL ) )
+					AND VES.DTULTIMAALTERACAO >= (SYSDATE -1)
+					AND VR.INSTATUS = 'P'
+					AND VES.IDUSUARIOALTERACAO = 1
+					AND ROWNUM <= :maxRegs
+            )RET;
+			
+			
+        memset(&lstOraIdVinculo_P,0,sizeof(lstOraIdVinculo_P));
+        memset(&lstOraCdAreaRegistro1_P,0,sizeof(lstOraCdAreaRegistro1_P));
+        memset(&lsOraNrLinha1_P,0,sizeof(lsOraNrLinha1_P));
+        memset(&lstOraCdAreaRegistro2_P,0,sizeof(lstOraCdAreaRegistro2_P));
+        memset(&lsOraNrLinha2_P,0,sizeof(lsOraNrLinha2_P));
+		
+        memset(&lstStatOraIdVinculo_P,-1,sizeof(lstStatOraIdVinculo_P));
+        memset(&lstStatOraCdAreaRegistro1_P,-1,sizeof(lstStatOraCdAreaRegistro1_P));
+        memset(&lstStatOraNrLinha1_P,-1,sizeof(lstStatOraNrLinha1_P));
+        memset(&lstStatOraCdAreaRegistro2_P,-1,sizeof(lstStatOraCdAreaRegistro2_P));
+        memset(&lstStatOraNrLinha2_P,-1,sizeof(lstStatOraNrLinha2_P));
+
+		
+		
+        EXEC SQL OPEN curvinculoRecargaSMS_Pendente;
+
+        oLog.logDebug("Carregando dados resultantes...");
+
+        EXEC SQL FOR :maxRegs FETCH curvinculoRecargaSMS_Pendente 
+        INTO 
+            :lstOraIdVinculo_P:lstStatOraIdVinculo_P,
+            :lstOraCdAreaRegistro1_P:lstStatOraCdAreaRegistro1_P,
+            :lsOraNrLinha1_P:lstStatOraNrLinha1_P,
+            :lstOraCdAreaRegistro2_P:lstStatOraCdAreaRegistro2_P,
+            :lsOraNrLinha2_P:lstStatOraNrLinha2_P;
+
+        linhas_retornadas_P = sqlca.sqlerrd[2];
+
+        EXEC SQL CLOSE curvinculoRecargaSMS_Pendente;
+
+        sprintf( szAux,"linhas retornadas Status Pendente=%d",linhas_retornadas_P );
+        oLog.logDebug(szAux);
+
+		// -------------------------------------------------------------------
+		
+        EXEC SQL DECLARE curvinculoRecargaSMS_Pendente_24H CURSOR FOR 
+            SELECT RET.IDVINCULORECARGA,RET.CDAREAREGISTROPOS,RET.NRLINHAPOS, RET.CDAREAREGISTROPRE_CTRL,RET.NRLINHAPRE_CTRL
+            FROM
+            ( 
+                SELECT 
+                    VR.IDVINCULORECARGA AS IDVINCULORECARGA,
+					SUBSTR(VES.NRLINHAPOS,1,2) AS CDAREAREGISTROPOS, 
+					SUBSTR(VES.NRLINHAPOS,3) AS NRLINHAPOS, 
+					SUBSTR(VES.NRLINHAPRE_CTRL,1,2) AS CDAREAREGISTROPRE_CTRL, 
+					SUBSTR(VES.NRLINHAPRE_CTRL,3) AS NRLINHAPRE_CTRL
+                FROM
+                    CUSTOMER.VINCULORECARGA VR,
+					CUSTOMER.VINCULO_ENVIAR_SMS VES
+                WHERE
+                    ( ( VR.NRLINHAPOS = VES.NRLINHAPOS ) AND ( VR.NRLINHAPRE_CTRL = VES.NRLINHAPRE_CTRL ) )
+					AND VES.DTULTIMAALTERACAO <= (SYSDATE -1)
+					AND VR.INSTATUS = 'P'
+					AND VES.IDUSUARIOALTERACAO = 2
+					AND ROWNUM <= :maxRegs
+            )RET;
+			
+        memset(&lstOraIdVinculo_P24h,0,sizeof(lstOraIdVinculo_P24h));
+        memset(&lstOraCdAreaRegistro1_P24h,0,sizeof(lstOraCdAreaRegistro1_P24h));
+        memset(&lsOraNrLinha1_P24h,0,sizeof(lsOraNrLinha1_P24h));
+        memset(&lstOraCdAreaRegistro2_P24h,0,sizeof(lstOraCdAreaRegistro2_P24h));
+        memset(&lsOraNrLinha2_P24h,0,sizeof(lsOraNrLinha2_P24h));
+		
+        memset(&lstStatOraIdVinculo_P24h,-1,sizeof(lstStatOraIdVinculo_P24h));
+        memset(&lstStatOraCdAreaRegistro1_P24h,-1,sizeof(lstStatOraCdAreaRegistro1_P24h));
+        memset(&lstStatOraNrLinha1_P24h,-1,sizeof(lstStatOraNrLinha1_P24h));
+        memset(&lstStatOraCdAreaRegistro2_P24h,-1,sizeof(lstStatOraCdAreaRegistro2_P24h));
+        memset(&lstStatOraNrLinha2_P24h,-1,sizeof(lstStatOraNrLinha2_P24h));
+
+		
+		
+        EXEC SQL OPEN curvinculoRecargaSMS_Pendente_24h;
+
+        oLog.logDebug("Carregando dados resultantes...");
+
+        EXEC SQL FOR :maxRegs FETCH curvinculoRecargaSMS_Pendente_24h 
+        INTO 
+            :lstOraIdVinculo_P24h:lstStatOraIdVinculo_P24h,
+            :lstOraCdAreaRegistro1_P24h:lstStatOraCdAreaRegistro1_P24h,
+            :lsOraNrLinha1_P24h:lstStatOraNrLinha1_P24h,
+            :lstOraCdAreaRegistro2_P24h:lstStatOraCdAreaRegistro2_P24h,
+            :lsOraNrLinha2_P24h:lstStatOraNrLinha2_P24h;
+
+        linhas_retornadas_P24h = sqlca.sqlerrd[2];
+
+        EXEC SQL CLOSE curvinculoRecargaSMS_Pendente_24h;
+
+        sprintf( szAux,"linhas retornadas Status Pendente 24H=%d",linhas_retornadas_P24h );
+        oLog.logDebug(szAux);
+
+		// -------------------------------------------------------------------
+					
+        EXEC SQL DECLARE curvinculoRecargaSMS_Ativo CURSOR FOR 
+            SELECT RET.IDVINCULORECARGA,RET.CDAREAREGISTROPOS,RET.NRLINHAPOS, RET.CDAREAREGISTROPRE_CTRL,RET.NRLINHAPRE_CTRL
+            FROM
+            ( 
+                SELECT 
+                    VR.IDVINCULORECARGA AS IDVINCULORECARGA,
+					SUBSTR(VES.NRLINHAPOS,1,2) AS CDAREAREGISTROPOS, 
+					SUBSTR(VES.NRLINHAPOS,3) AS NRLINHAPOS, 
+					SUBSTR(VES.NRLINHAPRE_CTRL,1,2) AS CDAREAREGISTROPRE_CTRL, 
+					SUBSTR(VES.NRLINHAPRE_CTRL,3) AS NRLINHAPRE_CTRL
+                FROM
+                    CUSTOMER.VINCULORECARGA VR,
+					CUSTOMER.VINCULO_ENVIAR_SMS VES
+                WHERE
+                    ( ( VR.NRLINHAPOS = VES.NRLINHAPOS ) AND ( VR.NRLINHAPRE_CTRL = VES.NRLINHAPRE_CTRL ) )
+					AND VR.INSTATUS = 'A'
+					AND ROWNUM <= :maxRegs
+            )RET;
+            
+
+        memset(&lstOraIdVinculo_Ativa,0,sizeof(lstOraIdVinculo_Ativa));
+        memset(&lstOraCdAreaRegistro1_Ativa,0,sizeof(lstOraCdAreaRegistro1_Ativa));
+        memset(&lsOraNrLinha1_Ativa,0,sizeof(lsOraNrLinha1_Ativa));
+        memset(&lstOraCdAreaRegistro2_Ativa,0,sizeof(lstOraCdAreaRegistro2_Ativa));
+        memset(&lsOraNrLinha2_Ativa,0,sizeof(lsOraNrLinha2_Ativa));
+		
+        memset(&lstStatOraIdVinculo_Ativa,-1,sizeof(lstStatOraIdVinculo_Ativa));
+        memset(&lstStatOraCdAreaRegistro1_Ativa,-1,sizeof(lstStatOraCdAreaRegistro1_Ativa));
+        memset(&lstStatOraNrLinha1_Ativa,-1,sizeof(lstStatOraNrLinha1_Ativa));
+        memset(&lstStatOraCdAreaRegistro2_Ativa,-1,sizeof(lstStatOraCdAreaRegistro2_Ativa));
+        memset(&lstStatOraNrLinha2_Ativa,-1,sizeof(lstStatOraNrLinha2_Ativa));
+
+		
+		
+        EXEC SQL OPEN curvinculoRecargaSMS_Ativo;
+
+        oLog.logDebug("Carregando dados resultantes...");
+
+        EXEC SQL FOR :maxRegs FETCH curvinculoRecargaSMS_Ativo 
+        INTO 
+            :lstOraIdVinculo_Ativa:lstStatOraIdVinculo_Ativa,
+            :lstOraCdAreaRegistro1_Ativa:lstStatOraCdAreaRegistro1_Ativa,
+            :lsOraNrLinha1_Ativa:lstStatOraNrLinha1_Ativa,
+            :lstOraCdAreaRegistro2_Ativa:lstStatOraCdAreaRegistro2_Ativa,
+            :lsOraNrLinha2_Ativa:lstStatOraNrLinha2_Ativa;
+
+        linhas_retornadas_Ativa = sqlca.sqlerrd[2];
+
+        EXEC SQL CLOSE curvinculoRecargaSMS_Ativo;
+
+        sprintf( szAux,"linhas retornadas Status Pendente Ativa=%d",linhas_retornadas_Ativa );
+        oLog.logDebug(szAux);
+
+		// -------------------------------------------------------------------
+
+        //==========================================================================
+        // Processa
+
+        if ( linhas_retornadas_P > 0 || linhas_retornadas_P24h > 0 || linhas_retornadas_Ativa > 0 )
+        {
+            // Conecta com fila Tibco
+            oLog.logDebug("Iniciando conexao JMS...");
+
+            const char *queueName = tParamConf.szQueueName;     // VIVO.FO.SMS.SEND
+            const char *serverUrl = tParamConf.szServerUrl;     // astorga.telespcelular.com.br
+            const char *userName = tParamConf.szUserName;       // admin
+            const char *password = tParamConf.szPassword;       // 71b60
+            const char *pk_password = tParamConf.szPk_password; // teste
+
+            sprintf(szAux, "  queueName=%s", queueName); oLog.logDebug(szAux);
+            sprintf(szAux, "  serverUrl=%s", serverUrl); oLog.logDebug(szAux);
+            //sprintf(szAux, "   userName=%s", userName); oLog.logDebug(szAux);
+            //sprintf(szAux, "   password=%s", password); oLog.logDebug(szAux);
+            //sprintf(szAux, "pk_password=%s", pk_password); oLog.logDebug(szAux);
+
+			
+			
+			
+			
+			
+			
+
+
+
+				
+			
+            // Create the connection, use ssl if specified
+            if(sslParams)
+            {
+                status = tibemsQueueConnection_CreateSSL(&queueConnection, serverUrl, NULL, userName, password, sslParams, pk_password);
+            }
+            else
+            {
+                status = tibemsQueueConnection_Create(&queueConnection, serverUrl, NULL, userName, password);
+            }
+
+            if (status != TIBEMS_OK)
+            {
+                oLog.logDebug("Falha de conexão à fila Tibco...");
+                oLog.logDebug("Desconectando da BD...");
+                DBDisconnect();
+
+                oLog.logDebug("Liberando fila...");
+                Process(argv[0], UNLOCK);
+
+                Fail("Error creating tibemsQueueConnection", status);
+            }
+
+            // create the queue session
+            status = tibemsQueue_Create(&queue, queueName);
+            if (status != TIBEMS_OK)
+            {
+                oLog.logDebug("Falha de conexão à fila Tibco...");
+                oLog.logDebug("Desconectando da BD...");
+                DBDisconnect();
+
+                oLog.logDebug("Liberando fila...");
+                Process(argv[0], UNLOCK);
+
+                Fail("Error tibemsQueue_Create", status);
+            }
+
+            // create the queue session
+            status = tibemsQueueConnection_CreateQueueSession(queueConnection, &queueSession, TIBEMS_FALSE, TIBEMS_AUTO_ACKNOWLEDGE);
+            if (status != TIBEMS_OK)
+            {
+                oLog.logDebug("Falha de conexão à fila Tibco...");
+                oLog.logDebug("Desconectando da BD...");
+                DBDisconnect();
+
+                oLog.logDebug("Liberando fila...");
+                Process(argv[0], UNLOCK);
+
+                Fail("Error tibemsQueueConnection_CreateQueueSession", status);
+            }
+
+            // create the queue sender
+            status = tibemsQueueSession_CreateSender(queueSession, &queueSender, queue);
+            if (status != TIBEMS_OK)
+            {
+                oLog.logDebug("Falha de conexão à fila Tibco...");
+                oLog.logDebug("Desconectando da BD...");
+                DBDisconnect();
+
+                oLog.logDebug("Liberando fila...");
+                Process(argv[0], UNLOCK);
+
+                Fail("Error tibemsQueueSession_CreateSender", status);
+            }
+
+            oLog.logDebug("Iniciando conexao JMS OK...");
+
+            oLog.logDebug("Enviando SMS's...");
+
+            //======================================================================
+            // Envia os SMS's que tiverem de ser enviados...
+            int qtEnviadas_P = 0;
+			int qtEnviadas_P24h = 0;
+			int qtEnviadas_Ativa = 0;
+			int i = 0;
+            for( i = 0; i < linhas_retornadas_P; i++ )
+            {
+                if(iSignalProcessa == 0)
+                {
+                    oLog.logDebug("3.Tratamento de sinal de termino dentro do loop");
+                    break;
+                }
+
+                CONVIND(lstOraIdVinculo_P[i],lstStatOraIdVinculo_P[i]);
+                CONVIND(lstOraCdAreaRegistro1_P[i],lstStatOraCdAreaRegistro1_P[i]);
+                CONVIND(lsOraNrLinha1_P[i],lstStatOraNrLinha1_P[i]);
+                CONVIND(lstOraCdAreaRegistro2_P[i],lstStatOraCdAreaRegistro2_P[i]);
+                CONVIND(lsOraNrLinha2_P[i],lstStatOraNrLinha2_P[i]);
+                
+				string strMsgAtivaPosTmp;
+				
+				string strLinhaPos;
+				string strLinhaPre;
+				
+				strLinhaPos = (const char *)lstOraCdAreaRegistro1_Ativa[i].arr;
+				strLinhaPos += (const char *)lsOraNrLinha1_Ativa[i].arr;
+				
+				strLinhaPre = (const char*)lstOraCdAreaRegistro2_Ativa[i].arr;
+				strLinhaPre += (const char*)lsOraNrLinha2_Ativa[i].arr;
+				
+                strMsgAtivaPosTmp = strMsgAtivaPosPendente;
+
+				sprintf( szAux,"Linha POS [%s]", (char *)strLinhaPos.c_str() ); oLog.logDebug(szAux);
+				sprintf( szAux,"Linha PRE/CTRL [%s]", (char *)strLinhaPre.c_str() ); oLog.logDebug(szAux);
+				
+				string sConstLinhaPos = "_NRLINHAPOS_";
+				string sConstLinhaPre = "_NRLINHAPRE_CTRL_";
+
+				int pos;
+				for(pos=0;(pos = strMsgAtivaPosTmp.find(sConstLinhaPos,pos))!=-1;pos++)
+					strMsgAtivaPosTmp.replace(pos,sConstLinhaPos.length(),strLinhaPos);
+					
+				for(pos=0;(pos = strMsgAtivaPosTmp.find(sConstLinhaPre,pos))!=-1;pos++)
+					strMsgAtivaPosTmp.replace(pos,sConstLinhaPre.length(),strLinhaPre);
+				
+				sprintf( szAux,"Mensagem para ser enviada Linha POS [%s]", (char *)strMsgAtivaPosTmp.c_str() ); oLog.logDebug(szAux);
+				
+				
+				//ENVIANDO MSG PARA TELEFONE POS
+				EnviarMensagemTibco((const char*)lstOraIdVinculo_P[i].arr
+								   ,(const char*)lstOraCdAreaRegistro1_P[i].arr
+								   ,(const char*)lsOraNrLinha1_P[i].arr
+								 //,(const char*)"Recarga Vivo. Voce recebeu um pedido para vincular recargas a sua conta. Para continuar, envie um SMS para 123 com a palavra \"CONSULTAR\"."
+								   //,(const char*)"Recarga Vivo. Voce recebeu um pedido para vincular recargas a sua conta. Para continuar, envie um SMS para 321 com a palavra \"CONSULTAR\"."
+								   ,(const char*)strMsgAtivaPosTmp.c_str()
+								   ,tParamConf.szQueueName
+								   ,argv[0]
+								   ,queueSender
+								   ,tParamConf.szMessageLog
+								   );
+/*
+				//ENVIANDO MSG PARA TELEFONE PRE/CTRL
+				EnviarMensagemTibco((const char*)lstOraIdVinculo_P[i].arr
+								   ,(const char*)lstOraCdAreaRegistro2_P[i].arr
+								   ,(const char*)lsOraNrLinha2_P[i].arr
+								   ,(const char*)"Voce possui solicitacoes de vinculo de recarga pendentes de confirmacao."
+								   ,tParamConf.szQueueName
+								   ,argv[0]
+								   ,queueSender
+								   ,tParamConf.szMessageLog
+								   );
+				*/
+
+				qtEnviadas_P++;
+
+            } // for(;;)
+			
+			sprintf(szAux,"%d mensagens foram enviadas para linhas Pendentes",qtEnviadas_P); oLog.logDebug(szAux);
+			
+            for( i = 0; i < linhas_retornadas_P24h; i++ )
+            {
+                if(iSignalProcessa == 0)
+                {
+                    oLog.logDebug("3.Tratamento de sinal de termino dentro do loop");
+                    break;
+                }
+
+                CONVIND(lstOraIdVinculo_P24h[i],lstStatOraIdVinculo_P24h[i]);
+                CONVIND(lstOraCdAreaRegistro1_P24h[i],lstStatOraCdAreaRegistro1_P24h[i]);
+                CONVIND(lsOraNrLinha1_P24h[i],lstStatOraNrLinha1_P24h[i]);
+                CONVIND(lstOraCdAreaRegistro2_P24h[i],lstStatOraCdAreaRegistro2_P24h[i]);
+                CONVIND(lsOraNrLinha2_P24h[i],lstStatOraNrLinha2_P24h[i]);
+                
+				string strMsgAtivaPosTmp;
+				
+				string strLinhaPos;
+				string strLinhaPre;
+				
+				strLinhaPos = (const char *)lstOraCdAreaRegistro1_Ativa[i].arr;
+				strLinhaPos += (const char *)lsOraNrLinha1_Ativa[i].arr;
+				
+				strLinhaPre = (const char*)lstOraCdAreaRegistro2_Ativa[i].arr;
+				strLinhaPre += (const char*)lsOraNrLinha2_Ativa[i].arr;
+				
+                strMsgAtivaPosTmp = strMsgAtivaPos24h;
+
+				sprintf( szAux,"Linha POS [%s]", (char *)strLinhaPos.c_str() ); oLog.logDebug(szAux);
+				sprintf( szAux,"Linha PRE/CTRL [%s]", (char *)strLinhaPre.c_str() ); oLog.logDebug(szAux);
+				
+				string sConstLinhaPos = "_NRLINHAPOS_";
+				string sConstLinhaPre = "_NRLINHAPRE_CTRL_";
+
+				int pos;
+				for(pos=0;(pos = strMsgAtivaPosTmp.find(sConstLinhaPos,pos))!=-1;pos++)
+					strMsgAtivaPosTmp.replace(pos,sConstLinhaPos.length(),strLinhaPos);
+					
+				for(pos=0;(pos = strMsgAtivaPosTmp.find(sConstLinhaPre,pos))!=-1;pos++)
+					strMsgAtivaPosTmp.replace(pos,sConstLinhaPre.length(),strLinhaPre);
+				
+				sprintf( szAux,"Mensagem para ser enviada Linha POS [%s]", (char *)strMsgAtivaPosTmp.c_str() ); oLog.logDebug(szAux);
+
+				
+				
+				
+				//ENVIANDO MSG PARA TELEFONE POS
+				EnviarMensagemTibco((const char*)lstOraIdVinculo_P24h[i].arr
+								   ,(const char*)lstOraCdAreaRegistro1_P24h[i].arr
+								   ,(const char*)lsOraNrLinha1_P24h[i].arr
+								 //,(const char*)"Recarga Vivo. Voce recebeu um pedido para vincular recargas a sua conta. Para continuar, envie um SMS para 123 com a palavra \"CONSULTAR\"."
+								   //,(const char*)"Recarga Vivo. Voce recebeu um pedido para vincular recargas a sua conta. Para continuar, envie um SMS para 321 com a palavra \"CONSULTAR\"."
+								   ,(const char*)strMsgAtivaPosTmp.c_str()
+								   ,tParamConf.szQueueName
+								   ,argv[0]
+								   ,queueSender
+								   ,tParamConf.szMessageLog
+								   );
+				/*
+				//ENVIANDO MSG PARA TELEFONE PRE/CTRL
+				EnviarMensagemTibco((const char*)lstOraIdVinculo_P24h[i].arr
+								   ,(const char*)lstOraCdAreaRegistro2_P24h[i].arr
+								   ,(const char*)lsOraNrLinha2_P24h[i].arr
+								   ,(const char*)"Voce possui solicitacoes de vinculo de recarga pendentes de confirmacao."
+								   ,tParamConf.szQueueName
+								   ,argv[0]
+								   ,queueSender
+								   ,tParamConf.szMessageLog
+								   );
+				*/
+				qtEnviadas_P24h++;
+
+            } // for(;;)
+			
+			sprintf(szAux,"%d mensagens foram enviadas para linhas Pendentes que foram criadas a 24 horas.",qtEnviadas_P24h); oLog.logDebug(szAux);
+			
+            for( i = 0; i < linhas_retornadas_Ativa; i++ )
+            {
+                if(iSignalProcessa == 0)
+                {
+                    oLog.logDebug("3.Tratamento de sinal de termino dentro do loop");
+                    break;
+                }
+
+                CONVIND(lstOraIdVinculo_Ativa[i],lstStatOraIdVinculo_Ativa[i]);
+                CONVIND(lstOraCdAreaRegistro1_Ativa[i],lstStatOraCdAreaRegistro1_Ativa[i]);
+                CONVIND(lsOraNrLinha1_Ativa[i],lstStatOraNrLinha1_Ativa[i]);
+                CONVIND(lstOraCdAreaRegistro2_Ativa[i],lstStatOraCdAreaRegistro2_Ativa[i]);
+                CONVIND(lsOraNrLinha2_Ativa[i],lstStatOraNrLinha2_Ativa[i]);
+                
+				string strMsgAtivaPosTmp;
+				string strMsgAtivaPreTmp;
+				
+				string strLinhaPos;
+				string strLinhaPre;
+				
+				strLinhaPos = (const char *)lstOraCdAreaRegistro1_Ativa[i].arr;
+				strLinhaPos += (const char *)lsOraNrLinha1_Ativa[i].arr;
+				
+				strLinhaPre = (const char*)lstOraCdAreaRegistro2_Ativa[i].arr;
+				strLinhaPre += (const char*)lsOraNrLinha2_Ativa[i].arr;
+				
+                strMsgAtivaPosTmp = strMsgAtivaPos;
+				strMsgAtivaPreTmp = strMsgAtivaPre;
+
+				sprintf( szAux,"Linha POS [%s]", (char *)strLinhaPos.c_str() ); oLog.logDebug(szAux);
+				sprintf( szAux,"Linha PRE/CTRL [%s]", (char *)strLinhaPre.c_str() ); oLog.logDebug(szAux);
+				
+				string sConstLinhaPos = "_NRLINHAPOS_";
+				string sConstLinhaPre = "_NRLINHAPRE_CTRL_";
+
+				int pos;
+				for(pos=0;(pos = strMsgAtivaPosTmp.find(sConstLinhaPos,pos))!=-1;pos++)
+					strMsgAtivaPosTmp.replace(pos,sConstLinhaPos.length(),strLinhaPos);
+					
+				for(pos=0;(pos = strMsgAtivaPosTmp.find(sConstLinhaPre,pos))!=-1;pos++)
+					strMsgAtivaPosTmp.replace(pos,sConstLinhaPre.length(),strLinhaPre);
+				
+				for(pos=0;(pos = strMsgAtivaPreTmp.find(sConstLinhaPos,pos))!=-1;pos++)
+					strMsgAtivaPreTmp.replace(pos,sConstLinhaPos.length(),strLinhaPos);
+					
+				for(pos=0;(pos = strMsgAtivaPreTmp.find(sConstLinhaPre,pos))!=-1;pos++)
+					strMsgAtivaPreTmp.replace(pos,sConstLinhaPre.length(),strLinhaPre);
+					
+					
+					
+				
+				sprintf( szAux,"Mensagem para ser enviada Linha POS [%s]", (char *)strMsgAtivaPosTmp.c_str() ); oLog.logDebug(szAux);
+				sprintf( szAux,"Mensagem para ser enviada Linha PRE/CTRL [%s]", (char *)strMsgAtivaPreTmp.c_str() ); oLog.logDebug(szAux);
+				
+				
+				//ENVIANDO MSG PARA TELEFONE POS
+				EnviarMensagemTibco((const char*)lstOraIdVinculo_Ativa[i].arr
+								   ,(const char*)lstOraCdAreaRegistro1_Ativa[i].arr
+								   ,(const char*)lsOraNrLinha1_Ativa[i].arr
+								   //,(const char*)"Recarga Vivo. Seu pedido foi autorizado. Sempre que quiser fazer uma recarga, ligue gratis para *123#."
+								   //,(const char*)"Recarga Vivo. O vinculo foi criado com sucesso. Envie um SMS com a palavra RECARGA para 123 e recarregue."
+								   ,(const char *) strMsgAtivaPosTmp.c_str()
+								   ,tParamConf.szQueueName
+								   ,argv[0]
+								   ,queueSender
+								   ,tParamConf.szMessageLog
+								   );
+
+				//ENVIANDO MSG PARA TELEFONE PRE/CTRL
+				EnviarMensagemTibco((const char*)lstOraIdVinculo_Ativa[i].arr
+								   ,(const char*)lstOraCdAreaRegistro2_Ativa[i].arr
+								   ,(const char*)lsOraNrLinha2_Ativa[i].arr
+								   //,(const char*)"Recarga Vivo. Seu pedido foi autorizado. Sempre que quiser fazer uma recarga, ligue gratis para *123#."
+								   //,(const char*)"Recarga Vivo. O vinculo foi criado com sucesso. Envie um SMS com a palavra RECARGA para 123 e recarregue."
+								   ,(const char *) strMsgAtivaPreTmp.c_str()
+								   ,tParamConf.szQueueName
+								   ,argv[0]
+								   ,queueSender
+								   ,tParamConf.szMessageLog
+								   );
+
+				qtEnviadas_Ativa+=2;
+
+            } // for(;;)			
+
+            sprintf(szAux,"%d mensagens foram enviadas para linhas Ativa(s)",qtEnviadas_Ativa); oLog.logDebug(szAux);
+
+            //======================================================================
+
+            // Apaga o bloco
+            oLog.logDebug("Vai atualizar o bloco [Pendente] processado...");
+
+			if( qtEnviadas_P > 0)
+			{
+			
+            EXEC SQL FOR :linhas_retornadas_P 
+                UPDATE
+                    CUSTOMER.VINCULO_ENVIAR_SMS VES
+                SET
+                    VES.IDUSUARIOALTERACAO = 2
+                WHERE
+				 1 <= (SELECT COUNT(1) FROM 
+						CUSTOMER.VINCULORECARGA VR 
+						WHERE 
+							VR.NRLINHAPOS = VES.NRLINHAPOS 
+							AND VR.NRLINHAPRE_CTRL = VES.NRLINHAPRE_CTRL
+							AND VR.IDVINCULORECARGA  IN (:lstOraIdVinculo_P:lstStatOraIdVinculo_P));
+				EXEC SQL COMMIT;
+			}
+			
+			if( qtEnviadas_P24h > 0)
+			{
+				oLog.logDebug("Vai atualizar o bloco [Pendente após 24 horas] processado...");
+
+				EXEC SQL FOR :linhas_retornadas_P24h
+				UPDATE
+                    CUSTOMER.VINCULO_ENVIAR_SMS VES
+                SET
+                    VES.IDUSUARIOALTERACAO = 3
+                WHERE
+				 1 <= (SELECT COUNT(1) FROM 
+						CUSTOMER.VINCULORECARGA VR 
+						WHERE 
+							VR.NRLINHAPOS = VES.NRLINHAPOS 
+							AND VR.NRLINHAPRE_CTRL = VES.NRLINHAPRE_CTRL
+							AND VR.IDVINCULORECARGA  IN (:lstOraIdVinculo_P24h:lstStatOraIdVinculo_P24h));
+							
+				EXEC SQL COMMIT;
+			}
+			
+			if( qtEnviadas_Ativa > 0)
+			{
+				oLog.logDebug("Vai apagar o bloco [Confirmado] processado...");
+
+				EXEC SQL FOR :linhas_retornadas_Ativa
+					DELETE
+						CUSTOMER.VINCULO_ENVIAR_SMS VES
+					WHERE
+					 1 <= (SELECT COUNT(1) FROM 
+							CUSTOMER.VINCULORECARGA VR 
+							WHERE 
+								VR.NRLINHAPOS = VES.NRLINHAPOS 
+								AND VR.NRLINHAPRE_CTRL = VES.NRLINHAPRE_CTRL
+								AND VR.IDVINCULORECARGA  IN (:lstOraIdVinculo_Ativa:lstStatOraIdVinculo_Ativa));
+
+				EXEC SQL COMMIT;
+			}
+
+            //======================================================================
+            // Desconecta da fila Tibco
+            oLog.logDebug("Fechando conexao JMS...");
+
+            // destroy the queue
+            status = tibemsQueue_Destroy(queue);
+            if (status != TIBEMS_OK)
+            {
+                sprintf( szAux,"Error tibemsQueue_Destroy=[%d]",status );
+                oLog.logDebug(szAux);
+            }
+            else
+            {
+                // close the connection
+                status = tibemsConnection_Close(queueConnection);
+                if (status != TIBEMS_OK)
+                {
+                    sprintf( szAux,"Error tibemsConnection_Close=[%d]",status );
+                    oLog.logDebug(szAux);
+                }
+                else
+                {
+                    // destroy the ssl params
+                    tibemsSSLParams_Destroy(sslParams);
+                    oLog.logDebug("Fechando conexao JMS OK...");
+                }
+            }
+
+        } // if ( linhas_retornadas_P > 0 )
+    } // if ( maxRegs > 0 )
+    else
+    {
+        oLog.logDebug("NÃO HOUVE PROCESSAMENTO PARA BUFFER COM TAMANHO ZERO");
+    }
+    oLog.logDebug("Desconectando da BD...");
+    DBDisconnect();
+
+    oLog.logDebug("Liberando fila...");
+    Process(argv[0], UNLOCK);
+
+    oLog.logDebug("Processamento encerrado");
+    oLog.logDebug("<<<vinculoRecargaSMS");
+
+    return 0;
+
+    sqlError:
+        oLog.logDebug("Liberando fila por erro...");
+        Process(argv[0], UNLOCK);
+
+        sprintf(szAux, "Finalizando processo com erro ORACLE (%d-%.256s)",
+                    sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+
+        EXEC SQL ROLLBACK;
+
+        oLog.logDebug("Vai tentar desconectar da BD...");
+        DBDisconnect();
+
+        return -1;
+}
+
+
+/************************************************************************************************************/
+void EnviarMensagemTibco(const char *idAtendimentoProtocolo,const char *cdAreaRegistro
+                        ,const char *nrLinha,const char *dsMensagemEnvio
+                        ,const char *queueName,char *argVZero
+                        ,tibemsQueueSender &queueSender
+                        ,const char *pSzMessageLog)
+{
+    tibemsTextMsg msg;
+    char szMsg[2001];
+
+    sprintf(szMsg,
+    "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>"
+    "<msg>"
+        "<msgHdr>"
+            "<service>SMSSend</service>"
+            "<user>1</user>"
+            "<topic>%s</topic>"
+            "<timeout>30</timeout>"
+        "</msgHdr>"
+        "<msgBody>"
+            "<sms>"
+                "<codigoInterno>%s</codigoInterno>"
+                "<origem>2001</origem>"
+                "<destino>%s%s</destino>"
+                "<mensagem>%s</mensagem>"
+            "</sms>"
+        "</msgBody>"
+    "</msg>",queueName
+            ,idAtendimentoProtocolo
+            ,cdAreaRegistro,nrLinha
+            ,dsMensagemEnvio);
+
+    // se é parar loggar a mensagem de envio ...
+    if ( 'S' == *pSzMessageLog )
+    {
+        sprintf(szAux,"Vai enfileirar MSG=%s,TAMMSG=%d",szMsg,strlen(szMsg));
+        oLog.logDebug(szAux);
+    }
+
+	// create the text message
+	tibems_status status = tibemsTextMsg_Create(&msg);
+	if (status != TIBEMS_OK)
+    {
+        oLog.logDebug("Falha de envio à fila Tibco...");
+        oLog.logDebug("Desconectando da BD...");
+        DBDisconnect();
+
+        oLog.logDebug("Liberando fila...");
+        Process(argVZero, UNLOCK);
+
+        Fail("Error tibemsTextMsg_Create", status);
+    }
+
+	// set the message text
+	status = tibemsTextMsg_SetText(msg, szMsg);
+	if (status != TIBEMS_OK)
+    {
+        oLog.logDebug("Falha de envio à fila Tibco...");
+        oLog.logDebug("Desconectando da BD...");
+        DBDisconnect();
+
+        oLog.logDebug("Liberando fila...");
+        Process(argVZero, UNLOCK);
+
+        Fail("Error tibemsTextMsg_SetText", status);
+    }
+
+	// send the message
+	status = tibemsQueueSender_Send(queueSender, msg);
+	if (status != TIBEMS_OK)
+    {
+        oLog.logDebug("Falha de envio à fila Tibco...");
+        oLog.logDebug("Desconectando da BD...");
+        DBDisconnect();
+
+        oLog.logDebug("Liberando fila...");
+        Process(argVZero, UNLOCK);
+
+        Fail("Error tibemsQueueSender_Send", status);
+    }
+
+	// destroy the message
+	status = tibemsMsg_Destroy(msg);
+	if (status != TIBEMS_OK)
+    {
+        oLog.logDebug("Falha de envio à fila Tibco...");
+        oLog.logDebug("Desconectando da BD...");
+        DBDisconnect();
+
+        oLog.logDebug("Liberando fila...");
+        Process(argVZero, UNLOCK);
+
+        Fail("Error tibemsMsg_Destroy", status);
+    }
+}
+
+/************************************************************************************************************/
+void ArmaSinal(int iSignal)
+{
+    sprintf(szAux, "Armando tratamento para Signal(%d)", iSignal); oLog.logInformation(szAux);
+
+    if(signal((iSignal), ProcessaSinal) == SIG_ERR)
+    {
+        fprintf(stderr, "ERRO ARMANDO SINAL!!!");
+        exit(-1);
+    }
+}
+
+/************************************************************************************************************/
+void ProcessaSinal(int iSig)
+{
+    sprintf(szAux, "iSig(%d)", iSig); oLog.logInformation(szAux);
+
+    // rearma o mesmo sinal lançado
+    ArmaSinal(iSig);
+
+    if(iSig == SIGTERM)
+    {
+        oLog.logInformation("Finalizando processamento via sinal....");
+        iSignalProcessa=0;
+    }
+}
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[101];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug("Obtendo parametros de configuracao...");
+
+    // Zera variáveis
+    memset(ptParamConf, 0, sizeof(TParamConf));
+    memset(szLinha, 0, sizeof(szLinha));
+    memset(szDivArq, 0, sizeof(szDivArq));
+    memset(szDivPre, 0, sizeof(szDivPre));
+
+    // Define o arquivo de configuração
+    mfConfig.setPath("vinculoRecargaSMS.cfg");
+
+    // Verificar se conseguiu abrir o arquivo
+    if(!mfConfig.abrir())
+    {
+        oLog.logError("Erro abrindo arquivo de configuração!");
+        return -1;
+    }
+
+    // Capturando usuario, senha, path e instance de banco do arquivo
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        // Verifica qual parâmetro foi encontrado.
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, TAM_BD_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, TAM_BD_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, TAM_BD_INST);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, TAM_TX_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, TAM_TX_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, TAM_TX_GEN);
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, TAM_TX_CLT);
+        }
+        else if (strcmp(szDivPre, "QueueName")==0)
+        {
+            strncpy(ptParamConf->szQueueName, szDivArq, TAM_SZ_QUEUE_NAME);
+        }
+        else if (strcmp(szDivPre, "ServerUrl")==0)
+        {
+            strncpy(ptParamConf->szServerUrl, szDivArq, TAM_SZ_SERVER_URL);
+        }
+        else if (strcmp(szDivPre, "UserName")==0)
+        {
+            strncpy(ptParamConf->szUserName, szDivArq, TAM_SZ_USERNAME);
+        }
+        else if (strcmp(szDivPre, "Password")==0)
+        {
+            strncpy(ptParamConf->szPassword, szDivArq, TAM_SZ_PASSWORD);
+        }
+        else if (strcmp(szDivPre, "Pk_password")==0)
+        {
+            strncpy(ptParamConf->szPk_password, szDivArq, TAM_SZ_PKPASSWD);
+        }
+
+        memset(szLinha,  0, sizeof(szLinha));
+        memset(szDivPre, 0, sizeof(szDivPre));
+        memset(szDivArq, 0, sizeof(szDivArq));
+    }
+
+    // Fechando o arquivo de configuracao aberto
+    mfConfig.fechar();
+
+    //sprintf(szAux, "ptParamConf->szPws[%s]", ptParamConf->szPws); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]", ptParamConf->szUsr); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]", ptParamConf->szInst); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTux[%s]", ptParamConf->szPwsTux); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUsrTux[%s]", ptParamConf->szUsrTux); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]", ptParamConf->szPwsTuxGen); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szCltTux[%s]", ptParamConf->szCltTux); oLog.logDebug(szAux);
+
+    sprintf(szAux, "ptParamConf->szQueueName[%s]", ptParamConf->szQueueName); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szServerUrl[%s]", ptParamConf->szServerUrl); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUserName[%s]", ptParamConf->szUserName); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szPassword[%s]", ptParamConf->szPassword); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szPk_password[%s]", ptParamConf->szPk_password); oLog.logDebug(szAux);
+
+    // Verifica se todos os dados foram recuperados do arquivo de configuração.
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0 ||
+        strlen(ptParamConf->szQueueName) == 0 ||
+        strlen(ptParamConf->szServerUrl) == 0 ||
+        strlen(ptParamConf->szUserName) == 0 ||
+        strlen(ptParamConf->szPassword) == 0)
+    {
+        oLog.logError("Dados incompletos!");
+        return -1;
+    }
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...");
+    return 0;
+}
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    // String de conexao
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    // Marca ponto de erro
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    // Conecta
+    EXEC SQL CONNECT :connString;
+
+    return (sqlca.sqlcode);
+
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]");
+    return -1;
+}
+
+/************************************************************************************************************/
+void DBDisconnect(void)
+{
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    EXEC SQL COMMIT WORK RELEASE;
+    return;
+
+Error:
+    sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return;
+}
+
+/************************************************************************************************************/
+void Fail(const char* message, tibems_status s)
+{
+    const char* msg = tibemsStatus_GetText(s);
+    printf("ERROR: %s\n",message);
+    printf("\tSTATUS: %d %s\n",s,msg?msg:"(Undefined Error)");
+    exit(1);
+}
+
+/************************************************************************************************************/
+int ObterParamMaxRegistros(int LimMax)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        int MaxRegs=0;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    EXEC SQL
+        SELECT
+            TO_NUMBER(NVL(DSVALORPARAMETRO,2000))
+        INTO
+            :MaxRegs
+        FROM
+            APOIO.PARAMETRO
+        WHERE
+            CDPARAMETRO = 'SMS_VINCULORECARGA_NRO_MAXREGS';
+	 
+    if ( MaxRegs > LimMax )
+    {
+        sprintf(szAux,"Valor solicitado de %d é maior que o limite máximo. Assumindo limite máximo.",MaxRegs);
+        oLog.logDebug(szAux);
+        MaxRegs = LimMax;
+    }
+
+    if ( MaxRegs < 0 )
+    {
+        oLog.logDebug("Parametro 'SMS_VINCULORECARGA_NRO_MAXREGS' com valor inválido, assumindo default.");
+        MaxRegs = 2000;
+    }
+
+    return MaxRegs;
+
+erro:
+    sprintf(szAux,"maxRegsPrm default=%d,errcode=%d",2000,sqlca.sqlcode); oLog.logDebug(szAux);
+    return 2000;
+
+naoexiste:
+    sprintf(szAux,"Parametro 'SMS_VINCULORECARGA_NRO_MAXREGS' nao encontrado. Assumindo %d",2000); oLog.logDebug(szAux);
+    return 2000;
+}
+
+
+/************************************************************************************************************/
+void ObterParamMsgLog(TParamConf *tParamConf)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR varOraDsValorParametro[256];
+        short statOraDsValorParametro = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erroLog;
+    EXEC SQL WHENEVER NOT FOUND goto naoexisteLog;
+
+    EXEC SQL
+        SELECT
+            NVL(DSVALORPARAMETRO,'N')
+        INTO
+            :varOraDsValorParametro:statOraDsValorParametro
+        FROM
+            APOIO.PARAMETRO
+        WHERE
+            CDPARAMETRO = 'SMS_VINCULORECARGA_MSGLOG';
+
+    CONVIND(varOraDsValorParametro,statOraDsValorParametro);
+    SAFE_STRNCPY(tParamConf->szMessageLog,(char*)varOraDsValorParametro.arr);
+
+    return;
+
+erroLog:
+    sprintf(szAux,"Erro %d na busca do parametro 'SMS_VINCULORECARGA_MSGLOG'. Assumindo 'N'.",sqlca.sqlcode);
+    oLog.logDebug(szAux);
+    SAFE_STRNCPY(tParamConf->szMessageLog,"N");
+
+naoexisteLog:
+    sprintf(szAux,"Parametro 'SMS_VINCULORECARGA_MSGLOG' nao encontrado. Assumindo 'N'.");
+    oLog.logDebug(szAux);
+    SAFE_STRNCPY(tParamConf->szMessageLog,"N");
+}
+
+/********************************************************************************************/
+int Process(char *pszFileName, int iFlagLock)
+{
+    static int semid;
+    time_t tStart, tEnd;
+    double tDiff;
+    key_t key;
+
+    if(iFlagLock == UNLOCK)
+    {
+        UnLockSemaphore(semid);
+    }
+    else if(iFlagLock == LOCK)
+    {
+
+        if((key = ftok(pszFileName, 'a')) == (key_t) -1)
+        {
+            perror("IPC error: ftok");
+            exit(-1);
+        }
+
+        if((semid = InitSemaphore(key, 1)) == -1)
+        {
+            perror("InitSemaphore");
+            exit(-1);
+        }
+
+        time(&tStart);
+        LockSemaphore(semid);
+        time(&tEnd);
+
+        tDiff = difftime(tEnd, tStart);
+
+        // tempo limite para espera de processamento
+        if(tDiff > (double)0)
+            return -1;
+    }
+    else if(iFlagLock == KILL)
+    {
+        semctl(semid, 0, IPC_RMID); // deleta o semaforo
+    }
+    else
+    {
+        exit(-1);
+    }
+
+    return 0;
+}
+
+/********************************************************************************************/
+void UnLockSemaphore(int semid)
+{
+    struct sembuf sb;
+
+    sb.sem_num = 0;
+    sb.sem_op = 1; // free resource
+    sb.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &sb, 1) == -1)
+    {
+        perror("semop");
+        exit(1);
+    }
+}
+
+/********************************************************************************************/
+void LockSemaphore(int semid)
+{
+    struct sembuf sb;
+
+    sb.sem_num = 0;
+    sb.sem_op = -1;  // set to allocate resource
+    sb.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &sb, 1) == -1)
+    {
+        perror("semop");
+        exit(1);
+    }
+}
+
+/********************************************************************************************/
+/*
+** InitSemaphore() -- more-than-inspired by W. Richard Stevens' UNIX Network
+** Programming 2nd edition, volume 2, lockvsem.c, page 295.
+*/
+int InitSemaphore(key_t key, int nsems)
+{
+    union semun
+    {
+        int val;
+        struct semid_ds *buf;
+        ushort *array;
+    } arg;
+
+    struct semid_ds buf;
+    struct sembuf sb;
+    int semid;
+
+    semid = semget(key, nsems, IPC_CREAT | IPC_EXCL | 0666);
+    if (semid >= 0)
+    { // we got it first
+        sb.sem_op = 1;
+        sb.sem_flg = 0;
+        arg.val = 1;
+
+        for(sb.sem_num = 0; sb.sem_num < nsems; sb.sem_num++)
+        {
+            // do a semop() to "free" the semaphores.
+            // this sets the sem_otime field, as needed below.
+            if (semop(semid, &sb, 1) == -1)
+            {
+                int e = errno;
+                semctl(semid, 0, IPC_RMID); // clean up
+                errno = e;
+                return -1; // error, check errno
+            }
+        }
+    }
+    else if (errno == EEXIST)
+    {
+        int ready = 0;
+
+        semid = semget(key, nsems, 0); // get the id
+        if (semid < 0)
+            return semid; // error, check errno
+
+        // wait for other process to initialize the semaphore:
+        arg.buf = &buf;
+
+        for(int i = 0; i < MAX_RETRIES && !ready; i++)
+        {
+            semctl(semid, nsems-1, IPC_STAT, arg);
+
+            if (arg.buf->sem_otime != 0)
+            {
+                ready = 1;
+            }
+            else
+            {
+                sleep(1);
+            }
+        }
+        if(!ready)
+        {
+            errno = ETIME;
+            return -1;
+        }
+    }
+    else
+    {
+        return semid; // error, check errno
+    }
+
+    return semid;
+}
+
+
+void ObterVariavelApoioParametro(char *szChave, string &strVariavel)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * szOraChave;
+        VARCHAR varOraVariavel[512];
+        short statOraVariavel = -1;
+    EXEC SQL END DECLARE SECTION;
+	
+	szOraChave = szChave;
+	
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erroLog;
+    EXEC SQL WHENEVER NOT FOUND goto naoexisteLog;
+
+    EXEC SQL
+        SELECT
+            NVL(DSVALORPARAMETRO,' ')
+        INTO
+            :varOraVariavel:statOraVariavel
+        FROM
+            APOIO.PARAMETRO
+        WHERE
+            CDPARAMETRO = :szOraChave;
+
+    CONVIND(varOraVariavel,statOraVariavel);
+	//strcpy(*szVariavel,(char *)varOraVariavel.arr);
+    strVariavel = (char *)varOraVariavel.arr;
+
+	return;
+
+erroLog:
+    sprintf(szAux,"Erro na busca do parametro '%s' em APOIO.PARAMETRO. Assumindo 'N'.",szChave);
+    oLog.logDebug(szAux);
+
+naoexisteLog:
+    sprintf(szAux,"Parametro '%s' nao encontrado em APOIO.PARAMETRO. Assumindo ' '.",szChave);
+    oLog.logDebug(szAux);
+}

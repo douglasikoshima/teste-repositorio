@@ -1,0 +1,571 @@
+/**
+ * 
+ * @modulo  Batch
+ * @usecase Batch
+ * @author  Marcelo Nunes
+ * @version $Revision: 1.1.4.4.72.53.24.2.2.1 $
+ * @CVS     $Author: a5113943 $ - $Date: 2015/11/12 19:39:17 $
+ **/
+
+#include "../include/linhaOferta.h"
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+#include <strings.h>
+
+extern int    DBConnect(char *pUsr, char *pPwd, char *pInst);
+extern void   DBDisconnect(void);
+extern int    ObtemParamConf(TParamConf *ptParamConf);
+extern void   moverArquivo( const char *pszNomeArquivoOrigem, const char *pszNomeArquivoDestino );
+extern void   BuscaArquivoProcessar( char * nmArquivoProc );
+extern void   ToStr( char * bf );
+extern void   t_start( void );
+extern void   t_stop( void );
+extern double t_getrtime( void );
+extern void   termination_handler( int signum );
+extern void   LimpaHistorico( void );
+
+EXEC SQL INCLUDE SQLCA;
+
+Log oLog;
+
+
+int main ( void )
+{
+    t_start();
+    
+    struct tm tim;
+    time_t now;
+    double seg;
+    char   bf[256];
+    int    retorno = 0;
+    char   nmArquivoProc[256];
+    char   pattern[256];
+    char   cmdLoader[256];
+    char   szBuffer[1024];
+    char   nmOrigem[256];
+    char   nmDestino[256];
+    char   nmDescarte[256];
+    TParamConf tParamConf;
+    FILE * fp;
+    long size = 0;
+
+    unsigned long commitCount = 0;
+
+    memset( nmArquivoProc , 0x0, sizeof(nmArquivoProc) );
+    memset( pattern       , 0x0, sizeof(pattern) );
+    memset( cmdLoader     , 0x0, sizeof(cmdLoader) );
+    memset( nmOrigem      , 0x0, sizeof(nmOrigem) );
+    memset( nmDestino     , 0x0, sizeof(nmDestino) );
+    memset( nmDescarte    , 0x0, sizeof(nmDescarte) );
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char    szTrunc[256];
+        VARCHAR szLoader[200];
+        int     qtRegistrosProc=0;
+        int     qtRegistrosCarr=0;
+        int     qtRegistrosDisc=0;	
+
+        //controle de chamadas
+        int  iCtrLoader=0;
+        int  iCtrWc=0;
+        short i_szLoader = -1;
+
+        char O_str1[32768];
+
+		int O_CDERRO = 0;
+		char O_DSERRO[256];
+		short iO_CDERRO = -1;
+		short iO_DSERRO = -1;
+
+        EXEC SQL VAR O_str1 IS STRING (1024);
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    memset( szTrunc, 0x0, sizeof(szTrunc) );
+    
+    oLog.setNivel(2);
+    oLog.logDebug(">>>linhaOferta");
+
+    signal( SIGTERM, termination_handler );
+    signal( SIGSTOP, termination_handler );
+    signal( SIGQUIT, termination_handler );
+    signal( SIGKILL, termination_handler );
+    
+    // parametros de configuração
+    if ( ObtemParamConf( &tParamConf ) )
+    {
+        oLog.logError("Erro obtendo parametros de configuracao");
+        oLog.logDebug("<<<linhaOferta");
+        return EXIT_FAILURE;
+    }
+
+    oLog.logDebug("Conectando na BD...");
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst))
+    {
+        oLog.logError("Erro conectando no banco de dados");
+        oLog.logDebug("<<<linhaOferta");
+        return EXIT_FAILURE;
+    }
+    oLog.logDebug("Conectado na BD com sucesso...");
+
+    LimpaHistorico();
+    BuscaArquivoProcessar( nmArquivoProc );
+    if ( nmArquivoProc[0] == 0x0 )
+    {
+        oLog.logDebug( "--- Nao foram encontrados arquivos a processar" );
+        t_stop();
+        seg = t_getrtime();
+        sprintf( bf,"Tempo de processamento: %.2f segundos",seg );
+        oLog.logDebug( bf );
+        oLog.logDebug( "<<<linhaOferta" );
+        return EXIT_SUCCESS;
+    }
+
+    /*   Chama Procedure para TRUNCATE da tabela   */
+    strcpy(szTrunc,"call linha.sp_limpalinhaoferta()");
+    oLog.logDebug( szTrunc );
+    EXEC SQL EXECUTE IMMEDIATE :szTrunc;
+
+    sprintf( pattern, "%.19s", nmArquivoProc );
+    oLog.logDebug( "Tratando arquivo:" );
+    oLog.logDebug( pattern );
+
+    sprintf( nmOrigem, "../data/%s.txt", pattern );
+    sprintf( nmDestino, "../data/%s_PROCESSADO.txt", pattern );
+    sprintf( nmDescarte, "../data/%s_DESCARTE.bad", pattern );
+    moverArquivo ( nmOrigem, nmDestino );
+    fp = fopen( nmDestino, "r" );
+    fseek ( fp, 0, SEEK_END );
+    size = ftell ( fp );
+    fclose ( fp );
+    if ( size > 0 )
+    {
+        oLog.logDebug("Executando...");
+        //endOraStr( szLoader );
+        sprintf( cmdLoader, "sqlldr %s/%s@%s parfile=load_linhaOferta.par control=load_linhaOferta.ctl data=%s bad=%s", tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst, nmDestino, nmDescarte );
+        oLog.logDebug( cmdLoader );
+
+        iCtrLoader = system( cmdLoader );
+        if ( iCtrLoader < 0 )
+        {
+        	oLog.logDebug("SQL Loader: codigo de retorno: (iCtrLoader < 0)\n");
+            oLog.logDebug(strerror(errno));
+        }
+
+    }
+    else
+    {
+        oLog.logDebug ( "--- Arquivo sem registros" );
+    }
+    
+    // finaliza
+    oLog.logDebug( "Fechando conexao com o banco" );
+    DBDisconnect();
+
+
+    now = time(NULL);
+    tim = *(localtime(&now));
+    strcpy( nmOrigem, "../bin/load_linhaOferta.log" );
+    strftime(nmDestino,40,"../data/URA_%Y%m%d_%H%M%S.log",&tim);
+
+    moverArquivo ( nmOrigem, nmDestino );
+
+    
+	//if ( 0 == iCtrLoader )
+	if ( iCtrLoader < 0 )
+    {
+        oLog.logDebug("Processamento encerrado com ERRO!");
+    }
+    else
+    {
+        oLog.logDebug("Processamento encerrado com sucesso...");
+    }
+
+    t_stop();
+    seg = t_getrtime();
+    sprintf( bf,"Tempo de processamento: %.2f segundos",seg );
+    oLog.logDebug(bf);
+
+    oLog.logDebug("<<<linhaOferta");
+
+    return iCtrLoader;
+
+    sqlError:
+    	EXEC SQL ROLLBACK;
+        sprintf(szBuffer, "*** ERRO: Processo FINALIZADO com erro ORACLE (%d) [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szBuffer);
+        return EXIT_FAILURE;
+}
+
+
+
+/************************************************************************************************************/
+void moverArquivo ( const char *pszNomeArquivoOrigem, const char *pszNomeArquivoDestino )
+{
+    char szAux[1024];
+
+    link( pszNomeArquivoOrigem, pszNomeArquivoDestino );
+    unlink( pszNomeArquivoOrigem );
+
+    oLog.logDebug(" Renomeando arquivo");
+    sprintf(szAux," Origem [%s]", pszNomeArquivoOrigem); oLog.logDebug(szAux);
+    sprintf(szAux," Destino [%s]", pszNomeArquivoDestino); oLog.logDebug(szAux);
+}
+
+
+
+/************************************************************************************************************/
+int ObtemParamConf( TParamConf * ptParamConf )
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[100 + 1];
+    char szDivArq[256];
+    char szDivPre[21];
+    char szAux[1024];
+
+    oLog.logDebug("Obtendo parametros de configuracao...");
+
+    memset( ptParamConf, 0x00, sizeof(TParamConf) );
+    memset( szLinha    , 0x00, sizeof(szLinha) );
+    memset( szDivArq   , 0x00, sizeof(szDivArq) );
+    memset( szDivPre   , 0x00, sizeof(szDivPre) );
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("linhaOferta.cfg");
+
+    if( !mfConfig.abrir() )
+    {
+        oLog.logError("Erro abrindo arquivo de configuração!");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv( '=' );
+    while( mfConfig.getLine(szLinha) )
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, TAM_BD_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, TAM_BD_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, TAM_BD_INST);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, TAM_TX_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, TAM_TX_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, TAM_TX_GEN);
+        }
+        else if (!strcmp(szDivPre, "clt_tux"))
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, TAM_TX_CLT);
+        }
+        else if (!strcmp(szDivPre, "path"))
+        {
+            strncpy(ptParamConf->szPath, szDivArq, _MAX_PATH);
+        }
+        else if (!strcmp(szDivPre, "path_togo"))
+        {
+            strncpy(ptParamConf->szPathToGo, szDivArq, _MAX_PATH);
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    ToStr( ptParamConf->szPws );
+    sprintf(szAux, "ptParamConf->szPws[%s]", ptParamConf->szPws); oLog.logDebug(szAux);
+    ToStr( ptParamConf->szUsr );
+    sprintf(szAux, "ptParamConf->szUsr[%s]", ptParamConf->szUsr); oLog.logDebug(szAux);
+    ToStr( ptParamConf->szInst );
+    sprintf(szAux, "ptParamConf->szInst[%s]", ptParamConf->szInst); oLog.logDebug(szAux);
+    ToStr( ptParamConf->szPwsTux );
+    sprintf(szAux, "ptParamConf->szPwsTux[%s]", ptParamConf->szPwsTux); oLog.logDebug(szAux);
+    ToStr( ptParamConf->szUsrTux );
+    sprintf(szAux, "ptParamConf->szUsrTux[%s]", ptParamConf->szUsrTux); oLog.logDebug(szAux);
+    ToStr( ptParamConf->szPwsTuxGen );
+    sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]", ptParamConf->szPwsTuxGen); oLog.logDebug(szAux);
+    ToStr( ptParamConf->szCltTux );
+    sprintf(szAux, "ptParamConf->szCltTux[%s]", ptParamConf->szCltTux); oLog.logDebug(szAux);
+    ToStr( ptParamConf->szPath );
+    sprintf(szAux, "ptParamConf->szPath[%s]", ptParamConf->szPath); oLog.logDebug(szAux);
+    ToStr( ptParamConf->szPathToGo );
+    sprintf(szAux, "ptParamConf->szPathToGo[%s]", ptParamConf->szPathToGo); oLog.logDebug(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szPath) == 0 ||
+        //strlen(ptParamConf->szPathToGo) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0)
+    {
+        oLog.logError("Dados incompletos!");
+        return -1;
+    }
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...");
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    char szAux[1024];
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logInformation(">>>DBConnect");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+    oLog.logInformation(connString);
+
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    EXEC SQL CONNECT :connString;
+
+    oLog.logInformation("<<<DBConnect");
+
+    return (sqlca.sqlcode);
+
+errConn:
+    //oLog.logInformation("<<<DBConnect [ERROR]");
+    sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return -1;
+}
+
+
+
+/************************************************************************************************************/
+void DBDisconnect( void )
+{
+    char szAux[1024];
+    
+    oLog.logInformation(">>>DBDisconnect");
+
+    EXEC SQL WHENEVER SQLERROR GOTO DBDisconnectError;
+    EXEC SQL COMMIT WORK RELEASE;
+
+    oLog.logInformation("<<<DBDisconnect");
+    return;
+
+DBDisconnectError:
+    sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+}
+
+
+
+void BuscaArquivoProcessar( char *nmArquivoProc )
+{
+    oLog.logInformation( ">>> BuscaArquivoProcessar()" );
+
+    FILE *fp;
+    char sRegistro[32];
+    int len = 23;  // o tamanho do nome do arquivo a processar eh de 23 pos URA_YYYYMMDD_HHMISS.txt
+
+    char   pattern[256];
+    char   nmOrigem[256];
+    char   nmDestino[256];
+
+    memset( sRegistro, 0x0, sizeof(sRegistro) );
+    chdir( "../data" );
+    system( "ls -car *.txt > ../bin/lista.dir" );
+    chdir( "../bin" );
+
+    fp = fopen( "./lista.dir", "r" );
+    if ( fp == NULL )
+    {
+        oLog.logInformation( "*** NAO CONSEGUIU GERAR LISTA DE ARQUIVOS A PROCESSAR" );
+        oLog.logDebug(strerror(errno));
+        oLog.logInformation( "<<< BuscaArquivoProcessar()" );
+        return;
+    }
+    while( fgets( sRegistro, sizeof(sRegistro), fp ) )
+    {
+        ToStr( sRegistro );
+        if ( strlen(sRegistro) == len && !memcmp(sRegistro, "URA_", 4) && !memcmp(&sRegistro[20], "txt", 3) ) 
+        {
+        	if (*nmArquivoProc) {
+        	    memset( pattern       , 0x0, sizeof(pattern) );
+        	    memset( nmOrigem      , 0x0, sizeof(nmOrigem) );
+        	    memset( nmDestino     , 0x0, sizeof(nmDestino) );
+
+        	    sprintf( pattern, "%.19s", sRegistro );
+        	    sprintf( nmOrigem, "../data/%s.txt", pattern );
+        	    sprintf( nmDestino, "../data/%s_PROCESSADO.txt", pattern );
+        	    moverArquivo ( nmOrigem, nmDestino );
+        	    continue;
+        	}
+
+            strcpy( nmArquivoProc,sRegistro );
+            //fclose(fp);
+            //unlink( "./lista.dir" );
+            //return;
+        }
+        memset( sRegistro, 0x0, sizeof(sRegistro) );
+    }
+    fclose( fp );
+    unlink( "./lista.dir" );
+    
+    /*
+    DIR *dirp = opendir( "../data" );
+    struct dirent *dp;
+    while( dp = readdir(dirp) )
+    {
+        if ( dp->d_namlen == len && !memcmp(dp->d_name, "URA_", 4) && !memcmp(&dp->d_name[20], "txt", 3) ) 
+        {
+            strcpy( nmArquivoProc,dp->d_name );
+            closedir(dirp);
+            return;
+        }
+    }
+    closedir(dirp);
+    */
+    
+
+    oLog.logInformation( "<<< BuscaArquivoProcessar()" );
+}
+
+
+
+void ToStr( char * bf )
+{
+    char *p = bf;
+    while ( *p )
+    {
+        if ( *p == 0x0d || *p == 0x0a )
+        {
+           *p = 0x0;
+            break;
+        }
+        p++;
+    }
+}
+
+
+
+void t_start( void )
+{
+   if ( (time_start = times(&tms_start)) == -1 )
+        oLog.logDebug( strerror(errno) );
+}
+
+
+
+void t_stop( void )
+{
+   if ( (time_stop = times(&tms_stop)) == -1 )
+        oLog.logDebug( strerror(errno) );
+}
+
+
+
+double t_getrtime( void )
+{
+    
+    seconds = (double) (time_stop - time_start) / (double) TICKS;
+
+    return ( seconds );
+}
+
+
+
+void termination_handler( int signum )
+{
+    double seg;
+    char   bf[64];
+    
+    char buffer[512];
+    oLog.logDebug( "*** TERMINANDO PROCESSAMENTO ***" );
+    sprintf( buffer,"--- Recebeu signal %d", signum );
+    oLog.logDebug( buffer );
+    oLog.logDebug( "*** Fechando conexao com o banco de dados ***" );
+    DBDisconnect();
+    oLog.logDebug( "--- Processamento encerrado por solicitação do S.O." );
+
+    t_stop();
+    seg = t_getrtime();
+    sprintf( bf,"Tempo de processamento: %.2f segundos",seg );
+    oLog.logDebug(bf);
+
+    oLog.logDebug("<<<linhaOferta");
+}
+
+
+
+void LimpaHistorico( void )
+{
+    DIR *dirp = NULL;
+    struct stat     statbuf;
+    struct dirent *dp;
+    struct tm     *tm;
+    char sDataArquivo[16];
+
+    int len = 23;  // o tamanho do nome do arquivo a processar eh de 23 pos URA_YYYYMMDD_HHMISS.txt
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char    szDataLimite[16];
+    EXEC SQL END DECLARE SECTION;
+    
+    EXEC SQL WHENEVER SQLERROR CONTINUE;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+    memset( szDataLimite, 0x0, sizeof(szDataLimite) );
+    EXEC SQL
+    select to_char(trunc(sysdate-7),'YYYYMMDD') into :szDataLimite from dual;
+
+    chdir( "../data" );
+    dirp = opendir( "./" );
+    while( dp = readdir(dirp) )
+    {
+        if ( !memcmp(dp->d_name, "URA_", 4) ) 
+        {
+            /*
+            if (stat(dp->d_name, &statbuf) == -1)
+                continue;
+            tm = localtime( &statbuf.st_mtime );
+            strftime( sDataArquivo, sizeof(sDataArquivo), "%Y%m%d", tm );
+            */
+         
+            sprintf( sDataArquivo, "%.8s", &dp->d_name[4] );
+            if ( atoi(sDataArquivo) < atoi(szDataLimite) )
+            {
+                unlink(dp->d_name);
+            }
+        }
+    }
+    closedir(dirp);
+    chdir( "../bin" );
+
+}

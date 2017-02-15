@@ -1,0 +1,601 @@
+/**
+ * @modulo  Batch
+ * @usecase Batch
+ * @author
+ * @version $Revision: 1.2.2.1 $
+ * @CVS     $Author: wrdos $ - $Date: 2015/04/29 18:24:10 $
+ **/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <ctype.h>
+
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <dirent.h>
+
+#ifndef WIN32
+#include <unistd.h>
+#endif
+
+#include <libxml/xpath.h>
+#include <libxml/tree.h>
+#include <libxml/parser.h>
+#include <libxml/debugXML.h>
+#include <libxml/xmlmemory.h>
+#include <libxml/tree.h>
+#include <libxml/parser.h>
+#include <libxml/uri.h>
+#include <libxml/entities.h>
+#include <libxml/valid.h>
+#include <libxml/xmlerror.h>
+#include <libxml/parserInternals.h>
+#include <libxml/globals.h>
+#include <libxml/xpathInternals.h>
+
+#include <tibems/tibems.h>
+
+#include "../include/CancelAutomaticoPF.h"
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+
+#include <string>
+using namespace std;
+
+#define     LEN_NMARQ_LOG   19
+
+EXEC SQL INCLUDE SQLCA;
+
+void ExpurgoLog( char * sDiretorio );
+
+//==============================================================================
+// Globais
+char szAux[1024 + 1];
+Log oLog;
+
+
+//==============================================================================
+// Run
+int main(int argc, char* argv[])
+{
+    time_t start_t, end_t;
+    time_t start_report, end_report;
+    
+    int diff_t;
+    int hour,min,sec; 
+    int ctLinhas = 0;
+    
+    time(&start_t);
+    
+    TParamConf tParamConf;
+    
+    string stmt;
+    char buffer[256];
+    
+    bool bFileOpened = false;
+    FILE *fpOut;
+    char sNomeArqSaida[256];
+    char sRegistroSaida[1024];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int qtPrmRegistros = 0;
+        char    sTpPessoa[3];
+        VARCHAR MesAtual[3];
+        VARCHAR QtRegs[11];
+        VARCHAR QtMesesExp[11];
+        VARCHAR sRowId[256];
+        VARCHAR sRegistro[256];
+        VARCHAR sHrArq[16];
+        VARCHAR nmClassificaProdCancel[101];
+
+        short   i_MesAtual = -1;
+        short   i_QtRegs = -1;
+        short   i_QtMesesExp = -1;
+        short   i_sRowId = -1;
+        short   i_sRegistro = -1;
+        short   i_sHrArq = -1;
+        short   i_s_idProduto = -1;
+        short   i_nmClassificaProdCancel = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( buffer      , 0x0, sizeof(buffer) );
+    memset( &MesAtual   , 0x0, sizeof(MesAtual) );
+    memset( &QtRegs     , 0x0, sizeof(QtRegs) );
+    memset( &QtMesesExp , 0x0, sizeof(QtMesesExp) );
+    memset( &sHrArq     , 0x0, sizeof(sHrArq) );
+    
+    memset( sNomeArqSaida , 0x0, sizeof(sNomeArqSaida) );
+    memset( sRegistroSaida, 0x0, sizeof(sRegistroSaida) );
+    
+
+    oLog.setNivel(2);
+    oLog.logDebug(">>> CancelAutomaticoPF");
+
+    //==========================================================================
+    // Parâmetros de configuração
+    if(ObtemParamConf(&tParamConf))
+    {
+        oLog.logError("Erro obtendo parametros de configuracao");
+        return -1;
+    }
+
+    //==========================================================================
+    // Conecta ao banco
+    //oLog.logDebug("Conectando na BD...");
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst))
+    {
+        oLog.logError("Erro conectando no banco de dados");
+        return -1;
+    }
+    oLog.logDebug("Conexao com BD bem sucedida.");
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+    EXEC SQL
+    SELECT DSVALORPARAMETRO INTO :QtRegs:i_QtRegs FROM APOIO.PARAMETRO WHERE CDPARAMETRO = 'QTD_REGS_CANCEL_AUTO' ;
+    if ( i_QtRegs != -1 )
+    {
+        CONVIND( QtRegs,i_QtRegs );
+        qtPrmRegistros = atoi( (char*)QtRegs.arr );
+    }
+    else
+    {
+        qtPrmRegistros = 410000;   // Aproximadamente 200MB para o tamanho do arquivo a ser gerado
+    }
+   
+    EXEC SQL DECLARE curProdutos CURSOR FOR
+    SELECT 
+       NMCLASSIFICAPRODCANCEL
+    FROM 
+       APOIO.PRODUTOCANCELADO
+    GROUP BY NMCLASSIFICAPRODCANCEL;
+    
+    EXEC SQL DECLARE curRelatorio CURSOR FOR   // Aproximadamente 505 bytes por registro
+    SELECT 
+        CANCELAUTOMATICO.ROWID ,
+        CANCELAUTOMATICO.NMORIGEMCANCELAMENTO || ';' || 
+        CANCELAUTOMATICO.NRPROTOCOLO || ';' || 
+        CANCELAUTOMATICO.SGTIPOPESSOA || ';' || 
+        CANCELAUTOMATICO.NRDOCUMENTO || ';' || 
+        PRODUTOCANCELADO.SGPRODUTOCANCELADO || ';' || 
+        CANCELAUTOMATICO.INTIPOREGISTRO || ';' || 
+        CANCELAUTOMATICO.CDAREAREGISTRO || ';' || 
+        CANCELAUTOMATICO.NRLINHA || ';' || 
+        CANCELAUTOMATICO.CDASSINATURA || ';' ||
+        CANCELAUTOMATICO.NMPESSOA || ';' || 
+        CANCELAUTOMATICO.NRTELEFONEORIGEM || ';' || 
+        CANCELAUTOMATICO.NRTELEFONECONTATO || ';' || 
+        CANCELAUTOMATICO.DSMOTIVO || ';' || 
+        TO_CHAR(CANCELAUTOMATICO.DTCANCELAMENTO,'DD/MM/RRRR HH24:MI:SS') AS REGISTRO 
+    FROM 
+        ATENDIMENTO.CANCELAUTOMATICO   CANCELAUTOMATICO ,
+        APOIO.PRODUTOCANCELADO   PRODUTOCANCELADO
+    WHERE
+        CANCELAUTOMATICO.IDPRODUTOCANCELADO = PRODUTOCANCELADO.IDPRODUTOCANCELADO
+    AND CANCELAUTOMATICO.DTEXTRACAO IS NULL
+    AND 
+        PRODUTOCANCELADO.NMCLASSIFICAPRODCANCEL = :nmClassificaProdCancel
+    AND
+        CANCELAUTOMATICO.SGTIPOPESSOA = 'PF'
+    AND 
+        ROWNUM <= :qtPrmRegistros ;
+    
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    EXEC SQL OPEN curProdutos;
+    for ( ;; )
+    {
+        memset( &nmClassificaProdCancel, 0x0, sizeof(nmClassificaProdCancel) );
+        
+        i_nmClassificaProdCancel = -1;
+        
+        EXEC SQL FETCH curProdutos 
+             INTO :nmClassificaProdCancel:i_nmClassificaProdCancel ;
+                  
+        CONVIND( nmClassificaProdCancel, i_nmClassificaProdCancel );
+               
+        strcpy( sTpPessoa, "PF" );
+                    
+        sprintf( buffer, "%s%s", (char*)nmClassificaProdCancel.arr, sTpPessoa );
+            
+		EXEC SQL
+		SELECT TO_CHAR(SYSDATE,'DDMMRRRR_HH24MISS') INTO :sHrArq:i_sHrArq FROM DUAL;
+		CONVIND( sHrArq, i_sHrArq );
+		
+        sprintf( sNomeArqSaida, "../data/CancelamentoAutomatico_%s_%s.txt", buffer, (char*)sHrArq.arr );
+            
+		//sprintf(szAux, "*** Classificacao do Produto Cancelado [%s]", (char*)nmClassificaProdCancel.arr ); oLog.logError(szAux);
+		//sprintf(szAux, "*** Tipo Pessoa                        [%s]", sTpPessoa ); oLog.logError(szAux);
+		//sprintf(szAux, "*** Limitacao de Registros por Arquivo [%d]", qtPrmRegistros ); oLog.logError(szAux);
+		
+		sprintf(szAux, "*** Processando Classificacao [%s - %s] ***", (char*)nmClassificaProdCancel.arr, sTpPessoa ); oLog.logError(szAux);
+		
+		time(&start_report);
+            
+		EXEC SQL OPEN curRelatorio;
+		int contador = 0;
+		for ( contador = ctLinhas = 0; contador < qtPrmRegistros; contador++ )
+		{
+			memset( &sRowId   , 0x0, sizeof(sRowId) );
+			memset( &sRegistro, 0x0, sizeof(sRegistro) );
+
+			EXEC SQL FETCH curRelatorio 
+				 INTO :sRowId:i_sRowId ,
+					  :sRegistro:i_sRegistro ;
+					  
+			CONVIND( sRowId   , i_sRowId );
+			CONVIND( sRegistro, i_sRegistro );
+			
+			
+			EXEC SQL
+			UPDATE ATENDIMENTO.CANCELAUTOMATICO
+			SET DTEXTRACAO = SYSDATE
+			WHERE ROWID = :sRowId ;
+			
+			if ( bFileOpened == false )
+			{
+				bFileOpened = true;
+				if( (fpOut = fopen( sNomeArqSaida, "w" )) == NULL)
+				{
+					EXEC SQL ROLLBACK;
+					sprintf(szAux, "@@@ ERRO ABRINDO ARQUIVO [%s]. errno(%d) strerror[%s]", sNomeArqSaida, errno, strerror(errno)); oLog.logError(szAux);
+					exit(-1);
+				}
+			}
+			
+			fprintf( fpOut, "%s\n", (char*)sRegistro.arr );
+			
+			ctLinhas++;
+			EXEC SQL COMMIT;
+			
+		}
+		EXEC SQL CLOSE curRelatorio;
+            
+			if(contador == 0 )
+			{
+				if ( bFileOpened == false )
+				{	
+					bFileOpened = true;
+					if( (fpOut = fopen( sNomeArqSaida, "w" )) == NULL)
+					{						
+						sprintf(szAux, "@@@ ERRO ABRINDO ARQUIVO [%s]. errno(%d) strerror[%s]", sNomeArqSaida, errno, strerror(errno)); oLog.logError(szAux);
+						exit(-1);
+					}
+				}
+			}
+			
+			
+            fclose( fpOut );
+
+            time(&end_report);
+            diff_t = difftime(end_report, start_report);
+            hour = diff_t / 3600; 
+            diff_t = diff_t % 3600; 
+            min = diff_t / 60; 
+            diff_t = diff_t % 60; 
+            sec = diff_t; 
+            
+            bFileOpened = false;
+            
+		sprintf( szAux,    "======================== Sintese do Relatorio ========================\n" ); oLog.logDebug(szAux);
+		if ( ctLinhas > 0 )
+		{
+			if ( ctLinhas > 1 )
+			{
+			   sprintf(szAux, "*** [%d] Registros gravados em [%s] ***\n", ctLinhas, sNomeArqSaida ); oLog.logDebug(szAux);
+			}
+			else
+			{
+			   sprintf(szAux, "*** [%d] Registro gravado em [%s] ***\n", ctLinhas, sNomeArqSaida ); oLog.logDebug(szAux);
+			}
+			   
+			sprintf( szAux, "--- Tempo de Geracao %02d:%02d:%02d ---\n", hour, min, sec ); oLog.logDebug(szAux);
+		}
+		else
+		{
+			sprintf(szAux, "!!! Nenhum registro encontrado para a classificacao [%s - %s] ###", (char*)nmClassificaProdCancel.arr, sTpPessoa ); oLog.logDebug(szAux);
+		}
+		sprintf( szAux,    "======================================================================\n" ); oLog.logDebug(szAux);
+                   
+        EXEC SQL COMMIT;
+        
+    } // FIM DO CURSOR DE PRODUTOS
+
+    ExpurgoLog( "../log" );  // Remove arquivos de LOG, somente aos domingos
+    
+    oLog.logDebug("Desconectando do BD.");
+    DBDisconnect();
+
+    oLog.logDebug("===> Processamento encerrado com sucesso <===");
+    
+    time(&end_t);
+    diff_t = difftime(end_t, start_t);
+    hour = diff_t / 3600; 
+    diff_t = diff_t % 3600; 
+    min = diff_t / 60; 
+    diff_t = diff_t % 60; 
+    sec = diff_t; 
+    
+    sprintf( szAux, "---> Tempo total de execucao: %02d:%02d:%02d", hour, min, sec ); oLog.logDebug(szAux);
+    
+    oLog.logDebug("<<< CancelAutomaticoPF");
+
+    return 0;
+
+    sqlError:
+        
+	sprintf(szAux, "####### ERRO ORACLE [%d] MSG: [%s] #######\n", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc ); oLog.logDebug(szAux);
+	DBDisconnect();
+	
+	oLog.logDebug("!!! PROCESSAMENTO ABORTADO ###");
+	
+	time(&end_t);
+	diff_t = difftime(end_t, start_t);
+	sprintf( szAux, "--- Tempo de execucao: %02d:%02d:%02d", hour, min, sec ); oLog.logDebug(szAux);
+
+	return -1;
+	
+}
+
+
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[101];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug("Obtendo parametros de configuracao...");
+
+    // Zera variáveis
+    memset(ptParamConf, 0, sizeof(TParamConf));
+    memset(szLinha, 0, sizeof(szLinha));
+    memset(szDivArq, 0, sizeof(szDivArq));
+    memset(szDivPre, 0, sizeof(szDivPre));
+
+    // Define o arquivo de configuração
+    mfConfig.setPath("CancelAutomaticoPF.cfg");
+
+    // Verificar se conseguiu abrir o arquivo
+    if(!mfConfig.abrir())
+    {
+        oLog.logError("Erro abrindo arquivo de configuração!");
+        return -1;
+    }
+
+    // Capturando usuario, senha, path e instance de banco do arquivo
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        // Verifica qual parâmetro foi encontrado.
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, TAM_BD_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, TAM_BD_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, TAM_BD_INST);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, TAM_TX_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, TAM_TX_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, TAM_TX_GEN);
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, TAM_TX_CLT);
+        }
+        else if (strcmp(szDivPre, "QueueName")==0)
+        {
+            strncpy(ptParamConf->szQueueName, szDivArq, TAM_SZ_QUEUE_NAME);
+        }
+        else if (strcmp(szDivPre, "ServerUrl")==0)
+        {
+            strncpy(ptParamConf->szServerUrl, szDivArq, TAM_SZ_SERVER_URL);
+        }
+        else if (strcmp(szDivPre, "UserName")==0)
+        {
+            strncpy(ptParamConf->szUserName, szDivArq, TAM_SZ_USERNAME);
+        }
+        else if (strcmp(szDivPre, "Password")==0)
+        {
+            strncpy(ptParamConf->szPassword, szDivArq, TAM_SZ_PASSWORD);
+        }
+        else if (strcmp(szDivPre, "Pk_password")==0)
+        {
+            strncpy(ptParamConf->szPk_password, szDivArq, TAM_SZ_PKPASSWD);
+        }
+
+        memset(szLinha,  0, sizeof(szLinha));
+        memset(szDivPre, 0, sizeof(szDivPre));
+        memset(szDivArq, 0, sizeof(szDivArq));
+    }
+
+    // Fechando o arquivo de configuracao aberto
+    mfConfig.fechar();
+
+    //sprintf(szAux, "ptParamConf->szPws[%s]", ptParamConf->szPws); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]", ptParamConf->szUsr); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]", ptParamConf->szInst); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTux[%s]", ptParamConf->szPwsTux); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szUsrTux[%s]", ptParamConf->szUsrTux); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]", ptParamConf->szPwsTuxGen); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szCltTux[%s]", ptParamConf->szCltTux); oLog.logDebug(szAux);
+
+    //sprintf(szAux, "ptParamConf->szQueueName[%s]", ptParamConf->szQueueName); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szServerUrl[%s]", ptParamConf->szServerUrl); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szUserName[%s]", ptParamConf->szUserName); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szPassword[%s]", ptParamConf->szPassword); oLog.logDebug(szAux);
+    //sprintf(szAux, "ptParamConf->szPk_password[%s]", ptParamConf->szPk_password); oLog.logDebug(szAux);
+
+    // Verifica se todos os dados foram recuperados do arquivo de configuração.
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0 ||
+        strlen(ptParamConf->szQueueName) == 0 ||
+        strlen(ptParamConf->szServerUrl) == 0 ||
+        strlen(ptParamConf->szUserName) == 0  ||
+        strlen(ptParamConf->szPassword) == 0)
+    {
+        oLog.logError("Dados incompletos!");
+        return -1;
+    }
+
+    //oLog.logDebug("Parametros de configuracao obtidos com sucesso...");
+    return 0;
+}
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    // String de conexao
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    // Marca ponto de erro
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    // Conecta
+    EXEC SQL CONNECT :connString;
+
+    return (sqlca.sqlcode);
+
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]");
+    return -1;
+}
+
+/************************************************************************************************************/
+void DBDisconnect(void)
+{
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    EXEC SQL COMMIT WORK RELEASE;
+    return;
+
+Error:
+    sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return;
+}
+
+
+void ExpurgoLog( char * sDiretorio )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        int DiaSemana;
+        VARCHAR   dtLimite[10];
+        short     i_dtLimite = -1;
+        int       iDiasHistorico;
+        VARCHAR   oraDiasHist[5];
+        short     i_oraDiasHist = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+    
+    int DataLimite;
+    int DataArquivo;
+    char buffer[10];
+    char sArquivoRemover[256];
+    DIR *dirp;
+    struct dirent *dp;
+    
+    memset( &oraDiasHist, 0x0, sizeof(oraDiasHist) );
+    
+    EXEC SQL WHENEVER SQLERROR GOTO ErrorDir;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+    EXEC SQL 
+    SELECT TO_NUMBER(TO_CHAR(TRUNC(SYSDATE),'D')) INTO :DiaSemana FROM DUAL;
+
+    //sprintf( szAux, "---> Dia da Semana: %02d", DiaSemana ); oLog.logDebug(szAux);
+ 
+    //if ( DiaSemana != 1)   // Nao eh Domingo onde (1,7) Iniciando 1 no Domingo
+    //    return;
+
+    memset( &dtLimite, 0x0, sizeof(dtLimite) );
+    memset( buffer   , 0x0, sizeof(buffer) );
+    
+    EXEC SQL
+    SELECT DSVALORPARAMETRO INTO :oraDiasHist:i_oraDiasHist FROM APOIO.PARAMETRO WHERE CDPARAMETRO = 'DIAS_EXP_LOG_CANCELAUTOM' ;
+    if ( i_oraDiasHist != -1 )
+    {
+        CONVIND( oraDiasHist, i_oraDiasHist );
+        iDiasHistorico = atoi( (char*)oraDiasHist.arr );
+    }
+    else
+    {
+        iDiasHistorico = 10;
+    }
+
+    EXEC SQL 
+    SELECT TO_CHAR( TRUNC( SYSDATE - :iDiasHistorico ),'RRRRMMDD' ) INTO :dtLimite:i_dtLimite FROM DUAL;
+    
+    CONVIND( dtLimite,i_dtLimite );
+    
+    //sprintf( szAux, "---> Data Limite: [%s]", (char*)dtLimite.arr ); oLog.logDebug(szAux);
+
+    //sprintf( szAux, "---> Diretorio de LOG: [%s]", sDiretorio ); oLog.logDebug(szAux);
+    
+    dirp = opendir( sDiretorio );
+    while( dp = readdir(dirp) )
+    {
+        //sprintf( szAux, "Leu [%s]", (char*)&dp->d_name ); oLog.logDebug(szAux);
+        
+        if ( dp->d_namlen == LEN_NMARQ_LOG && !memcmp(&dp->d_name[LEN_NMARQ_LOG-3], "log", 3) ) // Identifica arquivos de LOG
+        {
+            //sprintf( szAux, "Determinando Data Valida..." ); oLog.logDebug(szAux);
+            
+            DataLimite = atoi((char*)dtLimite.arr);
+            sprintf( buffer,"%.8s", (char*)&dp->d_name );
+
+            //sprintf( szAux, "Data Arquivo [%s]", buffer ); oLog.logDebug(szAux);
+
+            DataArquivo = atoi(buffer);
+            if ( DataArquivo < DataLimite )  // Verifica se arquivo deve ser removido
+            {
+                sprintf( sArquivoRemover, "%s/%s", sDiretorio, (char*)&dp->d_name );
+                // sprintf( szAux, "Removendo Arquivo: [%s]", sArquivoRemover ); oLog.logDebug(szAux);
+                unlink( sArquivoRemover );
+            }
+        }
+    }
+    closedir(dirp);
+
+    return;
+    
+ErrorDir:
+    return;
+
+}

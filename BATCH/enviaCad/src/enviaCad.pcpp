@@ -1,0 +1,958 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <iostream.h>
+#include <ctype.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <unistd.h>
+
+#include <tuxfw.h>
+#include <sys/shm.h>
+
+#include <enviaCad.h>
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+#include "../../commons/Defines.h"
+
+extern errno;
+
+EXEC SQL INCLUDE SQLCA;
+
+#define MAX_RETRIES     10
+#define LOCK            1
+#define UNLOCK          0
+#define KILL            2
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+bool semaphoreExists;
+char *argvGlobal;
+char szAux[4096 + 1];
+char szDataHoraGlobal[30 + 1];
+char szDataHoraGlobalFormatada[30 + 1];
+int iDeclaraCursor=1;
+Log oLog;
+long iErrorNumber=0;
+int shmid;
+key_t key;
+char *shm=0;
+
+//==============================================================================
+// Protótipos
+//bool killSemaforoSimNao();
+//int  InitSemaphore(key_t key, int nsems,bool &semaphoreExists);
+//int  Process(char *pszFileName, int iFlagLock,bool &semaphoreExists);
+//void LockSemaphore(int semid);
+//void UnLockSemaphore(int semid);
+//bool processoEmExecucaoSN( void );
+//void sinalizaFinalProcesso();
+
+int main(int argc, char* argv[])
+{
+    char *pPointer;
+    char szIdFila[38 + 1];
+    char szRetMsg[2000 + 1];
+    char szStatusCode[255 + 1];
+    char szStatusText[255 + 1];
+    char szXml[4000 + 1];
+    char szXmlTmp[128 + 1];
+    int iSleep=0;
+    
+    int iRetSendXML;
+
+    TParamConf tParamConf;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdFila[38+1];
+        int oiQtRetriesMax;
+        VARCHAR rows_proc[11];
+        short   i_rows_proc = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    argvGlobal = argv[0];
+
+    // Acertando o nivel de logs
+    oLog.setNivel(2);
+    oLog.logDebug(">>>enviaCad\n");
+
+    if(ObtemParamConf(&tParamConf)) {
+        oLog.logError("Erro obtendo parametros de configuracao\n");
+        exit(1);
+    }
+
+    //==========================================================================
+    // Conecta
+    oLog.logDebug("Conectando na BD...");
+    /* Conecta no banco de dados */
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst)) {
+        oLog.logError("Erro conectando no banco de dados\n");
+        exit(1);
+    }
+    oLog.logDebug("Conectado na BD com sucesso...\n");
+
+    oLog.logDebug("Inicializando TUXEDO...\n");
+    /* Inicializa o TUXEDO */
+    if(TUXinit(&tParamConf)) {
+        oLog.logError("Erro inicializando TUXEDO\n");
+        exit(1);
+    }
+    oLog.logDebug("Inicializado com sucesso...\n");
+
+    //==========================================================================
+    // Processa
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    oiQtRetriesMax = ObtemParamQtRetriesMax();
+    
+    EXEC SQL
+    SELECT dsvalorparametro
+      INTO :rows_proc:i_rows_proc
+      FROM apoio.parametro
+     WHERE cdparametro = 'REGISTROS_PROC_ENVIACAD';
+    
+    CONVIND(rows_proc,i_rows_proc);    
+    iSleep = ObtemTempoSleep();
+
+    EXEC SQL DECLARE Legado CURSOR FOR
+    SELECT
+       IDFILASETCLIENTINFO
+    FROM
+    (
+        SELECT
+           FILASETCLIENTINFO.IDFILASETCLIENTINFO
+        FROM
+           INFRA.FILASETCLIENTINFO FILASETCLIENTINFO
+        WHERE
+           FILASETCLIENTINFO.QTRETRY < 10
+        ORDER BY
+           FILASETCLIENTINFO.QTRETRY, FILASETCLIENTINFO.IDFILASETCLIENTINFO
+    )
+    WHERE
+       ROWNUM <= :rows_proc;
+
+
+    //oLog.logDebug("local1\n");
+
+    //oLog.logDebug("Abrindo cursor...\n");
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    EXEC SQL OPEN Legado;
+            
+    for( ;; ) 
+    {
+        EXEC SQL
+            FETCH Legado
+            INTO    :oszIdFila;
+
+        sprintf(szAux, "FETCH ->sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+
+        STRCPY_FROM_ORA(szIdFila, oszIdFila);
+        sprintf(szAux,  "Enviando idfilasetclientinfo [%s]\n",szIdFila ); oLog.logDebug(szAux);
+
+        /* formata o XML para envio */
+        memset(szXml, 0x00, sizeof(szXml));
+        strcpy(szXml, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>");
+        strcat(szXml, "<msg><msgHdr><user>1</user><service>PPPROCCAD</service></msgHdr><msgBody>");
+        sprintf( szXmlTmp, "<idFila>%s</idFila>", szIdFila );
+        strcat( szXml, szXmlTmp );
+        strcat(szXml, "</msgBody></msg>");
+        sprintf(szAux, "szXml[%s]", szXml); oLog.logDebug(szAux);
+
+        memset(szRetMsg, 0x00, sizeof(szRetMsg));
+        iRetSendXML = sendXML( szXml,szRetMsg );
+        if ( iErrorNumber != 0 )
+        {
+            sprintf(szAux, "iRetSendXML(%d)iErrorNumber(%d)szRetMsg[%s]\n", iRetSendXML, iErrorNumber, szRetMsg); oLog.logDebug(szAux);
+        }
+        
+        //sleep(1);  // Testes
+    }// for(;;)
+
+    //oLog.logDebug("Fechando cursor...");
+    EXEC SQL CLOSE Legado;
+
+
+    oLog.logDebug("Desconectando da BD...\n");
+    DBDisconnect();
+
+    oLog.logDebug("Finalizando conexao TUXEDO...\n");
+    tpterm(); 
+
+    oLog.logDebug("Processamento encerrado com sucesso...\n");
+    oLog.logDebug("<<<enviaCad\n");
+
+    exit(0);
+
+    sqlError:
+        sprintf(szAux, "Finalizando processo com erro ORACLE (%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        exit(1);
+
+    /* Tratamento de erro de processamento */
+    finalizaProcess:
+        oLog.logDebug("Finalizando processo...\n");
+        oLog.logDebug("Fechando cursor...\n");
+        EXEC SQL CLOSE Legado;
+
+        oLog.logDebug("Desconectando da BD...\n");
+        DBDisconnect();
+        oLog.logDebug("Finalizando conexao TUXEDO...\n");
+        tpterm(); 
+
+        oLog.logDebug("<<<enviaCad\n");
+        exit(1);
+}
+
+
+
+/************************************************************************************************************/
+void ObtemParamBase( int *piSleep )
+{
+    sprintf(szAux, "Antes->*piSleep(%d)\n", *piSleep); oLog.logDebug(szAux);
+
+    *piSleep=ObtemTempoSleep();
+
+    sprintf(szAux, "Depois->*piSleep(%d)\n", *piSleep); oLog.logDebug(szAux);
+}
+
+
+
+/************************************************************************************************************/
+int ObtemParamQtRetriesMax(void)
+{
+    char *pPointer= ObtemParametro("FILASETCLIENTINFO_QTRETRYMAX");
+    if(pPointer == NULL) {
+        oLog.logDebug("Parametro de configuracao 'FILASETCLIENTINFO_QTRETRYMAX' nao encontrado\n");
+        pPointer = "10"; // qtde máxima de retries
+    }
+
+    sprintf(szAux, "Retries Max=%s\n", pPointer);oLog.logDebug(szAux);
+
+    return (atoi(pPointer));
+}
+
+
+
+/************************************************************************************************************/
+int ObtemTempoSleep(void)
+{
+    char *pPointer = ObtemParametro("ENVIA_CAD_PREPAGO_SLEEP_EOF");
+    if(pPointer == NULL) {
+        oLog.logDebug("Parametro de configuracao 'ENVIA_CAD_PREPAGO_SLEEP_EOF' nao encontrado\n");
+
+        exit(-1);
+    }
+
+    return (atoi(pPointer));
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemDataHora(void)
+{
+    struct tm *ptTime;
+    time_t tTimeNow;
+    static char szDataHora[14 + 1];
+
+    time(&tTimeNow);
+    ptTime=localtime(&tTimeNow);
+    sprintf(szDataHora, "%04d%02d%02d%02d%02d%02d", 
+                        ptTime->tm_year + 1900, 
+                        ptTime->tm_mon + 1, 
+                        ptTime->tm_mday, 
+                        ptTime->tm_hour, 
+                        ptTime->tm_min, 
+                        ptTime->tm_sec );
+
+    return szDataHora;
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemValorTag(char *pXml, char *pTag)
+{
+    static char szValue[255 + 1];
+
+    szValue[0] = 0;
+    if ( pXml )
+    {
+        if ( *pXml )
+        {
+            char *p0 = strstr(pXml,pTag) + strlen(pTag) + 1;
+            if ( p0 )
+            {
+                char *p1 = strstr(p0,pTag) - 2;
+                if ( p1 )
+                {
+                    if ( p1 > p0 )
+                    {
+                        int tam = p1-p0;
+                        if (tam > 255) tam = 255;
+                        strncpy(szValue,p0,tam);
+                        szValue[tam]=0;
+                    }
+                }
+            }
+        }
+    }
+
+    return szValue;
+}
+
+
+
+/************************************************************************************************************/
+int TUXinit(TParamConf *ptParamConf)
+{
+    TPINIT *tpInitInfo;
+    int i;
+
+    oLog.logInformation(">>>TUXinit\n");
+
+    if((tpInitInfo = (TPINIT *)tpalloc("TPINIT", (char *)NULL, TPINITNEED(strlen(VIVO_GENERIC_PASSWORD) - 1) )) == (TPINIT *)NULL)
+    return tperrno;
+
+    strcpy(tpInitInfo->usrname, ptParamConf->szUsrTux);
+    strcpy(tpInitInfo->cltname, ptParamConf->szCltTux);
+    strcpy(tpInitInfo->passwd, ptParamConf->szPwsTux);
+    strcpy((char *)&tpInitInfo->data, ptParamConf->szPwsTuxGen);
+
+    i = tpinit(tpInitInfo);
+    sprintf(szAux, "TPINIT: %i, TPERRNO: %i\n", i, tperrno); oLog.logDebug(szAux);
+
+    oLog.logInformation("<<<TUXinit\n");
+
+//    printf("TUX_USRNAME[%s]\n", TUX_USRNAME);
+//    printf("TUX_CLTNAME[%s]\n", TUX_CLTNAME);
+//    printf("VIVO_APP_PASSWORD[%s]\n", VIVO_APP_PASSWORD);
+//    printf("VIVO_GENERIC_PASSWORD[%s]\n", VIVO_GENERIC_PASSWORD);
+
+    if (i == -1)
+        return 1;
+    else  
+        return 0;
+}
+
+
+
+/************************************************************************************************************/
+int sendXML(char *pXmlSaida, char *pRetMsg) {
+
+    char *sendbuf, *rcvbuf;
+    long sendlen, rcvlen;
+
+    sendlen = strlen(pXmlSaida);
+
+    // sprintf(szAux, "Tamanho da msg = (%d)\n", sendlen); oLog.logInformation(szAux);
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        oLog.logError("Error allocating send buffer\n");
+        tpterm();
+
+        return -1;
+    }
+
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        oLog.logError("Error allocating receive buffer\n");
+        tpfree(sendbuf);
+        tpterm();
+
+        return -1;
+    }
+
+    strcpy(sendbuf, pXmlSaida);
+
+    if(tpacall("PPPROCCAD", (char *)sendbuf, sendlen, TPNOTRAN|TPNOREPLY ) == -1) {
+        sprintf(szAux, "Tperrno = %d\n", tperrno); oLog.logError(szAux);
+        sprintf(szAux, "rcvbuf [%s]\n", rcvbuf); oLog.logError(szAux);
+
+        iErrorNumber=tperrno;
+        strcpy(pRetMsg, rcvbuf);
+
+        tpfree(sendbuf);
+        tpfree(rcvbuf);
+
+        return 1;
+    }
+
+    iErrorNumber=0;
+    strcpy(pRetMsg, rcvbuf);
+
+    tpfree(sendbuf);
+    tpfree(rcvbuf);
+
+    return 0;
+}
+
+
+
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[81];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug("Obtendo parametros de configuracao...\n");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("enviaCad.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir()) {
+        oLog.logError("Erro abrindo arquivo de configuração!\n");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, 20);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, 10);
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, 10);
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    //sprintf(szAux, "ptParamConf->szPws[%s]\n", ptParamConf->szPws); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]\n", ptParamConf->szUsr); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]\n", ptParamConf->szInst); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTux[%s]\n", ptParamConf->szPwsTux); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szUsrTux[%s]\n", ptParamConf->szUsrTux); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]\n", ptParamConf->szPwsTuxGen); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szCltTux[%s]\n", ptParamConf->szCltTux); oLog.logInformation(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0 )
+    {
+        oLog.logError("Dados incompletos!\n");
+        return -1;
+    }
+
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...\n");
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logInformation(">>>DBConnect\n");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    oLog.logInformation("<<<DBConnect\n");
+
+    return (sqlca.sqlcode);
+    
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]\n");
+    return -1;
+}
+
+
+
+
+/************************************************************************************************************/
+void DBDisconnect(void)
+{
+    oLog.logInformation(">>>DBDisconnect\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    // EXEC SQL COMMIT WORK RELEASE;
+
+    oLog.logInformation("<<<DBDisconnect\n");
+    return;
+
+Error:
+    sprintf(szAux, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); oLog.logError(szAux);
+    return;
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemParametro(char *pCdParametro)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        //VARCHAR oszCdParametro[255];
+        char *oszCdParametro = pCdParametro;
+        VARCHAR oszDsValorParametro[255+1];
+    EXEC SQL END DECLARE SECTION;
+
+    static char szDsValorParametro[255 + 1];
+    struct sqlca sqlca;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    //STRCPY_TO_ORA(oszCdParametro, pCdParametro);
+
+    EXEC SQL 
+        SELECT dsvalorparametro
+          INTO :oszDsValorParametro
+          FROM apoio.parametro
+         WHERE parametro.cdparametro = :oszCdParametro;
+
+    STRCPY_FROM_ORA(szDsValorParametro, oszDsValorParametro);
+
+    return szDsValorParametro;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        exit(-1);
+
+    naoexiste:
+        sprintf(szAux, "Chave pesquisada nao encontrada[%s]\n", pCdParametro); oLog.logDebug(szAux);
+        return NULL;
+}
+
+
+
+/************************************************************************************************************/
+/*
+bool killSemaforoSimNao()
+{
+    sprintf(szAux,">> killSemaforoSimNao\n");oLog.logDebug(szAux);
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR varOraDsValorParametro[256];
+        short statOraDsValorParametro=-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erroPrimVez;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    sprintf(szAux,"vai obter configuração de inicialização de semáforo.\n");oLog.logDebug(szAux);
+
+    EXEC SQL
+        SELECT dsvalorparametro
+          INTO :varOraDsValorParametro:statOraDsValorParametro
+          FROM apoio.parametro
+         WHERE cdparametro = 'ENVIA_CAD_PREPAGO_KILLSEMONOFF';
+
+    if ( sqlca.sqlcode == 0 )
+    {
+        CONVIND(varOraDsValorParametro,statOraDsValorParametro);
+
+        sprintf(szAux,"vai atualizar configuração de inicialização de semáforo.\n");oLog.logDebug(szAux);
+        sprintf(szAux,"UPDATE apoio.parametro...\n");
+        oLog.logDebug(szAux);
+
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL 
+            UPDATE apoio.parametro SET
+                dsvalorparametro = 'SIM',
+                idusuarioalteracao = -99,
+                dtultimaalteracao = SYSDATE
+             WHERE
+                cdparametro = 'ENVIA_CAD_PREPAGO_KILLSEMONOFF';
+
+        sprintf(szAux, "UPDATE sqlca.sqlcode=%d\n", sqlca.sqlcode); oLog.logDebug(szAux); //@cassio
+
+        EXEC SQL COMMIT;
+
+        //sprintf(szAux,"(1) ENVIA_CAD_PREPAGO_KILLSEMONOFF(1)='%s'\n",varOraDsValorParametro.arr);
+        //oLog.logDebug(szAux);
+
+        if ( stricmp((char*)varOraDsValorParametro.arr,"SIM") == 0 )
+        {
+            sprintf(szAux,"<< killSemaforoSimNao --> SIM\n");oLog.logDebug(szAux);
+            return true;
+        }
+
+        sprintf(szAux,"<< killSemaforoSimNao --> NÃO\n");oLog.logDebug(szAux);
+        return false;
+    }
+    else
+    {
+        sprintf(szAux,"vai criar configuração de inicialização de semáforo.\n");
+        oLog.logDebug(szAux);
+
+        sprintf(szAux,"INSERT INTO apoio.parametro...\n");
+        oLog.logDebug(szAux);
+
+        EXEC SQL 
+            INSERT INTO
+                apoio.parametro(idparametro
+                               ,cdparametro
+                               ,dsparametro
+                               ,dsvalorparametro
+                               ,idusuarioalteracao
+                               ,dtultimaalteracao)
+                VALUES(apoio.parametrosq.nextval
+                      ,'ENVIA_CAD_PREPAGO_KILLSEMONOFF'
+                      ,'Controle de criação de semáforo enviaCad'
+                      ,'NÃO'
+                      ,-99
+                      ,SYSDATE);
+
+        sprintf(szAux, "INSERT sqlca.sqlcode=%d\n", sqlca.sqlcode); oLog.logDebug(szAux); //@cassio
+
+        EXEC SQL COMMIT;
+
+        //sprintf(szAux,"(2) ENVIA_CAD_PREPAGO_KILLSEMONOFF='SIM'\n");
+        //oLog.logDebug(szAux);
+        sprintf(szAux,"<< killSemaforoSimNao --> NÃO (INSERIDO)\n");oLog.logDebug(szAux);
+        return true;
+    }
+
+erroPrimVez:
+    sprintf(szAux, "<< killSemaforoSimNao finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+    return false;
+    //exit(-1);
+}
+*/
+
+
+
+/********************************************************************************************/
+/*
+int Process(char *pszFileName, int iFlagLock,bool &semaphoreExists)
+{
+    static int semid=-1;
+    time_t tStart, tEnd;
+    key_t key;
+
+    if(iFlagLock == UNLOCK)
+    {
+        if ( semid >=0 )
+            UnLockSemaphore(semid);
+    }
+    else if(iFlagLock == LOCK)
+    {
+        if((key = ftok(pszFileName, 'a')) == (key_t) -1)
+        {
+            perror("IPC error: ftok");
+            exit(-1);
+        }
+        sprintf(szAux, "key=%d\n",key);oLog.logDebug(szAux);
+
+        semid = InitSemaphore(key, 1,semaphoreExists);
+        if(semid < 0 )
+        {
+            perror("InitSemaphore");
+            exit(-1);
+        }
+        
+        sprintf(szAux, "semaphoreExists=%d\n",semaphoreExists);oLog.logDebug(szAux); //@cassio
+
+        if ( semaphoreExists )
+        {
+            if ( killSemaforoSimNao() == true )
+            {
+                sprintf(szAux, "vai desalocar semaforo %d\n",semid);oLog.logDebug(szAux);
+                UnLockSemaphore(semid);
+                sprintf(szAux, "vai deletar semaforo %d\n",semid);oLog.logDebug(szAux);
+                semctl(semid, 0, IPC_RMID); // deleta o semaforo
+                sprintf(szAux, "semaforo %d deletado\n",semid);oLog.logDebug(szAux);
+                semid = InitSemaphore(key, 1,semaphoreExists);
+                if(semid < 0 )
+                {
+                    perror("InitSemaphore");
+                    exit(-1);
+                }
+            }
+        }
+
+        if ( semaphoreExists == false )
+        {
+            sprintf(szAux, "vai locar semaforo %d\n",semid);oLog.logDebug(szAux); //@cassio
+            time(&tStart);
+            LockSemaphore(semid);
+            sprintf(szAux, "locou semaforo %d\n",semid);oLog.logDebug(szAux); //@cassio
+            time(&tEnd);
+
+            double tDiff = difftime(tEnd, tStart);
+
+            // tempo limite para espera de processamento
+            if(tDiff > (double)0)
+                return -1;
+        }
+    }
+    else if(iFlagLock == KILL)
+    {
+        if ( semid >=0 )
+            semctl(semid, 0, IPC_RMID); // deleta o semaforo
+    }
+    else
+    {
+        exit(-1);
+    }
+
+    return semid;
+}
+*/
+
+
+
+/********************************************************************************************/
+/*
+void UnLockSemaphore(int semid)
+{
+    struct sembuf sb;
+
+    sb.sem_num = 0;
+    sb.sem_op = 1; // free resource
+    sb.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &sb, 1) == -1)
+    {
+        perror("semop");
+        exit(1);
+    }
+}
+*/
+
+
+
+/********************************************************************************************/
+/*
+void LockSemaphore(int semid)
+{
+    struct sembuf sb;
+
+    sb.sem_num = 0;
+    sb.sem_op = -1;  // set to allocate resource
+    sb.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &sb, 1) == -1)
+    {
+        perror("semop");
+        exit(1);
+    }
+}
+*/
+
+
+/********************************************************************************************/
+/*
+** InitSemaphore() -- more-than-inspired by W. Richard Stevens' UNIX Network
+** Programming 2nd edition, volume 2, lockvsem.c, page 295.
+*/
+/*
+int InitSemaphore(key_t key, int nsems,bool &semaphoreExists)
+{
+    union semun
+    {
+        int val;
+        struct semid_ds *buf;
+        ushort *array;
+    } arg;
+
+    struct semid_ds buf;
+    struct sembuf sb;
+    int semid;
+
+    semid = semget(key, nsems, IPC_CREAT | IPC_EXCL | 0666);
+    //sprintf(szAux, "@cassio: semget,semid=%d\n",semid);oLog.logDebug(szAux); //@cassio
+    
+    if (semid >= 0)
+    { // we got it first
+        sb.sem_op = 1;
+        sb.sem_flg = 0;
+        arg.val = 1;
+        semaphoreExists = false;
+        //sprintf(szAux, "@cassio: executando semop\n");oLog.logDebug(szAux); //@cassio
+
+        for(sb.sem_num = 0; sb.sem_num < nsems; sb.sem_num++)
+        {
+            // do a semop() to "free" the semaphores.
+            // this sets the sem_otime field, as needed below.
+            if (semop(semid, &sb, 1) == -1)
+            {
+                int e = errno;
+                semctl(semid, 0, IPC_RMID); // clean up
+                errno = e;
+                return -1; // error, check errno
+            }
+        }
+    }
+    else if (errno == EEXIST)
+    {
+        semid = semget(key, nsems, 0); // get the id
+        //sprintf(szAux, "@cassio: (2) semget,semid=%d\n",semid);oLog.logDebug(szAux); //@cassio
+        if (semid < 0)
+        {
+            sprintf(szAux, "InitSemaphore: erro %d obtendo semaforo existente\n",semid);
+            oLog.logDebug(szAux);
+            return semid; // error, check errno
+        }
+
+        semaphoreExists = true;
+        //sprintf(szAux, "@cassio: semaphoreExists=%d\n",semaphoreExists );oLog.logDebug(szAux); //@cassio
+
+        return semid; //semaforo já existe
+
+        /*
+        int ready = 0;
+
+        // wait for other process to initialize the semaphore:
+        arg.buf = &buf;
+
+        for(int i = 0; i < MAX_RETRIES && !ready; i++)
+        {
+            semctl(semid, nsems-1, IPC_STAT, arg);
+
+            if (arg.buf->sem_otime != 0)
+            {
+                ready = 1;
+            }
+            else
+            {
+                sleep(1);
+            }
+        }
+        if(!ready)
+        {
+            errno = ETIME;
+            return -1;
+        }
+        */
+/*    }
+    else
+    {
+        return semid; // error, check errno
+    }
+
+    return semid;
+}
+*/
+
+
+/************************************************************************************************************/
+/*
+bool processoEmExecucaoSN( void )
+{
+    key = ENVIA_CAD_KEY;
+
+    if ((shmid = shmget(key, ENVIA_CAD_SHMZ, 0666)) < 0) {
+        if ((shmid = shmget(key, ENVIA_CAD_SHMZ, IPC_CREAT | 0666)) < 0) {
+            cerr<<"shmget";
+            exit(1);
+        }
+    }
+
+    if ((shm = (char *)shmat(shmid, 0, 0)) == (char *) -1) {
+        cerr<<"shmat";
+        exit(1);
+    }
+
+    if ( *shm == ENVIA_CAD_VALUE )
+    {
+        return true;
+    }
+
+    *shm=ENVIA_CAD_VALUE;
+
+    return false;
+}
+*/
+
+
+/************************************************************************************************************/
+/*
+void sinalizaFinalProcesso()
+{
+    if ( shm )
+    {
+        *shm=0; 
+        if ( shmdt(shm) == -1 )
+        {
+            oLog.logDebug("** SHARED BUFFER ERROR - DETACHMENT **\n");
+        }
+        else
+        {
+            if ( shmctl(shmid,IPC_RMID,0) < 0 )
+            {
+                oLog.logDebug("** SHARED BUFFER ERROR - REMOVE **\n");
+            }
+            else
+            {
+                oLog.logDebug("** SHARED BUFFER FREED **\n");
+            }
+        }
+    }
+}
+*/

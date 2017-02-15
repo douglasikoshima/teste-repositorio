@@ -1,0 +1,1046 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Charles Santos
+ * @version $Revision: 1.1 $
+ * @CVS     $Author: cmgarcia $ - $Date: 2005/09/11 02:24:01 $
+ **/
+
+#ifdef WIN32
+#pragma warning(disable:4786)
+#endif
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <iostream>
+#include <string>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdarg.h>
+
+using namespace std;
+
+#include "../include/encaminhaContatoPrevioPC.h"
+
+#ifndef _MAX_PATH
+#   define _MAX_PATH 1024
+#endif
+
+EXEC SQL BEGIN DECLARE SECTION;
+    #define NUMREGISTRO         50
+    #define TAMANHODATA         32
+    #define TAMANHONUMERO       24
+    #define ERRO_INSERT_NULL -1400
+EXEC SQL END DECLARE SECTION;
+
+// ------------------------------------------------------------------------------
+// Constrói
+// ------------------------------------------------------------------------------
+cContatoPrevioPC::cContatoPrevioPC()
+{
+    Propriedade prop("encaminhaContatoPrevio.cfg");
+
+    char *szPws = prop.getParametro("pwd");
+    char *szUsr = prop.getParametro("usr");
+    char *szPath= prop.getParametro("pth");
+    char *szInst= prop.getParametro("inst");
+    int vlLog = atoi( prop.getParametro("log") );
+    string msgLog;
+
+    conectado = false;
+
+    if (!szPws || !szUsr || !szPath || !szInst || !vlLog)
+    {
+        configuracaoCompleta = false;
+    }
+    else
+    {
+        log.setNivel( vlLog );
+
+        szConnStr = (string)szUsr + "/" + (string)szPws + "@" + (string)szInst;
+
+        configuracaoCompleta = true;
+
+        msgLog = "Vai conectar em " + (string)szUsr + "/pwd???@" + (string)szInst;
+
+        log.logDebug((char*)msgLog.c_str());
+    }
+}
+
+
+// ------------------------------------------------------------------------------
+// Destroi
+// ------------------------------------------------------------------------------
+cContatoPrevioPC::~cContatoPrevioPC()
+{
+    Desconectar();
+}
+
+// ------------------------------------------------------------------------------
+// Conecta ao Banco
+// ------------------------------------------------------------------------------
+void cContatoPrevioPC::Conectar()
+{
+    if ( !conectado )
+    {
+        struct sqlca sqlca;
+
+        EXEC SQL BEGIN DECLARE SECTION;
+            char *pszConnStr;
+        EXEC SQL END DECLARE SECTION;
+
+        pszConnStr = (char*)szConnStr.c_str();
+
+        EXEC SQL WHENEVER SQLERROR DO ContatoPrevioSQLError(&sqlca,__LINE__,0);
+        EXEC SQL CONNECT :pszConnStr;
+
+        conectado = true;
+
+        log.logDebug("Conectou!");
+    }
+}
+
+// ------------------------------------------------------------------------------
+// Processa
+// ------------------------------------------------------------------------------
+void cContatoPrevioPC::ProcessarAtualizacao()
+{
+    bool bCursorContatoPrevio = false;
+    char msgLog[512];
+    struct sqlca sqlca;
+    unsigned long qtdeRegsLidos = 0;
+    unsigned long qtdeRegsInseridos = 0;
+    unsigned long qtdeRegsIgnorados = 0;
+    unsigned long qtdeProcessosEmDia = 0;
+
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        struct
+        {
+            long idAtendimento;
+            int idContato;
+            int idCanal;
+            int idProcedencia;
+            int idSegmentacao;
+            int idTipoCarteira;
+            int idUFOperadora;
+            int cdAreaRegistro;
+            int qtHorasPrazoAnatel;
+            VARCHAR dtAbertura[TAMANHODATA];
+            VARCHAR idPessoaUsuario[TAMANHONUMERO];
+            VARCHAR idGrupo[TAMANHONUMERO];
+        } fetchResultado;
+
+        struct
+        {
+            short idAtendimento;
+            short idContato;
+            short idCanal;
+            short idProcedencia;
+            short idSegmentacao;
+            short idTipoCarteira;
+            short idUFOperadora;
+            short cdAreaRegistro;
+            short qtHorasPrazoAnatel;
+            short dtAbertura;
+            short idPessoaUsuario;
+            short idGrupo;
+        } fetchResultadoStatus;
+
+        char sDataCalc[TAMANHODATA];
+        int idGrupoEncaminhar;
+
+        VARCHAR idAtendimentoArray[NUMREGISTRO][TAMANHONUMERO];
+        VARCHAR idGrupoEncaminhamentoArray[NUMREGISTRO][TAMANHONUMERO];
+        VARCHAR qtHorasContatoPrevioArray[NUMREGISTRO][TAMANHONUMERO];
+        VARCHAR dtCalculadaArray[NUMREGISTRO][TAMANHODATA];
+        VARCHAR idPessoaUsuarioAtualArray[NUMREGISTRO][TAMANHONUMERO];
+        VARCHAR idGrupoAtualArray[NUMREGISTRO][TAMANHONUMERO];
+
+        short iidAtendimentoArray[NUMREGISTRO];
+        short iidGrupoEncaminhamentoArray[NUMREGISTRO];
+        short iqtHorasContatoPrevioArray[NUMREGISTRO];
+        short idtCalculadaArray[NUMREGISTRO];
+        short iidPessoaUsuarioAtualArray[NUMREGISTRO];
+        short iidGrupoAtualArray[NUMREGISTRO];
+
+    EXEC SQL END DECLARE SECTION;
+
+    long i=0,posicao=0;
+
+    int testeqtHorasPrazoAnatel = 0 ;
+    char testedata[TAMANHODATA]; 
+    bool retCtPrevio = false;
+
+    memset(testedata,0,TAMANHODATA);
+    memset(sDataCalc,0,TAMANHODATA);
+
+    for (i=0; i< NUMREGISTRO; i++)
+    {
+        idAtendimentoArray[i].arr[0] = 0;
+        dtCalculadaArray[i].arr[0] = 0;
+        qtHorasContatoPrevioArray[i].arr[0] = 0; 
+        idPessoaUsuarioAtualArray[i].arr[0] =  0;
+        idGrupoAtualArray[i].arr[0] = 0;
+
+        idAtendimentoArray[i].len = 0;
+        dtCalculadaArray[i].len = 0;
+        qtHorasContatoPrevioArray[i].len = 0; 
+        idPessoaUsuarioAtualArray[i].len = 0;
+        idGrupoAtualArray[i].len = 0;
+        idGrupoEncaminhamentoArray[i].len = 0;
+
+        iidAtendimentoArray[i] = -1;
+        iidGrupoEncaminhamentoArray[i] = -1;
+        iqtHorasContatoPrevioArray[i] = -1;
+        idtCalculadaArray[i] = -1;
+        iidPessoaUsuarioAtualArray[i] = -1;
+        iidGrupoAtualArray[i] = -1;
+    }
+
+    fetchResultado.idAtendimento = 0; // evita warning
+
+    //
+    // conecta
+    //
+    Conectar();
+
+    //
+    // processa
+    //
+    EXEC SQL WHENEVER SQLERROR CONTINUE;
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    EXEC SQL DECLARE cursorContatoPrevio CURSOR FOR
+      SELECT 
+              ATENDIMENTO.IDATENDIMENTO,
+              ATENDIMENTO.IDCONTATO,
+              ATENDIMENTO.IDCANAL,
+              ATENDIMENTO.IDPROCEDENCIA,
+              ATENDIMENTO.IDSEGMENTACAO,
+              ATENDIMENTO.IDTIPOCARTEIRA,
+              AREAREGISTRO.IDUFOPERADORA,
+              ATENDIMENTOCONTATO.CDAREAREGISTRO, 
+              NVL(CONTATOFOLHA.QTHORASPRAZOANATEL,0) AS QTHORASPRAZOANATEL, 
+              TO_CHAR(ATENDIMENTO.DTABERTURA, 'DD/MM/YYYY') AS DTABERTURA,
+              ATENDIMENTOUSUARIOATUAL.IDPESSOAUSUARIO,
+              ATENDIMENTOGRUPOATUAL.IDGRUPO
+        FROM 
+              ACESSO.GRUPO GRUPO,
+              APOIO.AREAREGISTRO AREAREGISTRO,
+              ATENDIMENTO.ATENDIMENTO ATENDIMENTO, 
+              ATENDIMENTO.ATENDIMENTOCONTATO ATENDIMENTOCONTATO,
+              ATENDIMENTO.ATENDIMENTOCPFILA ATENDIMENTOCPFILA,
+              ATENDIMENTO.ATENDIMENTOFECHAMENTO ATENDIMENTOFECHAMENTO,
+              ATENDIMENTO.ATENDIMENTOUSUARIOATUAL ATENDIMENTOUSUARIOATUAL,
+              ATENDIMENTO.ATENDIMENTOGRUPOATUAL ATENDIMENTOGRUPOATUAL,
+              ATENDIMENTO.TRATAMENTOGRUPOCRI TRATAMENTOGRUPOCRI, 
+              CONTATOADM.CONTATOFOLHA CONTATOFOLHA
+        WHERE 
+              ATENDIMENTO.IDATENDIMENTO = ATENDIMENTOCONTATO.IDATENDIMENTO
+        AND
+              ATENDIMENTOCONTATO.CDAREAREGISTRO IS NOT NULL
+        AND
+              ATENDIMENTOCONTATO.CDAREAREGISTRO = AREAREGISTRO.CDAREAREGISTRO
+        AND 
+              ATENDIMENTO.IDCONTATO = CONTATOFOLHA.IDCONTATO
+        AND
+              ATENDIMENTO.IDATENDIMENTO = ATENDIMENTOUSUARIOATUAL.IDATENDIMENTO (+)
+        AND
+              ATENDIMENTO.IDATENDIMENTO = ATENDIMENTOGRUPOATUAL.IDATENDIMENTO (+)
+        AND
+              ATENDIMENTO.IDATENDIMENTO = ATENDIMENTOFECHAMENTO.IDATENDIMENTO (+)
+        AND
+              ATENDIMENTOFECHAMENTO.IDATENDIMENTO IS NULL
+        AND
+              ATENDIMENTO.IDATENDIMENTO = TRATAMENTOGRUPOCRI.IDATENDIMENTO (+)
+        AND
+              TRATAMENTOGRUPOCRI.IDATENDIMENTO IS NULL
+        AND
+              ATENDIMENTO.IDATENDIMENTO = ATENDIMENTOCPFILA.IDATENDIMENTO (+)
+        AND
+              ATENDIMENTOCPFILA.IDATENDIMENTO IS NULL 
+        AND
+              ATENDIMENTOGRUPOATUAL.IDGRUPO = GRUPO.IDGRUPO
+        AND
+              GRUPO.INCRI = 0
+        ORDER BY 
+              ATENDIMENTO.DTABERTURA,CONTATOFOLHA.QTHORASPRAZOANATEL;
+
+    EXEC SQL OPEN cursorContatoPrevio;
+
+    if (sqlca.sqlcode < 0) 
+    {
+        goto ErroProcessarAtualizacao;
+    }
+
+    bCursorContatoPrevio = true;
+
+    for(;;)
+    {
+        fetchResultadoStatus.dtAbertura 
+            = fetchResultadoStatus.idPessoaUsuario 
+                = fetchResultadoStatus.idGrupo = -1;
+
+        EXEC SQL FETCH cursorContatoPrevio 
+                  INTO :fetchResultado INDICATOR :fetchResultadoStatus;
+
+        if (sqlca.sqlcode < 0) 
+        {
+            goto ErroProcessarAtualizacao;
+        }
+
+        CONVIND(fetchResultado.dtAbertura,fetchResultadoStatus.dtAbertura);
+        CONVIND(fetchResultado.idPessoaUsuario,fetchResultadoStatus.idPessoaUsuario);
+        CONVIND(fetchResultado.idGrupo,fetchResultadoStatus.idGrupo);
+
+        qtdeRegsLidos++;
+
+        //
+        // Contato sem prazo atendimento c.prévio configurado ?
+        //
+        if ( fetchResultado.qtHorasPrazoAnatel == 0 )
+        {
+            qtdeRegsIgnorados++;
+
+            sprintf(msgLog,"Atendimento %ld com contato com prazo zero"
+                                                ,fetchResultado.idAtendimento);
+            log.logDebug(msgLog);
+
+            continue;
+        }
+
+        //
+        // Houve quebra?
+        //
+        if (( strcmp(testedata,(char*)fetchResultado.dtAbertura.arr) ) 
+            || ( fetchResultado.qtHorasPrazoAnatel != testeqtHorasPrazoAnatel ))
+        {
+             retCtPrevio = VerificarContatoPrevio((char*)fetchResultado.dtAbertura.arr
+                         ,fetchResultado.qtHorasPrazoAnatel,fetchResultado.cdAreaRegistro
+                         ,sDataCalc,fetchResultado.idAtendimento);
+
+             testeqtHorasPrazoAnatel = fetchResultado.qtHorasPrazoAnatel;
+             strcpy(testedata,(char*)fetchResultado.dtAbertura.arr); 
+        }
+
+        //
+        // Inserção
+        //
+        if ( retCtPrevio )
+        {
+            //
+            // Obtém o grupo para o qual o processo deve ser encaminhado
+            //
+            if ( obterGrupoRCConfigurado(fetchResultado.idAtendimento
+                                        ,fetchResultado.idContato
+                                        ,fetchResultado.idCanal
+                                        ,fetchResultado.idProcedencia
+                                        ,fetchResultado.idSegmentacao
+                                        ,fetchResultado.idTipoCarteira
+                                        ,fetchResultado.idUFOperadora
+                                        ,idGrupoEncaminhar) == false )
+            {
+                sprintf(msgLog,"Atendimento %ld nao pode ser associado a um grupo RC por falta de grupo "
+                            "RC associado ao contato %d"
+                            ,fetchResultado.idAtendimento,fetchResultado.idContato);
+
+                log.logDebug(msgLog);
+
+                qtdeRegsIgnorados++;
+
+                continue;
+            }
+
+            //
+            // Bloco de inserção
+            //
+            sprintf((char*)dtCalculadaArray[posicao].arr,"%.*s"
+                    ,sizeof(dtCalculadaArray[0].arr)-1,sDataCalc);
+            dtCalculadaArray[posicao].len = strlen((char*)dtCalculadaArray[posicao].arr);
+            idtCalculadaArray[posicao] = 0;
+
+            sprintf((char*)idPessoaUsuarioAtualArray[posicao].arr,"%.*s"
+                ,sizeof(idPessoaUsuarioAtualArray[0].arr)-1
+                    ,(char*)fetchResultado.idPessoaUsuario.arr);
+            idPessoaUsuarioAtualArray[posicao].len = strlen((char*)idPessoaUsuarioAtualArray[posicao].arr);
+            iidPessoaUsuarioAtualArray[posicao] = 0;
+
+            sprintf((char*)idGrupoAtualArray[posicao].arr,"%.*s"
+                ,sizeof(idGrupoAtualArray[0].arr)-1,(char*)fetchResultado.idGrupo.arr);
+            idGrupoAtualArray[posicao].len = strlen((char*)idGrupoAtualArray[posicao].arr);
+            iidGrupoAtualArray[posicao] = 0;
+
+            sprintf((char*)qtHorasContatoPrevioArray[posicao].arr,"%d",fetchResultado.qtHorasPrazoAnatel);
+            qtHorasContatoPrevioArray[posicao].len = strlen((char*)qtHorasContatoPrevioArray[posicao].arr);
+            iqtHorasContatoPrevioArray[posicao] = 0;
+
+            sprintf((char*)idAtendimentoArray[posicao].arr,"%ld",fetchResultado.idAtendimento);
+            idAtendimentoArray[posicao].len = strlen((char*)idAtendimentoArray[posicao].arr);
+            iidAtendimentoArray[posicao] = 0;
+
+            sprintf((char*)idGrupoEncaminhamentoArray[posicao].arr,"%d",idGrupoEncaminhar);
+            idGrupoEncaminhamentoArray[posicao].len = strlen((char*)idGrupoEncaminhamentoArray[posicao].arr);
+            iidGrupoEncaminhamentoArray[posicao] = 0;
+
+            posicao++;
+
+            if ( posicao == NUMREGISTRO )
+            {
+                posicao = 0;
+
+                qtdeRegsInseridos += NUMREGISTRO;
+
+                EXEC SQL WHENEVER NOT FOUND CONTINUE;
+                EXEC SQL 
+                    INSERT INTO ATENDIMENTO.ATENDIMENTOCPFILA
+                    (
+                         IDATENDIMENTO
+                        ,IDGRUPOORIGEM
+                        ,IDPESSOAUSUARIOORIGEM
+                        ,INCONTATOPREVIOREALIZADO
+                        ,NRTENTATIVAS
+                        ,IDUSUARIOALTERACAO
+                        ,DTULTIMAALTERACAO
+                        ,DTCALCULADA
+                        ,QTHORASCONTATOPREVIO
+                    )
+                    VALUES 
+                    ( 
+                         :idAtendimentoArray:iidAtendimentoArray
+                        ,:idGrupoAtualArray:iidGrupoAtualArray
+                        ,:idPessoaUsuarioAtualArray:iidPessoaUsuarioAtualArray
+                        ,0
+                        ,0
+                        ,NULL
+                        ,SYSDATE
+                        ,TO_DATE(:dtCalculadaArray:idtCalculadaArray,'DD/MM/YYYY')
+                        ,:qtHorasContatoPrevioArray:iqtHorasContatoPrevioArray
+                    );
+
+                if (sqlca.sqlcode != ERRO_INSERT_NULL && sqlca.sqlcode < 0) 
+                {
+                    goto ErroProcessarAtualizacao;
+                }
+
+                //
+                // Encaminha o(s) processo(s)
+                //
+                for ( i=0; i < NUMREGISTRO; i++ )
+                {
+                    if ( !AtualizarGrupoUsuarioAtual(atoi((char*)idAtendimentoArray[i].arr)
+                                                    ,atoi((char*)idGrupoAtualArray[i].arr)
+                                                    ,atoi((char*)idGrupoEncaminhamentoArray[i].arr)
+                                                    ,atoi((char*)idPessoaUsuarioAtualArray[i].arr)
+                                                    ,(char*)dtCalculadaArray[i].arr) )
+                    {
+                        sprintf(msgLog,"Falha na associacao do grupo %d ao atendimento %ld "
+                                    ,idGrupoEncaminhamentoArray[i],idAtendimentoArray[i]);
+
+                        log.logDebug(msgLog);
+                    }
+                }
+
+                EXEC SQL COMMIT;
+            }
+        }
+        else
+        {
+            qtdeProcessosEmDia++;
+        }
+    } // for(;;)
+
+    if ( posicao )
+    {
+        qtdeRegsInseridos += posicao;
+
+        for (i=posicao; i< NUMREGISTRO; i++)
+        {
+            idAtendimentoArray[i].arr[0] = 0;
+            dtCalculadaArray[i].arr[0] = 0;
+            qtHorasContatoPrevioArray[i].arr[0] = 0; 
+            idPessoaUsuarioAtualArray[i].arr[0] =  0;
+            idGrupoAtualArray[i].arr[0] = 0;
+
+            idAtendimentoArray[i].len = 0;
+            dtCalculadaArray[i].len = 0;
+            qtHorasContatoPrevioArray[i].len = 0; 
+            idPessoaUsuarioAtualArray[i].len = 0;
+            idGrupoAtualArray[i].len = 0;
+            idGrupoEncaminhamentoArray[i].len = 0;
+
+            iidAtendimentoArray[i] = -1;
+            iidGrupoEncaminhamentoArray[i] = -1;
+            iqtHorasContatoPrevioArray[i] = -1;
+            idtCalculadaArray[i] = -1;
+            iidPessoaUsuarioAtualArray[i] = -1;
+            iidGrupoAtualArray[i] = -1;
+        }
+
+        EXEC SQL 
+            INSERT INTO ATENDIMENTO.ATENDIMENTOCPFILA
+            ( 
+                 IDATENDIMENTO
+                ,IDGRUPOORIGEM
+                ,IDPESSOAUSUARIOORIGEM
+                ,INCONTATOPREVIOREALIZADO
+                ,NRTENTATIVAS
+                ,IDUSUARIOALTERACAO
+                ,DTULTIMAALTERACAO
+                ,DTCALCULADA
+                ,QTHORASCONTATOPREVIO
+            )
+            VALUES 
+            ( 
+                 :idAtendimentoArray:iidAtendimentoArray
+                ,:idGrupoAtualArray:iidGrupoAtualArray
+                ,:idPessoaUsuarioAtualArray:iidPessoaUsuarioAtualArray
+                ,0
+                ,0
+                ,NULL
+                ,SYSDATE
+                ,TO_DATE(:dtCalculadaArray:idtCalculadaArray,'DD/MM/YYYY')
+                ,:qtHorasContatoPrevioArray:iqtHorasContatoPrevioArray
+            );
+
+            if (sqlca.sqlcode != ERRO_INSERT_NULL && sqlca.sqlcode < 0) 
+            {
+                goto ErroProcessarAtualizacao;
+            }
+
+            //
+            // Encaminha o(s) processo(s)
+            //
+            for ( i=0; i < posicao; i++ )
+            {
+                if ( !AtualizarGrupoUsuarioAtual(atoi((char*)idAtendimentoArray[i].arr)
+                                                ,atoi((char*)idGrupoAtualArray[i].arr)
+                                                ,atoi((char*)idGrupoEncaminhamentoArray[i].arr)
+                                                ,atoi((char*)idPessoaUsuarioAtualArray[i].arr)
+                                                ,(char*)dtCalculadaArray[i].arr) )
+                {
+                    sprintf(msgLog,"Falha na associacao do grupo %d ao atendimento %ld "
+                                ,idGrupoEncaminhamentoArray[i],idAtendimentoArray[i]);
+
+                    log.logDebug(msgLog);
+                }
+            }
+    }
+
+    EXEC SQL COMMIT;
+
+    EXEC SQL CLOSE cursorContatoPrevio;
+    
+    bCursorContatoPrevio = false;
+
+    EXEC SQL COMMIT;
+
+    //
+    // desconecta
+    //
+    Desconectar();
+
+    //
+    // Fim do processamento
+    //
+    sprintf(msgLog,"Quantidade de registros processados=%ld",qtdeRegsLidos);
+    log.logDebug(msgLog);
+
+    sprintf(msgLog,"Quantidade de registros inseridos=%ld",qtdeRegsInseridos);
+    log.logDebug(msgLog);
+
+    sprintf(msgLog,"Quantidade de registros ignorados=%ld",qtdeRegsIgnorados);
+    log.logDebug(msgLog);
+
+    sprintf(msgLog,"Quantidade de processos em dia =%ld",qtdeProcessosEmDia);
+    log.logDebug(msgLog);
+
+    return;
+
+ErroProcessarAtualizacao:
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    if ( !bCursorContatoPrevio )
+    {
+        EXEC SQL CLOSE cursorContatoPrevio;
+    }
+
+    ContatoPrevioSQLError(&sqlca,__LINE__,fetchResultado.idAtendimento);
+}
+
+// ------------------------------------------------------------------------------
+// Calcula a data prevista para o processo a partir do contato
+// ------------------------------------------------------------------------------
+bool cContatoPrevioPC::VerificarContatoPrevio(char *sData
+                                             ,int nHoras
+                                             ,int nAreaReg
+                                             ,char *sDataCalc
+                                             ,unsigned long idAtendimento)
+{
+    char msgLog[256];
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *pData = sData;
+
+        VARCHAR data[TAMANHODATA];
+        VARCHAR dataHoje[TAMANHODATA];
+        VARCHAR dataRetorno[TAMANHODATA];
+
+        int nDias = nHoras/24;
+        int cdAreaRegistro = nAreaReg;
+
+        short i_dataRetorno= -1 ;
+        short i_data = -1;
+        short i_dataHoje = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO ContatoPrevioSQLError(&sqlca,__LINE__,0);
+    EXEC SQL WHENEVER NOTFOUND CONTINUE;
+    EXEC SQL 
+    SELECT 
+           TO_CHAR(DATA,'DD/MM/YYYY') AS DATARETORNO,
+           TO_CHAR(DATA,'YYYYMMDD'),
+           TO_CHAR(SYSDATE,'YYYYMMDD')
+      INTO  
+          :dataRetorno:i_dataRetorno,
+          :data:i_data,
+          :dataHoje:i_dataHoje
+      FROM (SELECT DATA
+                FROM (SELECT DATA
+                        FROM (SELECT D.CDAREAREGISTRO, D.DTDIASEMANA AS DATA
+                                  FROM (SELECT DREG.CDAREAREGISTRO,
+                                               (TO_DATE (:pData, 'dd/mm/yyyy') + DREG.DIA ) AS DTDIASEMANA,
+                                               FREG.DTDIA
+                                            FROM (SELECT AR.CDAREAREGISTRO,
+                                                         F.DTDIA
+                                                    FROM APOIO.AREAREGISTRO AR,
+                                                         CUSTOMER.UFOPERADORA UO,
+                                                         APOIO.UF UF,
+                                                         CALENDARIO.UFFERIADO UFF,
+                                                         CALENDARIO.FERIADO F
+                                                   WHERE AR.IDUFOPERADORA = UO.IDUFOPERADORA
+                                                     AND UO.IDUF = UF.IDUF
+                                                     AND UF.IDUF = UFF.IDUF (+)
+                                                     AND UFF.IDFERIADO = F.IDFERIADO(+)) FREG,
+                                                 (SELECT AR.CDAREAREGISTRO, D.DIA
+                                                    FROM APOIO.AREAREGISTRO AR,
+                                                         CALENDARIO.DIA D) DREG
+                                           WHERE TO_CHAR (TO_DATE (:pData,'dd/mm/yyyy')+ DREG.DIA,'D') NOT IN (1, 7)
+                                             AND FREG.CDAREAREGISTRO(+) = DREG.CDAREAREGISTRO
+                                             AND FREG.DTDIA(+) = TO_DATE (:pData,'dd/mm/yyyy') + DREG.DIA
+                                        ORDER BY DREG.DIA) D
+                                 WHERE DTDIA IS NULL AND CDAREAREGISTRO = :cdAreaRegistro
+                              ORDER BY CDAREAREGISTRO, DATA)
+                       WHERE ROWNUM <= :nDias)
+            ORDER BY DATA DESC)
+     WHERE ROWNUM = 1;
+
+    if (!sqlca.sqlcode)
+    {
+        CONVIND(dataRetorno,i_dataRetorno);
+        CONVIND(data,i_data);
+        CONVIND(dataHoje,i_dataHoje);
+
+        strcpy(sDataCalc,(char*)dataRetorno.arr);
+
+        if ( strcmp((char*)data.arr,(char*)dataHoje.arr) < 0 )
+        {
+            return true;
+        }
+
+        //sprintf(msgLog,"Processo %ld nao esta atrasado",idAtendimento);
+    }
+    else
+    {
+        sprintf(msgLog,"SQLCODE=%d para Processo=%ld",sqlca.sqlcode,idAtendimento);
+        log.logDebug(msgLog);
+    }
+
+    return false;
+}
+
+// ------------------------------------------------------------------------------
+// Encaminha
+// ------------------------------------------------------------------------------
+bool cContatoPrevioPC::obterGrupoRCConfigurado(unsigned long _idAtendimento
+                                              ,int _idContato
+                                              ,int _idCanal
+                                              ,int _idProcedencia
+                                              ,int _idSegmentacao
+                                              ,int _idTipoCarteira
+                                              ,int _idUFOperadora
+                                              ,int &idGrupoEncaminhar)
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idAtendimento = _idAtendimento;
+        int idContato = _idContato;
+        int idCanal = _idCanal;
+        int idProcedencia = _idProcedencia;
+        int idSegmentacao = _idSegmentacao;
+        int idTipoCarteira = _idTipoCarteira;
+        int idUFOperadora = _idUFOperadora;
+        int idGrupo;
+        short i_idGrupo = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO ContatoPrevioSQLError(&sqlca,__LINE__,0);
+    EXEC SQL WHENEVER NOTFOUND CONTINUE;
+
+    EXEC SQL 
+        SELECT 
+              ARG.IDGRUPO
+        INTO  
+              :idGrupo:i_idGrupo
+        FROM 
+              ATENDIMENTO.ATDRELGRUPORCV01 ARG
+             ,CONTATOADM.UFOPERADORAGRUPO UFOG
+        WHERE 
+              ARG.IDCONTATO = :idContato
+        AND
+              ARG.IDCANAL = :idCanal
+        AND
+              ARG.IDPROCEDENCIA = :idProcedencia
+        AND
+              ARG.IDSEGMENTACAO = :idSegmentacao
+        AND
+              ARG.IDTIPOCARTEIRA = :idTipoCarteira
+        AND 
+              UFOG.IDUFOPERADORA = :idUFOperadora
+        AND 
+              UFOG.IDGRUPO = ARG.IDGRUPO
+        AND
+              ROWNUM < 2;
+    //
+    // se não encontrar nenhum grupo que atenda as variáveis configuradas,
+    // assume o primeiro grupo de resposta ao cliente associado ao contato
+    // que pertença a UF operadora do atendimento
+    //
+    if (sqlca.sqlcode == 1403)
+    {
+        EXEC SQL 
+            SELECT 
+                  ARG.IDGRUPO
+            INTO
+                  :idGrupo:i_idGrupo
+            FROM 
+                  ATENDIMENTO.ATDRELGRUPORCV01 ARG
+                 ,CONTATOADM.UFOPERADORAGRUPO UFOG
+                 ,ACESSO.USUARIOUFOPERADORA UUFOP
+            WHERE 
+                  ARG.IDCONTATO = :idContato
+            AND 
+                  UFOG.IDUFOPERADORA = :idUFOperadora
+            AND 
+                  UFOG.IDGRUPO = ARG.IDGRUPO
+            AND
+                  ROWNUM < 2;
+
+        //
+        // se não existe grupo associado a UF operadora então pega o primeiro
+        // grupo associado ao contato que for encontrado
+        //
+        if (sqlca.sqlcode == 1403)
+        {
+            EXEC SQL 
+                SELECT 
+                      ARG.IDGRUPO
+                INTO
+                      :idGrupo:i_idGrupo
+                FROM 
+                      ATENDIMENTO.ATDRELGRUPORCV01 ARG
+                WHERE 
+                      ARG.IDCONTATO = :idContato
+                AND
+                      ROWNUM < 2;
+
+            //
+            // nenhum grupo associado ? então falha a busca
+            //
+            if (sqlca.sqlcode == 1403)
+            {
+                return false;
+            }
+        }
+    }
+
+    idGrupoEncaminhar = idGrupo;
+
+    return true;
+}
+
+
+// ------------------------------------------------------------------------------
+// Atualiza grupo e usuario atual
+// ------------------------------------------------------------------------------
+bool cContatoPrevioPC::AtualizarGrupoUsuarioAtual(unsigned long _idAtendimento
+                                                 ,int _idGrupoAtual
+                                                 ,int _idGrupoEncaminhamento
+                                                 ,int _idPessoaUsuarioAtual
+                                                 ,char *sDataBKO)
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char * auxsDataBKO = sDataBKO ;
+        unsigned long idAtendimento = _idAtendimento;
+        int idGrupoEncaminhamento = _idGrupoEncaminhamento;
+        int idPessoaUsuarioAtual = _idPessoaUsuarioAtual;
+        int idAgrupamentoEstadoTpProc;
+        int idPessoaUsuario;
+        int idAndamento;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR DO ContatoPrevioSQLError(&sqlca,__LINE__,0);
+    EXEC SQL WHENEVER NOTFOUND CONTINUE;
+
+    //
+    // Atualiza Andamento
+    //
+    EXEC SQL 
+        SELECT
+             ANDAMENTO.IDAGRUPAMENTOESTADOTPPROC
+            ,ANDAMENTO.IDPESSOAUSUARIO
+        INTO
+            :idAgrupamentoEstadoTpProc
+           ,:idPessoaUsuario
+        FROM
+             ANDAMENTO.ANDAMENTO ANDAMENTO,
+             ATENDIMENTO.ATENDIMENTOANDAMENTOATUAL ATENDIMENTOANDAMENTOATUAL
+        WHERE 
+             ATENDIMENTOANDAMENTOATUAL.IDATENDIMENTO = :idAtendimento
+         AND 
+             ANDAMENTO.IDANDAMENTO = ATENDIMENTOANDAMENTOATUAL.IDANDAMENTO;
+
+    if (sqlca.sqlcode == 1403)
+    { // não encontrou andamento atual para o processo ? isso não pode ocorrer
+      // assume o ultimo andamento como o + atual
+
+        EXEC SQL 
+            SELECT  ANDAMENTO.IDAGRUPAMENTOESTADOTPPROC
+                   ,ANDAMENTO.IDPESSOAUSUARIO
+            INTO
+                :idAgrupamentoEstadoTpProc
+               ,:idPessoaUsuario
+            FROM
+                ANDAMENTO.ANDAMENTO ANDAMENTO,
+                (
+                    SELECT MAX(ANDAMENTOWRK.IDANDAMENTO) AS IDANDAMENTO
+                          ,ANDAMENTOWRK.IDATENDIMENTO 
+                       FROM ANDAMENTO.ANDAMENTO ANDAMENTOWRK 
+                      WHERE ANDAMENTOWRK.IDATENDIMENTO = :idAtendimento
+                     GROUP BY ANDAMENTOWRK.IDATENDIMENTO
+                ) TEMP
+            WHERE
+                 TEMP.IDANDAMENTO = ANDAMENTO.IDANDAMENTO
+              AND
+                 TEMP.IDATENDIMENTO = ANDAMENTO.IDATENDIMENTO;
+
+        if (sqlca.sqlcode == 1403)
+        {
+            return false;
+        }
+    }
+
+    EXEC SQL 
+        SELECT
+             ANDAMENTO.ANDAMENTOSQ.NEXTVAL
+        INTO
+            :idAndamento
+        FROM
+             DUAL;
+
+    EXEC SQL 
+        INSERT INTO ANDAMENTO.ANDAMENTO
+        (
+             IDANDAMENTO
+            ,IDATENDIMENTO
+            ,DTANDAMENTO
+            ,IDPESSOAUSUARIO
+            ,IDAGRUPAMENTOESTADOTPPROC
+            ,IDATIVIDADE
+            ,IDUSUARIOALTERACAO
+            ,DTULTIMAALTERACAO
+            ,IDGRUPO
+        )
+        VALUES 
+        ( 
+             :idAndamento
+            ,:idAtendimento
+            ,SYSDATE
+            ,1
+            ,:idAgrupamentoEstadoTpProc
+            ,34
+            ,NULL
+            ,SYSDATE
+            ,:idGrupoEncaminhamento
+        );
+
+        EXEC SQL COMMIT;
+
+        EXEC SQL 
+            UPDATE
+                 ATENDIMENTO.ATENDIMENTOANDAMENTOATUAL
+            SET  
+                 IDANDAMENTO = :idAndamento 
+            WHERE
+                 IDATENDIMENTO = :idAtendimento;
+
+        EXEC SQL COMMIT;
+
+    //
+    // Atualiza Atendimento Grupo Atual
+    //
+    if ( _idGrupoAtual )
+    {
+        EXEC SQL 
+            UPDATE
+                 ATENDIMENTO.ATENDIMENTOGRUPOATUAL
+            SET  
+                 IDGRUPO = :idGrupoEncaminhamento 
+                ,DTULTIMAALTERACAO = SYSDATE
+                ,DTENTRADAFILA = SYSDATE
+            WHERE
+                 IDATENDIMENTO = :idAtendimento;
+
+        EXEC SQL COMMIT;
+    } 
+    else
+    {
+        EXEC SQL 
+            INSERT INTO ATENDIMENTO.ATENDIMENTOGRUPOATUAL
+            (
+                 DTENTRADABKO
+                ,DTENTRADAFILA
+                ,DTULTIMAALTERACAO
+                ,IDATENDIMENTO
+                ,IDGRUPO
+                ,IDUSUARIOALTERACAO
+                ,INCRI              
+            )
+            VALUES 
+            ( 
+                 TO_DATE(:auxsDataBKO,'DD/MM/YYYY')
+                , SYSDATE
+                , SYSDATE
+                ,:idAtendimento
+                ,:idGrupoEncaminhamento
+                ,NULL
+                ,0
+            );
+
+        EXEC SQL COMMIT;
+    }
+
+    if ( _idPessoaUsuarioAtual )
+    {
+        //
+        // Envia mensagem do processamento ao usuario
+        //
+        EXEC SQL 
+            INSERT INTO ATENDIMENTO.ANDAMENTOMENSAGEM
+            (
+                 IDANDAMENTO
+                ,DTMENSAGEM
+                ,IDUSUARIOALTERACAO
+                ,DTULTIMAALTERACAO
+                ,IDPESSOAUSUARIODESTINO
+                ,IDPESSOAUSUARIO
+                ,INORIGEM    
+            )
+            VALUES 
+            ( 
+                 :idAndamento
+                ,SYSDATE
+                ,1
+                ,SYSDATE
+                ,:idPessoaUsuarioAtual
+                ,1
+                ,1
+            );
+
+        EXEC SQL COMMIT;
+
+        //
+        // Remove o processo da responsabilidade do usuario bko
+        //
+        EXEC SQL 
+            DELETE
+                 ATENDIMENTO.ATENDIMENTOUSUARIOATUAL
+            WHERE
+                 IDATENDIMENTO = :idAtendimento;
+
+        EXEC SQL COMMIT;
+    } 
+
+    return true;
+}
+
+// ------------------------------------------------------------------------------
+// Desconecta do banco
+// ------------------------------------------------------------------------------
+void cContatoPrevioPC::Desconectar()
+{
+    if ( conectado )
+    {
+        struct sqlca sqlca;
+
+        EXEC SQL WHENEVER SQLERROR DO ContatoPrevioSQLError(&sqlca,__LINE__,0);
+        EXEC SQL COMMIT WORK RELEASE;
+
+        log.logDebug("Desconectou!");
+
+        conectado = false;
+    }
+}
+
+// ------------------------------------------------------------------------------
+// Se erro...
+// ------------------------------------------------------------------------------
+void cContatoPrevioPC::ContatoPrevioSQLError(sqlca*sqlcaerr, int linha,unsigned long idAtendimento)
+{
+    char msgErro[2048];
+    char _arquivo[_MAX_PATH];
+
+    #ifdef WIN32
+        char drive[_MAX_DRIVE];
+        char dir[_MAX_DIR];
+        char fname[_MAX_FNAME];
+        char ext[_MAX_EXT];
+
+        _splitpath(__FILE__,drive,dir,fname,ext);
+        sprintf(_arquivo,"%.*s%.*s",_MAX_PATH/2,fname,_MAX_PATH/2,ext);
+    #else
+        sprintf(_arquivo,"%.*s",sizeof(_arquivo)-1,__FILE__);
+    #endif
+
+    //
+    // checa se ainda precisa desconectar
+    //
+    Desconectar();
+
+    if ( idAtendimento )
+    {
+        sprintf(msgErro,"%s:%d:ATENDIMENTO->%ld,ORACLE->%.1024s",_arquivo,linha,
+               idAtendimento,sqlcaerr->sqlerrm.sqlerrmc);
+    }
+    else
+    {
+        sprintf(msgErro,"%s:%d:ORACLE->%.1024s",_arquivo,linha,
+               sqlcaerr->sqlerrm.sqlerrmc);
+    }
+
+    throw msgErro;
+}

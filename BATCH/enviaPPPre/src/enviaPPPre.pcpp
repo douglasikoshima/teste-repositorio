@@ -1,0 +1,941 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <iostream.h>
+#include <ctype.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <unistd.h>
+
+#include <tuxfw.h>
+#include <sys/shm.h>
+
+#include <enviaPPPre.h>
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+#include "../../commons/Defines.h"
+
+extern errno;
+
+EXEC SQL INCLUDE SQLCA;
+
+#define MAX_RETRIES     10
+#define LOCK            1
+#define UNLOCK          0
+#define KILL            2
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+bool semaphoreExists;
+char *argvGlobal;
+char szAux[4096 + 1];
+char szDataHoraGlobal[30 + 1];
+char szDataHoraGlobalFormatada[30 + 1];
+int iDeclaraCursor=1;
+Log oLog;
+long iErrorNumber=0;
+int shmid;
+key_t key;
+char *shm=0;
+
+//==============================================================================
+// Protótipos
+//bool killSemaforoSimNao();
+//int  InitSemaphore(key_t key, int nsems,bool &semaphoreExists);
+//int  Process(char *pszFileName, int iFlagLock,bool &semaphoreExists);
+//void LockSemaphore(int semid);
+//void UnLockSemaphore(int semid);
+//bool processoEmExecucaoSN( void );
+//void sinalizaFinalProcesso();
+
+void corrige( char * buffer );
+char * replacechar(char * a);
+
+int main(int argc, char* argv[])
+{
+    char *pPointer;
+    char szRetMsg[2000 + 1];
+    char szStatusCode[255 + 1];
+    char szStatusText[255 + 1];
+    char szXml[4000 + 1];
+    char szXmlTmp[4000 + 1];
+	char szProc[4000+1];
+    int iSleep=0;
+    int iQtdEnviosOK = 0;
+	int iQtdEnviosNOK = 0;
+    int iRetSendXML;
+
+    TParamConf tParamConf;
+
+        char buf[256];
+
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int oiQtRetriesMax;
+        VARCHAR rows_proc[11];
+        short   i_rows_proc = -1;
+				
+        VARCHAR qtdTentativa[11];
+        short   i_qtdTentativa = -1;
+				
+		VARCHAR  I_IDPESSOADEPARA[255+1]; 
+		VARCHAR  I_IDLINHATELEFONICA[255+1]; 
+		VARCHAR  I_IDOPERADORA[255+1]; 
+		VARCHAR  I_NRLINHA[255+1];
+		VARCHAR  I_INELEGIVEL[255+1]; //    NUMBER:=1;
+		VARCHAR  I_IDTIPOLINHA[255+1]; //    NUMBER:=1;
+		VARCHAR  I_IDCONTA[255+1]; //:=30002019;
+		VARCHAR  I_STCONTA [255+1]; //;
+		VARCHAR  I_TPDOCUMENTO[255+1]; //    NUMBER:=1;
+		VARCHAR  I_NRDOCUMENTO[255+1]; //    char2(11):='98356054168';
+		VARCHAR  I_IDCUSTOMER[255+1]; //     char2(16):='C_DOLH5CC088EFQ';
+		VARCHAR  I_STLINHA[255+1]; //:=2;
+		VARCHAR  I_DTHABILITACAO[255+1]; //  DATE:=to_date('20090611','YYYYMMDD');
+		VARCHAR  I_DTDESATIVACAO[255+1]; //  DATE;
+		VARCHAR  I_IDSUBSCRICAO[255+1]; //   NUMBER:=30002023;
+		VARCHAR  I_SGPLANO[255+1]; // char2(20):='VIVO MAIS 1400 TITRJ';
+		VARCHAR  I_IDCLIENTE[255+1]; //      NUMBER;
+		VARCHAR  I_STCLIENTE[255+1]; //      NUMBER;
+		VARCHAR  I_NMPESSOA[255+1]; // char2(23):='EDINEY MARTINS DA SILVA';
+		VARCHAR  I_SGTECNOLOGIA[255+1]; //   CHAR:='G';
+		VARCHAR  I_DTNASCIMENTO[255+1]; //   DATE:=to_date('19810819','YYYYMMDD');
+		VARCHAR  I_NMEMAIL[255+1]; // char2(20);
+		VARCHAR  I_SGSEGMENTO[255+1]; //     char2(2):='30';
+		VARCHAR  I_DTINICIORELACIONAMENTO[255+1]; //  DATE:=to_date('20110902','YYYYMMDD');
+		VARCHAR  I_DTCARGA[255+1]; // DATE;
+		VARCHAR  I_IDBILLING[255+1]; //      NUMBER;
+		VARCHAR  I_CDERRO[255+1]; //  NUMBER;
+		VARCHAR  I_CDPLANO[255+1]; // char2(20);
+		VARCHAR  I_NRPESQUISA[255+1]; //     char2(20);
+		VARCHAR  I_IDTIPOSERVICO[255+1]; //     char2(20);
+		VARCHAR  I_INQTDTENTATIVA[255+1]; 		
+		VARCHAR  O_STCARGAATIVA[255+1]; //   NUMBER;		
+		
+		short IND_IDPESSOADEPARA =-1;
+		short IND_IDLINHATELEFONICA =-1;
+		short IND_IDOPERADORA = -1;
+		short IND_NRLINHA = -1;
+		short IND_INELEGIVEL = -1;
+		short IND_IDTIPOLINHA = -1;
+		short IND_IDCONTA = -1;
+		short IND_STCONTA  = -1;
+		short IND_TPDOCUMENTO = -1;
+		short IND_NRDOCUMENTO = -1;
+		short IND_IDCUSTOMER = -1;
+		short IND_STLINHA = -1;
+		short IND_DTHABILITACAO = -1;
+		short IND_DTDESATIVACAO = -1;
+		short IND_IDSUBSCRICAO = -1;
+		short IND_SGPLANO = -1;
+		short IND_IDCLIENTE = -1;
+		short IND_STCLIENTE = -1;
+		short IND_NMPESSOA = -1;
+		short IND_SGTECNOLOGIA = -1;
+		short IND_DTNASCIMENTO = -1;
+		short IND_NMEMAIL = -1;
+		short IND_SGSEGMENTO = -1;
+		short IND_DTINICIORELACIONAMENTO = -1;
+		short IND_DTCARGA = -1;
+		short IND_IDBILLING = -1;
+		short IND_CDERRO = -1;
+		short IND_CDPLANO = -1;
+		short IND_NRPESQUISA = -1;
+		short IND_IDTIPOSERVICO = -1;
+		short IND_STCARGAATIVA = -1;	
+		short IND_INQTDTENTATIVA = -1;
+		
+    EXEC SQL END DECLARE SECTION;
+
+    argvGlobal = argv[0];
+	
+	memset( &I_IDPESSOADEPARA, 0, sizeof( I_IDPESSOADEPARA ) );
+	memset( &I_IDLINHATELEFONICA, 0, sizeof( I_IDLINHATELEFONICA ) );
+	memset( &I_IDOPERADORA, 0, sizeof( I_IDOPERADORA ) );
+	memset( &I_NRLINHA, 0, sizeof( I_NRLINHA ) );
+	memset( &I_INELEGIVEL, 0, sizeof( I_INELEGIVEL ) );
+	memset( &I_IDTIPOLINHA, 0, sizeof( I_IDTIPOLINHA ) );
+	memset( &I_IDCONTA, 0, sizeof( I_IDCONTA ) );
+	memset( &I_STCONTA , 0, sizeof( I_STCONTA ) );
+	memset( &I_TPDOCUMENTO, 0, sizeof( I_TPDOCUMENTO ) );
+	memset( &I_NRDOCUMENTO, 0, sizeof( I_NRDOCUMENTO ) );
+	memset( &I_IDCUSTOMER, 0, sizeof( I_IDCUSTOMER ) );
+	memset( &I_STLINHA, 0, sizeof( I_STLINHA ) );
+	memset( &I_DTHABILITACAO, 0, sizeof( I_DTHABILITACAO ) );
+	memset( &I_DTDESATIVACAO, 0, sizeof( I_DTDESATIVACAO ) );
+	memset( &I_IDSUBSCRICAO, 0, sizeof( I_IDSUBSCRICAO ) );
+	memset( &I_SGPLANO, 0, sizeof( I_SGPLANO ) );
+	memset( &I_IDCLIENTE, 0, sizeof( I_IDCLIENTE ) );
+	memset( &I_STCLIENTE, 0, sizeof( I_STCLIENTE ) );
+	memset( &I_NMPESSOA, 0, sizeof( I_NMPESSOA ) );
+	memset( &I_SGTECNOLOGIA, 0, sizeof( I_SGTECNOLOGIA ) );
+	memset( &I_DTNASCIMENTO, 0, sizeof( I_DTNASCIMENTO ) );
+	memset( &I_NMEMAIL, 0, sizeof( I_NMEMAIL ) );
+	memset( &I_SGSEGMENTO, 0, sizeof( I_SGSEGMENTO ) );
+	memset( &I_DTINICIORELACIONAMENTO, 0, sizeof( I_DTINICIORELACIONAMENTO ) );
+	memset( &I_DTCARGA, 0, sizeof( I_DTCARGA ) );
+	memset( &I_IDBILLING, 0, sizeof( I_IDBILLING ) );
+	memset( &I_CDERRO, 0, sizeof( I_CDERRO ) );
+	memset( &I_CDPLANO, 0, sizeof( I_CDPLANO ) );
+	memset( &I_NRPESQUISA, 0, sizeof( I_NRPESQUISA ) );
+	memset( &I_IDTIPOSERVICO, 0, sizeof( I_IDTIPOSERVICO ) );
+	memset( &I_INQTDTENTATIVA, 0, sizeof( I_INQTDTENTATIVA ) );
+	
+	memset( &O_STCARGAATIVA, 0, sizeof( O_STCARGAATIVA ) );
+
+    // Acertando o nivel de logs
+    oLog.setNivel(2);
+    oLog.logDebug(">>>enviaPPPre\n");
+
+    if(ObtemParamConf(&tParamConf)) {
+        oLog.logError("Erro obtendo parametros de configuracao\n");
+        exit(1);
+    }
+
+    //==========================================================================
+    // Conecta
+    oLog.logDebug("Conectando na BD...");
+    /* Conecta no banco de dados */
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst)) {
+        oLog.logError("Erro conectando no banco de dados\n");
+        exit(1);
+    }
+    oLog.logDebug("Conectado na BD com sucesso...\n");
+
+    oLog.logDebug("Inicializando TUXEDO...\n");
+    /* Inicializa o TUXEDO */
+    if(TUXinit(&tParamConf)) {
+        oLog.logError("Erro inicializando TUXEDO\n");
+        exit(1);
+    }
+    oLog.logDebug("Inicializado com sucesso...\n");
+
+    //==========================================================================
+    // Processa
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    oiQtRetriesMax = ObtemParamQtRetriesMax();
+    
+    EXEC SQL 
+    SELECT dsvalorparametro
+      INTO :rows_proc:i_rows_proc
+      FROM apoio.parametro
+     WHERE cdparametro = 'REGISTROS_PROC_ENVIAPP';
+	 
+    CONVIND(rows_proc,i_rows_proc);    
+	iSleep = ObtemTempoSleep();
+	
+    EXEC SQL 
+    SELECT dsvalorparametro
+      INTO :qtdTentativa:i_qtdTentativa
+      FROM apoio.parametro
+     WHERE cdparametro = 'REGISTROS_PROC_QTDMAXIMATENTATIVASPP';	
+
+    EXEC SQL DECLARE DADOSPP CURSOR FOR
+			SELECT
+	   TPL.IDPESSOADEPARA ,
+	   TPL.IDLINHATELEFONICA ,
+	   TPL.INQTDTENTATIVA  
+			FROM 	
+	   CUSTOMER.TEMPPESSOALINHA   TPL
+			WHERE 
+	   TPL.IDTIPORELACIONAMENTO = 2
+	AND NVL (TPL.INSTATUSLINHA, 0) < 2
+	AND ROWNUM <= :rows_proc;
+
+
+				
+	oLog.logDebug("passou 1");
+	
+    //oLog.logDebug("local1\n");
+
+    //oLog.logDebug("Abrindo cursor...\n");
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL OPEN DADOSPP;
+    for( ;; ) 
+    {
+
+			IND_IDPESSOADEPARA = IND_IDLINHATELEFONICA = -1;
+
+			memset( &I_IDLINHATELEFONICA, 0, sizeof( I_IDLINHATELEFONICA ) );
+			memset( &I_IDPESSOADEPARA, 0, sizeof( I_IDPESSOADEPARA ) );
+			memset( &I_IDOPERADORA, 0, sizeof( I_IDOPERADORA ) );
+			memset( &I_NRLINHA, 0, sizeof( I_NRLINHA ) );
+			memset( &I_INELEGIVEL, 0, sizeof( I_INELEGIVEL ) );
+			memset( &I_IDTIPOLINHA, 0, sizeof( I_IDTIPOLINHA ) );
+			memset( &I_IDCONTA, 0, sizeof( I_IDCONTA ) );
+			memset( &I_STCONTA , 0, sizeof( I_STCONTA ) );
+			memset( &I_TPDOCUMENTO, 0, sizeof( I_TPDOCUMENTO ) );
+			memset( &I_NRDOCUMENTO, 0, sizeof( I_NRDOCUMENTO ) );
+			memset( &I_IDCUSTOMER, 0, sizeof( I_IDCUSTOMER ) );
+			memset( &I_STLINHA, 0, sizeof( I_STLINHA ) );
+			memset( &I_DTHABILITACAO, 0, sizeof( I_DTHABILITACAO ) );
+			memset( &I_DTDESATIVACAO, 0, sizeof( I_DTDESATIVACAO ) );
+			memset( &I_IDSUBSCRICAO, 0, sizeof( I_IDSUBSCRICAO ) );
+			memset( &I_SGPLANO, 0, sizeof( I_SGPLANO ) );
+			memset( &I_IDCLIENTE, 0, sizeof( I_IDCLIENTE ) );
+			memset( &I_STCLIENTE, 0, sizeof( I_STCLIENTE ) );
+			memset( &I_NMPESSOA, 0, sizeof( I_NMPESSOA ) );
+			memset( &I_SGTECNOLOGIA, 0, sizeof( I_SGTECNOLOGIA ) );
+			memset( &I_DTNASCIMENTO, 0, sizeof( I_DTNASCIMENTO ) );
+			memset( &I_NMEMAIL, 0, sizeof( I_NMEMAIL ) );
+			memset( &I_SGSEGMENTO, 0, sizeof( I_SGSEGMENTO ) );
+			memset( &I_DTINICIORELACIONAMENTO, 0, sizeof( I_DTINICIORELACIONAMENTO ) );
+			memset( &I_DTCARGA, 0, sizeof( I_DTCARGA ) );
+			memset( &I_IDBILLING, 0, sizeof( I_IDBILLING ) );
+			memset( &I_CDERRO, 0, sizeof( I_CDERRO ) );
+			memset( &I_CDPLANO, 0, sizeof( I_CDPLANO ) );
+			memset( &I_NRPESQUISA, 0, sizeof( I_NRPESQUISA ) );
+			memset( &I_IDTIPOSERVICO, 0, sizeof( I_IDTIPOSERVICO ) );
+			memset( &I_INQTDTENTATIVA, 0, sizeof( I_INQTDTENTATIVA ) );
+			memset( &O_STCARGAATIVA, 0, sizeof( O_STCARGAATIVA ) );
+	
+	        EXEC SQL
+            FETCH DADOSPP
+            INTO 
+				:I_IDPESSOADEPARA:IND_IDPESSOADEPARA,
+				:I_IDLINHATELEFONICA:IND_IDLINHATELEFONICA,
+				:I_INQTDTENTATIVA:IND_INQTDTENTATIVA;
+
+			if( sqlca.sqlcode == 1403 )
+				break;
+
+			CONVIND( I_IDPESSOADEPARA, IND_IDPESSOADEPARA );
+			CONVIND( I_IDLINHATELEFONICA, IND_IDLINHATELEFONICA );
+			CONVIND( I_INQTDTENTATIVA, IND_INQTDTENTATIVA );
+
+			EXEC SQL
+			SELECT
+				NVL(IDOPERADORA,'NULL'),
+				NVL(NRLINHA,'NULL'),
+				NVL(TO_CHAR(INELEGIVEL),'NULL'),
+ 			    NVL(TO_CHAR(IDTIPOLINHA),'NULL'),
+				NVL(TO_CHAR(IDCONTA),'NULL'),
+				NVL(TO_CHAR(STCONTA),'NULL'),
+				NVL(TO_CHAR(TPDOCUMENTO),'NULL'),
+				NVL(TO_CHAR(NRDOCUMENTO),'NULL'),
+				NVL(TO_CHAR(IDCUSTOMER),'NULL'),
+				NVL(TO_CHAR(STLINHA),'NULL'),
+				NVL(TO_CHAR(DTHABILITACAO,'YYYYMMDD'),'NULL'),
+				NVL(TO_CHAR(DTDESATIVACAO,'YYYYMMDD'),'NULL'),
+				NVL(TO_CHAR(IDSUBSCRICAO),'NULL'),
+				NVL(TO_CHAR(SGPLANO),'NULL'),
+				NVL(TO_CHAR(IDCLIENTE),'NULL'),
+				NVL(TO_CHAR(STCLIENTE),'NULL'),
+				NVL(NMPESSOA,'NULL'),
+				NVL(TO_CHAR(SGTECNOLOGIA),'NULL'),
+				NVL(TO_CHAR(DTNASCIMENTO,'YYYYMMDD'),'NULL'),
+				NVL(NMEMAIL,'NULL'),
+				NVL(SGSEGMENTO,'NULL'),
+				NVL(TO_CHAR(DTINICIORELACIONAMENTO,'YYYYMMDD'),'NULL'),
+				NVL(TO_CHAR(DTCARGA, 'YYYYMMDD'),'NULL'),
+				NVL(TO_CHAR(IDBILLING),'NULL'),
+				NVL(CDPLANO,'NULL'),
+				NVL(NRPESQUISA,'NULL'),
+				NVL(IDTIPOSERVICO,'NULL')
+		    INTO
+			    :I_IDOPERADORA:IND_IDOPERADORA,
+				:I_NRLINHA:IND_NRLINHA,
+				:I_INELEGIVEL:IND_INELEGIVEL,
+				:I_IDTIPOLINHA:IND_IDTIPOLINHA,
+				:I_IDCONTA:IND_IDCONTA,
+				:I_STCONTA:IND_STCONTA,
+				:I_TPDOCUMENTO:IND_TPDOCUMENTO,
+				:I_NRDOCUMENTO:IND_NRDOCUMENTO,
+				:I_IDCUSTOMER:IND_IDCUSTOMER,
+				:I_STLINHA:IND_STLINHA,
+				:I_DTHABILITACAO:IND_DTHABILITACAO,
+				:I_DTDESATIVACAO:IND_DTDESATIVACAO,
+				:I_IDSUBSCRICAO:IND_IDSUBSCRICAO,
+				:I_SGPLANO:IND_SGPLANO,
+				:I_IDCLIENTE:IND_IDCLIENTE,
+				:I_STCLIENTE:IND_STCLIENTE,
+				:I_NMPESSOA:IND_NMPESSOA,
+				:I_SGTECNOLOGIA:IND_SGTECNOLOGIA,
+				:I_DTNASCIMENTO:IND_DTNASCIMENTO,
+				:I_NMEMAIL:IND_NMEMAIL,
+				:I_SGSEGMENTO:IND_SGSEGMENTO,
+				:I_DTINICIORELACIONAMENTO:IND_DTINICIORELACIONAMENTO,
+				:I_DTCARGA:IND_DTCARGA,
+				:I_IDBILLING:IND_IDBILLING,
+				:I_CDPLANO:IND_CDPLANO,
+				:I_NRPESQUISA:IND_NRPESQUISA,
+				:I_IDTIPOSERVICO:IND_IDTIPOSERVICO
+			FROM 	
+				RETENCAO.CADASTROONLINEPPPRE
+			WHERE 
+		        IDPESSOADEPARA = :I_IDPESSOADEPARA
+		    AND IDLINHATELEFONICA = :I_IDLINHATELEFONICA
+		    AND ROWNUM <= 1;
+
+			if( sqlca.sqlcode == 1403 )
+				continue;
+
+			CONVIND( I_IDOPERADORA,IND_IDOPERADORA );
+			CONVIND( I_NRLINHA,IND_NRLINHA );
+			CONVIND( I_INELEGIVEL,IND_INELEGIVEL );
+			CONVIND( I_IDTIPOLINHA,IND_IDTIPOLINHA );
+			CONVIND( I_IDCONTA,IND_IDCONTA );
+			CONVIND( I_STCONTA,IND_STCONTA );
+			CONVIND( I_TPDOCUMENTO,IND_TPDOCUMENTO );
+			CONVIND( I_NRDOCUMENTO,IND_NRDOCUMENTO );
+			CONVIND( I_IDCUSTOMER,IND_IDCUSTOMER );
+			CONVIND( I_STLINHA,IND_STLINHA );
+			CONVIND( I_DTHABILITACAO,IND_DTHABILITACAO );
+			CONVIND( I_DTDESATIVACAO,IND_DTDESATIVACAO );
+			CONVIND( I_IDSUBSCRICAO,IND_IDSUBSCRICAO );
+			CONVIND( I_SGPLANO,IND_SGPLANO );
+			CONVIND( I_IDCLIENTE,IND_IDCLIENTE );
+			CONVIND( I_STCLIENTE,IND_STCLIENTE );
+			CONVIND( I_NMPESSOA,IND_NMPESSOA );
+			CONVIND( I_SGTECNOLOGIA,IND_SGTECNOLOGIA );
+			CONVIND( I_DTNASCIMENTO,IND_DTNASCIMENTO );
+			CONVIND( I_NMEMAIL,IND_NMEMAIL );
+			CONVIND( I_SGSEGMENTO,IND_SGSEGMENTO );
+			CONVIND( I_DTINICIORELACIONAMENTO,IND_DTINICIORELACIONAMENTO );
+			CONVIND( I_DTCARGA,IND_DTCARGA );
+			CONVIND( I_IDBILLING,IND_IDBILLING );
+			CONVIND( I_CDPLANO,IND_CDPLANO );
+			CONVIND( I_NRPESQUISA,IND_NRPESQUISA );
+			CONVIND( I_IDTIPOSERVICO,IND_IDTIPOSERVICO );
+					
+		
+
+        //sprintf(szAux, "FETCH ->sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+
+		//oLog.logDebug("Montando XML...");
+        //STRCPY_FROM_ORA(szIdFila, oszIdFila);
+        //sprintf(szAux,  "Enviando idfilasetclientinfo [%s]\n",szIdFila ); oLog.logDebug(szAux);
+
+        // formata o XML para envio 
+        memset(szXml, 0x00, sizeof(szXml));
+        strcpy(szXml, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>");
+        strcat(szXml, "<msg><msgHdr><user>1</user><service>INTERMEDCADPP</service></msgHdr><msgBody>");
+		
+	
+			strcpy( szProc,"<PROCEDURE>");
+			strcat( szProc,"PONTOS.CADASTRO.CADASTROONLINEVIVONET(");
+			sprintf( szXmlTmp,"'%s',", I_IDOPERADORA.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", I_NRLINHA.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", I_INELEGIVEL.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", I_IDTIPOLINHA.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", I_IDCONTA.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", I_STCONTA .arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", I_TPDOCUMENTO.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"'%s',", I_NRDOCUMENTO.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"'%s',", I_IDCUSTOMER.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", I_STLINHA.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"TO_DATE(%s,'YYYYMMDD'),", I_DTHABILITACAO.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"TO_DATE(%s,'YYYYMMDD'),", I_DTDESATIVACAO.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", I_IDSUBSCRICAO.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"'%s',", I_SGPLANO.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", I_IDCLIENTE.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", I_STCLIENTE.arr); strcat( szProc, szXmlTmp);
+                    
+                    memset( buf, 0x0, sizeof( buf) );
+                    strcpy( buf, (char*)I_NMPESSOA.arr );
+                    corrige( buf );
+					sprintf( szXmlTmp,"'%s',", buf ); strcat( szProc, szXmlTmp);
+                    
+			sprintf( szXmlTmp,"'%s',", I_SGTECNOLOGIA.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"TO_DATE(%s,'YYYYMMDD'),", I_DTNASCIMENTO.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"'%s',", I_NMEMAIL.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"'%s',", I_SGSEGMENTO.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"TO_DATE(%s,'YYYYMMDD'),", I_DTINICIORELACIONAMENTO.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"TO_DATE(%s,'YYYYMMDD'),", I_DTCARGA.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%d,", 2 ); strcat( szProc, szXmlTmp); 												//sprintf( szXmlTmp,"%s,", I_IDBILLING.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"'%s',", I_CDPLANO.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", I_NRPESQUISA.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"'%s',", I_IDTIPOSERVICO.arr); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s,", ":O_CDERRO"); strcat( szProc, szXmlTmp);
+			sprintf( szXmlTmp,"%s);", ":O_DSERRO"); strcat( szProc, szXmlTmp);
+			strcat( szProc, "</PROCEDURE>");
+			strcat( szXml, szProc );
+			
+			sprintf( szXmlTmp, "<IDPESSOADEPARA>%s</IDPESSOADEPARA>", I_IDPESSOADEPARA.arr );strcat( szXml, szXmlTmp );
+			sprintf( szXmlTmp, "<IDLINHATELEFONICA>%s</IDLINHATELEFONICA>", I_IDLINHATELEFONICA.arr );strcat( szXml, szXmlTmp );
+			sprintf( szXmlTmp, "<IDOPERADORA>%s</IDOPERADORA>", I_IDOPERADORA.arr );strcat( szXml, szXmlTmp );
+			sprintf( szXmlTmp, "<NRLINHA>%s</NRLINHA>", I_NRLINHA.arr );strcat( szXml, szXmlTmp );
+			sprintf( szXmlTmp, "<NRDOCUMENTO>%s</NRDOCUMENTO>", I_NRDOCUMENTO.arr );strcat( szXml, szXmlTmp );
+			sprintf( szXmlTmp, "<NMPESSOA>%s</NMPESSOA>", I_NMPESSOA.arr );strcat( szXml, szXmlTmp );
+			sprintf( szXmlTmp, "<SGPLANO>%s</SGPLANO>", I_SGPLANO.arr );strcat( szXml, szXmlTmp );
+			sprintf( szXmlTmp, "<INQTDTENTATIVA>%s</INQTDTENTATIVA>", I_INQTDTENTATIVA.arr );strcat( szXml, szXmlTmp );
+			
+			
+        strcat(szXml, "</msgBody></msg>");
+		replacechar(szXml);
+		
+        sprintf(szAux, "szXml[%s]", szXml); oLog.logDebug(szAux);
+
+        memset(szRetMsg, 0x00, sizeof(szRetMsg));
+        iRetSendXML = sendXML( szXml,szRetMsg );
+        if ( iErrorNumber != 0 )
+        {
+            sprintf(szAux, "iRetSendXML(%d)iErrorNumber(%d)szRetMsg[%s]\n", iRetSendXML, iErrorNumber, szRetMsg); oLog.logDebug(szAux);
+			iQtdEnviosNOK++;
+        }
+		else
+		{
+			iQtdEnviosOK++;
+		}
+		
+        //sleep(1);  // Testes
+    }// for(;;)
+
+	sprintf(szAux, "Foram executadas (%d) envios com ERRO.\n", iQtdEnviosNOK); oLog.logDebug(szAux);
+	sprintf(szAux, "Foram executadas (%d) envios com SUCESSO.\n", iQtdEnviosOK); oLog.logDebug(szAux);
+	
+    //oLog.logDebug("Fechando cursor...");
+    EXEC SQL CLOSE DADOSPP;
+
+
+    oLog.logDebug("Desconectando da BD...\n");
+    DBDisconnect();
+
+    oLog.logDebug("Finalizando conexao TUXEDO...\n");
+    tpterm(); 
+
+    oLog.logDebug("Processamento encerrado com sucesso...\n");
+    oLog.logDebug("<<<enviaPPPre\n");
+
+    exit(0);
+
+    sqlError:
+        sprintf(szAux, "Finalizando processo com erro ORACLE (%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        exit(1);
+
+    /* Tratamento de erro de processamento */
+    finalizaProcess:
+        oLog.logDebug("Finalizando processo...\n");
+        oLog.logDebug("Fechando cursor...\n");
+        EXEC SQL CLOSE DADOSPP;
+
+        oLog.logDebug("Desconectando da BD...\n");
+        DBDisconnect();
+        oLog.logDebug("Finalizando conexao TUXEDO...\n");
+        tpterm(); 
+
+        oLog.logDebug("<<<enviaPPPre\n");
+        exit(1);
+}
+
+
+
+/************************************************************************************************************/
+void ObtemParamBase( int *piSleep )
+{
+    sprintf(szAux, "Antes->*piSleep(%d)\n", *piSleep); oLog.logDebug(szAux);
+
+    *piSleep=ObtemTempoSleep();
+
+    sprintf(szAux, "Depois->*piSleep(%d)\n", *piSleep); oLog.logDebug(szAux);
+}
+
+
+
+/************************************************************************************************************/
+int ObtemParamQtRetriesMax(void)
+{
+    char *pPointer= ObtemParametro("FILASETCLIENTINFO_QTRETRYMAX");
+    if(pPointer == NULL) {
+        oLog.logDebug("Parametro de configuracao 'FILASETCLIENTINFO_QTRETRYMAX' nao encontrado\n");
+        pPointer = "10"; // qtde máxima de retries
+    }
+
+    sprintf(szAux, "Retries Max=%s\n", pPointer);oLog.logDebug(szAux);
+
+    return (atoi(pPointer));
+}
+
+
+
+/************************************************************************************************************/
+int ObtemTempoSleep(void)
+{
+    char *pPointer = ObtemParametro("ENVIA_CAD_PREPAGO_SLEEP_EOF");
+    if(pPointer == NULL) {
+        oLog.logDebug("Parametro de configuracao 'ENVIA_CAD_PREPAGO_SLEEP_EOF' nao encontrado\n");
+
+        exit(-1);
+    }
+
+    return (atoi(pPointer));
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemDataHora(void)
+{
+    struct tm *ptTime;
+    time_t tTimeNow;
+    static char szDataHora[14 + 1];
+
+    time(&tTimeNow);
+    ptTime=localtime(&tTimeNow);
+    sprintf(szDataHora, "%04d%02d%02d%02d%02d%02d", 
+                        ptTime->tm_year + 1900, 
+                        ptTime->tm_mon + 1, 
+                        ptTime->tm_mday, 
+                        ptTime->tm_hour, 
+                        ptTime->tm_min, 
+                        ptTime->tm_sec );
+
+    return szDataHora;
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemValorTag(char *pXml, char *pTag)
+{
+    static char szValue[255 + 1];
+
+    szValue[0] = 0;
+    if ( pXml )
+    {
+        if ( *pXml )
+        {
+            char *p0 = strstr(pXml,pTag) + strlen(pTag) + 1;
+            if ( p0 )
+            {
+                char *p1 = strstr(p0,pTag) - 2;
+                if ( p1 )
+                {
+                    if ( p1 > p0 )
+                    {
+                        int tam = p1-p0;
+                        if (tam > 255) tam = 255;
+                        strncpy(szValue,p0,tam);
+                        szValue[tam]=0;
+                    }
+                }
+            }
+        }
+    }
+
+    return szValue;
+}
+
+
+
+/************************************************************************************************************/
+int TUXinit(TParamConf *ptParamConf)
+{
+    TPINIT *tpInitInfo;
+    int i;
+
+    oLog.logInformation(">>>TUXinit\n");
+
+    if((tpInitInfo = (TPINIT *)tpalloc("TPINIT", (char *)NULL, TPINITNEED(strlen(VIVO_GENERIC_PASSWORD) - 1) )) == (TPINIT *)NULL)
+    return tperrno;
+
+    strcpy(tpInitInfo->usrname, ptParamConf->szUsrTux);
+    strcpy(tpInitInfo->cltname, ptParamConf->szCltTux);
+    strcpy(tpInitInfo->passwd, ptParamConf->szPwsTux);
+    strcpy((char *)&tpInitInfo->data, ptParamConf->szPwsTuxGen);
+
+    i = tpinit(tpInitInfo);
+    sprintf(szAux, "TPINIT: %i, TPERRNO: %i\n", i, tperrno); oLog.logDebug(szAux);
+
+    oLog.logInformation("<<<TUXinit\n");
+
+//    printf("TUX_USRNAME[%s]\n", TUX_USRNAME);
+//    printf("TUX_CLTNAME[%s]\n", TUX_CLTNAME);
+//    printf("VIVO_APP_PASSWORD[%s]\n", VIVO_APP_PASSWORD);
+//    printf("VIVO_GENERIC_PASSWORD[%s]\n", VIVO_GENERIC_PASSWORD);
+
+    if (i == -1)
+        return 1;
+    else  
+        return 0;
+}
+
+
+
+/************************************************************************************************************/
+int sendXML(char *pXmlSaida, char *pRetMsg) 
+{
+    char *sendbuf, *rcvbuf;
+    long sendlen, rcvlen;
+
+    sendlen = strlen(pXmlSaida);
+
+    // sprintf(szAux, "Tamanho da msg = (%d)\n", sendlen); oLog.logInformation(szAux);
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) 
+	{
+        oLog.logError("Error allocating send buffer\n");
+        tpterm();
+
+        return -1;
+    }
+
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) 
+	{
+        oLog.logError("Error allocating receive buffer\n");
+        tpfree(sendbuf);
+        tpterm();
+
+        return -1;
+    }
+
+    strcpy(sendbuf, pXmlSaida);
+
+    if(tpacall("INTERMEDCADPP", (char *)sendbuf, sendlen, TPNOTRAN|TPNOREPLY ) == -1) 
+	{
+        sprintf(szAux, "Tperrno = %d\n", tperrno); oLog.logError(szAux);
+        sprintf(szAux, "rcvbuf [%s]\n", rcvbuf); oLog.logError(szAux);
+
+        iErrorNumber=tperrno;
+        strcpy(pRetMsg, rcvbuf);
+
+        tpfree(sendbuf);
+        tpfree(rcvbuf);
+
+        return 1;
+    }
+
+    iErrorNumber=0;
+    strcpy(pRetMsg, rcvbuf);
+
+    tpfree(sendbuf);
+    tpfree(rcvbuf);
+
+    return 0;
+}
+
+
+
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[81];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug("Obtendo parametros de configuracao...\n");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("enviaPPPre.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir()) {
+        oLog.logError("Erro abrindo arquivo de configuração!\n");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, 20);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, 10);
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, 10);
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    //sprintf(szAux, "ptParamConf->szPws[%s]\n", ptParamConf->szPws); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]\n", ptParamConf->szUsr); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]\n", ptParamConf->szInst); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTux[%s]\n", ptParamConf->szPwsTux); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szUsrTux[%s]\n", ptParamConf->szUsrTux); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]\n", ptParamConf->szPwsTuxGen); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szCltTux[%s]\n", ptParamConf->szCltTux); oLog.logInformation(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0 )
+    {
+        oLog.logError("Dados incompletos!\n");
+        return -1;
+    }
+
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...\n");
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logInformation(">>>DBConnect\n");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    oLog.logInformation("<<<DBConnect\n");
+
+    return (sqlca.sqlcode);
+    
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]\n");
+    return -1;
+}
+
+
+
+
+/************************************************************************************************************/
+void DBDisconnect(void)
+{
+    oLog.logInformation(">>>DBDisconnect\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    // EXEC SQL COMMIT WORK RELEASE;
+
+    oLog.logInformation("<<<DBDisconnect\n");
+    return;
+
+Error:
+    sprintf(szAux, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); oLog.logError(szAux);
+    return;
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemParametro(char *pCdParametro)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        //VARCHAR oszCdParametro[255];
+        char *oszCdParametro = pCdParametro;
+        VARCHAR oszDsValorParametro[255+1];
+    EXEC SQL END DECLARE SECTION;
+
+    static char szDsValorParametro[255 + 1];
+    struct sqlca sqlca;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    //STRCPY_TO_ORA(oszCdParametro, pCdParametro);
+
+    EXEC SQL 
+        SELECT dsvalorparametro
+          INTO :oszDsValorParametro
+          FROM apoio.parametro
+         WHERE parametro.cdparametro = :oszCdParametro;
+
+    STRCPY_FROM_ORA(szDsValorParametro, oszDsValorParametro);
+
+    return szDsValorParametro;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        exit(-1);
+
+    naoexiste:
+        sprintf(szAux, "Chave pesquisada nao encontrada[%s]\n", pCdParametro); oLog.logDebug(szAux);
+        return NULL;
+}
+
+char * replacechar(char * a)
+{
+	while(*a!='\0')
+	{
+		if(*a=='&')
+		*a=' ';
+		a++;
+	}
+	
+	sprintf(szAux, " replacechar() RETORNO (%s) ....\n",  a); oLog.logDebug(szAux);
+	
+	return a;
+}
+
+
+
+void corrige( char * buffer )
+{
+   int i;
+   int j;
+   char bf[256];
+   memset( bf, 0x0, sizeof(bf) );
+   j = 0;
+
+   for ( i=0; i < 256; i++ )
+   {
+      if ( buffer[i] == '<' || buffer[i] == '>' || buffer[i] == ':' )
+         continue;
+
+      bf[j++] = buffer[i];
+   }
+   strcpy( buffer, bf );
+
+}

@@ -1,0 +1,702 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+#include<ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <tuxfw.h>
+#include "../include/ComprovanteServico.h"
+
+ComprovanteServico::ComprovanteServico()
+{
+	memset(&m_erroOracle,0,4097);
+	m_log.setNivel(2);
+	m_servicoAtivo = 0;
+	m_log.logInformation("ComprovanteServico::ComprovanteServico()");
+}
+
+ComprovanteServico::~ComprovanteServico()
+{
+	m_log.logInformation("ComprovanteServico::~ComprovanteServico()");
+}
+
+/**
+ *  Função:
+ *		Executa o processo de desativação de comprovante de serviço
+ **/
+int ComprovanteServico::executar()
+{
+	m_log.logInformation("ComprovanteServico::executar()");
+	struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+		int qtRegistros;
+		int qtTentativas;
+		int intervalo = 0;
+		struct param{
+			VARCHAR idcompservicodesativado[22];
+			int qttentativa;
+			VARCHAR xmlenvio[2000+1];
+		}m_param;
+		struct iparam{
+			short idcompservicodesativado;
+			short qttentativa;
+			short xmlenvio;
+		}m_iparam;
+    EXEC SQL END DECLARE SECTION;	
+
+	char szXml[4000];		// XML de entrada
+	char szRetMsg[6000];	// XML de saida do legado
+	int iErrorNumber;		// codigo de erro do Service Router
+	int iRetSendXML;		// codigo de erro do Service Router	
+	int indice = 0;			// contador de registros
+	int tempoInativo = 0;
+
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	// loop principal
+	while(getSignalProcessa() == 1)
+	{
+
+		while(continuaProcessamento() == false)
+		{
+			tempoInativo = this->getTempoSemFilaDB();
+
+			sprintf(szAux, "Aguarda para continuar o processamento: [%d] segundos\n", tempoInativo); m_log.logDebug(szAux);
+
+			sleep(tempoInativo); // espera n segundos
+
+		    if(getSignalProcessa() == 0) {
+                m_log.logDebug("1.Tratamento de sinal de termino dentro do loop\n");
+                break;
+            }
+		}
+
+		qtRegistros = this->m_registros;
+		qtTentativas = this->m_qtTentativas;
+		intervalo = this->getTempoReprocessar();
+
+		m_log.logInformation("continuar processamento...");
+
+        /* tratamento para interromper o processamento via sinal (complemento da saida acima) */
+        if(getSignalProcessa() == 0) {
+            m_log.logDebug("2.Tratamento de sinal de termino dentro do loop\n");
+            break;
+        }
+
+		m_log.logInformation("declara cursor FILA");
+		EXEC SQL DECLARE FILA CURSOR FOR
+			SELECT 
+				IDCOMPSERVICODESATIVADO,
+				QTTENTATIVA,
+				XMLENVIO
+			FROM
+				INFRA.COMPSERVICODESATIVADO
+			WHERE
+			QTTENTATIVA < :qtTentativas AND
+				ROWNUM <= :qtRegistros AND
+				(
+					ROUND((SYSDATE - TO_DATE(TO_CHAR(DTULTIMAALTERACAO,'DD/MM/YYYY HH24:MI:SS'),'DD/MM/YYYY HH24:MI:SS'))*24,0) >= :intervalo AND
+					QTTENTATIVA > 0
+				) OR 
+				(
+					QTTENTATIVA = 0
+				)
+			ORDER BY DTCRIACAO ASC;
+
+		EXEC SQL OPEN FILA;
+
+		m_log.logInformation("Inicio da leitura dos registros");
+		for(;;)
+		{
+            if(getSignalProcessa() == 0) {
+                m_log.logDebug("3.Tratamento de sinal de termino dentro do loop\n");
+                break;
+            }
+			int tpExecucao = this->getTempoDB();
+			sprintf(szAux, "aguardar %d segundos antes de processar\n", tpExecucao); m_log.logDebug(szAux);
+			// aguardar um tempo entre cada execução
+			sleep(tpExecucao);	
+			m_log.logInformation("zerar variaveis");
+			// zerar as variaveis
+			memset(&m_param,0,sizeof(m_param));
+			memset(&m_iparam,0,sizeof(m_iparam));
+			EXEC SQL FETCH FILA INTO :m_param:m_iparam;
+
+			m_log.logInformation("Fazendo o fetch dos registros");
+			if(sqlca.sqlcode == 1403) {
+				m_log.logInformation("Não existem mais registros. terminando o fetch");
+				break;
+			}			
+
+
+			m_log.logInformation("montar XML de envio");
+
+			// montar o xml de entrada para o service router
+			memset(szXml, 0x00, sizeof(szXml));
+			strcpy(szXml, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>");
+			strcat(szXml, "<msg><msgHdr><user>1</user><service>AcessoRouter</service></msgHdr><msgBody>");
+			strcat(szXml, (char*)m_param.xmlenvio.arr);
+			strcat(szXml, "</msgBody></msg>");
+			sprintf(szAux, "szXml[%s]", szXml); 
+			m_log.logDebug(szAux);
+
+			memset(szRetMsg, 0x00, sizeof(szRetMsg));
+		        iRetSendXML = sendXML(szXml, szRetMsg, &iErrorNumber);
+
+			sprintf(szAux, "iRetSendXML(%d)iErrorNumber(%d)szRetMsg[%s]\n", iRetSendXML, iErrorNumber, szRetMsg); 
+			m_log.logDebug(szAux);
+
+			/* Verifica status do envio do XML e retorno da conexao */
+			if(iRetSendXML != 0) 
+			{
+				sprintf(szAux, "Erro TUXEFO retornado(%d)\n", iErrorNumber); 
+				m_log.logDebug(szAux);
+				return -2;
+			}
+			else
+			{		
+				//******* FAKE DO sendXML ********/
+				//strcpy(szRetMsg,"<?xml version=\"1.0\" encoding=\"UTF-8\"?><ARG><ERRO><COD>999</COD><MSG>Erro geral: null</MSG></ERRO></ARG>");
+				//******* FAKE DO sendXML ********/
+
+				char *ptag = NULL;
+				char *pcod = NULL;
+				char *pmsg = NULL;
+				char tag[20];
+				char cod[200];
+				char msg[800];
+				memset(&tag,0,sizeof(tag));
+				memset(&cod,0,sizeof(cod));
+				memset(&msg,0,sizeof(msg));
+
+				// Procurar Tag de ERRO
+				ptag = this->getTag(szRetMsg, "ERRO");
+				if(ptag!=NULL)
+				{
+					strcpy(tag,ptag);
+					pcod = this->getTag(szRetMsg, "COD");
+					if(pcod != NULL)
+						strncpy(cod,pcod,199);
+					pmsg = this->getTag(szRetMsg, "MSG");
+					if(pmsg != NULL)
+						strncpy(msg,pmsg,799);
+					// atualiza registro com código de erro e XML do Service Router
+					this->atualizaRegistro((char*)m_param.idcompservicodesativado.arr,++m_param.qttentativa,cod,msg,szRetMsg);
+				}
+				else
+				{
+					// Remover registro com execução sucesso.
+					this->removeRegistro((char*)m_param.idcompservicodesativado.arr);
+				}
+			}
+			// comitar a cada n registros
+			EXEC SQL COMMIT;
+			m_log.logInformation("Faz commit (1)");
+			m_log.logInformation("aguardando n segundos para processar o próximo.");
+
+		} //for
+
+		
+		m_log.logInformation("fecha cursor FILA");
+		EXEC SQL CLOSE FILA;
+
+	} // while
+
+	return 0;
+
+sqlError:
+		sprintf(m_erroOracle, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); 
+		m_log.logDebug(m_erroOracle);
+		return -1;
+}
+
+char* ComprovanteServico::getParametro(char*nome,char*param)
+{
+	
+	struct sqlca sqlca;
+	char valor[256];
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR parametroValor[256];
+		char* parametro = nome;
+    EXEC SQL END DECLARE SECTION;	
+
+	memset(&parametroValor,0,sizeof(parametroValor));
+	memset(&valor,0,256);
+	memset(param,0,sizeof(param));
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+	EXEC SQL WHENEVER NOT FOUND goto erro;
+
+	EXEC SQL
+		SELECT DSVALORPARAMETRO 
+		INTO :parametroValor
+		FROM APOIO.PARAMETRO
+		WHERE CDPARAMETRO = :parametro;
+
+	if(((char*)parametroValor.arr)!=NULL)
+		strcpy(param,(char*)parametroValor.arr);
+
+	return param;
+
+    erro:
+        sprintf(m_erroOracle, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); 
+		m_log.logDebug(m_erroOracle);
+        return NULL;
+}
+
+int ComprovanteServico::connect(char *sid)
+{
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *connString = sid;
+    EXEC SQL END DECLARE SECTION;
+
+    m_log.logInformation("connect\n");
+
+   // sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+
+	m_log.logInformation(connString);
+
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    EXEC SQL CONNECT :connString;
+
+    m_log.logInformation("connect.\n");
+
+    return (sqlca.sqlcode);
+    
+errConn:
+	sprintf(m_erroOracle, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); 
+    m_log.logInformation("connect [ERROR]\n");
+    m_log.logError(m_erroOracle);
+    return -1;
+}
+
+void ComprovanteServico::disconnect()
+{
+	struct sqlca sqlca;
+    m_log.logInformation("disconnect\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    // EXEC SQL COMMIT WORK RELEASE;
+
+    m_log.logInformation("disconnect.\n");
+    return;
+
+Error:
+   // sprintf(m_erroOracle, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); 
+	m_log.logError(m_erroOracle);
+}
+
+int ComprovanteServico::atualizaRegistro(char*idcompservicodesativado,int qttentativa,char*cdErro,char*dsErro,char*xmlRetorno)
+{
+	m_log.logInformation("ComprovanteServico::atualizaRegistro");
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *cidcompservicodesativado = idcompservicodesativado;
+		int  cqttentativa = qttentativa;
+		char *ccdErro = cdErro;
+		char *cdsErro = dsErro;
+		char *cxmlRetorno = xmlRetorno;
+    EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR GOTO error;
+	EXEC SQL WHENEVER NOT FOUND goto error;
+	EXEC SQL
+		UPDATE INFRA.COMPSERVICODESATIVADO SET
+		CDERRO = :ccdErro,
+		DSERRO = :cdsErro,
+		XMLRETORNO = :cxmlRetorno,
+		QTTENTATIVA=:cqttentativa ,
+		DTULTIMAALTERACAO=SYSDATE
+		WHERE
+		IDCOMPSERVICODESATIVADO = :cidcompservicodesativado;
+
+	m_log.logInformation("registro atualizado com sucesso");
+		
+	return 1;
+
+error:
+	sprintf(m_erroOracle, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); 
+	m_log.logError(m_erroOracle);
+	return 0;
+}
+
+int ComprovanteServico::removeRegistro(char*registro)
+{
+	m_log.logInformation("ComprovanteServico::removeRegistro");
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *cregistro = registro;
+    EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR GOTO error;
+	EXEC SQL WHENEVER NOT FOUND goto error;
+	EXEC SQL
+		DELETE FROM INFRA.COMPSERVICODESATIVADO
+		WHERE IDCOMPSERVICODESATIVADO = :cregistro;
+
+	m_log.logInformation("registro removido com sucesso");
+
+	return 1;
+
+error:
+	sprintf(m_erroOracle, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); 
+	m_log.logError(m_erroOracle);
+	return 0;
+}
+
+
+int ComprovanteServico::tuxedoInit(char*userTux,char*cltTux,char*pwsTux,char*pwsTuxGen)
+{
+    TPINIT *tpInitInfo;
+    int i;
+	char aux[2000];
+
+	memset(&aux,0,sizeof(aux));
+    m_log.logInformation("ComprovanteServico::TuxedoInit\n");
+
+    if((tpInitInfo = (TPINIT *)tpalloc("TPINIT", (char *)NULL, TPINITNEED(strlen("vivo") - 1) )) == (TPINIT *)NULL)
+		return tperrno;
+
+    strcpy(tpInitInfo->usrname, userTux);
+    strcpy(tpInitInfo->cltname, cltTux);
+    strcpy(tpInitInfo->passwd, pwsTux);
+    strcpy((char *)&tpInitInfo->data, pwsTuxGen);
+
+    i = tpinit(tpInitInfo);
+    sprintf(aux, "TPINIT: %i, TPERRNO: %i\n", i, tperrno); 
+	m_log.logDebug(aux);
+
+    m_log.logInformation("ComprovanteServico::TuxedoInit fim\n");
+
+    if (i == -1)
+        return 1;
+    else  
+        return 0;
+}
+
+int ComprovanteServico::sendXML(char *pXmlSaida, char *pRetMsg, int *pErrorNumber) 
+{
+
+	m_log.logInformation("enviando XML de envio");
+    char *sendbuf, *rcvbuf;
+    long sendlen, rcvlen;
+
+    sendlen = strlen(pXmlSaida);
+
+    // sprintf(szAux, "Tamanho da msg = (%d)\n", sendlen); m_log.logInformation(szAux);
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        m_log.logError("Error allocating send buffer\n");
+        tpterm();
+
+        return -1;
+    }
+
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        m_log.logError("Error allocating receive buffer\n");
+        tpfree(sendbuf);
+        tpterm();
+
+        return -1;
+    }
+
+    strcpy(sendbuf, pXmlSaida);
+
+    if(tpcall("AcessoRouter", (char *)sendbuf, sendlen, (char **)&rcvbuf, &rcvlen, (long)0) == -1) {
+
+		memset(m_erroOracle,0,sizeof(m_erroOracle));
+        sprintf(m_erroOracle, "Tperrno = %d\n", tperrno); m_log.logError(m_erroOracle);
+        sprintf(m_erroOracle, "rcvbuf[%s]\n", rcvbuf); m_log.logError(m_erroOracle);
+		sprintf(m_erroOracle, "Erro[%s]\n", tpstrerror(tperrno)); m_log.logError(m_erroOracle);
+
+        *pErrorNumber=tperrno;
+        strcpy(pRetMsg, rcvbuf);
+
+        tpfree(sendbuf);
+        tpfree(rcvbuf);
+
+		switch(*pErrorNumber)
+		{
+			case TPEINVAL: m_log.logError(CONST_TPEINVAL); break;
+			case TPENOENT: m_log.logError(CONST_TPENOENT); break;
+			case TPEITYPE: m_log.logError(CONST_TPEITYPE); break;
+			case TPEOTYPE: m_log.logError(CONST_TPEOTYPE); break;
+			case TPETRAN: m_log.logError(CONST_TPETRAN); break;
+			case TPETIME: m_log.logError(CONST_TPETIME); break;
+			case TPESVCFAIL: m_log.logError(CONST_TPESVCFAIL); break;
+			case TPESVCERR: m_log.logError(CONST_TPESVCERR); break;
+			case TPEBLOCK: m_log.logError(CONST_TPEBLOCK); break;
+			case TPGOTSIG: m_log.logError(CONST_TPGOTSIG); break;
+			case TPEPROTO: m_log.logError(CONST_TPEPROTO); break;
+			case TPESYSTEM: m_log.logError(CONST_TPESYSTEM); break;
+			case TPEOS: m_log.logError(CONST_TPEOS); break;
+		}
+
+        return 1;
+    }
+
+    *pErrorNumber=0;
+    strcpy(pRetMsg, rcvbuf);
+
+    tpfree(sendbuf);
+    tpfree(rcvbuf);
+
+    return 0;
+}
+
+
+/**
+  * Não está sendo usado o xercer para fazer parse do XML de entrada
+  */
+char *ComprovanteServico::getTag(char *pXml, char *pTag)
+{
+    static char szValue[255 + 1];
+    char szXmlAux[6096 + 1];
+    char *pTok;
+    int iFlag=0;
+
+    /* copia string a ser analisada para buffer local (strtok altera o ponteiro de entrada) */
+    strcpy(szXmlAux, pXml);
+
+    for(pTok = strtok(szXmlAux, "<>"); pTok != NULL; pTok = strtok(NULL, "<>")) {
+        if(iFlag) {
+            strcpy(szValue, pTok);
+            iFlag=0;
+
+            return szValue;
+        }
+
+        if(!strcmp(pTag, pTok)) {
+            iFlag=1;
+        }
+    }
+
+    return NULL;
+}
+
+void ComprovanteServico::setQttentativas(int qtTentativas)
+{
+	this->m_qtTentativas = qtTentativas;
+}
+void ComprovanteServico::setRegistros(int registros)
+{
+	this->m_registros = registros;
+}
+void ComprovanteServico::setTempo(int tempo)
+{
+	this->m_tempo = tempo;
+}
+void ComprovanteServico::setTempoSemFila(int tempoSemFila)
+{
+	this->m_tempoSemFila = tempoSemFila;
+}
+int ComprovanteServico::getQttentativas()
+{
+	return this->m_qtTentativas;
+}
+int ComprovanteServico::getRegistros()
+{
+	return this->m_registros;
+}
+int ComprovanteServico::getTempo()
+{
+	return this->m_tempo;
+}
+int ComprovanteServico::getTempoSemFila()
+{
+	return this->m_tempoSemFila;
+}
+void ComprovanteServico::setTempoReprocessar(int tempoReprocessar)
+{
+	this->m_tempoReprocessar = tempoReprocessar;
+}
+int ComprovanteServico::getTempoReprocessar()
+{
+	return this->m_tempoReprocessar;
+}
+void ComprovanteServico::setSignalProcessa(int *signal)
+{
+	this->m_piSignalProcessa = signal;
+}
+
+int ComprovanteServico::getSignalProcessa()
+{
+	return *this->m_piSignalProcessa;
+}
+
+
+bool ComprovanteServico::continuaProcessamento()
+{
+	m_log.logInformation("ComprovanteServico::continuaProcessamento()");
+    char *pPointer=NULL;
+    static int iCtrl=1;
+	char szAux[4096 + 1];
+	char servicoAtivo[20];
+
+    pPointer = getParametro("DEAMMON_COMPROVANTE_ATIVO",servicoAtivo);
+    sprintf(szAux, "DEAMMON_COMPROVANTE_ATIVO[%s]\n", pPointer?pPointer:"...NULL..."); m_log.logDebug(szAux);
+    if(pPointer == NULL)
+    {
+        m_log.logDebug("Parametro de configuracao nao encontrado DEAMMON_COMPROVANTE_ATIVO\n");
+        exit(-1);
+    }
+    m_servicoAtivo = atoi(pPointer);
+
+    if(m_servicoAtivo == 0) {
+        iCtrl=1;
+        m_log.logDebug("inativo");
+        return false;
+    }
+    else { 
+		getParametrosBase();
+        m_log.logDebug("ativo");
+        return true;
+    }
+}
+
+int ComprovanteServico::getParametrosBase()
+{
+	m_log.logInformation("Recuperar parametros da base");
+	// ler parametros 
+	char qtTentativas[256];
+	char registros[256];
+	char tempoReprocessar[256];
+		
+	this->getParametro("DEAMMON_COMPROVANTE_QTTENTATIVAS",qtTentativas);
+	this->getParametro("DEAMMON_COMPROVANTE_REGISTROS_POR_VEZ",registros);
+	this->getParametro("DEAMMON_COMPROVANTE_TEMPO_REPROCESSAR",tempoReprocessar);
+
+	if( strlen(qtTentativas) == 0 || strlen(registros) == 0 ||
+		strlen(tempoReprocessar) == 0)
+	{
+		 m_log.logError("Parametros de base incompletos!\n");
+		 return 0;
+	}
+	m_log.logInformation("DEAMMON_COMPROVANTE_QTTENTATIVAS");
+	m_log.logInformation(qtTentativas);
+	m_log.logInformation("DEAMMON_COMPROVANTE_REGISTROS_POR_VEZ");
+	m_log.logInformation(registros);
+	m_log.logInformation("DEAMMON_COMPROVANTE_TEMPO_REPROCESSAR");
+	m_log.logInformation(tempoReprocessar);
+
+	try
+	{
+		this->setQttentativas(atoi(qtTentativas));
+		this->setRegistros(atoi(registros));
+		this->setTempoReprocessar(atoi(tempoReprocessar));
+		return 1;
+	}catch(...)
+	{
+		m_log.logError("Erro ao converter parametros para número");
+		return 0;
+	}
+}
+
+int ComprovanteServico::getTempoSemFilaDB()
+{
+	// ler parametros 
+	char tempoSemFila[256];
+		
+	this->getParametro("DEAMMON_COMPROVANTE_TEMPO_SEM_FILA",tempoSemFila);
+	sprintf(szAux, "DEAMMON_COMPROVANTE_TEMPO_SEM_FILA[%s]\n", tempoSemFila); m_log.logDebug(szAux);
+
+	if(strlen(tempoSemFila) == 0)
+	{
+		 m_log.logError("Parametros de base incompletos!\n");
+		 exit(-1);
+		 return 0;
+	}
+
+	try
+	{
+		this->setTempoSemFila(atoi(tempoSemFila));
+		return getTempoSemFila();
+	}catch(...)
+	{
+		m_log.logError("Erro ao converter parametros para número");
+		exit(-1);
+		return 0;
+	}
+}
+
+int ComprovanteServico::getTempoDB()
+{
+	// ler parametros 
+	char tempo[256];
+		
+	this->getParametro("DEAMMON_COMPROVANTE_TEMPO_ENTRE_EXECUCAO",tempo);
+	sprintf(szAux, "DEAMMON_COMPROVANTE_TEMPO_ENTRE_EXECUCAO[%s]\n", tempo); m_log.logDebug(szAux);
+
+	if(strlen(tempo) == 0)
+	{
+		 m_log.logError("Parametros de base incompletos!\n");
+		 exit(-1);
+		 return 0;
+	}
+
+	try
+	{
+		this->setTempo(atoi(tempo));
+		return getTempo();
+	}catch(...)
+	{
+		m_log.logError("Erro ao converter parametros para número");
+		exit(-1);
+		return 0;
+	}
+}
+
+int ComprovanteServico::permiteReprocessar(int data,int segundos)
+{
+	m_log.logInformation("ComprovanteServico::permiteReprocessar");
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		int dataAtual = 0;
+		int segundosAtual = 0;
+    EXEC SQL END DECLARE SECTION;
+
+	int dataDiferenca = 0;
+	int segundosDiferenca = 0;
+	int intervalo = this->getTempoReprocessar()*3600; // intervalo em hora passado para segundo
+
+	EXEC SQL WHENEVER SQLERROR GOTO error;
+	EXEC SQL WHENEVER NOT FOUND goto error;
+
+	EXEC SQL 
+	SELECT TO_NUMBER(TO_CHAR(SYSDATE,'YYYYMMDD')) AS DATA,
+		   TO_NUMBER(TO_CHAR(SYSDATE,'HH24')*3600 + TO_CHAR(SYSDATE,'MI')*60 + TO_CHAR(SYSDATE,'SS')) AS SEGUNDOS
+	INTO :dataAtual,:segundosAtual
+	FROM DUAL;
+
+	sprintf(szAux, "Data atual YYYYMMDD=[%d], Hora atual em segundos=[%d]\n", dataAtual,segundosAtual); m_log.logDebug(szAux);
+	sprintf(szAux, "Data registro YYYYMMDD=[%d], Hora do regitro em segundos=[%d]\n", data,segundos); m_log.logDebug(szAux);
+
+	dataDiferenca = dataAtual - data;
+	segundosDiferenca = segundosAtual - segundos;
+
+	if(dataDiferenca <= 1 && dataDiferenca >= 0 && segundosDiferenca >= intervalo )
+	{	
+		m_log.logDebug("Intervalo de tempo OK");
+		return 1;
+	}
+
+	return 0;
+error:
+	sprintf(m_erroOracle, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); 
+	m_log.logError(m_erroOracle);
+	return 0;
+}
+

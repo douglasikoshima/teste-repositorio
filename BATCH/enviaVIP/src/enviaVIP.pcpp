@@ -1,0 +1,1059 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <unistd.h>
+#include <ctype.h>
+
+#include <tuxfw.h>
+
+#include <enviaVIP.h>
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+
+EXEC SQL INCLUDE SQLCA;
+
+char szAux[4096 + 1];
+Log oLog;
+int iSignalProcessa=1;
+char szDataHoraGlobal[19 + 1];
+long iErrorNumber=0;
+
+#define LOCK            1
+#define UNLOCK          0
+#define KILL            2
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+// Prototipos
+bool StartSimNao( bool TermProc );
+
+/*--------------------------------------------------------*/
+
+
+char* rtrim(char *pStr)
+{
+	int rInd;
+
+	if (pStr == NULL)
+			return NULL;
+
+   rInd = strlen(pStr) - 1;
+   while ( isspace(pStr[rInd]) && rInd >= 0){
+      rInd--;
+   }
+
+   pStr[rInd + 1] = '\0';
+   
+   return pStr;
+}
+
+char* ltrim(char *pStr)
+{
+	int lInd = 0;
+
+	if (pStr == NULL)
+			return NULL;
+
+    //rInd = strlen(pStr) - 1;
+
+    while (isspace(pStr[lInd])){
+        lInd++;
+	}
+
+	pStr = pStr + lInd;
+     
+   return pStr;
+}
+
+char* trim(char *pStr)
+{
+	return ltrim(rtrim(pStr));		
+}
+
+
+void registrarContato(char* cServico, int iCdAreaRegistro, int iNrLinha )
+{
+
+	char cContato[100];
+	char cNrLinha[16];
+	char cCdAreaRegistro[3];
+	int iRetSendXML = 0; 
+	char szXml[4000 + 1];
+	char szRetMsg[1000];
+
+	memset(cContato, 0x00, sizeof(cContato));
+	memset(cNrLinha, 0x00, sizeof(cNrLinha));
+	memset(cCdAreaRegistro, 0x00, sizeof(cCdAreaRegistro));
+
+	if (!strcmp(cServico, "SMTPSEND"))
+		strcpy (cContato, "ContatoEnvioAlertaEmail");
+	else
+		strcpy (cContato, "ContatoEnvioAlertaSMS");
+	
+
+	memset(szXml, 0x00, sizeof(szXml));		
+	strcpy(szXml, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>");
+	strcat(szXml, "<msg><msgHdr><user>1</user><service>INCRGCONTATO</service></msgHdr><msgBody>");
+	strcat(szXml, "<nrLinha>");
+	sprintf(cNrLinha, "%d", iNrLinha);
+	strcat(szXml, cNrLinha);
+	strcat(szXml, "</nrLinha>");	
+	strcat(szXml, "<cdAreaRegistro>");
+	sprintf(cCdAreaRegistro, "%d", iCdAreaRegistro);
+	strcat(szXml, cCdAreaRegistro);
+	strcat(szXml, "</cdAreaRegistro>");	
+	strcat(szXml, "<idTipoRelacionamento>1</idTipoRelacionamento>");
+	strcat(szXml, "<cdContato>");
+	strcat(szXml,  cContato);
+	strcat(szXml, "</cdContato>");
+	strcat(szXml, "<idCanal>1</idCanal>");
+
+	strcat(szXml, "</msgBody></msg>");
+	sprintf(szAux, "szXml[%s]", szXml); 
+	oLog.logDebug(szAux);
+
+	memset(szRetMsg, 0x00, sizeof(szRetMsg));
+	iRetSendXML = sendXML(szXml, szRetMsg, "INCRGCONTATO");
+
+
+	sprintf(szAux, "iRetSendXML(%d)iErrorNumber(%d)szRetMsg[%s]\n", iRetSendXML, iErrorNumber, szRetMsg); 
+	oLog.logDebug(szAux);
+
+}
+
+int main(void)
+{
+
+	int iSleep=0;
+	int iCursor=0;
+	int iFechaCursor=0;
+	int iRetSendXML;
+
+	int iFlagEOF=0; // esse flag evita que o processo durma enquanto existam registros para processar.
+
+	char szXml[4000 + 1];
+	char szXmlTmp[4000 + 1];
+
+	char szStatusCode[255 + 1];
+	char szStatusText[255 + 1];
+	char szRetMsg[512];
+	char *pPointer;
+
+
+    TParamConf tParamConf;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+   
+	char    cDsLoja[256];
+	char    cDtEnvio[30];
+	int     iNrLinha;
+	int     iCdAreaRegistro;
+	char    cSgClassificacao[10];
+	char    cDsContato[256];
+	char    cDtVisitaLoja[30];
+	char    cDsLog[256];
+	char	cHrVisitaLoja[30];
+
+    EXEC SQL END DECLARE SECTION;
+
+
+    // Acertando o nivel de logs
+	oLog.setNivel(2);
+	oLog.logDebug(">>>enviaVIP\n");
+
+    ArmaSinal(SIGTERM);
+    ArmaSinal(SIGQUIT);
+    ArmaSinal(SIGINT);
+
+    /* Obtem a data e hora atual e armazena em variavel global */
+    strcpy(szDataHoraGlobal, ObtemDataHora());
+
+
+    if(ObtemParamConf(&tParamConf)) 
+    {
+        oLog.logError("Erro obtendo parametros de configuracao\n");
+        return -1;
+    }
+
+    oLog.logDebug("Conectando na BD...");
+    /* Conecta no banco de dados */
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst)) 
+	{
+        oLog.logError("Erro conectando no banco de dados\n");
+        return -1;
+    } 
+    oLog.logDebug("Conectado na BD com sucesso...\n");
+
+    if ( StartSimNao( false ) == false )   // Existe uma outra instancia rodando, esta deverah ser encerrada.
+    {
+        oLog.logDebug("Outra instancia já está em execução, terminando processo.\n");
+        DBDesconect();
+        oLog.logDebug("<<<enviaVIP\n");
+        return 0;
+    }
+
+    oLog.logDebug("Inicializando TUXEDO...\n");
+    /* Inicializa o TUXEDO */
+    if(TUXinit(&tParamConf)) 
+	{
+        oLog.logError("Erro inicializando TUXEDO\n");
+        return -2;
+    }
+    oLog.logDebug("Inicializado com sucesso...\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+	while(iSignalProcessa == 1) 
+	{
+
+		oLog.logDebug("Verificando se ha pausa no processamento...\n");
+        while(ContinuaProcessamento(&iSleep) == false)
+		{
+            sleep(5); /* aguarda para nao bombardear a base */
+	    
+            /* tratamento para interromper o processamento via sinal (complemento abaixo)*/
+            if(iSignalProcessa == 0) 
+			{
+                oLog.logDebug("1.Tratamento de sinal de termino dentro do loop\n");
+                break;
+            }
+        }
+
+        /* tratamento para interromper o processamento via sinal (complemento da saida acima) */
+        if(iSignalProcessa == 0) 
+		{
+            oLog.logDebug("2.Tratamento de sinal de termino dentro do loop\n");
+            break;
+        }
+
+          /* declara cursor para busca dos xml´s a serem enviados */
+		EXEC SQL DECLARE ENVIAVIP CURSOR FOR
+		SELECT
+			CDAREAREGISTRO,
+			NRLINHA, 
+			TO_CHAR(DTVISITALOJA, 'dd/mm/yyyy'),
+			TO_CHAR(DTVISITALOJA, 'hh24:mi'),
+			SGCLASSIFICACAO,
+			NVL(DSCONTATO, ' '),
+			DSLOJA
+		FROM
+			VOL.ATENDIMENTOLOJA 
+		WHERE
+			DTENVIOCOMUNICACAO <= SYSDATE AND
+			DTVISITALOJA       >  SYSDATE AND
+			INENVIADO	    = 0;
+
+
+        sprintf(szAux, "Buscando alertas para serem enviados agora\r\n");
+		oLog.logDebug(szAux);
+
+        oLog.logDebug("local1\n");
+
+        /* tratamento para fechar cursor e redeclarar */
+        if(iFechaCursor == 1) 
+		{
+            iFechaCursor=0;            
+            oLog.logDebug("Fechando cursor...");
+            EXEC SQL CLOSE ENVIAVIP;
+
+            continue;
+        }
+
+        oLog.logDebug("Abrindo cursor...\n");
+        EXEC SQL OPEN ENVIAVIP;
+                
+        for(;;Sumariza(0, 0, 0, 0, 0, 1)) 
+		{
+
+			if(iSignalProcessa == 0)
+			{
+                oLog.logDebug("3.Tratamento de sinal de termino dentro do loop\n");
+                break;
+            }
+
+			EXEC SQL
+            FETCH ENVIAVIP
+            INTO    
+			:iCdAreaRegistro,
+			:iNrLinha,
+			:cDtVisitaLoja,
+			:cHrVisitaLoja,
+			:cSgClassificacao,
+			:cDsContato,
+			:cDsLoja;
+
+            sprintf(szAux, "FETCH ->sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+
+			
+            if(sqlca.sqlcode == 1403) 
+			{
+               // if(iFlagEOF == 0) 
+			//	{
+			
+                    sprintf(szAux, "Dormindo por (%d) segundos por nao haver registros para enviar...\n\n", iSleep); oLog.logDebug(szAux);
+                    sleep(iSleep);
+                    oLog.logDebug("Acordou...\n");
+              //  }
+
+                iFlagEOF=0;
+                break;
+            }
+
+            iFlagEOF=1;
+			
+			char cMensagem[512];
+			memset(cMensagem, 0x00, sizeof(cMensagem));
+
+			sprintf(cMensagem, "Caro cliente, seu atendimento na loja %s está CONFIRMADO para %s às %s.", trim(cDsLoja), trim(cDtVisitaLoja), trim(cHrVisitaLoja));
+			char cNrLinha[15];
+			char cServico[10];
+					
+			if ( !strcmp(trim(cSgClassificacao), "SMS"))
+			 {
+
+				strcpy(cServico, "SMSSend");		
+				memset(szXml, 0x00, sizeof(szXml));
+				strcpy(szXml, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>");
+				strcat(szXml, "<msg><msgHdr><user>1</user><service>SMSSend</service></msgHdr><msgBody>");
+				strcat(szXml, "<message>");
+				strcat(szXml, cMensagem);
+				strcat(szXml, "</message>");
+				sprintf (cNrLinha, "%d%d", iCdAreaRegistro, iNrLinha);
+				strcat(szXml, "<recipient>");
+				strcat(szXml, cNrLinha);
+				strcat(szXml, "</recipient>");
+				strcat(szXml, "</msgBody></msg>");
+				sprintf(szAux, "szXml[%s]", szXml); 
+				oLog.logDebug(szAux);
+
+			}		
+			else
+			{
+				memset(szXml, 0x00, sizeof(szXml));
+    			strcpy(cServico, "SMTPSEND");		
+				strcpy(szXml, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>");
+				strcat(szXml, "<msg><msgHdr><user>1</user><service>SMTPSEND</service></msgHdr><msgBody>");
+				strcat(szXml, "<from>boletim.vivoonline@vivo.com.br</from>");
+				strcat(szXml, "<to>");
+				strcat(szXml, trim(cDsContato));
+    			strcat(szXml, "</to>");
+				strcat(szXml, "<subject>");
+				strcat(szXml, "VIVO AVISA");
+    			strcat(szXml, "</subject>");
+				strcat(szXml, "<data>");
+				strcat(szXml, cMensagem);
+    			strcat(szXml, "</data>");		    
+				strcat(szXml, "</msgBody></msg>");
+				sprintf(szAux, "szXml[%s]", szXml); 
+				oLog.logDebug(szAux);
+			}
+
+			memset(szRetMsg, 0x00, sizeof(szRetMsg));
+			iRetSendXML = sendXML(szXml, szRetMsg, cServico);
+
+
+		   /* Verifica status do envio do XML e retorno da conexao */
+            if(iErrorNumber == TPESYSTEM) 
+			{
+                sprintf(szAux, "Erro TUXEFO retornado(%d)\n", iErrorNumber); oLog.logDebug(szAux);
+                goto finalizaProcess;
+            }
+
+
+			char cErrCount[10];
+
+			memset(cErrCount, 0x00, sizeof(cErrCount));
+			memset(cDsLog, 0x00, sizeof(cDsLog));
+			oLog.logDebug(szAux);
+
+			 /* Obtem os valores das tags de retorno do XML */    
+
+
+			pPointer = ObtemValorTag(szRetMsg, "statusCode"); 
+
+
+			sprintf(szAux, "errCount->pPointer[%s]\n", pPointer?pPointer:"...NULL..."); 
+			oLog.logDebug(szAux);
+
+			
+			if (pPointer == NULL)  /*o servico SMSSend nao retorna statusCode qdo há sucesso*/									
+				pPointer = ObtemValorTag(szRetMsg, "errCount"); 
+				
+			strcpy(cErrCount, pPointer); 
+
+			sprintf(szAux, "iRetSendXML(%d)iErrorNumber(%d)szRetMsg[%s]\n", iRetSendXML, iErrorNumber, szRetMsg); oLog.logDebug(szAux);
+			sprintf(szAux, "[%s]\n", szRetMsg); 
+	   					
+			/* Verifica status do envio do XML e retorno da conexao */
+
+			oLog.logDebug(cErrCount);			
+
+    		if((!strcmp(cErrCount, "0") && !strcmp(cServico, "SMSSend")) || ( !strcmp(cServico, "SMTPSEND") && cErrCount[2] == 'I' ))
+			{
+				oLog.logDebug(szAux);	
+				sprintf(cDsLog, "Sucesso: retorno statusCode = %s\r\n", cErrCount);
+
+				strcpy (cSgClassificacao, trim(cSgClassificacao));
+
+				EXEC SQL
+				UPDATE
+					VOL.ATENDIMENTOLOJA
+				SET 
+					DSLOG		= :cDsLog,
+					INENVIADO	= 1
+				WHERE 
+					NRLINHA			= :iNrLinha  AND
+					CDAREAREGISTRO  = :iCdAreaRegistro AND
+					SGCLASSIFICACAO = :cSgClassificacao AND
+					INENVIADO		= 0;		
+
+			}else 
+			{
+				oLog.logDebug(szAux);
+				sprintf (cDsLog, "Erro TUXEFO retornado = %s\r\n", cErrCount);
+
+				EXEC SQL
+				UPDATE
+					VOL.ATENDIMENTOLOJA
+				SET 
+					DSLOG			= :cDsLog,
+					QTTENTATIVAERRO = QTTENTATIVAERRO  + 1
+				WHERE 
+					NRLINHA			= :iNrLinha  AND
+					CDAREAREGISTRO	        = :iCdAreaRegistro AND
+					SGCLASSIFICACAO		= :cSgClassificacao AND
+					INENVIADO		= 0;
+															
+
+			 }
+			 
+			oLog.logDebug("Efetuando commit na BD...");
+
+			EXEC SQL COMMIT;
+			oLog.logDebug("Commit efetuado com sucesso na BD...");
+
+			registrarContato(cServico, iCdAreaRegistro, iNrLinha);
+
+			Sumariza(1, 0, 0, 0, 0, 0);
+
+
+
+			
+						
+        }// for(;;)
+
+        Sumariza(0, 1, 0, 0, 0, 0);
+        Sumariza(0, 0, 0, 0, 0, 0);
+
+        oLog.logDebug("Fechando cursor...");
+        EXEC SQL CLOSE ENVIAVIP;
+
+    } // while
+
+    oLog.logDebug("Finalizando conexao TUXEDO...\n");
+    tpterm(); 
+
+    StartSimNao( true ); // Ajusta para disponibilidade da proxima instancia
+    
+    oLog.logDebug("Desconectando da BD...\n");
+    DBDesconect();
+
+    oLog.logDebug("Processamento encerrado com sucesso...\n");
+    oLog.logDebug("<<<enviaVIP\n");
+
+    return 0;
+
+    sqlError:
+        sprintf(szAux, "Finalizando processo com erro ORACLE (%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+	EXEC SQL ROLLBACK;
+	return -1;
+
+    /* Tratamento de erro de processamento */
+    finalizaProcess:
+        oLog.logDebug("Finalizando processo...\n");
+        oLog.logDebug("Fechando cursor...\n");
+        EXEC SQL CLOSE ENVIAVIP;
+
+        oLog.logDebug("Finalizando conexao TUXEDO...\n");
+        tpterm(); 
+
+        oLog.logDebug("Desconectando da BD...\n");
+        DBDesconect();
+
+        oLog.logDebug("<<<enviaVIP\n");
+        return -1;
+}
+
+/************************************************************************************************************/
+void ObtemParamBase(int *piSleep)
+{
+    sprintf(szAux, "*piSleep(%d)\n", *piSleep); 
+	oLog.logDebug(szAux);
+
+    *piSleep=ObtemTempoSleep();
+
+    sprintf(szAux, "Depois->*piSleep(%d)\n", *piSleep); 
+	oLog.logDebug(szAux);
+
+}
+
+/************************************************************************************************************/
+int ObtemTempoSleep(void)
+{
+    char *pPointer=NULL;
+    int iAux;
+
+    pPointer = ObtemParametro("ENVIA_VIP_SLEEP_EOF");
+    if(pPointer == NULL)
+	{
+        oLog.logDebug("Parametro de configuracao nao encontrado ENVIA_VIP_SLEEP_EOF\n");
+        exit(-1);
+    }
+
+    return (atoi(pPointer));
+}
+
+/************************************************************************************************************/
+bool ContinuaProcessamento(int *piSleep)
+{
+    char *pPointer=NULL;
+    static int iCtrl=1;
+    int iEnviaVIPAtivo;
+
+    pPointer = ObtemParametro("ENVIA_VIP_ATIVO");
+    sprintf(szAux, "ENVIA_VIP_ATIVO[%s]\n", pPointer?pPointer:"...NULL..."); 
+	oLog.logDebug(szAux);
+
+    if(pPointer == NULL)
+    {
+        oLog.logDebug("Parametro de configuracao nao encontrado ENVIA_VIP_ATIVO\n");
+        exit(-1);
+    }
+    iEnviaVIPAtivo = atoi(pPointer);
+
+    if(iEnviaVIPAtivo == 0) 
+	{
+        iCtrl=1;
+        oLog.logDebug(">>> FALSE");
+        return false;
+    }
+    else 
+	{
+        if(iCtrl == 1) 
+		{
+            ObtemParamBase(piSleep);
+            iCtrl=0;
+        }
+    
+        oLog.logDebug(">>> TRUE");
+        return true;
+    }
+}
+
+/************************************************************************************************************/
+void Sumariza(int iQtdRegCursor, int iQtdLoops, int iQtdTotalRegOK, int iQtdTotalRegErro, int iQtdTotalRegReProc, int iQtdTotalReg)
+{
+    static int _iQtdRegCursor=0;
+    static int _iQtdLoops=0;
+    static int _iQtdTotalRegOK=0;
+    static int _iQtdTotalRegErro=0;
+    static int _iQtdTotalRegReProc=0;
+    static int _iQtdTotalReg=0;
+    static char szDataHoraAux[19 + 1];
+    static int iFlag=1;
+
+
+
+    if(!iQtdRegCursor && !iQtdLoops && !iQtdTotalRegOK && !iQtdTotalRegErro && !iQtdTotalRegReProc && !iQtdTotalReg) {
+
+        if(iFlag) {
+            sprintf(szDataHoraAux, "%.2s/%.2s/%.4s %.2s:%.2s:%.2s",
+                                    szDataHoraGlobal+6,
+                                    szDataHoraGlobal+4,
+                                    szDataHoraGlobal,
+                                    szDataHoraGlobal+8,
+                                    szDataHoraGlobal+10,
+                                    szDataHoraGlobal+12);
+            iFlag=0;
+        }
+
+        sprintf(szAux, "***************** START  %s  **********************\n", szDataHoraAux); oLog.logDebug(szAux);
+        sprintf(szAux, "Total de verificacoes efetuadas...................(%06d)\n", _iQtdLoops); oLog.logDebug(szAux);
+        sprintf(szAux, "Total de registros processados com sucesso........(%06d)\n", _iQtdTotalRegOK); oLog.logDebug(szAux);
+        sprintf(szAux, "Total de registros processados com erro...........(%06d)\n", _iQtdTotalRegErro); oLog.logDebug(szAux);
+        sprintf(szAux, "Total de registros ignorados para reprocessamento.(%06d)\n", _iQtdTotalRegReProc); oLog.logDebug(szAux);
+        sprintf(szAux, "Total de registros processados....................(%06d)\n", _iQtdTotalReg); oLog.logDebug(szAux);
+        sprintf(szAux, "********************************************************************\n"); oLog.logDebug(szAux);
+
+        _iQtdRegCursor=0;
+
+        return;
+    }
+
+    if(iQtdRegCursor)       _iQtdRegCursor++;
+    if(iQtdLoops)           _iQtdLoops++;
+    if(iQtdTotalRegOK)      _iQtdTotalRegOK++;
+    if(iQtdTotalRegErro)    _iQtdTotalRegErro++;
+    if(iQtdTotalRegReProc)  _iQtdTotalRegReProc++;
+    if(iQtdTotalReg)        _iQtdTotalReg++;
+}
+
+/************************************************************************************************************/
+char *ObtemDataHora(void)
+{
+    struct tm *ptTime;
+    time_t tTimeNow;
+    static char szDataHora[14 + 1];
+
+	time(&tTimeNow);
+	ptTime=localtime(&tTimeNow);
+	sprintf(szDataHora, "%04d%02d%02d%02d%02d%02d", 
+						ptTime->tm_year + 1900, 
+						ptTime->tm_mon + 1, 
+						ptTime->tm_mday, 			
+						ptTime->tm_hour, 
+						ptTime->tm_min, 
+						ptTime->tm_sec );
+
+    return szDataHora;
+}
+
+/************************************************************************************************************/
+char *ObtemValorTag(char *pXml, char *pTag)
+{
+    static char szValue[255 + 1];
+    char szXmlAux[512];
+    char *pTok;
+    int iFlag=0;
+
+    /* copia string a ser analisada para buffer local (strtok altera o ponteiro de entrada) */
+    strcpy(szXmlAux, pXml);
+
+    for(pTok = strtok(szXmlAux, "<>"); pTok != NULL; pTok = strtok(NULL, "<>")) {
+        if(iFlag) {
+            strcpy(szValue, pTok);
+            iFlag=0;
+
+            return szValue;
+        }
+
+        if(!strcmp(pTag, pTok)) {
+            iFlag=1;
+        }
+    }
+
+    return NULL;
+}
+
+/************************************************************************************************************/
+int TUXinit(TParamConf *ptParamConf)
+{
+    TPINIT *tpInitInfo;
+    int i;
+
+    oLog.logInformation(">>>TUXinit\n");
+
+    if((tpInitInfo = (TPINIT *)tpalloc("TPINIT", (char *)NULL, TPINITNEED(strlen(VIVO_GENERIC_PASSWORD) - 1) )) == (TPINIT *)NULL)
+    return tperrno;
+
+    strcpy(tpInitInfo->usrname, ptParamConf->szUsrTux);
+    strcpy(tpInitInfo->cltname, ptParamConf->szCltTux);
+    strcpy(tpInitInfo->passwd, ptParamConf->szPwsTux);
+    strcpy((char *)&tpInitInfo->data, ptParamConf->szPwsTuxGen);
+
+    i = tpinit(tpInitInfo);
+    sprintf(szAux, "TPINIT: %i, TPERRNO: %i\n", i, tperrno); oLog.logDebug(szAux);
+
+    oLog.logInformation("<<<TUXinit\n");
+
+//    printf("TUX_USRNAME[%s]\n", TUX_USRNAME);
+//    printf("TUX_CLTNAME[%s]\n", TUX_CLTNAME);
+//    printf("VIVO_APP_PASSWORD[%s]\n", VIVO_APP_PASSWORD);
+//    printf("VIVO_GENERIC_PASSWORD[%s]\n", VIVO_GENERIC_PASSWORD);
+
+    if (i == -1)
+        return 1;
+    else  
+        return 0;
+}
+
+
+/************************************************************************************************************/
+int sendXML(char *pXmlSaida, char *pRetMsg, char* pServico) {
+
+    char *sendbuf, *rcvbuf;
+    long sendlen, rcvlen;
+    sendlen = strlen(pXmlSaida);
+
+    // sprintf(szAux, "Tamanho da msg = (%d)\n", sendlen); oLog.logInformation(szAux);
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        oLog.logError("Error allocating send buffer\n");
+        tpterm();
+
+        return -1;
+    }
+
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        oLog.logError("Error allocating receive buffer\n");
+        tpfree(sendbuf);
+        tpterm();
+
+        return -1;
+    }
+
+    strcpy(sendbuf, pXmlSaida);
+
+    if(tpcall(pServico, (char *)sendbuf, sendlen, (char **)&rcvbuf, &rcvlen, (long)0) == -1)
+    {
+        sprintf(szAux, "Tperrno = %d\n", tperrno); oLog.logError(szAux);
+        sprintf(szAux, "rcvbuf[%s]\n", rcvbuf); oLog.logError(szAux);
+
+        iErrorNumber=tperrno;	
+        strcpy(pRetMsg, rcvbuf);
+
+        tpfree(sendbuf);
+        tpfree(rcvbuf);
+
+        return 1;
+    }
+
+    iErrorNumber=0;    
+    strcpy(pRetMsg, rcvbuf);
+
+    tpfree(sendbuf);
+    tpfree(rcvbuf);
+
+    return 0;
+}
+
+/************************************************************************************************************/
+void ArmaSinal(int iSignal)
+{
+    sprintf(szAux, "Armando tratamento para Signal(%d)\n", iSignal); 
+	oLog.logInformation(szAux);
+
+    if(signal((iSignal), ProcessaSignal) == SIG_ERR) 
+	{
+        fprintf(stderr, "ERRO ARMANDO SINAL!!!\n");
+        exit(-1);
+    }
+}
+
+/************************************************************************************************************/
+void ProcessaSignal(int iSig)
+{
+    oLog.logInformation(">>>ProcessaSignal\n");
+    sprintf(szAux, "iSig(%d)\n", iSig); oLog.logInformation(szAux);
+
+    /* rearma o mesmo sinal lancado */
+    ArmaSinal(iSig);
+
+    if( iSig == SIGTERM || iSig == SIGQUIT || iSig == SIGINT ) 
+	{
+        oLog.logInformation( "Finalizando processamento via sinal....\n" );
+        iSignalProcessa = 0;
+        StartSimNao( true ); // Ajusta para disponibilidade da proxima instancia
+    }
+
+    oLog.logInformation(">>>ProcessaSignal\n");
+}
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[81];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug("Obtendo parametros de configuracao...\n");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("enviaVIP.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir())
+	{
+        oLog.logError("Erro abrindo arquivo de configuração!\n");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, 15);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, 15);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, 20);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, 10);
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, 10);
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    sprintf(szAux, "ptParamConf->szPws[%s]\n", ptParamConf->szPws); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]\n", ptParamConf->szUsr); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]\n", ptParamConf->szInst); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szPwsTux[%s]\n", ptParamConf->szPwsTux); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szUsrTux[%s]\n", ptParamConf->szUsrTux); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]\n", ptParamConf->szPwsTuxGen); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szCltTux[%s]\n", ptParamConf->szCltTux); oLog.logInformation(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0 )
+    {
+        oLog.logError("Dados incompletos!\n");
+        return -1;
+    }
+
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...\n");
+    return 0;
+}
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logInformation(">>>DBConnect\n");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    oLog.logInformation("<<<DBConnect\n");
+
+    return (sqlca.sqlcode);
+    
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]\n");
+    return -1;
+}
+
+/************************************************************************************************************/
+void DBDesconect(void)
+{
+    oLog.logInformation(">>>DBDesconect\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    // EXEC SQL COMMIT WORK RELEASE;
+
+    oLog.logInformation("<<<DBDesconect\n");
+    return;
+
+Error:
+    sprintf(szAux, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); oLog.logError(szAux);
+    return;
+}
+
+/************************************************************************************************************/
+char *ObtemParametro(char *pCdParametro)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszCdParametro[255];
+        VARCHAR oszDsValorParametro[255];
+    EXEC SQL END DECLARE SECTION;
+
+    static char szDsValorParametro[255 + 1];
+    struct sqlca sqlca;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszCdParametro, pCdParametro);
+
+    EXEC SQL 
+        SELECT dsvalorparametro
+          INTO :oszDsValorParametro
+          FROM apoio.parametro
+         WHERE parametro.cdparametro = :oszCdParametro;
+
+    STRCPY_FROM_ORA(szDsValorParametro, oszDsValorParametro);
+
+    return szDsValorParametro;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        exit(-1);
+
+    naoexiste:
+        sprintf(szAux, "Chave pesquisada nao encontrada[%s]\n", pCdParametro); oLog.logDebug(szAux);
+        return NULL;
+}
+
+
+
+bool StartSimNao( bool TermProc )
+{
+    sprintf(szAux,">> StartSimNao\n");oLog.logDebug(szAux);
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR varOraDsValorParametro[256];
+        short statOraDsValorParametro=-1;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erroPrimVez;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+    if ( TermProc == true )  // Recebeu sinalizacao para terminar processo
+    {
+        EXEC SQL 
+            UPDATE apoio.parametro SET
+                dsvalorparametro = 'NAO',
+                idusuarioalteracao = -99,
+                dtultimaalteracao = SYSDATE
+             WHERE
+                cdparametro = 'ENVIA_VIP_STARTONOFF';
+
+        EXEC SQL COMMIT;
+        return true;
+    }
+
+    sprintf(szAux,"vai obter configuração de inicialização de semáforo.\n");oLog.logDebug(szAux);
+
+    EXEC SQL
+    SELECT dsvalorparametro
+      INTO :varOraDsValorParametro:statOraDsValorParametro
+      FROM apoio.parametro
+     WHERE cdparametro = 'ENVIA_VIP_STARTONOFF';
+
+    if ( sqlca.sqlcode == 0 )
+    {
+        CONVIND(varOraDsValorParametro,statOraDsValorParametro);
+
+        sprintf(szAux,"vai atualizar configuração de inicialização.\n");oLog.logDebug(szAux);
+        sprintf(szAux,"UPDATE apoio.parametro...\n");
+        oLog.logDebug(szAux);
+
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL 
+            UPDATE apoio.parametro SET
+                dsvalorparametro = 'SIM',
+                idusuarioalteracao = -99,
+                dtultimaalteracao = SYSDATE
+             WHERE
+                cdparametro = 'ENVIA_VIP_STARTONOFF';
+
+        sprintf(szAux, "UPDATE sqlca.sqlcode=%d\n", sqlca.sqlcode); oLog.logDebug(szAux); //@cassio
+
+        EXEC SQL COMMIT;
+
+        //sprintf(szAux,"(1) ENVIA_VIP_STARTONOFF(1)='%s'\n",varOraDsValorParametro.arr);
+        //oLog.logDebug(szAux);
+
+        if ( stricmp((char*)varOraDsValorParametro.arr,"NAO") == 0 )   // Indica que nao existe processo em paralelo
+        {
+            sprintf(szAux,"<< StartSimNao --> NAO\n");oLog.logDebug(szAux);
+            return true;
+        }
+
+        sprintf(szAux,"<< StartSimNao --> SIM\n");oLog.logDebug(szAux);
+        return false;
+    }
+    else
+    {
+        sprintf(szAux,"vai criar configuração de inicialização.\n");
+        oLog.logDebug(szAux);
+
+        sprintf(szAux,"INSERT INTO apoio.parametro...\n");
+        oLog.logDebug(szAux);
+
+        EXEC SQL 
+            INSERT INTO
+                apoio.parametro(idparametro
+                               ,cdparametro
+                               ,dsparametro
+                               ,dsvalorparametro
+                               ,idusuarioalteracao
+                               ,dtultimaalteracao)
+                VALUES(apoio.parametrosq.nextval
+                      ,'ENVIA_VIP_STARTONOFF'
+                      ,'Controle de criação de enviaVIP'
+                      ,'NAO'
+                      ,-99
+                      ,SYSDATE);
+
+        sprintf(szAux, "INSERT sqlca.sqlcode=%d\n", sqlca.sqlcode); oLog.logDebug(szAux); //@cassio
+
+        EXEC SQL COMMIT;
+
+        //sprintf(szAux,"(2) ENVIA_VIP_STARTONOFF='NAO'\n");
+        //oLog.logDebug(szAux);
+        sprintf(szAux,"<< StartSimNao --> NAO (INSERIDO)\n");oLog.logDebug(szAux);
+        return true;
+    }
+
+erroPrimVez:
+    sprintf(szAux, "<< StartSimNao finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+    return false;
+    //exit(-1);
+}

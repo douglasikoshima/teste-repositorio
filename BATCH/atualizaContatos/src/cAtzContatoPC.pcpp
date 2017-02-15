@@ -1,0 +1,352 @@
+#ifdef WIN32
+  #include "../include/cAtzContato.h"
+#else
+  #include "cAtzContato.h"
+#endif
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+#include <list>
+#include <iterator>
+using namespace std;
+typedef list<unsigned long> ListCampos;
+
+#define CONVIND(O,I) \
+{\
+	if (I == -1) { \
+		##O.arr[0]=0; \
+	} else { \
+		##O.arr[##O.len]=0; \
+	} \
+}
+
+#define endOraStr(varstr)      varstr.arr[varstr.len]= '\0'
+#define oraToStr(bstr,vchar)   if(!bstr) strncpy(bstr,vchar.arr,vchar.len)
+#define strToOra(vchar,bstr)   vchar.len = strlen(bstr);strncpy((char *)vchar.arr,bstr,vchar.len);vchar.arr[vchar.len] = 0
+
+/*---- Prototypes ---------------------------------------------*/
+void proCAtualizaFolhas( unsigned long idGrupoPrm, unsigned long idUsuarioPrm, Log * log  );
+bool proCValidaCampos( unsigned long idContatoPrm, unsigned long idGrupoPrm, unsigned long idCampoPrm, Log * log );
+void proCCarregaPrm( unsigned long * idGrupoPrm, unsigned long * idUsuarioPrm );
+void SqlErrorCampos( sqlca * sqlca );
+
+/*--------------------------------------------------------------------*\
+ *
+\*--------------------------------------------------------------------*/
+
+
+void proCCarregaPrm( void )
+{
+    Log log;
+	struct sqlca sqlca;
+    char Msg[1024];
+
+    char* szPws;
+    char* szUsr;
+    char* szPath;
+    char* szInst;
+    int  vlLog = ERROR;
+
+    Propriedade prop("atualizaContatos.cfg");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char szConnStr[512];
+
+        unsigned long idGrupo;
+        unsigned long idUsuario = 1;
+        short i_idGrupo = -1;
+        short i_idUsuario = -1;
+
+	EXEC SQL END DECLARE SECTION;
+
+    szPws = prop.getParametro("pwd");
+    szUsr = prop.getParametro("usr");
+    szPath= prop.getParametro("pth");
+    szInst= prop.getParametro("inst");
+
+    vlLog = atoi( prop.getParametro("log") );
+
+    // Verifica se todos os dados foram recuperados do arquivo de configuração
+    if (!szPws || !szUsr || !szPath || !szInst || vlLog == 0)
+    {
+        log.logError("Dados incompletos!\n");
+    }
+
+    log.setNivel( vlLog );
+
+    // Conecta ao banco de dados
+    sprintf(szConnStr, "%s/%s@%s", szUsr, szPws, szInst);
+    EXEC SQL CONNECT :szConnStr;
+    if (sqlca.sqlcode)
+    {
+        char linha[2048];
+        sprintf( linha, "Erro ao conectar ao Banco de Dados - Erro Oracle [%d] - Mensagem [%s].\n", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc);
+        log.logError(linha);
+        return;
+    }
+
+	EXEC SQL WHENEVER SQLERROR GOTO GotoErro;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL CALL contatoadm.AtualizaContatos();
+
+    EXEC SQL COMMIT;
+
+	EXEC SQL CALL contatoadm.AtualizaCamposDependentes();
+
+    EXEC SQL COMMIT;
+
+    //proCAtualizaFolhas( idGrupo, idUsuario, &log );
+
+GotoFinal:
+    EXEC SQL COMMIT WORK RELEASE;
+    if (sqlca.sqlcode)
+    {
+        log.logError("Erro desconectando do banco de dados! Erro oracle...\n");
+    }
+
+    return;
+
+GotoErro:
+    sprintf( Msg, "%.*s", sqlca.sqlerrm.sqlerrml-1, sqlca.sqlerrm.sqlerrmc );
+    log.logError( Msg );
+}
+
+
+
+
+
+
+
+
+
+void proCAtualizaFolhas( unsigned long idGrupoPrm, unsigned long idUsuarioPrm, Log * log )
+{
+	struct sqlca sqlca;
+    ListCampos pCampos;	
+    list<unsigned long>::iterator itCampos;
+
+    int idContatoAux = -1;
+    int idUFOperadoraAux = -1;
+    int idTipoLinhaAux = -1;
+    int idOrdemApresentacaoAux = -1;
+    int idFaseAux = -1;
+    char Msg[1024];
+
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+		unsigned long idGrupo = idGrupoPrm;
+		unsigned long idUsuario = idUsuarioPrm;
+        unsigned long idContatoFolhaCampo;
+        unsigned long idUFOperadora;
+        unsigned long idTipoLinha;
+        unsigned long idOrdemApresentacao;
+        unsigned long idFase;
+        unsigned long idCampo;
+        unsigned long idContato;
+
+
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR GOTO GotoAtualizaFolhas;
+
+    
+    /*---- Obtem Campos do Grupo ----------------*/
+    pCampos.clear();
+    EXEC SQL DECLARE Campos CURSOR FOR
+        SELECT
+           IDCAMPO
+        FROM
+           CONTATOADM.SUBFORMULARIOCAMPO
+        WHERE
+           IDSUBFORMULARIO = :idGrupo;
+
+    EXEC SQL OPEN Campos;
+    for( ;; )
+    {
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+        
+        EXEC SQL FETCH Campos INTO :idCampo ;
+    
+        pCampos.push_back( idCampo );
+                       
+        sprintf( Msg,"Identificado Campo [%lu]\n",idCampo);
+		log->logInformation( Msg );
+         
+
+    }
+    EXEC SQL CLOSE Campos;
+    /*-----------------------------------------------------*/
+
+
+    EXEC SQL DECLARE ContatoFolha CURSOR FOR
+        SELECT
+	        IDCONTATOFOLHACAMPO ,
+            IDCONTATO ,
+	        IDUFOPERADORA ,
+	        IDTIPOLINHA ,
+	        SQORDEMAPRESENTACAO ,
+	        IDFASEPROCESSO 
+        FROM
+	        CONTATOADM.CONTATOFOLHACAMPO
+        WHERE
+            IDSUBFORMULARIO = :idGrupo;
+    
+    EXEC SQL OPEN ContatoFolha;
+
+    for( ;; )
+    {
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+        
+        EXEC SQL FETCH ContatoFolha INTO :idContatoFolhaCampo ,
+                                         :idContato ,
+                                         :idUFOperadora ,
+                                         :idTipoLinha ,
+                                         :idOrdemApresentacao ,
+                                         :idFase ;
+        if ( idContatoAux == idContato &&
+             idUFOperadoraAux == idUFOperadora &&
+             idTipoLinhaAux == idTipoLinha &&
+             idFaseAux == idFase 
+           )
+        {
+            continue;
+        }
+
+        idContatoAux = idContato ;     
+        idUFOperadoraAux = idUFOperadora ;
+        idTipoLinhaAux = idTipoLinha ;
+        idFaseAux = idFase ;
+
+
+		for ( itCampos=pCampos.begin();itCampos!=pCampos.end();itCampos++ )
+		{
+			log->logInformation( "Valida Contato..." );
+            if ( proCValidaCampos( idContato, idGrupo, *itCampos, log ) == true ) continue;
+        }
+
+
+		sprintf( Msg,"Removendo ContatoFolhaCampo com idContato [%lu]\n",idContato );
+		log->logInformation( Msg );
+
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL DELETE FROM CONTATOADM.CONTATOFOLHACAMPO WHERE IDCONTATO = :idContato 
+        	                                                       AND IDUFOPERADORA = :idUFOperadora
+        	                                                       AND IDTIPOLINHA = :idTipoLinha
+        	                                                       AND IDFASEPROCESSO = :idFase;
+        
+		for ( itCampos=pCampos.begin();itCampos!=pCampos.end();itCampos++ )
+		{
+            idCampo = *itCampos;
+			sprintf( Msg,"Inserindo idContato [%lu] - idUFOperadora [%lu] - idTipoLinha [%lu] - idCampo [%lu] - idFase [%lu] - idGrupo [%lu]\n",idContato,idUFOperadora,idTipoLinha,idCampo,idFase,idGrupo );
+			log->logInformation( Msg );
+
+	        EXEC SQL
+	        INSERT INTO CONTATOADM.CONTATOFOLHACAMPO
+	        (
+                IDCONTATOFOLHACAMPO ,
+                IDCONTATO ,
+                IDUFOPERADORA ,
+                IDTIPOLINHA ,
+                IDCAMPO ,
+                SQORDEMAPRESENTACAO ,
+                IDFASEPROCESSO ,
+                IDUSUARIOALTERACAO ,
+                DTULTIMAALTERACAO ,
+                IDSUBFORMULARIO 
+	        )
+	        VALUES
+	        (
+	           CONTATOADM.CONTATOFOLHACAMPOSQ.NextVal ,
+	           :idContato ,
+	           :idUFOperadora  ,
+               :idTipoLinha ,
+	           :idCampo ,
+	           :idOrdemApresentacao ,
+	           :idFase ,
+               :idUsuario ,
+	           SYSDATE ,
+               :idGrupo
+	        );
+        }
+        
+    }
+
+    EXEC SQL CLOSE ContatoFolha;
+    return;
+
+GotoAtualizaFolhas:
+    sprintf( Msg, "%.*s", sqlca.sqlerrm.sqlerrml-1, sqlca.sqlerrm.sqlerrmc );
+    log->logError( Msg );
+
+}
+
+
+
+bool proCValidaCampos( unsigned long idContatoPrm, unsigned long idGrupoPrm, unsigned long idCampoPrm, Log * log )
+{
+
+	struct sqlca sqlca;
+    char Msg[1024];
+
+	log->logInformation( "proCValidaCampos" );
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idCampo;
+        short i_idCampo = -1;
+        unsigned long idGrupo=idGrupoPrm;
+        unsigned long idContato=idContatoPrm;
+
+
+	EXEC SQL END DECLARE SECTION;
+
+
+	EXEC SQL WHENEVER SQLERROR GOTO GotoValidaCampos;
+
+    EXEC SQL DECLARE VCampos CURSOR FOR
+        SELECT
+           IDCAMPO
+        FROM
+           CONTATOADM.CONTATOFOLHACAMPO
+        WHERE
+            IDCONTATO = :idContato
+        AND
+            IDSUBFORMULARIO != :idGrupo;         
+
+    EXEC SQL OPEN VCampos;
+    for( ;; )
+    {
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+        
+        EXEC SQL FETCH VCampos INTO :idCampo ;
+    
+        if( idCampo == idCampoPrm )
+        {
+            EXEC SQL CLOSE VCampos;
+			sprintf( Msg,"Contato [%lu]jah possue o campo [%lu] configurado...\n",idContato,idCampo );
+			log->logInformation( Msg );
+            return true;
+        }
+
+    }
+    EXEC SQL CLOSE VCampos;
+
+    return false;
+
+GotoValidaCampos:
+    sprintf( Msg, "%.*s", sqlca.sqlerrm.sqlerrml-1, sqlca.sqlerrm.sqlerrmc );
+    log->logError( Msg );
+}
+
+
+
+
+
+

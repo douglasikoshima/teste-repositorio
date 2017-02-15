@@ -1,0 +1,16 @@
+set timi on
+set echo on
+spool A_L1118.log
+
+CREATE SEQUENCE ATENDIMENTO.ATENDIMENTOANATELARQUIVOSQ
+START WITH 1
+INCREMENT BY 1
+MINVALUE 0
+NOCACHE 
+NOCYCLE 
+NOORDER;
+
+
+spool off
+set echo off
+set timi off

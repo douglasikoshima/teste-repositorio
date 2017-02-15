@@ -1,0 +1,844 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <sstream>
+#include <ctype.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <dirent.h>
+
+#include <tuxfw.h>
+#include <sys/shm.h>
+
+#include <notasUra.h>
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+#include "../../commons/Defines.h"
+
+extern errno;
+
+#include <string>
+using namespace std;
+
+
+EXEC SQL INCLUDE SQLCA;
+
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+#define MSG_DATA_INVALID	"*** Data invalida ***"
+#define MSG_CEL_INVALID	    "*** Nro. celular invalido ***"
+#define MSG_NOTA_INVALID	"*** Nota invalida ***"
+#define MSG_PROTO_INVALID	"*** Protocolo invalido ***"
+#define MSG_REG_INVALID     "*** Registro de tamanho invalido ***"
+
+char szAux[256000 + 1];
+Log oLog;
+long iErrorNumber=0;
+
+//==============================================================================
+// Protótipos
+int ProcessaRegistro( ofstream & output, char * registroPrm );
+bool ValidaDtEnvio( char * buffer );
+bool ValidaNota( char * bf );
+bool ValidaNumerico( char * bf );
+char * alltrim( char * pszString );
+char * ltrim( char * pszString );
+char * rtrim( char * pszString );
+void findFileType( char *path, string &arquivo, char *type );
+void RemoveHistoricoArq( char *path, int DataLimite );
+
+
+int main(int argc, char* argv[])
+{
+
+	time_t      rawtime;
+	struct tm * timeinfo;
+	char        buffer[81];
+	char        sArqPrc[512];
+    string      arquivoTXT;
+	string      arquivoERR;
+	string      registro;
+	TParamConf  tParamConf;
+	
+    EXEC SQL BEGIN DECLARE SECTION;
+        
+		VARCHAR dataLimite[16];
+		short   i_dataLimite = -1;
+		VARCHAR qtdDias[4];
+		short   i_qtdDias = -1;
+		
+    EXEC SQL END DECLARE SECTION;
+
+
+    // Acertando o nivel de logs
+    oLog.setNivel(2);
+    oLog.logDebug(">>> notasUra\n");
+
+    if(ObtemParamConf(&tParamConf)) {
+        oLog.logError("Erro obtendo parametros de configuracao\n");
+        return -1;
+    }
+
+    //==========================================================================
+    // Conecta
+    oLog.logDebug("Conectando na BD...");
+    /* Conecta no banco de dados */
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst)) {
+        oLog.logError("Erro conectando no banco de dados\n");
+        return -1;
+    }
+    oLog.logDebug("Conectado na BD com sucesso...\n");
+
+	ifstream infile;
+	ofstream outfile;
+	
+    findFileType( "../data", arquivoTXT, ".txt");
+	if ( strlen(arquivoTXT.c_str()) == 7 )
+	{
+		if ( !memcmp(arquivoTXT.c_str(),"../data",7) )
+		{
+			arquivoTXT = "";
+		}
+	}
+
+	
+	sprintf( sArqPrc, "%s", arquivoTXT.c_str() );
+	sprintf( sArqPrc, "%.*serr", strlen(sArqPrc)-3,sArqPrc );
+	arquivoERR = sArqPrc;
+
+	infile.open ( arquivoTXT.c_str() );
+	outfile.open ( arquivoERR.c_str() );
+	sprintf(szAux, "Lendo arquivo [%s]\n", arquivoTXT.c_str() ); oLog.logDebug(szAux);
+	if ( infile.is_open() )
+	{
+		while( !infile.eof() ) // To get you all the lines.
+		{
+			getline( infile, registro ); // Saves the line in registro.
+			if ( registro.length() > 1 )
+			{
+			   ProcessaRegistro( outfile,(char*)registro.c_str() );		
+			}
+		}
+		infile.close();
+	}
+	long tamArqErro = (long)outfile.tellp();
+	outfile.close();
+
+	time ( &rawtime );
+	timeinfo = localtime ( &rawtime );
+
+	memset( buffer, 0x0, sizeof(buffer) );
+	strftime ( buffer,80,"_%Y%m%d_%H%M%S.prc", timeinfo );
+	sprintf( sArqPrc, "%s", arquivoTXT.c_str() );
+	sprintf( sArqPrc, "%.*s%s", strlen(sArqPrc)-4,sArqPrc,buffer );
+	rename( arquivoTXT.c_str() , sArqPrc );
+	
+	if ( tamArqErro > 0)   /* Arquivo de Registros Invalidos Existe? */
+	{
+		memset( buffer, 0x0, sizeof(buffer) );
+		strftime ( buffer,80,"_%Y%m%d_%H%M%S.err", timeinfo );
+
+		sprintf( sArqPrc, "%s", arquivoERR.c_str() );
+		sprintf( sArqPrc, "%.*s%s", strlen(sArqPrc)-4,sArqPrc,buffer );
+
+		rename( arquivoERR.c_str() , sArqPrc );
+	}
+	else
+	{
+		unlink ( arquivoERR.c_str() );   /* Arquivo de Registros Invalidos com tamanho ZERO */
+		//nmArquivo[0] = 0x0;
+	}
+	
+	EXEC SQL COMMIT WORK RELEASE;
+
+	/*   Obtem a qtde de dias do historico de arquivos processados   */
+	EXEC SQL
+	SELECT DSVALORPARAMETRO INTO :qtdDias:i_qtdDias FROM APOIO.PARAMETRO WHERE CDPARAMETRO = 'QTD_DIAS_EXPURGO_NOTAS_URA';
+	CONVIND( qtdDias,i_qtdDias );
+	//sprintf( szAux, "*** Qtde limite de dias [%s]\n", (char*)qtdDias.arr ); oLog.logDebug(szAux);
+	
+	EXEC SQL 
+	SELECT TO_CHAR(TRUNC(SYSDATE - :qtdDias ),'YYYYMMDD') INTO :dataLimite:i_dataLimite FROM DUAL;
+	CONVIND( dataLimite,i_dataLimite );
+	
+	RemoveHistoricoArq( "../data", atoi((char*)dataLimite.arr) );
+
+	oLog.logDebug("Desconectando da BD...\n");
+    DBDisconnect();
+
+    oLog.logDebug("Processamento encerrado com sucesso...\n");
+    oLog.logDebug("<<< notasUra\n");
+
+    return 0;
+
+    sqlError:
+        sprintf(szAux, "Finalizando processo com erro ORACLE (%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return -1;
+
+    /* Tratamento de erro de processamento */
+    finalizaProcess:
+        oLog.logDebug("Finalizando processo...\n");
+
+        oLog.logDebug("Desconectando da BD...\n");
+        DBDisconnect();
+
+        oLog.logDebug("<<< notasUra\n");
+        return -1;
+}
+
+
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[81];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    //oLog.logDebug("Obtendo parametros de configuracao...\n");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("notasUra.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir()) {
+        oLog.logError("Erro abrindo arquivo de configuração!\n");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, 20);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, 10);
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, 10);
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    //sprintf(szAux, "ptParamConf->szPws[%s]\n", ptParamConf->szPws); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szUsr[%s]\n", ptParamConf->szUsr); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szInst[%s]\n", ptParamConf->szInst); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTux[%s]\n", ptParamConf->szPwsTux); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szUsrTux[%s]\n", ptParamConf->szUsrTux); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]\n", ptParamConf->szPwsTuxGen); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szCltTux[%s]\n", ptParamConf->szCltTux); oLog.logInformation(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0 )
+    {
+        oLog.logError("Dados incompletos!\n");
+        return -1;
+    }
+
+
+    //oLog.logDebug("Parametros de configuracao obtidos com sucesso...\n");
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    //oLog.logInformation(">>>DBConnect\n");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    //oLog.logInformation("<<<DBConnect\n");
+
+    return (sqlca.sqlcode);
+    
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]\n");
+    return -1;
+}
+
+
+
+
+/************************************************************************************************************/
+void DBDisconnect(void)
+{
+    //oLog.logInformation(">>>DBDisconnect\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    //EXEC SQL COMMIT WORK RELEASE;
+
+    //oLog.logInformation("<<<DBDisconnect\n");
+    return;
+
+Error:
+    sprintf(szAux, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); oLog.logError(szAux);
+    return;
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemParametro(char *pCdParametro)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        //VARCHAR oszCdParametro[255];
+        char *oszCdParametro = pCdParametro;
+        VARCHAR oszDsValorParametro[255+1];
+    EXEC SQL END DECLARE SECTION;
+
+    static char szDsValorParametro[255 + 1];
+    struct sqlca sqlca;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    //STRCPY_TO_ORA(oszCdParametro, pCdParametro);
+
+    EXEC SQL 
+        SELECT dsvalorparametro
+          INTO :oszDsValorParametro
+          FROM apoio.parametro
+         WHERE parametro.cdparametro = :oszCdParametro;
+
+    STRCPY_FROM_ORA(szDsValorParametro, oszDsValorParametro);
+
+    return szDsValorParametro;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        exit(-1);
+
+    naoexiste:
+        sprintf(szAux, "Chave pesquisada nao encontrada[%s]\n", pCdParametro); oLog.logDebug(szAux);
+        return NULL;
+}
+
+
+
+int ProcessaRegistro( ofstream & output, char * registroPrm )
+{
+    bool   erroRegistro = false;
+	int    idx = 0;
+	char   buffer[256];
+	string token;
+	string registro;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+	
+		VARCHAR idAtdProtocolo[40];
+        VARCHAR idPesquisaATD[40];
+		short   i_idPesquisaATD;
+        VARCHAR idPerguntaNotaATD[40];
+		short   i_idPerguntaNotaATD;
+        VARCHAR dtEnvio[40];
+        VARCHAR nrLinhaCliente[40];
+		VARCHAR NotaAtd[3];
+		
+    EXEC SQL END DECLARE SECTION;
+
+	memset( &idAtdProtocolo    , 0x0, sizeof(idAtdProtocolo) );
+	memset( &idPesquisaATD     , 0x0, sizeof(idPesquisaATD) );
+	memset( &idPerguntaNotaATD , 0x0, sizeof(idPerguntaNotaATD) );
+	memset( &dtEnvio           , 0x0, sizeof(dtEnvio) );
+	memset( &nrLinhaCliente    , 0x0, sizeof(nrLinhaCliente) );
+	memset( &NotaAtd           , 0x0, sizeof(NotaAtd) );
+
+	registro = registroPrm;
+	
+	istringstream iss( registro );
+	
+	/*
+	0  dtEnvio, 
+	4  celular, 
+	11 Nota ,
+	20 Protocolo
+	*/
+	
+	char delims[] = "|";
+	char *result = NULL;
+	sprintf(szAux, "Registro lido [%s]\n", registroPrm ); oLog.logInformation(szAux);
+	result = strtok( registroPrm, delims );
+	while( result != NULL ) 
+	{
+	/*
+	while ( getline(iss, token, "|") )
+	{
+	*/
+		switch( idx )
+		{
+			case  0 :  /*   Coluna DATA/HORA   */
+					   //strcpy( buffer, (char*)token.c_str() );
+					   //strcpy( buffer, result );
+					   sprintf(szAux, "DATA/HORA [%s]\n", result ); oLog.logInformation(szAux);
+					   if ( ValidaDtEnvio( result ) )
+					   {
+							sprintf( (char*)&dtEnvio.arr, "%.19s", result );
+							dtEnvio.len = 19;
+					   }
+					   else
+					   {
+							output << registroPrm << endl ;
+							output << MSG_DATA_INVALID << endl ;
+							erroRegistro = true;
+					   }
+					   break;
+
+		    case  6  :     /*   Coluna NOTA   */
+					   //strcpy( buffer, (char*)token.c_str() );
+					   strcpy( buffer, result );
+					   sprintf(szAux, "NOTA [%s]\n", buffer ); oLog.logInformation(szAux);
+					   if ( ValidaNota( buffer ) )
+					   {
+							strcpy( (char*)&NotaAtd.arr, (char*)buffer );
+							NotaAtd.len = strlen(buffer);
+					   }
+					   else
+					   {
+							if ( erroRegistro == false )
+							{
+								output << registroPrm << endl ;
+							}
+							output << MSG_NOTA_INVALID << endl ;
+							erroRegistro = true;
+					   }
+					   break;
+
+		    case  8  :  /*   Coluna CELULAR   */
+					   //strcpy( buffer, (char*)token.c_str() );
+					   strcpy( buffer, result );
+					   sprintf(szAux, "CELULAR [%s]\n", buffer ); oLog.logInformation(szAux);
+					   if ( ValidaNumerico( buffer ) )
+					   {
+							strcpy( (char*)&nrLinhaCliente.arr, (char*)buffer );
+							nrLinhaCliente.len = strlen(buffer);
+					   }
+					   else
+					   {
+							if ( erroRegistro == false )
+							{
+								output << registroPrm << endl ;
+							}
+							output << MSG_CEL_INVALID << endl ;
+							erroRegistro = true;
+					   }
+					   break;
+
+		    case  11 :     /*   Coluna PROTOCOLO   */
+					   //strcpy( buffer, (char*)token.c_str() );
+					   strcpy( buffer, result );
+					   sprintf(szAux, "PROTOCOLO [%s]\n", buffer ); oLog.logInformation(szAux);
+					   if ( ValidaNumerico( buffer ) )
+					   {
+							strcpy( (char*)&idAtdProtocolo.arr, (char*)buffer );
+							idAtdProtocolo.len = strlen(buffer);
+					   }
+					   else
+					   {
+							if ( erroRegistro == false )
+							{
+								output << registroPrm << endl ;
+							}
+							output << MSG_PROTO_INVALID << endl ;
+							erroRegistro = true;
+					   }
+					   break;
+
+        }
+		idx++;
+		result = strtok( NULL, delims );
+		if ( idx > 11 ) break;
+	}
+	
+	if ( idx <= 11 )
+	{
+		output << registroPrm << endl ;
+	    output << MSG_REG_INVALID << endl ;
+		return -1;
+	}
+	
+	if ( erroRegistro == true)
+	{
+	    return -1;
+	}
+	
+	EXEC SQL WHENEVER SQLERROR goto erroGravacao;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+	EXEC SQL
+	select IDPESQUISAATD INTO :idPesquisaATD:i_idPesquisaATD from CUSTOMER.PESQUISAATD where DSPESQUISAATD = 'Notas da URA' ;
+	CONVIND( idPesquisaATD,i_idPesquisaATD );
+	
+	sprintf(szAux, "idAtdProtocolo [%s]\n", (char*)idAtdProtocolo.arr ); oLog.logInformation(szAux);
+	sprintf(szAux, "idPesquisaATD  [%s]\n", (char*)idPesquisaATD.arr ); oLog.logInformation(szAux);
+	sprintf(szAux, "dtEnvio        [%s]\n", (char*)dtEnvio.arr ); oLog.logInformation(szAux);
+	sprintf(szAux, "nrLinhaCliente [%s]\n", (char*)nrLinhaCliente.arr ); oLog.logInformation(szAux);
+	
+	EXEC SQL
+	UPDATE CUSTOMER.RESPOSTAPESQUISAATD
+	SET DTENVIO = TO_DATE(:dtEnvio,'dd/mm/yyyy hh24miss') ,
+	    NRLINHACLIENTE = :nrLinhaCliente ,
+		IDUSUARIOALTERACAO = 11 ,
+		DTULTIMAALTERACAO = SYSDATE
+    WHERE
+	    IDATENDIMENTOPROTOCOLO = :idAtdProtocolo
+    AND
+	    IDPESQUISAATD = :idPesquisaATD ; 
+
+    if( sqlca.sqlerrd[2] == 0)
+    {
+		EXEC SQL
+		INSERT INTO CUSTOMER.RESPOSTAPESQUISAATD
+		(
+			IDATENDIMENTOPROTOCOLO ,
+			IDPESQUISAATD ,
+			DTENVIO ,
+			NRLINHACLIENTE ,
+			IDUSUARIOALTERACAO ,
+			DTULTIMAALTERACAO 
+		)
+		VALUES
+		(
+			:idAtdProtocolo ,
+			:idPesquisaATD ,
+			TO_DATE(:dtEnvio,'dd/mm/yyyy hh24miss') ,
+			:nrLinhaCliente ,
+			11 ,
+			SYSDATE
+		);
+    }
+	    
+	
+	EXEC SQL
+	select IDPERGUNTANOTAATD into :idPerguntaNotaATD:i_idPerguntaNotaATD from CUSTOMER.PERGUNTANOTASATD where DSPERGUNTANOTAATD = 'Nota para atendimento URA';
+	CONVIND( idPerguntaNotaATD,i_idPerguntaNotaATD );
+
+	sprintf(szAux, "idAtdProtocolo    [%s]\n", (char*)idAtdProtocolo.arr ); oLog.logInformation(szAux);
+	sprintf(szAux, "idPerguntaNotaATD [%s]\n", (char*)idPerguntaNotaATD.arr ); oLog.logInformation(szAux);
+	sprintf(szAux, "NotaAtd           [%s]\n", (char*)NotaAtd.arr ); oLog.logInformation(szAux);
+	
+	EXEC SQL
+	UPDATE CUSTOMER.RESPOSTANOTASATD
+	SET NOTA = :NotaAtd ,
+	    IDUSUARIOALTERACAO = 11 ,
+		DTULTIMAALTERACAO = SYSDATE
+    WHERE
+	    IDATENDIMENTOPROTOCOLO = :idAtdProtocolo
+    AND
+	    IDPERGUNTANOTAATD = :idPerguntaNotaATD ;
+		
+    if( sqlca.sqlerrd[2] == 0)
+    {
+		EXEC SQL
+		INSERT INTO CUSTOMER.RESPOSTANOTASATD
+		(
+			IDATENDIMENTOPROTOCOLO ,
+			IDPERGUNTANOTAATD ,
+			NOTA ,
+			IDUSUARIOALTERACAO ,
+			DTULTIMAALTERACAO 
+		)
+		VALUES
+		(
+			:idAtdProtocolo ,
+			:idPerguntaNotaATD ,
+			:NotaAtd ,
+			11 ,
+			SYSDATE
+		);
+	}
+	
+	return 0;
+
+    erroGravacao:
+        sprintf(szAux, "*** ERRO ORACLE sqlca.sqlcode[%d]\n", sqlca.sqlcode ); oLog.logDebug(szAux);
+        return -1 ;
+}
+
+
+
+bool ValidaDtEnvio( char * buffer )
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		char * pQuery;
+		VARCHAR dtEnvio[64];
+		short i_dtEnvio = -1;
+    EXEC SQL END DECLARE SECTION;
+
+	if (strlen(buffer) != 19)
+	   return false;
+	   
+	string query;
+	memset( &dtEnvio, 0x0, sizeof(dtEnvio) );
+   
+    query = "select to_date(";
+	query += buffer;
+    query += ",'dd/mm/yyyy hh24:mi:ss') from dual";
+	pQuery = (char*)query.c_str();
+	
+	//sprintf(szAux, "QUERY [%s]\n", pQuery ); oLog.logInformation(szAux);
+
+    EXEC SQL WHENEVER SQLERROR goto erroValData;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL PREPARE S1 FROM :pQuery; 
+	EXEC SQL DECLARE VERIFICADATA CURSOR FOR S1;
+	EXEC SQL OPEN VERIFICADATA;
+	EXEC SQL FETCH VERIFICADATA INTO :dtEnvio:i_dtEnvio;
+	EXEC SQL CLOSE VERIFICADATA;
+	
+	CONVIND( dtEnvio,i_dtEnvio );
+	//sprintf(szAux, "dtEnvio [%s]\n", (char*)dtEnvio.arr ); oLog.logInformation(szAux);
+	
+	return true;
+	
+    erroValData:
+        sprintf(szAux, "*** DATA INVALIDA ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+		return false;
+}
+
+
+
+bool ValidaNumerico( char * bf )
+{
+	int i;
+	int tambf;
+	alltrim( bf );
+	tambf = strlen( bf );
+	for ( i=0;i<tambf;i++)
+	{
+		if ( !isdigit(bf[i]) )
+		   return false;
+	}
+	return true;
+	
+}
+
+
+
+bool ValidaNota( char * bf )
+{
+	int i;
+	int tambf;
+	alltrim( bf );
+	tambf = strlen( bf );
+	for ( i=0;i<tambf;i++)
+	{
+		if ( !isdigit(bf[i]) )
+		   return false;
+	}
+	if ( atoi(bf) < 0 ) return false;
+	if ( atoi(bf) > 10 ) return false;
+	
+	return true;
+	
+}
+
+
+
+char * alltrim( char * pszString )
+{
+    ltrim(pszString);
+    rtrim(pszString);
+    return pszString;
+}
+
+char * ltrim( char * pszString )
+{
+    unsigned int iPos;
+    unsigned int iLen;
+    char *pszTmp, *pszAlocado;
+
+    iLen=strlen(pszString);
+
+    pszAlocado = (char *)malloc(iLen + 1);
+    
+    strcpy(pszAlocado, pszString);
+
+    pszTmp=pszAlocado;
+    
+
+    for(iPos=0; iPos < iLen; iPos++)
+        if(pszString[iPos] == 0x20)
+            pszTmp++;
+        else
+            break;
+
+    strcpy(pszString, pszTmp);
+    
+    free(pszAlocado);
+    return pszString;
+}
+
+
+
+char * rtrim( char * pszString )
+{
+    int iPos;
+
+    for(iPos=strlen(pszString)-1; iPos >= 0; iPos--)
+        if(pszString[iPos] == 0x20)
+            pszString[iPos] = 0x00;
+        else
+            break;
+    return pszString;
+}
+
+
+
+void findFileType( char *path, string &arquivo, char *type)
+{
+    DIR *dirp;
+    struct dirent *dp;
+    char nameLog[1024];
+	char nmArquivo[512];
+	char exten[5];
+
+    // inicializando nameLog
+    memset(nameLog,0,sizeof(nameLog));
+
+    // copiando o path
+    arquivo = path;
+
+    // vai abrir o diretório
+    if ((dirp = opendir(path)) == NULL) {
+        oLog.logError("Erro ao abrir diretório");
+        return;
+    }
+
+    do {
+        if ((dp = readdir(dirp)) != NULL) {
+            sprintf(nameLog,"encontrado: %s size = %d\n", dp->d_name, sizeof(dp->d_name));     
+			strcpy( nmArquivo, dp->d_name );
+			sprintf( exten, "%s", (char*)&nmArquivo[strlen(dp->d_name)-4] );
+             if((!memcmp(exten,type,4))) {
+                arquivo += "/";
+                arquivo += dp->d_name;
+                closedir(dirp);
+                return;
+             }
+        }
+    } while (dp != NULL);
+
+    closedir(dirp);
+}
+
+
+
+void RemoveHistoricoArq( char *path, int DataLimite )
+{
+    DIR *dirp;
+    struct dirent *dp;
+    char nameLog[1024];
+	char nmArquivo[512];
+	char Data_Arquivo[16];
+
+    // inicializando nameLog
+    memset(nameLog,0,sizeof(nameLog));
+
+    if ((dirp = opendir(path)) == NULL) {
+        oLog.logError("Erro ao abrir diretório");
+        return;
+    }
+
+    do 
+	{
+        if ((dp = readdir(dirp)) != NULL) 
+		{
+		    if ( strlen(dp->d_name) < 9 )
+			{
+			   continue;
+			}
+			//sprintf( nameLog, "))) Encontrou arquivo [%s]\n", dp->d_name ); oLog.logDebug(nameLog);
+			
+			sprintf( Data_Arquivo, "%.*s", 8, (char*)&dp->d_name[strlen(dp->d_name)-19] );
+			//sprintf( nameLog, "@@@ Data do arquivo [%s]\n", Data_Arquivo ); oLog.logDebug(nameLog);
+			//sprintf( nameLog, "@@@ Data limite do arquivo [%d]\n", DataLimite ); oLog.logDebug(nameLog);
+			
+			if ( DataLimite > atoi(Data_Arquivo) )
+			{
+				//sprintf( nameLog, "))) Removendo arquivo [%s]\n", dp->d_name ); oLog.logDebug(nameLog);
+				unlink( dp->d_name );
+			}
+        }
+    } while (dp != NULL);
+
+    closedir(dirp);
+}

@@ -1,0 +1,444 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#ifndef WIN32
+#include <unistd.h>
+#endif
+#include <ctype.h>
+
+#include "../include/extratorDB.h"
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+#include "../../commons/CLeitorArquivo/CLeitorArquivo.h"
+
+EXEC SQL INCLUDE SQLCA;
+
+char szAux[1024];
+char szTemp[1024];
+char szTempTrace[2048];
+Log oLog;
+int iSignalProcessa=1;
+
+#define TAM_BUFFER 2048
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+#ifdef WIN32
+#define MKDIR _mkdir
+#define ACCESS _access
+#else
+#define MKDIR mkdir
+#define ACCESS access
+#endif
+
+void NomeRelatorio( char * sNmRelatorio );
+void ObterHora(char *pszData);
+int executaExtracao(const char *pszNomeArquivoExtracao, const char *pszUsuario, const char *pszSenha, const char *pszDB );
+
+//void sqlTratamentoErro(sqlca*sqlca);
+
+int main(void)
+{
+    TParamConf tParamConf;
+    int retorno = 0;
+    char sNmRelatorio[256];
+	
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszLinha[512];
+        VARCHAR strOraDataProcessamento[12];
+        VARCHAR strOraHoraProcessamento[12];
+
+        short ostLinha;
+        short ostrOraDataProcessamento = -1;
+        short ostrOraHoraProcessamento = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.setNivel(2);
+    oLog.logDebug(">>>extratorDB");
+
+#ifndef WIN32
+    ArmaSinal(SIGTERM);
+#endif
+
+    // parametros de configuração
+    if(ObtemParamConf(&tParamConf))
+    {
+        oLog.logError("Erro obtendo parametros de configuracao");
+        oLog.logDebug("<<<extratorDB");
+        return -1;
+    }
+
+	executaExtracao(tParamConf.szArquivoExtracao, tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst );
+/*
+    if ( 0 == retorno )
+    {
+        oLog.logDebug("Processamento encerrado com sucesso...");
+    }
+    else
+    {
+        oLog.logDebug("Processamento encerrado com ERRO!");
+    }*/
+
+    oLog.logDebug("<<<extratorDB");
+
+    return retorno;
+
+    sqlError:
+        sprintf(szTempTrace, "Finalizando processo com erro ORACLE (%d)", sqlca.sqlcode); oLog.logDebug(szTempTrace);
+        return -1;
+}
+
+int executaExtracao(const char *pszNomeArquivoExtracao, const char *pszUsuario, const char *pszSenha, const char *pszDB )
+{
+    char sComando[_MAX_PATH*2+16];
+/*
+rm extracao_gc_$(date +"%d%m%Y").txt
+sqlplus /@tva @executaScriptSQL >> /dev/null
+mv resultadoConsultaSQL.txt extracao_gc_$(date +"%d%m%Y").txt
+*/
+	if ( (pszNomeArquivoExtracao == NULL) || (pszUsuario == NULL) || (pszSenha == NULL) || (pszDB == NULL) )
+	{
+		return -1;
+	}
+
+    sprintf(sComando,"sqlplus %s/%s@%s @./%s >> /dev/null", pszUsuario, pszSenha, pszDB, pszNomeArquivoExtracao);
+    sprintf(szAux,"Comando [%s] pronto para ser exetutado...", sComando); oLog.logDebug(szAux);
+
+    system(sComando);
+
+	sprintf(szAux,"Comando [%s] exetutado...", sComando); oLog.logDebug(szAux);
+	
+	return 0;
+}
+
+
+
+
+/************************************************************************************************************/
+void ObterData(int iDiasAnteriores, char *pszData)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR strOraDataProcessamento[12];
+        short ostrOraDataProcessamento = -1;
+		short ostrDiasAnteriores = iDiasAnteriores;
+    EXEC SQL END DECLARE SECTION;
+	struct sqlca sqlca;
+	
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    EXEC SQL 
+        SELECT
+           TO_CHAR(SYSDATE -:ostrDiasAnteriores,'DDMMYYYY')
+        INTO
+            :strOraDataProcessamento:ostrOraDataProcessamento
+        FROM
+            DUAL;
+
+    CONVIND( strOraDataProcessamento,ostrOraDataProcessamento );
+
+	sprintf( pszData,"%s", (char*)strOraDataProcessamento.arr );
+	pszData[8] = '\0';
+	
+    return;
+	
+sqlError:
+        return;		
+}
+
+void ObterHora(char *pszData)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR strOraDataProcessamento[12];
+        short ostrOraDataProcessamento = -1;
+    EXEC SQL END DECLARE SECTION;
+	struct sqlca sqlca;
+	
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+	
+    EXEC SQL 
+        SELECT
+           TO_CHAR(SYSDATE,'HH24MISS')
+        INTO
+            :strOraDataProcessamento:ostrOraDataProcessamento
+        FROM
+            DUAL;
+
+    CONVIND( strOraDataProcessamento,ostrOraDataProcessamento );
+
+	sprintf( pszData,"%s", (char*)strOraDataProcessamento.arr );
+	pszData[6] = '\0';
+    return;
+sqlError:
+        return;		
+	
+}
+
+/************************************************************************************************************/
+int gravarRegistro(FILE *pFile, const char *spzRegistro)
+{
+    char szPog[1000];
+ 
+    if( spzRegistro )
+    {
+        if(fputs(spzRegistro, pFile) <= 0)
+        {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/************************************************************************************************************/
+
+/*void sqlTratamentoErro(sqlca*sqlca)
+{
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    ULOGE("sql_error_WFAtendimento:sqlcode=%d,sqlerrmc=%.70s"
+                            ,sqlca->sqlcode
+                            ,sqlca->sqlerrm.sqlerrmc);
+
+    throw new TuxBasicOraException(sqlca->sqlcode
+                                  ,sqlca->sqlerrm.sqlerrmc
+                                  ,sqlca->sqlerrm.sqlerrml);
+	return 0;
+}
+*/
+
+/************************************************************************************************************/
+#ifndef WIN32
+void ArmaSinal(int iSignal)
+{
+    sprintf(szTempTrace, "Armando tratamento para Signal(%d)", iSignal); oLog.logInformation(szTempTrace);
+
+    if(signal((iSignal), ProcessaSignal) == SIG_ERR)
+	{
+        fprintf(stderr, "ERRO ARMANDO SINAL!!!\n");
+        exit(-1);
+    }
+}
+/************************************************************************************************************/
+void ProcessaSignal(int iSig)
+{
+    oLog.logInformation(">>>ProcessaSignal");
+    sprintf(szTempTrace, "iSig(%d)", iSig); oLog.logInformation(szTempTrace);
+
+    /* rearma o mesmo sinal lancado */
+    ArmaSinal(iSig);
+
+    if(iSig == SIGTERM)
+	{
+        oLog.logInformation("Finalizando processamento via sinal....");
+        iSignalProcessa=0;
+    }
+
+    oLog.logInformation(">>>ProcessaSignal");
+}
+#endif
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[100 + 1];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug("Obtendo parametros de configuracao...");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("extratorDB.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir())
+	{
+        oLog.logError("Erro abrindo arquivo de configuração!");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, TAM_BD_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, TAM_BD_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, TAM_BD_INST);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, TAM_TX_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, TAM_TX_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, TAM_TX_GEN);
+        }
+        else if (!strcmp(szDivPre, "clt_tux"))
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, TAM_TX_CLT);
+        }
+        else if (!strcmp(szDivPre, "path"))
+        {
+            strncpy(ptParamConf->szPath, szDivArq, _MAX_PATH);
+        }
+        else if (!strcmp(szDivPre, "ArquivoExtracao"))
+        {
+            strncpy(ptParamConf->szArquivoExtracao, szDivArq, _MAX_PATH);
+        }
+        else if (!strcmp(szDivPre, "path_log_erros"))
+        {
+            strncpy(ptParamConf->szPathLogErros, szDivArq, _MAX_PATH);
+        }
+		
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    sprintf(szTempTrace, "ptParamConf->szPws[%s]", ptParamConf->szPws); oLog.logDebug(szTempTrace);
+    sprintf(szTempTrace, "ptParamConf->szUsr[%s]", ptParamConf->szUsr); oLog.logDebug(szTempTrace);
+    sprintf(szTempTrace, "ptParamConf->szInst[%s]", ptParamConf->szInst); oLog.logDebug(szTempTrace);
+    sprintf(szTempTrace, "ptParamConf->szPwsTux[%s]", ptParamConf->szPwsTux); oLog.logDebug(szTempTrace);
+    sprintf(szTempTrace, "ptParamConf->szUsrTux[%s]", ptParamConf->szUsrTux); oLog.logDebug(szTempTrace);
+    sprintf(szTempTrace, "ptParamConf->szPwsTuxGen[%s]", ptParamConf->szPwsTuxGen); oLog.logDebug(szTempTrace);
+    sprintf(szTempTrace, "ptParamConf->szCltTux[%s]", ptParamConf->szCltTux); oLog.logDebug(szTempTrace);
+    sprintf(szTempTrace, "ptParamConf->szPath[%s]", ptParamConf->szPath); oLog.logDebug(szTempTrace);
+	sprintf(szTempTrace, "ptParamConf->szArquivoExtracao[%s]", ptParamConf->szArquivoExtracao); oLog.logDebug(szTempTrace);
+    sprintf(szTempTrace, "ptParamConf->szPathLogErros[%s]", ptParamConf->szPathLogErros); oLog.logDebug(szTempTrace);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0 ||
+        strlen(ptParamConf->szPath) == 0 ||
+        strlen(ptParamConf->szArquivoExtracao) == 0 ||
+        strlen(ptParamConf->szPathLogErros) == 0 )
+    {
+        oLog.logError("Dados incompletos!");
+        return -1;
+    }
+
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...");
+    return 0;
+}
+
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logInformation(">>>DBConnect");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    oLog.logInformation("<<<DBConnect");
+
+    return (sqlca.sqlcode);
+
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]");
+    return -1;
+}
+
+/************************************************************************************************************/
+void DBDisconnect(void)
+{
+    oLog.logInformation(">>>DBDisconnect");
+
+    EXEC SQL WHENEVER SQLERROR GOTO DBDisconnectError;
+    EXEC SQL COMMIT WORK RELEASE;
+
+    oLog.logInformation("<<<DBDisconnect");
+    return;
+
+DBDisconnectError:
+    sprintf(szTempTrace, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szTempTrace);
+}
+
+void NomeRelatorio( char * sNmRelatorio )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oraNmRelatorio[256];
+        short   i_oraNmRelatorio = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorNomeRelatorio;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+    SELECT
+       DSVALORPARAMETRO
+    INTO
+       :oraNmRelatorio:i_oraNmRelatorio
+    FROM
+       APOIO.PARAMETRO
+    WHERE
+       CDPARAMETRO = 'RELATDVOL';   // Constante para busca no banco do nome do relatorio a ser gerado
+    
+    CONVIND( oraNmRelatorio, i_oraNmRelatorio );
+    
+    if ( i_oraNmRelatorio != -1 )
+    {
+        sprintf( sNmRelatorio,"%.*s", oraNmRelatorio.len,(char*)oraNmRelatorio.arr );
+    }
+    
+    return;
+    
+sqlErrorNomeRelatorio:
+    sNmRelatorio[0] = 0x0;
+}

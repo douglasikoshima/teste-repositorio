@@ -1,0 +1,510 @@
+#include "../include/ReservaAparelho.hpp"
+
+extern errno;
+
+EXEC SQL INCLUDE SQLCA;
+
+ReservaAparelho::ReservaAparelho() {
+	log.setNivel(2);
+	log.logDebug("inicializando o ReservaAparelho");
+	memset(this->szTempTrace,0,sizeof(szTempTrace));
+	this->userDatabase = NULL;
+	this->passwordDatabase = NULL;
+	this->oracleSID = NULL;
+}
+
+ReservaAparelho::~ReservaAparelho() {
+	log.logDebug("finalizando o ReservaAparelho");
+	this->disconnect();
+	log.logDebug("Desconectar tuxedo");
+	tpterm(); 
+}
+
+int ReservaAparelho::processar() {
+	log.logDebug("inicio ReservaAparelho::processar");
+	
+	// carregar arquivo de configuração
+	if (!loadConfig()) {
+		log.logDebug("falha ao carregar arquivo de configuração");
+		return 0;
+	}
+	
+	// connectar ao oracle
+	if (this->connect(this->userDatabase, this->passwordDatabase, this->oracleSID)) {
+		log.logError("erro ao conectar ao oracle");
+		return 0;
+	}
+	
+	// iniciar tuxedo
+	if ( this->tuxInit() ) {
+		log.logError("erro ao iniciar tuxedo");
+		return 0;
+	}	
+
+	this->buscarReservaAparelho();
+	
+	log.logDebug("final ReservaAparelho::processar");
+	return 1;
+}
+
+int ReservaAparelho::buscarReservaAparelho() {
+	log.logDebug("inicio vai buscar reserva aparelho");
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+		
+        VARCHAR cpf[256];
+        VARCHAR nmtiporeserva[256];
+        VARCHAR sguf[256];
+        VARCHAR codsapllpp[256];
+        VARCHAR codsapllpp2[256];
+        VARCHAR nmsapmaterial[256];
+        VARCHAR codsapmaterial[256];
+        VARCHAR codfabricante[256];
+        VARCHAR nmfabricante[256];
+        VARCHAR nmmodelo[256];
+        VARCHAR quantidade[256];
+        VARCHAR login[256];
+        VARCHAR nmloja[256];
+        VARCHAR nmloja2[256];
+        VARCHAR dtreserva[256];
+        VARCHAR retornoreservasap[256];
+        VARCHAR dthrexpirareserva[256];
+        VARCHAR indresgateefetuado[256];
+        VARCHAR hrsla[256];
+        VARCHAR nmstatus[256];
+        VARCHAR idusuarioalteracao[256];
+        VARCHAR dtultimaalteracao[256];
+		
+		short i_idAtendimentoAnatelAtv = 0;
+		short i_idAtendimentoAnatel = 0;
+		short i_nrAtividade = 0;
+		short i_descricao = 0;
+		
+        short i_cpf = 0;
+        short i_nmtiporeserva = 0;
+        short i_sguf = 0;
+        short i_codsapllpp = 0;
+        short i_codsapllpp2 = 0;
+        short i_nmsapmaterial = 0;
+        short i_codsapmaterial = 0;
+        short i_codfabricante = 0;
+        short i_nmfabricante = 0;
+        short i_nmmodelo = 0;
+        short i_quantidade = 0;
+        short i_login = 0;
+        short i_nmloja = 0;
+        short i_nmloja2 = 0;
+        short i_dtreserva = 0;
+        short i_retornoreservasap = 0;
+        short i_dthrexpirareserva = 0;
+        short i_indresgateefetuado = 0;
+        short i_hrsla = 0;
+        short i_nmstatus = 0;
+        short i_idusuarioalteracao = 0;
+        short i_dtultimaalteracao = 0;		
+		
+		char xmlIn[4000 + 1];
+		char xmlOut[2000 + 1];
+		int errorNumber;
+		
+		int total = 0;
+		int qtdeRegistros = 0;
+		
+	EXEC SQL END DECLARE SECTION;
+	struct sqlca sqlca;	
+	
+	// montar XML de entrada
+	int registro = 0;
+	int index = 0;
+	string xml = "<?xml version='1.0' encoding='ISO-8859-1'?>";
+	   xml += "<msg><msgHdr><user>1";
+	   xml += "</user><service>RSVAPARELHO</service></msgHdr><msgBody>";
+		
+	EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+	
+	EXEC SQL
+    SELECT count(1) INTO :total
+	  FROM RETENCAO.RESERVAAPARELHO RA,
+			   APOIO.TIPORESERVA TR,
+			   APOIO.STATUSRESERVA SR
+	 WHERE RA.IDTIPORESERVA = TR.IDTIPORESERVA
+		 AND RA.IDSTATUS = SR.IDSTATUS
+		 AND RA.IDSTATUS = 1
+		 AND RA.DTHREXPIRARESERVA <= SYSDATE;
+		 
+	EXEC SQL
+    SELECT TO_NUMBER(DSVALORPARAMETRO) INTO :qtdeRegistros
+	  FROM APOIO.PARAMETRO
+     WHERE CDPARAMETRO = 'QTDE_RESERVA_APARELHO';
+	 
+		 	
+	
+	EXEC SQL DECLARE CURSOR_APARELHO CURSOR FOR	
+	SELECT CPF,
+		   TR.NMTIPORESERVA,
+		   RA.SGUF,
+		   RA.CODSAPLLPP,
+		   RA.CODSAPLLPP2,
+		   RA.NMSAPMATERIAL,
+		   RA.CODSAPMATERIAL,
+		   RA.CODFABRICANTE,
+		   RA.NMFABRICANTE,
+		   RA.NMMODELO,
+		   RA.QUANTIDADE,
+		   RA.LOGIN,
+		   RA.NMLOJA,
+		   RA.NMLOJA2,
+		   TO_CHAR(RA.DTRESERVA,'DD/MM/YYYY'),
+		   RA.RETORNORESERVASAP,
+		   TO_CHAR(RA.DTHREXPIRARESERVA,'DD/MM/YYYY HH24:MI:SS'),
+		   RA.INDRESGATEEFETUADO,
+		   TO_CHAR(RA.HRSLA,'DD/MM/YYYY HH24:MI:SS'),
+		   SR.NMSTATUS,
+		   RA.IDUSUARIOALTERACAO,
+		   TO_CHAR(RA.DTULTIMAALTERACAO,'DD/MM/YYYY')
+	  FROM RETENCAO.RESERVAAPARELHO RA,
+			   APOIO.TIPORESERVA TR,
+			   APOIO.STATUSRESERVA SR
+	 WHERE RA.IDTIPORESERVA = TR.IDTIPORESERVA
+		 AND RA.IDSTATUS = SR.IDSTATUS
+		 AND RA.IDSTATUS = 1
+		 AND RA.DTHREXPIRARESERVA <= SYSDATE
+		 AND ROWNUM <= :total;
+		 
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	
+	EXEC SQL OPEN CURSOR_APARELHO;
+	   
+	for( ;; ) 
+	{		
+        memset(&cpf,0,sizeof(cpf));
+        memset(&nmtiporeserva,0,sizeof(nmtiporeserva));
+        memset(&sguf,0,sizeof(sguf));
+        memset(&codsapllpp,0,sizeof(codsapllpp));
+        memset(&codsapllpp2,0,sizeof(codsapllpp2));
+        memset(&nmsapmaterial,0,sizeof(nmsapmaterial));
+        memset(&codsapmaterial,0,sizeof(codsapmaterial));
+        memset(&codfabricante,0,sizeof(codfabricante));
+        memset(&nmfabricante,0,sizeof(nmfabricante));
+        memset(&nmmodelo,0,sizeof(nmmodelo));
+        memset(&quantidade,0,sizeof(quantidade));
+        memset(&login,0,sizeof(login));
+        memset(&nmloja,0,sizeof(nmloja));
+        memset(&nmloja2,0,sizeof(nmloja2));
+        memset(&dtreserva,0,sizeof(dtreserva));
+        memset(&retornoreservasap,0,sizeof(retornoreservasap));
+        memset(&dthrexpirareserva,0,sizeof(dthrexpirareserva));
+        memset(&indresgateefetuado,0,sizeof(indresgateefetuado));
+        memset(&hrsla,0,sizeof(hrsla));
+        memset(&nmstatus,0,sizeof(nmstatus));
+        memset(&idusuarioalteracao,0,sizeof(idusuarioalteracao));
+        memset(&dtultimaalteracao,0,sizeof(dtultimaalteracao));
+		
+		// varre todos os registros 
+		EXEC SQL FETCH CURSOR_APARELHO INTO
+        :cpf:i_cpf,
+        :nmtiporeserva:i_nmtiporeserva,
+        :sguf:i_sguf,
+        :codsapllpp:i_codsapllpp,
+        :codsapllpp2:i_codsapllpp2,
+        :nmsapmaterial:i_nmsapmaterial,
+        :codsapmaterial:i_codsapmaterial,
+        :codfabricante:i_codfabricante,
+        :nmfabricante:i_nmfabricante,
+        :nmmodelo:i_nmmodelo,
+        :quantidade:i_quantidade,
+        :login:i_login,
+        :nmloja:i_nmloja,
+        :nmloja2:i_nmloja2,
+        :dtreserva:i_dtreserva,
+        :retornoreservasap:i_retornoreservasap,
+        :dthrexpirareserva:i_dthrexpirareserva,
+        :indresgateefetuado:i_indresgateefetuado,
+        :hrsla:i_hrsla,
+        :nmstatus:i_nmstatus,
+        :idusuarioalteracao:i_idusuarioalteracao,
+        :dtultimaalteracao:i_dtultimaalteracao;
+		
+		log.log("CPF = %s", (char*)cpf.arr);	
+			 
+		xml += "<retornoReservaSAP>";
+		xml += (char*) retornoreservasap.arr;
+		xml += "</retornoReservaSAP>";		   		
+		   			
+		++registro;
+		++index;
+		log.log("registro = %d, index = %d, total = %d, qtdeRegistros = %d ", registro, index, total, qtdeRegistros);
+		if (registro == qtdeRegistros || index == total) {
+		
+			xml += "</msgBody></msg>";			
+			registro = 0;
+			
+			// inicilizar
+			memset(xmlIn, 0, sizeof(xmlIn));
+			memset(xmlOut, 0, sizeof(xmlOut));
+			strcpy( xmlIn, xml.c_str());
+			log.log("XML de Entrada [%s]", xmlIn);
+		
+			if ( !this->sendXML(xmlIn, xmlOut, &errorNumber) ) {
+				log.logDebug("sucesso na chamada do serviço RSVAPARELHO");
+			} else {
+				log.logError("erro ao chamar serviço REGCONTATO");
+			}
+			
+			xml = "<?xml version='1.0' encoding='ISO-8859-1'?>";
+			xml += "<msg><msgHdr><user>1";
+			xml += "</user><service>RSVAPARELHO</service></msgHdr><msgBody>";
+		
+		}
+
+	}
+	
+	EXEC SQL CLOSE CURSOR_APARELHO;	
+	
+	log.logDebug("final vai buscar reserva aparelho");
+	
+	return 1;
+sqlError:		
+		string sRegistroError;
+		sRegistroError = "Erro no processamento do registro: ";
+		log.logDebug((char *)sRegistroError.data());
+		
+	    sprintf(this->szTempTrace, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); 
+		log.logDebug(this->szTempTrace);	
+        return 0;	
+}
+
+int ReservaAparelho::loadConfig() {
+	log.logDebug("inicio vai abrir o arquivo de configuração");
+	
+	int retorno = 0;
+		
+	// fazer parse do arquivo de configuração
+	if ( managerConfig.parse("cancelarReservaAparelho.xml") ) {
+		TiXmlElement *element = managerConfig.getRootElement();
+		
+		if (element->FirstChild("userDatabase") == NULL) {
+			log.logError("campo userDatabase do arquivo de configuração, não encontrado.");
+			return retorno;
+		} else if (element->FirstChild("passwordDatabase") == NULL) {
+			log.logError("campo passwordDatabase do arquivo de configuração, não encontrado.");
+			return retorno;
+		} else if (element->FirstChild("oracleSID") == NULL) {
+			log.logError("campo oracleSID do arquivo de configuração, não encontrado.");
+			return retorno;
+		} else if (element->FirstChild("userTuxedo") == NULL) {
+			log.logError("campo userTuxedo do arquivo de configuração, não encontrado.");
+			return retorno;
+		} else if (element->FirstChild("passwordTuxedo") == NULL) {
+			log.logError("campo passwordTuxedo do arquivo de configuração, não encontrado.");
+			return retorno;
+		} else if (element->FirstChild("passwordTuxedoGen") == NULL) {
+			log.logError("campo passwordTuxedoGen do arquivo de configuração, não encontrado.");
+			return retorno;
+		} else if (element->FirstChild("cltTux") == NULL) {
+			log.logError("campo cltTux do arquivo de configuração, não encontrado.");
+			return retorno;
+		} 
+		
+		this->userDatabase = (char*) element->FirstChild("userDatabase")->ToElement()->GetText(); 
+		log.log("userDatabase = [%s]",(char*)this->userDatabase);
+		this->passwordDatabase = (char*) element->FirstChild("passwordDatabase")->ToElement()->GetText();
+		this->oracleSID = (char*) element->FirstChild("oracleSID")->ToElement()->GetText(); 
+		log.log("oracleSID = [%s]", (char*)this->oracleSID);
+		this->userTuxedo = (char*) element->FirstChild("userTuxedo")->ToElement()->GetText(); 
+		log.log("userTuxedo = [%s]", (char*)this->userTuxedo);
+		this->passwordTuxedo = (char*) element->FirstChild("passwordTuxedo")->ToElement()->GetText(); 
+		log.log("passwordTuxedo = [%s]", (char*)this->passwordTuxedo);
+		this->passwordTuxedoGen = (char*) element->FirstChild("passwordTuxedoGen")->ToElement()->GetText(); 
+		log.log("passwordTuxedoGen = [%s]", (char*)this->passwordTuxedoGen);
+		this->cltTux = (char*) element->FirstChild("cltTux")->ToElement()->GetText(); 
+		log.log("cltTux = [%s]", (char*)this->cltTux);
+		
+		
+		retorno = 1;
+		log.logDebug("sucesso ao abrir arquivo de configuração");
+	}
+	
+	log.logDebug("fim vai abrir o arquivo de configuração");
+	
+	return retorno;
+}
+
+
+char* ReservaAparelho::getParametro(char *parametro) {
+	log.logDebug("inicio ReservaAparelho::getParametro");
+	
+	EXEC SQL BEGIN DECLARE SECTION;		
+		char* cdParametro = parametro;
+		
+		VARCHAR pdsValorParametro[256];
+		short i_pdsValorParametro = 0;
+		
+	EXEC SQL END DECLARE SECTION;
+	struct sqlca sqlca;	
+		
+	log.log("cdParametro = %s", cdParametro);
+	
+	memset(&pdsValorParametro,0,sizeof(pdsValorParametro));
+	memset(this->dsValorParametro,0,sizeof(this->dsValorParametro));
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+	EXEC SQL
+		SELECT dsvalorparametro
+		  INTO :pdsValorParametro:i_pdsValorParametro
+		  FROM apoio.parametro
+		 WHERE cdparametro = :cdParametro;	 
+		 
+		 if (strlen((char*)pdsValorParametro.arr) == 0) {
+			log.logDebug("parametro não encontrado");			
+		 } else {			
+			strcpy(this->dsValorParametro, (char*) pdsValorParametro.arr);
+			log.log("parametro encontrado valor = [%s]", this->dsValorParametro);
+		 }
+	
+	return this->dsValorParametro;
+sqlError:
+		log.log( "ERRO ORACLE : sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);		
+        return this->dsValorParametro;	
+}
+
+
+int ReservaAparelho::connect(char *user, char *password, char *sid) {
+	log.logInformation("inicio conectar ao oracle");
+	int retorno = 0;
+	EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+	
+	// montar string de conexão
+	sprintf(connString, "%s/%s@%s", user, password, sid);
+	
+	// tratar erro
+	EXEC SQL WHENEVER SQLERROR GOTO errConn;
+	
+	// conectar no banco
+	EXEC SQL CONNECT :connString;
+	retorno = sqlca.sqlcode;
+	
+	log.logDebug("fim conectar ao oracle");
+	return retorno;
+	
+errConn:
+    log.logInformation("erro ao conectar no oracle");
+	return -1;
+}
+
+void ReservaAparelho::disconnect(void)
+{
+    log.logInformation("inicio desconectar no oracle");
+
+    EXEC SQL WHENEVER SQLERROR GOTO DBDisconnectError;
+    EXEC SQL COMMIT WORK RELEASE;
+
+    log.logInformation("desconectado com sucesso.");
+    return;
+
+DBDisconnectError:
+    sprintf(szTempTrace, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); 
+	log.logDebug(szTempTrace);
+}
+
+int ReservaAparelho::tuxInit()
+{
+    log.logDebug("inicio: ReservaAparelho::TuxedoInit");
+	
+	TPINIT *tpInitInfo;	
+    int i;
+	
+	log.logDebug("alocanto TPINIT");
+    if((tpInitInfo = (TPINIT *)tpalloc("TPINIT", (char *)NULL, TPINITNEED(strlen("vivo") - 1) )) == (TPINIT *)NULL)
+		return tperrno;
+
+    strcpy(tpInitInfo->usrname, this->userTuxedo);
+    strcpy(tpInitInfo->cltname, this->cltTux);
+    strcpy(tpInitInfo->passwd, this->passwordTuxedo);
+    strcpy((char *)&tpInitInfo->data, this->passwordTuxedoGen);
+
+	log.logDebug("iniciando tuxedo");
+    i = tpinit(tpInitInfo);
+	
+	log.log("TPINIT: %i, TPERRNO: %i", i, tperrno);
+
+    log.logDebug("ReservaAparelho::TuxedoInit fim");
+
+    if (i == -1)
+        return 1;
+    else  
+        return 0;
+}
+
+
+int ReservaAparelho::sendXML(char *pXmlSaida, char *pRetMsg, int *pErrorNumber) 
+{
+
+	log.logDebug("enviando XML de envio");
+    char *sendbuf, *rcvbuf;
+    long sendlen, rcvlen;
+
+    sendlen = strlen(pXmlSaida);
+    
+	log.log("tamanho da msg = (%d)", sendlen);
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        log.logError("Error allocating send buffer");
+        tpterm();
+
+        return -1;
+    }
+
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        log.logError("Error allocating receive buffer");
+        tpfree(sendbuf);
+        tpterm();
+
+        return -1;
+    }
+
+    strcpy(sendbuf, pXmlSaida);
+
+    if(tpcall("TuxConnector", (char *)sendbuf, sendlen, (char **)&rcvbuf, &rcvlen, (long)0) == -1) {
+				
+		log.log("Tperrno = %d", tperrno);
+		log.log("rcvbuf[%s]", rcvbuf);
+		log.log("Erro[%s]", tpstrerror(tperrno));
+
+        *pErrorNumber=tperrno;
+        strcpy(pRetMsg, rcvbuf);
+
+        tpfree(sendbuf);
+        tpfree(rcvbuf);
+
+		switch(*pErrorNumber)
+		{
+			case TPEINVAL: log.logError(CONST_TPEINVAL); break;
+			case TPENOENT: log.logError(CONST_TPENOENT); break;
+			case TPEITYPE: log.logError(CONST_TPEITYPE); break;
+			case TPEOTYPE: log.logError(CONST_TPEOTYPE); break;
+			case TPETRAN: log.logError(CONST_TPETRAN); break;
+			case TPETIME: log.logError(CONST_TPETIME); break;
+			case TPESVCFAIL: log.logError(CONST_TPESVCFAIL); break;
+			case TPESVCERR: log.logError(CONST_TPESVCERR); break;
+			case TPEBLOCK: log.logError(CONST_TPEBLOCK); break;
+			case TPGOTSIG: log.logError(CONST_TPGOTSIG); break;
+			case TPEPROTO: log.logError(CONST_TPEPROTO); break;
+			case TPESYSTEM: log.logError(CONST_TPESYSTEM); break;
+			case TPEOS: log.logError(CONST_TPEOS); break;
+		}
+
+        return 1;
+    }
+
+    *pErrorNumber=0;
+    strcpy(pRetMsg, rcvbuf);
+
+    tpfree(sendbuf);
+    tpfree(rcvbuf);
+
+    return 0;
+}

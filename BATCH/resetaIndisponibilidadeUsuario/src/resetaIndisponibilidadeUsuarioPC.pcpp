@@ -1,0 +1,238 @@
+
+#include "../include/resetaIndisponibilidadeUsuarioPC.h"
+
+int cResetaIndisponibilidadeUsuarioPC::proCResetarUsuariosLivres()
+{
+	Propriedade prop("resetaIndisponibilidadeUsuario.cfg");
+
+	char linha[2049];
+	char *szPws = prop.getParametro("pwd");
+	char *szUsr = prop.getParametro("usr");
+	char *szPath= prop.getParametro("pth");
+	char *szInst= prop.getParametro("inst");
+	int vlLog = atoi( prop.getParametro("log") );
+    int totalUsuariosResetados = 0;
+    struct sqlca sqlca;
+
+	// Verifica se todos os dados foram recuperados do arquivo de configuração.
+	if (!szPws || !szUsr || !szPath || !szInst || vlLog == 0)
+    {
+		log.logError("Dados incompletos!\n");
+	}
+
+	log.setNivel( vlLog );
+
+	log.logDebug("> proCResetarUsuariosLivres\n");
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		char szConnStr[2049];
+        int nMinutos;
+        short inMinutos=-1; 
+        double nMinutosDia;
+		char  idPessoaUsuarioArray[500][32];
+        VARCHAR idPessoaUsuario[32];
+	EXEC SQL END DECLARE SECTION;
+
+	// Conecta no banco de dados.
+    sprintf(szConnStr,"%s/%s@%s",szUsr,szPws,szInst);
+
+	EXEC SQL CONNECT :szConnStr;
+
+	if (sqlca.sqlcode)
+    {
+		sprintf(linha, "Erro ao conectar usuario %s na instancia %s do BD - "
+                       "Erro Oracle [%d] - Mensagem [%s].\n"
+               , szUsr,szInst,sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc);
+
+		log.logError(linha);
+
+	    log.logDebug("< proCResetarUsuariosLivres\n");
+
+		return -1;
+	}
+
+    // Obtêm o tempo máximo em minutos que um usuário pode ficar parado indisponível
+    EXEC SQL
+        SELECT dsValorParametro
+        INTO   nMinutos:inMinutos
+        FROM   apoio.Parametro
+        WHERE  UPPER(CDPARAMETRO) = 'TEMPOLIMITEUSUIND';
+
+	if ( sqlca.sqlcode || inMinutos == -1 )
+	{
+        nMinutos = 10;
+
+		sprintf( linha
+               , "'TEMPOLIMITEUSUIND' nao cadastrado na tabela de "
+                 "parametros ou erro Oracle ocorrido, assumindo valor de %d minuto(s).\n",nMinutos);
+
+		log.logError(linha);
+
+	}
+
+    nMinutosDia = (double)(nMinutos) / 1440.0;
+
+    // Reseta em zero todos os usuários indisponíveis e parados por um tempo maior
+    // do que os mínutos parâmetrizados.
+    EXEC SQL DECLARE cursorUser CURSOR FOR
+        SELECT idPessoaUsuario 
+		  FROM acesso.Usuario
+        WHERE idPessoaUsuario IN (SELECT ad.idPessoaUsuario
+                                     FROM andamento.andamentotrans ad
+                                   WHERE EXISTS (SELECT u.idPessoaUsuario
+                                                   FROM acesso.usuario u
+                                                  WHERE u.idPessoaUsuario = ad.idPessoaUsuario 
+                                                    AND u.inDisponivelWF = 1
+                                                )
+                                  HAVING SYSDATE - MAX(ad.dtAndamento) > :nMinutosDia
+                                  GROUP BY ad.idPessoaUsuario
+                                  );
+
+    EXEC SQL OPEN cursorUser;
+
+    if ( sqlca.sqlcode )
+	{
+        sprintf(linha, "Erro OPEN CURSOR %d:%s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        log.logError(linha);
+
+	    // Desconecta do banco de dados.
+	    EXEC SQL COMMIT WORK RELEASE;
+
+	    if (sqlca.sqlcode)
+        {
+            sprintf(linha, "Erro WORK RELEASE %d:%s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		log.logError(linha);
+	    }
+
+	    log.logDebug("< proCResetarUsuariosLivres\n");
+
+        return -1;
+	}
+
+    memset(&idPessoaUsuarioArray,0,sizeof(idPessoaUsuarioArray));
+    int posicao = 0;
+
+    while( true )
+    {
+        memset(&idPessoaUsuario, 0x00, sizeof(idPessoaUsuario));
+
+        EXEC SQL FETCH cursorUser INTO :idPessoaUsuario;
+
+        if ( sqlca.sqlcode )
+        {
+            if ( sqlca.sqlcode != 1403 )
+            {
+                sprintf(linha, "Erro %d:%s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+                log.logError(linha);
+            }
+
+            break;
+        }
+
+		strcpy(idPessoaUsuarioArray[posicao++],(char*)idPessoaUsuario.arr);
+
+        if ( posicao >= 500 )
+        {
+            EXEC SQL
+                UPDATE acesso.Usuario
+                SET inDisponivelWF = 0
+                WHERE idPessoaUsuario = :idPessoaUsuarioArray;
+
+            memset(&idPessoaUsuarioArray,0,sizeof(idPessoaUsuarioArray));
+            totalUsuariosResetados += posicao;
+            posicao=0;
+
+            if ( sqlca.sqlcode )
+            {
+                sprintf(linha, "Erro %d:%s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		log.logError(linha);
+
+                log.logError("Executando ROLLBACK ...");
+	            
+	    EXEC SQL ROLLBACK;
+
+                if ( sqlca.sqlcode )
+                {
+                    sprintf(linha, "Erro no ROLLBACK %d:%s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+                    log.logError(linha);
+                }
+                else
+                {
+                    log.logError("ROLLBACK executado com sucesso.");
+                }
+
+                break;
+	}
+
+	EXEC SQL COMMIT;
+
+            if ( sqlca.sqlcode )
+            {
+                sprintf(linha, "Erro no COMMIT %d:%s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+                log.logError(linha);
+            }
+        }
+    }
+
+    if ( posicao )
+    {
+        EXEC SQL
+            UPDATE acesso.Usuario
+            SET inDisponivelWF = 0
+            WHERE idPessoaUsuario = :idPessoaUsuarioArray;
+
+        if ( sqlca.sqlcode )
+        {
+            sprintf(linha, "Erro %d:%s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+            log.logError(linha);
+
+            log.logError("Executando ROLLBACK ...");
+	        
+            EXEC SQL ROLLBACK;
+
+            if ( sqlca.sqlcode )
+            {
+                sprintf(linha, "Erro no ROLLBACK %d:%s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+                log.logError(linha);
+            }
+            else
+            {
+                log.logError("ROLLBACK executado com sucesso.");
+            }
+        }
+        else
+        {
+	        EXEC SQL COMMIT;
+
+            if ( sqlca.sqlcode )
+            {
+                sprintf(linha, "Erro no COMMIT %d:%s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+                log.logError(linha);
+            }
+        }
+
+        totalUsuariosResetados += posicao;
+    }
+
+    EXEC SQL CLOSE cursorUser;
+
+	if (sqlca.sqlcode)
+    {
+        sprintf(linha, "Erro CLOSE CURSOR %d:%s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		log.logError(linha);
+	}
+
+	// Desconecta do banco de dados.
+	EXEC SQL COMMIT WORK RELEASE;
+
+	if (sqlca.sqlcode)
+    {
+        sprintf(linha, "Erro WORK RELEASE %d:%s\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+		log.logError(linha);
+	}
+
+	log.logDebug("< proCResetarUsuariosLivres\n");
+
+    // retorna o numero de usuários em que inDisponivelWF foi resetado em zero.
+    return totalUsuariosResetados;
+}

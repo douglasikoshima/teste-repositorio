@@ -1,0 +1,663 @@
+/**
+ * 
+ * @modulo  Batch
+ * @usecase Batch
+ * @author  Cassio M Garcia
+ * @version $Revision: 1.1.4.13 $
+ * @CVS     $Author: cmgarcia $ - $Date: 2008/08/26 17:53:11 $
+ **/
+
+#include <math.h>
+#include "../include/PriorizacaoAtendimentoPortoutPC.h"
+
+EXEC SQL BEGIN DECLARE SECTION;
+#include "../include/PriorizacaoAtendimentoPortoutSt.h"
+#define TAM_BLOCO_FETCH 500
+EXEC SQL END DECLARE SECTION;
+
+void cPriorizacaoAtendimentoPortoutPC::processaAtualizacao()
+{
+    struct sqlca sqlca;
+
+    int posicao = 0;
+    int qtdeProcessados = 0;
+    int ctBloco=0;
+    double pesoMaximo;
+
+    char* szPws;
+    char* szUsr;
+    char* szPath;
+    char* szInst;
+    int  vlLog = ERROR;
+
+    Propriedade prop("priorizacaoAtendimentoPortout.cfg");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char szConnStr[512];
+    EXEC SQL END DECLARE SECTION;
+
+    szPws = prop.getParametro("pwd");
+    szUsr = prop.getParametro("usr");
+    szPath= prop.getParametro("pth");
+    szInst= prop.getParametro("inst");
+    vlLog = atoi( prop.getParametro("log") );
+
+    // Verifica se todos os dados foram recuperados do arquivo de configuração.
+    if (!szPws || !szUsr || !szPath || !szInst || vlLog == 0)
+    {
+        logFile.logError("Dados incompletos!\n");
+    }
+
+    logFile.setNivel( vlLog );
+
+    // Conecta no banco de dados
+    sprintf(szConnStr, "%s/%s@%s", szUsr, szPws, szInst);
+    EXEC SQL CONNECT :szConnStr;
+    if (sqlca.sqlcode)
+    {
+        sprintf( linha, "Erro ao conectar ao Banco de Dados - Erro Oracle [%d] - Mensagem [%s].\n", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return;
+    }
+
+    // Para printar o log com parametros é necessário concatenar na versao inicial do log.
+    linha[0] = 0;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int idAtendimento;
+        double tempoPrazoPortOut;
+        double vlPesoAtendimento;
+
+        struct ParametrosCalculo parametrosCalculo;
+
+        short i_idAtendimento;
+        short i_tempoPrazoPortOut;
+        short i_vlPesoAtendimento;
+
+        int idAtendimentoArray[TAM_BLOCO_FETCH];
+        int idAlertaArray[TAM_BLOCO_FETCH];
+        double nrCriticidadeArray[TAM_BLOCO_FETCH];
+        char nmCorArray[TAM_BLOCO_FETCH][256];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    //==========================================================================
+    // Obtém parametros de cálculo
+
+    if ( obterParametrosCalculo(&parametrosCalculo) == false )
+    { // se der erro, aborta o processamento
+
+        logFile.logError("Erro na obtenção de parâmetros de cálculo.\n");
+
+        EXEC SQL COMMIT WORK RELEASE;
+
+        return;
+    }
+
+    //==========================================================================
+    // Pesos Máximos
+
+    if ( calcularPesoMaximo(&pesoMaximo,&parametrosCalculo) == false )
+    { // se der erro, aborta o processamento
+
+        logFile.logError("Erro na obtenção do peso máximo.\n");
+
+        EXEC SQL COMMIT WORK RELEASE;
+
+        return;
+    }
+
+    //==========================================================================
+    // Limpa buffers
+    memset(idAtendimentoArray,0,sizeof(idAtendimentoArray));
+    memset(idAlertaArray,0,sizeof(idAlertaArray));
+    memset(nrCriticidadeArray,0,sizeof(nrCriticidadeArray));
+    memset(nmCorArray,0,sizeof(nmCorArray));
+
+    //==========================================================================
+    // Processa
+    EXEC SQL DECLARE cursorPriorizacao CURSOR FOR
+        SELECT IDATENDIMENTO,
+               TRUNC(DTJANELAPORTOUT-SYSDATE )*1440+
+               TRUNC(MOD((DTJANELAPORTOUT-SYSDATE)*24,24))*60+
+               TRUNC(MOD((DTJANELAPORTOUT-SYSDATE)*24*60,60)) AS TEMPO,
+               VLPESOATENDIMENTO
+        FROM ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+       WHERE SGTIPOPORTABILIDADE = 'PORTOUT'
+       AND (DTJANELAPORTOUT-SYSDATE) >= 
+                (SELECT TO_NUMBER(DSVALORPARAMETRO)/1440 
+                   FROM APOIO.PARAMETRO 
+                  WHERE CDPARAMETRO='PORTABILIDADE_TPEXCLUSAOFILA');
+
+    EXEC SQL OPEN cursorPriorizacao;
+
+    bool bExecuta = true;
+
+    logFile.logError("Calculando priorizacao de portout...\n");
+
+    while (bExecuta)
+    {
+        for (posicao=0;posicao<TAM_BLOCO_FETCH;posicao++)
+        {
+            EXEC SQL
+                FETCH
+                    cursorPriorizacao
+                INTO 
+                    :idAtendimento:i_idAtendimento,
+                    :tempoPrazoPortOut:i_tempoPrazoPortOut,
+                    :vlPesoAtendimento:i_vlPesoAtendimento;
+            // Fim
+            if (sqlca.sqlcode == 1403)
+            {
+                bExecuta = false;
+                break;
+            }
+
+             // Se erro de fetch, aborta processamento
+            if (sqlca.sqlcode < 0)
+               {
+                sprintf(linha, "Erro Oracle %d-%s.\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+                logFile.logError(linha);
+                bExecuta = false;
+                break;
+            }
+
+            idAtendimentoArray[posicao] = idAtendimento;
+
+            // Calcula criticidade do processo
+            nrCriticidadeArray[posicao] = vlPesoAtendimento;
+
+            if ( tempoPrazoPortOut <= parametrosCalculo.horaCorteCrit1 )
+            { // esta dentro das zonas de criticidade
+
+                //double C1 = vlPesoAtendimento+pesoMaximo*(pesoMaximo/tempoPrazoPortOut);
+
+                // Zona de criticidade 1
+                nrCriticidadeArray[posicao] = vlPesoAtendimento+pesoMaximo*(pesoMaximo/tempoPrazoPortOut);
+
+                if ( tempoPrazoPortOut <= parametrosCalculo.horaCorteCrit2 )
+                { // esta dentro da zona de criticidade 2
+                    nrCriticidadeArray[posicao] *= 2.0;
+                }
+
+                // if ( tempoPrazoPortOut <= parametrosCalculo.horaCorteCrit2 )
+                // { // esta dentro da zona de criticidade 2
+                //     nrCriticidadeArray[posicao] = C1 * 2.0;
+                // }
+                // else
+                // { // esta dentro da zona de criticidade 1
+                //     nrCriticidadeArray[posicao] = C1;
+                // }
+            }
+
+            // Determina cor e ID de alerta
+            idAlertaArray[posicao] = 0;
+            nmCorArray[posicao][0] = 0;
+
+            if ( tempoPrazoPortOut <= parametrosCalculo.qtTempoDecorridoCorVermelho )
+            {
+                idAlertaArray[posicao] = parametrosCalculo.idAlertaVermelho;
+                strcpy(nmCorArray[posicao],parametrosCalculo.nmCorAlertaVermelho);
+            }
+            else if ( tempoPrazoPortOut > parametrosCalculo.qtTempoDecorridoCorVermelho &&
+                      tempoPrazoPortOut <= parametrosCalculo.qtTempoDecorridoCorLaranja )
+            {
+                idAlertaArray[posicao] = parametrosCalculo.idAlertaLaranja;
+                strcpy(nmCorArray[posicao],parametrosCalculo.nmCorAlertaLaranja);
+            }
+            else if ( tempoPrazoPortOut <= parametrosCalculo.qtTempoDecorridoCorAmarela )
+            {
+                idAlertaArray[posicao] = parametrosCalculo.idAlertaAmarela;
+                strcpy(nmCorArray[posicao],parametrosCalculo.nmCorAlertaAmarela);
+            }
+        } // for (int posicao=0;posicao<TAM_BLOCO_FETCH;posicao++)
+
+        // Grava o resultado do cálculo
+        if ( idAtendimentoArray[0] )
+        {
+            ctBloco++;
+
+            sprintf(linha,"Vai atualizar %do bloco de priorizacao...\n",ctBloco);
+            logFile.logError(linha);
+
+            EXEC SQL
+                UPDATE
+                    ATENDIMENTO.ATENDIMENTOPRIORIZACAO
+                SET
+                    NRCRITICIDADE = :nrCriticidadeArray,
+                    NMCOR = :nmCorArray,
+                    IDALERTA = :idAlertaArray,
+                    DTATUALIZACAO = SYSDATE
+                WHERE
+                    IDATENDIMENTO = :idAtendimentoArray;
+
+            memset(idAtendimentoArray,0,sizeof(idAtendimentoArray));
+            memset(idAlertaArray,0,sizeof(idAlertaArray));
+            memset(nrCriticidadeArray,0,sizeof(nrCriticidadeArray));
+            memset(nmCorArray,0,sizeof(nmCorArray));
+
+            qtdeProcessados += posicao;
+
+            EXEC SQL COMMIT;
+        }
+
+    } // while (bExecuta)
+
+    EXEC SQL CLOSE cursorPriorizacao;
+    EXEC SQL COMMIT;
+
+    sprintf(linha, "Foram processados %d protocolos de portout\n",qtdeProcessados);
+    logFile.logError(linha);
+
+    // Desconecta do banco de dados.
+    EXEC SQL COMMIT WORK RELEASE;
+    if (sqlca.sqlcode)
+    {
+        logFile.logError("Erro desconectando no banco de dados! Erro oracle...\n");
+    }
+
+    strcpy(linha, "FIM DO PROCESSAMENTO.");
+    logFile.logError(linha);
+}
+
+bool cPriorizacaoAtendimentoPortoutPC::calcularPesoMaximo(double *pesoMaximo,ParametrosCalculo *parametrosCalculo)
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        int pesoMaxContato;
+        int pesoMaxTipoCarteira;
+        int pesoMaxProcedencia;
+        int pesoMaxSegmentacao;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    EXEC SQL
+        SELECT
+            MAX(VLPESOCONTATO)
+        INTO
+            :pesoMaxContato
+        FROM
+            CONTATOADM.CONTATOFOLHA;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "Peso maximo dos contatos não encontrado: "
+                "Erro Oracle %d-%s.\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+
+    sprintf(linha, "Peso máximo CONTATOFOLHA=%d",pesoMaxContato);
+    logFile.logError(linha);
+
+    EXEC SQL
+        SELECT 
+            MAX(VLPESO)
+        INTO
+            :pesoMaxTipoCarteira
+        FROM
+            APOIO.TIPOCARTEIRA;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "Peso maximo de tipos de carteira não encontrado: "
+                "Erro Oracle %d-%s.\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+    sprintf(linha, "Peso máximo TIPOCARTEIRA=%d",pesoMaxTipoCarteira);
+    logFile.logError(linha);
+
+    EXEC SQL
+        SELECT
+            MAX(VLPESO)
+        INTO
+            :pesoMaxProcedencia
+        FROM
+            APOIO.PROCEDENCIA;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "Peso maximo de procedências não encontrado: "
+                "Erro Oracle %d-%s.\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+    sprintf(linha, "Peso máximo PROCEDENCIA=%d",pesoMaxProcedencia);
+    logFile.logError(linha);
+
+    EXEC SQL
+        SELECT
+            MAX(VLPESO)
+        INTO
+            :pesoMaxSegmentacao
+        FROM
+            APOIO.SEGMENTACAO;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "Peso maximo de segmentações não encontrado: "
+                "Erro Oracle %d-%s.\n",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+    sprintf(linha, "Peso máximo SEGMENTACAO=%d",pesoMaxSegmentacao);
+    logFile.logError(linha);
+
+    //==========================================================================
+    // Peso máximo possível
+
+    *pesoMaximo = (pow(parametrosCalculo->ntContato,pesoMaxContato) 
+                 * pow(parametrosCalculo->ntProcedencia,pesoMaxProcedencia) 
+                 * pow(parametrosCalculo->ntCarteira,pesoMaxTipoCarteira) 
+                 * pow(parametrosCalculo->ntSegmentacao,pesoMaxSegmentacao));
+
+    //*pesoMaximo = (pow(1.2,pesoMaxContato) 
+    //             * pow(1.4,pesoMaxProcedencia) 
+    //             * pow(1.5,pesoMaxTipoCarteira) 
+    //             * pow(1.7,pesoMaxSegmentacao));
+
+    sprintf(linha, "Peso maximo=%f\n",*pesoMaximo);
+    logFile.logInformation(linha);
+
+    return true;
+}
+
+bool cPriorizacaoAtendimentoPortoutPC::obterParametrosCalculo(ParametrosCalculo *parametrosCalculo)
+{
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char *cdParametro;
+
+        struct ParametrosCalculo *OraParamCalculo = parametrosCalculo;
+        struct ParametrosCalculoStatus StatusOraParamCalculo;
+
+        VARCHAR strOraNmCorAlertaAmarela[256];
+        VARCHAR strOraNmCorAlertaLaranja[256];
+        VARCHAR strOraNmCorAlertaVermelho[256];
+
+        VARCHAR strOraNtContato[256];
+        VARCHAR strOraNtProcedencia[256];
+        VARCHAR strOraNtCarteira[256];
+        VARCHAR strOraNtSegmentacao[256];
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    memset(&StatusOraParamCalculo,-1,sizeof(StatusOraParamCalculo));
+
+    //
+    // Tempo alerta amarela
+    //
+    cdParametro = "portout_baixo";
+
+    EXEC SQL
+        SELECT
+            IDALERTA,
+            NMCOR,
+            (QTTEMPODECORRIDO*60) AS QTTEMPODECORRIDOMIN
+        INTO
+            :OraParamCalculo->idAlertaAmarela:StatusOraParamCalculo.idAlertaAmarela,
+            :strOraNmCorAlertaAmarela:StatusOraParamCalculo.nmCorAlertaAmarela,
+            :OraParamCalculo->qtTempoDecorridoCorAmarela:StatusOraParamCalculo.qtTempoDecorridoCorAmarela
+        FROM
+            WORKFLOW.ALERTA
+        WHERE
+            SGALERTA = :cdParametro;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "%s:Erro Oracle %d-%s.\n",cdParametro,sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+
+    //
+    // Tempo alerta laranja
+    //
+    cdParametro = "portout_medio";
+
+    EXEC SQL
+        SELECT
+            IDALERTA,
+            NMCOR,
+            (QTTEMPODECORRIDO*60) AS QTTEMPODECORRIDOMIN
+        INTO
+            :OraParamCalculo->idAlertaLaranja:StatusOraParamCalculo.idAlertaLaranja,
+            :strOraNmCorAlertaLaranja:StatusOraParamCalculo.nmCorAlertaLaranja,
+            :OraParamCalculo->qtTempoDecorridoCorLaranja:StatusOraParamCalculo.qtTempoDecorridoCorLaranja
+        FROM
+            WORKFLOW.ALERTA
+        WHERE
+            SGALERTA = :cdParametro;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "%s:Erro Oracle %d-%s.\n",cdParametro,sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+
+    //
+    // Tempo alerta vermelho
+    //
+    cdParametro = "portout_alto";
+
+    EXEC SQL
+        SELECT
+            IDALERTA,
+            NMCOR,
+            (QTTEMPODECORRIDO*60) AS QTTEMPODECORRIDOMIN
+        INTO
+            :OraParamCalculo->idAlertaVermelho:StatusOraParamCalculo.idAlertaVermelho,
+            :strOraNmCorAlertaVermelho:StatusOraParamCalculo.nmCorAlertaVermelho,
+            :OraParamCalculo->qtTempoDecorridoCorVermelho:StatusOraParamCalculo.qtTempoDecorridoCorVermelho
+        FROM
+            WORKFLOW.ALERTA
+        WHERE
+            SGALERTA = :cdParametro;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "%s:Erro Oracle %d-%s.\n",cdParametro,sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+
+    //
+    // Tempo minimo para entrada na zona de criticidade
+    //
+    cdParametro = "PORTABILIDADE_TMPSTARTCRIT1";
+
+    EXEC SQL
+        SELECT
+            (DSVALORPARAMETRO*60) AS DSVALORPARAMETROMIN
+        INTO
+            :OraParamCalculo->horaCorteCrit1:StatusOraParamCalculo.horaCorteCrit1
+        FROM
+            APOIO.PARAMETRO 
+        WHERE
+            CDPARAMETRO = :cdParametro;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "%s:Erro Oracle %d-%s.\n",cdParametro,sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+
+    //
+    // Tempo minimo para entrada na zona de criticidade
+    //
+    cdParametro = "PORTABILIDADE_TMPSTARTCRIT2";
+
+    EXEC SQL
+        SELECT
+            (DSVALORPARAMETRO*60) AS DSVALORPARAMETROMIN
+        INTO
+            :OraParamCalculo->horaCorteCrit2:StatusOraParamCalculo.horaCorteCrit2
+        FROM
+            APOIO.PARAMETRO 
+        WHERE
+            CDPARAMETRO = :cdParametro;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "%s:Erro Oracle %d-%s.\n",cdParametro,sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+
+    //
+    // Nota do contato
+    //
+    cdParametro = "ntContatoPortout";
+
+    EXEC SQL
+        SELECT
+            REPLACE(DSVALORPARAMETRO,',','.') AS DSVALORPARAMETRO
+        INTO
+            :strOraNtContato:StatusOraParamCalculo.ntContato
+        FROM
+            APOIO.PARAMETRO 
+        WHERE
+            CDPARAMETRO = :cdParametro;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "%s:Erro Oracle %d-%s.\n",cdParametro,sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+
+    //
+    // Nota da procedencia
+    //
+    cdParametro = "ntProcedenciaPortout";
+
+    EXEC SQL
+        SELECT
+            REPLACE(DSVALORPARAMETRO,',','.') AS DSVALORPARAMETRO
+        INTO
+            :strOraNtProcedencia:StatusOraParamCalculo.ntProcedencia
+        FROM
+            APOIO.PARAMETRO 
+        WHERE
+            CDPARAMETRO = :cdParametro;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "%s:Erro Oracle %d-%s.\n",cdParametro,sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+
+    //
+    // Nota da carteira
+    //
+    cdParametro = "ntCarteiraPortout";
+
+    EXEC SQL
+        SELECT
+            REPLACE(DSVALORPARAMETRO,',','.') AS DSVALORPARAMETRO
+        INTO
+            :strOraNtCarteira:StatusOraParamCalculo.ntCarteira
+        FROM
+            APOIO.PARAMETRO 
+        WHERE
+            CDPARAMETRO = :cdParametro;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "%s:Erro Oracle %d-%s.\n",cdParametro,sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+
+    //
+    // Nota da segmentação
+    //
+    cdParametro = "ntSegmentacaoPortout";
+
+    EXEC SQL
+        SELECT
+            REPLACE(DSVALORPARAMETRO,',','.') AS DSVALORPARAMETRO
+        INTO
+            :strOraNtSegmentacao:StatusOraParamCalculo.ntSegmentacao
+        FROM
+            APOIO.PARAMETRO 
+        WHERE
+            CDPARAMETRO = :cdParametro;
+
+    if (sqlca.sqlcode < 0)
+    {
+        sprintf(linha, "%s:Erro Oracle %d-%s.\n",cdParametro,sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+        logFile.logError(linha);
+        return false;
+    }
+
+    CONVIND(strOraNmCorAlertaAmarela,StatusOraParamCalculo.nmCorAlertaAmarela);
+    CONVIND(strOraNmCorAlertaLaranja,StatusOraParamCalculo.nmCorAlertaLaranja);
+    CONVIND(strOraNmCorAlertaVermelho,StatusOraParamCalculo.nmCorAlertaVermelho);
+
+    CONVIND(strOraNtContato,StatusOraParamCalculo.ntContato);
+    CONVIND(strOraNtProcedencia,StatusOraParamCalculo.ntProcedencia);
+    CONVIND(strOraNtCarteira,StatusOraParamCalculo.ntCarteira);
+    CONVIND(strOraNtSegmentacao,StatusOraParamCalculo.ntSegmentacao);
+
+    parametrosCalculo->ntContato = atof((char*)strOraNtContato.arr);
+    parametrosCalculo->ntProcedencia = atof((char*)strOraNtProcedencia.arr);
+    parametrosCalculo->ntCarteira = atof((char*)strOraNtCarteira.arr);
+    parametrosCalculo->ntSegmentacao = atof((char*)strOraNtSegmentacao.arr);
+
+    strcpy(parametrosCalculo->nmCorAlertaAmarela,(char*)strOraNmCorAlertaAmarela.arr);
+    strcpy(parametrosCalculo->nmCorAlertaLaranja,(char*)strOraNmCorAlertaLaranja.arr);
+    strcpy(parametrosCalculo->nmCorAlertaVermelho,(char*)strOraNmCorAlertaVermelho.arr);
+
+    sprintf(linha, "horaCorteCrit1=%d\n",parametrosCalculo->horaCorteCrit1);
+    logFile.logInformation(linha);
+
+    sprintf(linha, "horaCorteCrit2=%d\n",parametrosCalculo->horaCorteCrit2);
+    logFile.logInformation(linha);
+
+    sprintf(linha, "idAlertaAmarela=%d\n",parametrosCalculo->idAlertaAmarela);
+    logFile.logInformation(linha);
+    sprintf(linha, "nmCorAlertaAmarela=%s\n",parametrosCalculo->nmCorAlertaAmarela);
+    logFile.logInformation(linha);
+    sprintf(linha, "qtTempoDecorridoCorAmarela=%d\n",parametrosCalculo->qtTempoDecorridoCorAmarela);
+    logFile.logInformation(linha);
+
+    sprintf(linha, "idAlertaLaranja=%d\n",parametrosCalculo->idAlertaLaranja);
+    logFile.logInformation(linha);
+    sprintf(linha, "nmCorAlertaLaranja=%s\n",parametrosCalculo->nmCorAlertaLaranja);
+    logFile.logInformation(linha);
+    sprintf(linha, "qtTempoDecorridoCorLaranja=%d\n",parametrosCalculo->qtTempoDecorridoCorLaranja);
+    logFile.logInformation(linha);
+
+    sprintf(linha, "idAlertaVermelho=%d\n",parametrosCalculo->idAlertaVermelho);
+    logFile.logInformation(linha);
+    sprintf(linha, "nmCorAlertaVermelho=%s\n",parametrosCalculo->nmCorAlertaVermelho);
+    logFile.logInformation(linha);
+    sprintf(linha, "qtTempoDecorridoCorVermelho=%d\n",parametrosCalculo->qtTempoDecorridoCorVermelho);
+    logFile.logInformation(linha);
+
+    sprintf(linha,"ntContato=%.4f",parametrosCalculo->ntContato);
+    logFile.logInformation(linha);
+
+    sprintf(linha,"ntProcedencia=%.4f",parametrosCalculo->ntProcedencia);
+    logFile.logInformation(linha);
+
+    sprintf(linha,"ntCarteira=%.4f",parametrosCalculo->ntCarteira);
+    logFile.logInformation(linha);
+
+    sprintf(linha,"ntSegmentacao=%.4f",parametrosCalculo->ntSegmentacao);
+    logFile.logInformation(linha);
+
+    return true;
+}

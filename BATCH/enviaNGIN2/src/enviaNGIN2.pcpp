@@ -1,0 +1,1554 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <dirent.h>
+
+#include <enviaNGIN2.h>
+#include <tuxfw.h>
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+
+extern errno;
+
+EXEC SQL INCLUDE SQLCA;
+
+char szAux[4096 + 1];
+Log oLog;
+int iSignalProcessa=1;
+char szDataHoraGlobal[19 + 1];
+char szErrorOut[255 + 1];
+long iErrorNumber=0;
+
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+#ifdef WIN32
+#define MKDIR _mkdir
+#define ACCESS _access
+#else
+#define MKDIR mkdir
+#define ACCESS access
+#endif
+
+TDadosDocumento *gptDadosDocumento=0;
+
+// controle de alocacao de memoria
+int giQtdElementosAlocados;
+int giQtdElementosObtidos;
+
+char *TrataErroNGIN(char *pStatusText);
+char *ObtemValorTag(char *pXml, char *pTag);
+int sendXML(char *pXmlSaida, char *pRetMsg);
+
+int main( void )
+{
+    int iCursor=50;
+    int iRetSendXML;
+
+    char szXmlRender[2000 + 1];
+    char szXmlTmp[2000 + 1];
+    char szRetMsg[TUXFW_MAX_MSG_LEN + 1];
+    char szXml[4000 + 1];
+    char szStatusCode[255 + 1];
+    char szStatusText[255 + 1];
+
+    char *pPointer;
+    char szIdLinhaTelefonica[21 + 1];
+    char *pszNrLinha=NULL;
+    int iQtdRegistros=0;
+
+    char *pArquivoEntrada=NULL;
+
+    TParamConf tParamConf;
+    TObtemDadosXml tObtemDadosXml;
+    TDadosDocumento *ptDadosDocumento=NULL;
+    int iFlagIE=0;
+
+    char szAuxNGIN[256 + 1];
+    int iCountLogradouro=0;
+
+    /* De para de tipo de logradouros para o NGIN */
+    char *pszTipoLogNGIN[] = {
+        "ACS", "AL", "AV", "BC", "ESTR", "GLR", "JD", "LAD", "LGO", "PAS","PCA",
+        "PRA", "PQ", "PTE", "R", "ROD", "TRAV", "TRV", "V", "VD", "VIA", "VL"
+    };
+    char *pszTipoLogFO[] = {
+        "ACESSO", "ALAMEDA", "AVENIDA", "BECO", "ESTRADA", "GALERIA", "JARDIM",
+        "LADEIRA", "LARGO", "PASSAGEM", "PRACA", "PRAIA", "PARQUE", "PONTE",
+        "RUA", "RODOVIA", "TRAVESSA", "TREVO", "VALE", "VIADUTO", "VIA", "VIELA", NULL
+    };
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdFilaSetClientInfo[21];
+    EXEC SQL END DECLARE SECTION;
+
+    // Acertando o nivel de logs
+    oLog.setNivel(2);
+    oLog.logDebug(">>>enviaNGIN2\n");
+
+    ArmaSinal(SIGTERM);
+
+    /* Obtem a data e hora atual e armazena em variavel global */
+    strcpy(szDataHoraGlobal, ObtemDataHora());
+
+    if(ObtemParamConf(&tParamConf)) {
+        oLog.logError("Erro obtendo parametros de configuracao\n");
+        fflush(stdout);
+        return -1;
+    }
+
+    oLog.logDebug("Conectando na BD...");
+    fflush(stdout);
+    /* Conecta no banco de dados */
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst)) {
+        oLog.logError("Erro conectando no banco de dados\n");
+        fflush(stdout);
+        return -1;
+    }
+
+    oLog.logDebug("Conectado na BD com sucesso...\n");
+    fflush(stdout);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    for (int ctDir=0;ctDir<2;ctDir++)
+    {
+        /* tratamento para interromper o processamento via sinal */
+        if(iSignalProcessa == 0)
+        {
+            oLog.logDebug("Tratamento de sinal de termino dentro do loop\n");
+            fflush(stdout);
+            break;
+        }
+
+        DIR *pDir=0;
+        char szPath[1024]="";
+
+        if ( 0 == ctDir )
+        {
+            oLog.logDebug("Processando arquivos do diretório 1...\n");
+            fflush(stdout);
+            pDir=OpenDir(tParamConf.szPath);
+            SAFE_STRNCPY(szPath,tParamConf.szPath);
+        }
+        if ( 1 == ctDir )
+        {
+            oLog.logDebug("Processando arquivos do diretório 2...\n");
+            fflush(stdout);
+            pDir=OpenDir(tParamConf.szPath2);
+            SAFE_STRNCPY(szPath,tParamConf.szPath2);
+        }
+
+        while( (pArquivoEntrada = ReadDir(pDir)) != NULL )
+        {
+            iQtdRegistros = 0;
+
+            /* tratamento para interromper o processamento via sinal */
+            if(iSignalProcessa == 0)
+            {
+                oLog.logDebug("Tratamento de sinal de termino dentro do loop\n");
+                fflush(stdout);
+                break;
+            }
+
+            while((pszNrLinha = leArquivo(szPath, pArquivoEntrada)) != NULL)
+            {
+                if(ObtemIdLinhaTelefonica(pszNrLinha, szIdLinhaTelefonica) == false)
+                {
+                    Sumariza(0, 1, NULL, NULL); // Total de registros processados com erro
+                    if(geraArquivo(pszNrLinha, "ERROR idLinhaTelefonica nao obtido", szPath, pArquivoEntrada))
+                    {
+                        oLog.logDebug("Erro no processo de geracao do arquivo de saida");
+                        fflush(stdout);
+                        exit(-1);
+                    }
+                    continue;
+                }
+    
+                if(ObtemDadosXml(szIdLinhaTelefonica, &tObtemDadosXml) == false)
+                {
+                    Sumariza(0, 1, NULL, NULL); // Total de registros processados com erro
+                    if(geraArquivo(pszNrLinha, "ERROR dados do cliente nao obtidos", szPath, pArquivoEntrada))
+                    {
+                        oLog.logDebug("Erro no processo de geracao do arquivo de saida");
+                        fflush(stdout);
+                        exit(-1);
+                    }
+                    continue;
+                }
+
+                sprintf(szXmlRender, 
+                    "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>"
+                    "<msg>"
+                    "<ProxyOperacao>setCliente</ProxyOperacao>"
+                    "<usuario>FO</usuario>"
+                    "<ProxyLinha>%s</ProxyLinha>"
+                    "<idCanal>666</idCanal>",
+                    pszNrLinha);
+
+    
+                /* esse sprintf cria a primeira parte do xml que serah concatenado */
+                if(!memcmp(tObtemDadosXml.szIdTipoPessoa, "2", 1)) /* Pessoa Juridica */
+                {
+                    sprintf(szXmlTmp,
+                        "<tipoCliente>%s</tipoCliente>"
+                        "<nome>%s</nome>",
+                        tObtemDadosXml.szTipoCliente,
+                        tObtemDadosXml.szNome);
+                }
+                else /* Pessoa Fisica ou nao classificada */
+                {
+                    sprintf(szXmlTmp,
+                        "<tipoCliente>%s</tipoCliente>"
+                        "<nome>%s</nome>"
+                        "<confidencial>%s</confidencial>"
+                        "<dataNascimento>%s</dataNascimento>"
+                        "<estadoCivil>%s</estadoCivil>"
+                        "<codSexo>%s</codSexo>",
+                        tObtemDadosXml.szTipoCliente,
+                        tObtemDadosXml.szNome,
+                        tObtemDadosXml.szConfidencial,
+                        tObtemDadosXml.szDataNascimento,
+                        tObtemDadosXml.szEstadoCivil,
+                        tObtemDadosXml.szCodSexo);
+                }
+    
+                strcat(szXmlRender, szXmlTmp);
+
+                //sprintf(szAux, "1.szXmlRender[%s]\n", szXmlRender); oLog.logDebug(szAux);
+                //fflush(stdout);
+                // sprintf(szAux, "tObtemDadosXml.szIdTipoPessoa[%s]", tObtemDadosXml.szIdTipoPessoa); oLog.logDebug(szAux);
+    
+                /* esse while cria a segunda parte do xml que serah concatenado */
+                while((ptDadosDocumento = BuscaDocumentoPorIdPessoa((char *)&tObtemDadosXml.szIdPessoa)) != NULL)
+                {
+                    // sprintf(szAux, "ptDadosDocumento->szSgTipoDocumento[%s]", ptDadosDocumento->szSgTipoDocumento); oLog.logDebug(szAux);
+                    // sprintf(szAux, "ptDadosDocumento->szNrDocumento[%s]", ptDadosDocumento->szNrDocumento); oLog.logDebug(szAux);
+                    // sprintf(szAux, "ptDadosDocumento->szSgOrgaoExpedidor[%s]", ptDadosDocumento->szSgOrgaoExpedidor); oLog.logDebug(szAux);
+    
+                    if(!memcmp(tObtemDadosXml.szIdTipoPessoa, "1", 1)) /* Pessoa Fisica */
+                    {
+                        if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "CPF") ||
+                           !strcmp(ptDadosDocumento->szSgTipoDocumento, "FCPF") ||
+                           !strcmp(ptDadosDocumento->szSgTipoDocumento, "KLCPF"))
+                        {
+                            sprintf(szXmlTmp,
+                                "<CPF>%s</CPF>"
+                                "<tipoCPF>D</tipoCPF>",
+                                ptDadosDocumento->szNrDocumento);
+                        }
+                        else if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "RG"))
+                        {
+                            sprintf(szXmlTmp,
+                                "<RG>%s</RG>"
+                                "<tipoRG>D</tipoRG>",
+                                ptDadosDocumento->szNrDocumento);
+                        }
+                        else if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "PAS"))
+                        {
+                            sprintf(szXmlTmp,
+                                "<passaporte>%s</passaporte>"
+                                "<tipoPassaporte>D</tipoPassaporte>",
+                                ptDadosDocumento->szNrDocumento);
+                        }
+                        else
+                        {
+                            sprintf(szAux, "PessoaFisica sigla ignorada[%s]", ptDadosDocumento->szSgTipoDocumento); oLog.logDebug(szAux);
+                            fflush(stdout);
+                        }
+                    }
+                    else if(!memcmp(tObtemDadosXml.szIdTipoPessoa, "2", 1)) /* Pessoa Juridica */
+                    {
+                        if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "CNPJ") ||
+                           !strcmp(ptDadosDocumento->szSgTipoDocumento, "OCNPJ") ||
+                           !strcmp(ptDadosDocumento->szSgTipoDocumento, "UCNPJ"))
+                        {
+                            sprintf(szXmlTmp,
+                                "<CNPJ>%s</CNPJ>",
+                                ptDadosDocumento->szNrDocumento);
+                        }
+                        else if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "CNAE"))
+                        {
+                            sprintf(szXmlTmp,
+                                "<CNAE>%s</CNAE>",
+                                ptDadosDocumento->szNrDocumento);
+                        }
+                        else if(!strcmp(ptDadosDocumento->szSgTipoDocumento, "IE"))
+                        {
+                            sprintf(szXmlTmp,
+                                "<IE>%s</IE>",
+                                ptDadosDocumento->szNrDocumento);
+    
+                            iFlagIE=1;
+                        }
+                        else
+                        {
+                            sprintf(szAux, "PessoaJuridica sigla ignorada[%s]", ptDadosDocumento->szSgTipoDocumento); oLog.logDebug(szAux);
+                            fflush(stdout);
+                        }
+                    }
+    
+                    // sprintf(szAux, "szXmlTmp[%s]", szXmlTmp); oLog.logDebug(szAux);
+                    strcat(szXmlRender, szXmlTmp);
+                    //sprintf(szAux, "2.szXmlRender[%s]", szXmlRender); oLog.logDebug(szAux);
+                    //fflush(stdout);
+                }// while((ptDadosDocumento = BuscaDocumentoPorIdPessoa((char *)&tObtemDadosXml.szIdPessoa)) != NULL)
+    
+                /* caso nao tenha IE e seja pessoa juridica */
+                if(iFlagIE == 0 && !memcmp(tObtemDadosXml.szIdTipoPessoa, "2", 1))
+                {
+                    strcat(szXmlRender, "<IE>ISENTO</IE>");
+                }
+
+                iFlagIE=0;
+
+                //sprintf(szAux, "tObtemDadosXml.szNmTipoLogradouro[%s]", tObtemDadosXml.szNmTipoLogradouro); oLog.logDebug(szAux);
+                //fflush(stdout);
+
+                memset(szAuxNGIN, 0x00, sizeof(szAuxNGIN));
+                for(iCountLogradouro=0; pszTipoLogFO[iCountLogradouro] != NULL; iCountLogradouro++)
+                {
+                    if(!strcasecmp(pszTipoLogFO[iCountLogradouro], tObtemDadosXml.szNmTipoLogradouro))
+                    {
+                        strcpy(szAuxNGIN, pszTipoLogNGIN[iCountLogradouro]);
+                        break;
+                    }
+                }
+
+                //sprintf(szAux, "Logradouro szAuxNGIN[%s]", szAuxNGIN); oLog.logDebug(szAux);
+                //fflush(stdout);
+                sprintf(szXmlTmp, "<logradouro>%s</logradouro>", szAuxNGIN);
+                strcat(szXmlRender, szXmlTmp);
+
+                /* parte referente a endereco */
+                sprintf(szXmlTmp,
+                    "<endereco>%s</endereco>"
+                    "<complemento>%s</complemento>"
+                    "<bairro>%s</bairro>"
+                    "<CEP>%s</CEP>"
+                    "<cidade>%s</cidade>"
+                    "<estado>%s</estado>"
+                    "<pais>%s</pais>"
+                    "<numero>%s</numero>",
+                    tObtemDadosXml.szEndereco,
+                    tObtemDadosXml.szDsEnderecoComplemento,
+                    tObtemDadosXml.szNmBairro,
+                    tObtemDadosXml.szNrCep,
+                    tObtemDadosXml.szCidade,
+                    tObtemDadosXml.szEstado,
+                    tObtemDadosXml.szPais,
+                    tObtemDadosXml.szNumero);
+
+                strcat(szXmlRender, szXmlTmp);
+                /* recoloca a ultima tag retirada no inicio do processo */
+                strcat(szXmlRender, "</msg>");
+                //sprintf(szAux, "3.szXmlRender[%s]", szXmlRender); oLog.logDebug(szAux);
+                //fflush(stdout);
+    
+                /*
+                if(InsereRegistro(szIdLinhaTelefonica, szXmlRender) == false)
+                {
+                    oLog.logDebug("Erro no processo de insercao");
+                    Sumariza(0, 1, NULL, NULL); // Total de registros processados com erro
+                    if(geraArquivo(pszNrLinha, szErrorOut, szPath, pArquivoEntrada))
+                    {
+                        oLog.logDebug("Erro no processo de geracao do arquivo de saida");
+                        break;
+                    }
+                    continue;
+                }
+                */
+
+                memset(szRetMsg, 0x00, sizeof(szRetMsg));
+                iRetSendXML = sendXML(szXmlRender, szRetMsg);
+
+                /*
+                @cassio - março - 2010 -->
+                ==================================================================================
+                    TODO ESTE CÓDIGO NA PRÁTICA NÃO FAZ NADA E POR ISSO COMENTEI.
+                    A PARTE FUNCIONAL DO CÓDIGO JÁ ESTAVA COMENTADA QUANDO COMENTEI O BLOCO.
+                    CASSIO - MARÇO - 2010
+                ==================================================================================
+                //sprintf(szAux, "iRetSendXML(%d)iErrorNumber(%d)szRetMsg[%s]\n", iRetSendXML, iErrorNumber, szRetMsg); oLog.logDebug(szAux);
+
+                // Verifica status do envio do XML e retorno da conexao
+                //if(iErrorNumber == TPESYSTEM) {
+                //    sprintf(szAux, "Erro TUXEFO retornado(%d)\n", iErrorNumber); oLog.logDebug(szAux);
+                //    goto finalizaProcess;
+                //}
+
+                SAFE_STRNCPY(szStatusCode,ObtemValorTag(szRetMsg, "statusCode"));
+                sprintf(szAux, "statusCode=[%s]\n",szStatusCode);
+                //oLog.logDebug(szAux);
+
+                SAFE_STRNCPY(szStatusText,ObtemValorTag(szRetMsg, "statusText"));
+                sprintf(szAux, "statusText=[%s]\n",szStatusText);
+                //oLog.logDebug(szAux);
+
+                if ( iErrorNumber )
+                {
+                    if ( 0 == szStatusCode[0] )
+                    {
+                        switch (iErrorNumber)
+                        {
+                            case TPEABORT     : strcpy(szStatusCode,"TPEABORT");strcpy(szStatusText,"TPEABORT"); break;
+                            case TPEBADDESC   : strcpy(szStatusCode,"TPEBADDESC");strcpy(szStatusText,"TPEBADDESC"); break;
+                            case TPEBLOCK     : strcpy(szStatusCode,"TPEBLOCK");strcpy(szStatusText,"TPEBLOCK"); break;
+                            case TPEINVAL     : strcpy(szStatusCode,"TPEINVAL");strcpy(szStatusText,"TPEINVAL"); break;
+                            case TPELIMIT     : strcpy(szStatusCode,"TPELIMIT");strcpy(szStatusText,"TPELIMIT"); break;
+                            case TPENOENT     : strcpy(szStatusCode,"TPENOENT");strcpy(szStatusText,"TPENOENT"); break;
+                            case TPEOS        : strcpy(szStatusCode,"TPEOS");strcpy(szStatusText,"TPEOS"); break;
+                            case TPEPERM      : strcpy(szStatusCode,"TPEPERM");strcpy(szStatusText,"TPEPERM"); break;
+                            case TPEPROTO     : strcpy(szStatusCode,"TPEPROTO");strcpy(szStatusText,"TPEPROTO"); break;
+                            case TPESVCERR    : strcpy(szStatusCode,"TPESVCERR");strcpy(szStatusText,"TPESVCERR"); break;
+                            case TPESVCFAIL   : strcpy(szStatusCode,"TPESVCFAIL");strcpy(szStatusText,"TPESVCFAIL"); break;
+                            case TPESYSTEM    : strcpy(szStatusCode,"TPESYSTEM");strcpy(szStatusText,"TPESYSTEM"); break;
+                            case TPETIME      : strcpy(szStatusCode,"TPETIME");strcpy(szStatusText,"TPETIME"); break;
+                            case TPETRAN      : strcpy(szStatusCode,"TPETRAN");strcpy(szStatusText,"TPETRAN"); break;
+                            case TPGOTSIG     : strcpy(szStatusCode,"TPGOTSIG");strcpy(szStatusText,"TPGOTSIG"); break;
+                            case TPERMERR     : strcpy(szStatusCode,"TPERMERR");strcpy(szStatusText,"TPERMERR"); break;
+                            case TPEITYPE     : strcpy(szStatusCode,"TPEITYPE");strcpy(szStatusText,"TPEITYPE"); break;
+                            case TPEOTYPE     : strcpy(szStatusCode,"TPEOTYPE");strcpy(szStatusText,"TPEOTYPE"); break;
+                            case TPERELEASE   : strcpy(szStatusCode,"TPERELEASE");strcpy(szStatusText,"TPERELEASE"); break;
+                            case TPEHAZARD    : strcpy(szStatusCode,"TPEHAZARD");strcpy(szStatusText,"TPEHAZARD"); break;
+                            case TPEHEURISTIC : strcpy(szStatusCode,"TPEHEURISTIC");strcpy(szStatusText,"TPEHEURISTIC"); break;
+                            case TPEEVENT     : strcpy(szStatusCode,"TPEEVENT");strcpy(szStatusText,"TPEEVENT"); break;
+                            case TPEMATCH     : strcpy(szStatusCode,"TPEMATCH");strcpy(szStatusText,"TPEMATCH"); break;
+                            case TPEDIAGNOSTIC: strcpy(szStatusCode,"TPEDIAGNOSTIC");strcpy(szStatusText,"TPEDIAGNOSTIC"); break;
+                            case TPEMIB       : strcpy(szStatusCode,"TPEMIB");strcpy(szStatusText,"TPEMIB"); break;
+                            default           : strcpy(szStatusCode,"ERRDESCONHECIDO");strcpy(szStatusText,"ERRDESCONHECIDO"); break;
+                        } // switch (iErrorNumber)
+                    } // if ( 0 == szStatusCode[0] )
+                }
+
+                // Se sucesso grava o XML em disco e apaga o registro
+                if(szStatusCode[2] == 'I' && 0 == iErrorNumber)
+                {
+                    //sprintf(szAux, "Deletando registro enviado com sucesso:\nidlinhatelefonica[%.*s]\n[%.*s]\n", 
+                    //    oszIdLinhaTelefonica.len, oszIdLinhaTelefonica.arr, oszXML1.len, oszXML1.arr); oLog.logDebug(szAux);
+                
+                    //if(DeletaRegistro(szIdLinhaTelefonica) == false) {
+                    //    goto finalizaProcess;
+                    //}
+                
+                    //Sumariza(0, 0, 1, 0, 0, 0);
+                }
+                else // Grava Codigo de erro e mensagem
+                {
+                
+                    if(!memcmp(szStatusCode, "46E0000", 8)) {
+                        oLog.logDebug("Inicio tratamento de erro NGIN...");
+                
+                        sprintf(szAux, "Mensagem original -> szStatusCode[%s] szStatusText[%s]\n", szStatusCode, szStatusText); oLog.logDebug(szAux);
+                        strcpy(szStatusCode, TrataErroNGIN(szStatusText));
+                        sprintf(szAux, "Mensagem tratada -> szStatusCode[%s] szStatusText[%s]\n", szStatusCode, szStatusText); oLog.logDebug(szAux);
+                
+                        oLog.logDebug("Final tratamento de erro NGIN...");
+                        fflush(stdout);
+                    }
+                
+                    //oLog.logDebug("Atualizando registro com erro...");
+                
+                    //if(AtualizaRegistro(szIdLinhaTelefonica, szStatusCode, szStatusText,oiQtRetriesMax) == false) {
+                    //    goto finalizaProcess;
+                    //}
+                
+                    //Sumariza(0, 0, 0, 1, 0, 0);
+                }
+                <-- @cassio - março - 2010
+                */
+    
+                oLog.logDebug("Efetuando commit na BD...");
+                EXEC SQL COMMIT;
+    
+                if(geraArquivo(pszNrLinha, "OK", szPath, pArquivoEntrada))
+                {
+                    oLog.logDebug("Erro no processo de geracao do arquivo de saida");
+                    break;
+                }
+    
+                Sumariza(1, 0, NULL, NULL); // processado com sucesso
+                iQtdRegistros++;
+            } //while((pszNrLinha = leArquivo(szPath, pArquivoEntrada)) != NULL)
+
+            if(iQtdRegistros == 0)
+            {
+                geraArquivo(NULL, NULL, szPath, pArquivoEntrada); // gera arquivo zerado
+            }
+            else
+            {
+                geraArquivo(NULL, NULL, NULL, NULL); // Fecha Arquivo de Saida
+            }
+
+            leArquivo(NULL, NULL); // Fecha Arquivo de Entrada
+
+            moverArquivo(szPath,tParamConf.szPathToGo,pArquivoEntrada);
+
+            Sumariza(0, 0, szPath, pArquivoEntrada); // Display do sumario
+        } // while((pArquivoEntrada = ReadDir(pDir)) != NULL )
+
+        CloseDir(pDir);
+    } // for (int ctDir=0;ctDir<2;ctDir++)
+
+    DBDisconnect();
+
+    if ( gptDadosDocumento )
+    {
+        free(gptDadosDocumento);
+        gptDadosDocumento=NULL;
+    }
+
+    oLog.logDebug("Processamento encerrado com sucesso...\n");
+    oLog.logDebug("<<<enviaNGIN2\n");
+    fflush(stdout);
+
+    return 0;
+
+    sqlError:
+        sprintf(szAux, "Finalizando processo com erro ORACLE (%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        fflush(stdout);
+        return -1;
+}
+
+/************************************************************************************************************/
+void moverArquivo(char *pszPathOrigem,char *pszPathDestino,char *pszFileName)
+{
+    char sComando[1024*2+16];
+    char nmArquivoOrigem[1024];
+    char nmArquivoDestino[1024];
+
+    strcpy(nmArquivoOrigem, pszPathOrigem);
+    //strcat(nmArquivoOrigem, "/");
+    strcat(nmArquivoOrigem, pszFileName);
+
+    strcpy(nmArquivoDestino, pszPathDestino);
+    //strcat(nmArquivoDestino, "/");
+    strcat(nmArquivoDestino, pszFileName);
+    strcat(nmArquivoDestino, ".PROCESSADO");
+
+    sprintf(sComando,"/usr/bin/mv -f %s %s", nmArquivoOrigem, nmArquivoDestino);
+
+    oLog.logDebug(" Vai mover o arquivo");
+    sprintf(szAux," Arquivo Origem [%s]", nmArquivoOrigem); oLog.logDebug(szAux);
+    sprintf(szAux,"Arquivo Destino [%s]", nmArquivoDestino); oLog.logDebug(szAux);
+    sprintf(szAux,"        Comando [%s]", sComando); oLog.logDebug(szAux);
+
+    system(sComando);
+    fflush(stdout);
+}
+
+/************************************************************************************************************/
+void Sumariza(int iQtdTotalRegReProc, int iQtdTotalRegReProcError, char *pszPatch, char *pszBatchName)
+{
+    static int _iQtdTotalRegReProc=0;
+    static int _iQtdTotalRegReProcError=0;
+    static int _iQtdTotalReg=0;
+    static char szDataHoraAux[19 + 1];
+    static int iFlag=1;
+
+
+
+    if(!iQtdTotalRegReProc && !iQtdTotalRegReProcError) {
+
+        if(iFlag) {
+            sprintf(szDataHoraAux, "%.2s/%.2s/%.4s %.2s:%.2s:%.2s",
+                                    szDataHoraGlobal+6,
+                                    szDataHoraGlobal+4,
+                                    szDataHoraGlobal,
+                                    szDataHoraGlobal+8,
+                                    szDataHoraGlobal+10,
+                                    szDataHoraGlobal+12);
+            iFlag=0;
+        }
+
+        sprintf(szAux, "***************** START  %s **********************\n", szDataHoraAux); oLog.logDebug(szAux);
+        sprintf(szAux, "*** Arquivo processado [%s%s]\n", pszPatch, pszBatchName); oLog.logDebug(szAux);
+        sprintf(szAux, "Total de registros processados com erro...........(%06d)\n", _iQtdTotalRegReProcError); oLog.logDebug(szAux);
+        sprintf(szAux, "Total de registros processados com sucesso........(%06d)\n", _iQtdTotalRegReProc); oLog.logDebug(szAux);
+        sprintf(szAux, "Total de registros processados....................(%06d)\n", _iQtdTotalReg); oLog.logDebug(szAux);
+        sprintf(szAux, "********************************************************************\n"); oLog.logDebug(szAux);
+        fflush(stdout);
+
+        _iQtdTotalRegReProc=_iQtdTotalRegReProcError=_iQtdTotalReg=0;
+
+        return;
+    }
+
+    if(iQtdTotalRegReProc)       _iQtdTotalRegReProc++;
+    if(iQtdTotalRegReProcError)  _iQtdTotalRegReProcError++;
+    _iQtdTotalReg++;
+}
+
+/************************************************************************************************************/
+char *ObtemDataHora(void)
+{
+    struct tm *ptTime;
+    time_t tTimeNow;
+    static char szDataHora[14 + 1];
+
+    time(&tTimeNow);
+    ptTime=localtime(&tTimeNow);
+    sprintf(szDataHora, "%04d%02d%02d%02d%02d%02d",
+                        ptTime->tm_year + 1900,
+                        ptTime->tm_mon + 1,
+                        ptTime->tm_mday,
+                        ptTime->tm_hour,
+                        ptTime->tm_min,
+                        ptTime->tm_sec );
+
+    return szDataHora;
+}
+
+/************************************************************************************************************/
+void ArmaSinal(int iSignal) {
+    sprintf(szAux, "Armando tratamento para Signal(%d)\n", iSignal); oLog.logInformation(szAux);
+
+    if(signal((iSignal), ProcessaSignal) == SIG_ERR) {
+        fprintf(stderr, "ERRO ARMANDO SINAL!!!\n");
+        exit(-1);
+    }
+}
+
+/************************************************************************************************************/
+void ProcessaSignal(int iSig)
+{
+    oLog.logInformation(">>>ProcessaSignal\n");
+    sprintf(szAux, "iSig(%d)\n", iSig); oLog.logInformation(szAux);
+
+    /* rearma o mesmo sinal lancado */
+    ArmaSinal(iSig);
+
+    if(iSig == SIGTERM) {
+        oLog.logInformation("Finalizando processamento via sinal....\n");
+        iSignalProcessa=0;
+    }
+
+    oLog.logInformation(">>>ProcessaSignal\n");
+}
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[100 + 1];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug("Obtendo parametros de configuracao...");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("enviaNGIN2.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir()) {
+        oLog.logError("Erro abrindo arquivo de configuração!");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            if ( szDivArq[0] )
+            {
+                strncpy(ptParamConf->szPws, szDivArq, 10);
+            }
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            if ( szDivArq[0] )
+            {
+                strncpy(ptParamConf->szUsr, szDivArq, 10);
+            }
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            if ( szDivArq[0] )
+            {
+                strncpy(ptParamConf->szInst, szDivArq, 20);
+            }
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            if ( szDivArq[0] )
+            {
+                strncpy(ptParamConf->szPwsTux, szDivArq, 10);
+            }
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            if ( szDivArq[0] )
+            {
+                strncpy(ptParamConf->szUsrTux, szDivArq, 10);
+            }
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            if ( szDivArq[0] )
+            {
+                strncpy(ptParamConf->szPwsTuxGen, szDivArq, 10);
+            }
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            if ( szDivArq[0] )
+            {
+                strncpy(ptParamConf->szCltTux, szDivArq, 10);
+            }
+        }
+        else if ( strcmp(szDivPre, "path")==0 )
+        {
+            if ( szDivArq[0] )
+            {
+                strncpy(ptParamConf->szPath, szDivArq, 255);
+                if ( ptParamConf->szPath[strlen(ptParamConf->szPath)-1] != '/' )
+                {
+                    strcat(ptParamConf->szPath, "/");
+                }
+            }
+        }
+        else if ( strcmp(szDivPre, "path2")==0 )
+        {
+            if ( szDivArq[0] )
+            {
+                strncpy(ptParamConf->szPath2, szDivArq, 255);
+                if ( ptParamConf->szPath2[strlen(ptParamConf->szPath2)-1] != '/' )
+                {
+                    strcat(ptParamConf->szPath2, "/");
+                }
+            }
+        }
+        else if ( strcmp(szDivPre, "path_togo")==0 )
+        {
+            if ( szDivArq[0] )
+            {
+                strncpy(ptParamConf->szPathToGo, szDivArq,255);
+                if ( ptParamConf->szPathToGo[strlen(ptParamConf->szPathToGo)-1] != '/' )
+                {
+                    strcat(ptParamConf->szPathToGo, "/");
+                }
+            }
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    // Fechando o arquivo de configuracao aberto
+    mfConfig.fechar();
+
+    if ( ptParamConf->szPathToGo[0] == 0 )
+    {
+        strcpy(ptParamConf->szPathToGo,"../PROCESSADOS/");
+    }
+
+    if ( ptParamConf->szPath2[0] == 0 )
+    {
+        strcpy(ptParamConf->szPath2,"../../enviaNGIN/bin/");
+    }
+
+    if ( strcmp(ptParamConf->szPathToGo,ptParamConf->szPath) )
+    {
+        if ( ACCESS(ptParamConf->szPathToGo,0) )
+        {
+            if (MKDIR(ptParamConf->szPathToGo,447) )
+            {
+                sprintf(szAux, "Erro %s criando diretorio %s", ptParamConf->szPathToGo, strerror(errno)); oLog.logError(szAux);
+                fflush(stdout);
+                exit(-1);
+            }
+        }
+    }
+
+    //sprintf(szAux, "szPws[%s]", ptParamConf->szPws); oLog.logDebug(szAux);
+    sprintf(szAux, "szUsr[%s]", ptParamConf->szUsr); oLog.logDebug(szAux);
+    sprintf(szAux, "szInst[%s]", ptParamConf->szInst); oLog.logDebug(szAux);
+    //sprintf(szAux, "szPwsTux[%s]", ptParamConf->szPwsTux); oLog.logDebug(szAux);
+    sprintf(szAux, "szUsrTux[%s]", ptParamConf->szUsrTux); oLog.logDebug(szAux);
+    //sprintf(szAux, "szPwsTuxGen[%s]", ptParamConf->szPwsTuxGen); oLog.logDebug(szAux);
+    sprintf(szAux, "szCltTux[%s]", ptParamConf->szCltTux); oLog.logDebug(szAux);
+    sprintf(szAux, "szPath[%s]", ptParamConf->szPath); oLog.logDebug(szAux);
+    sprintf(szAux, "szPathToGo[%s]", ptParamConf->szPathToGo); oLog.logDebug(szAux);
+    sprintf(szAux, "szPath2[%s]", ptParamConf->szPath2); oLog.logDebug(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szPath) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0)
+    {
+        oLog.logError("Dados incompletos!");
+        return -1;
+    }
+
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...");
+    return 0;
+}
+
+/************************************************************************************************************/
+bool InsereRegistro(char *pszIdLinhaTelefonica, char *pszXml)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLinhaTelefonica[21];
+        VARCHAR oszIdFilaSetClientInfo[21];
+        VARCHAR oszXml[2000];
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    sprintf(szAux, "Inicio InsereRegistro\n"); oLog.logDebug(szAux);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+
+    EXEC SQL SELECT infra.filasetclientinfosq.nextval INTO :oszIdFilaSetClientInfo FROM DUAL;
+
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, pszIdLinhaTelefonica);
+    STRCPY_TO_ORA(oszXml, pszXml);
+
+    EXEC SQL
+        INSERT INTO infra.filasetclientinfo
+        (
+            idfilasetclientinfo,
+            idlinhatelefonica,
+            dttimestamp,
+            xml1
+        )
+        VALUES
+        (
+            :oszIdFilaSetClientInfo,
+            :oszIdLinhaTelefonica,
+            SYSDATE,
+            :oszXml
+        );
+
+    sprintf(szAux, "Finalizando InsereRegistro <OK>\n", sqlca.sqlcode); oLog.logDebug(szAux);
+    return true;
+
+    erro:
+        sprintf(szAux, "Finalizando InsereRegistro <ERROR>\n"); oLog.logDebug(szAux);
+        sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.*s",sqlca.sqlcode, sqlca.sqlerrm.sqlerrml, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+        strcpy(szErrorOut, sqlca.sqlerrm.sqlerrmc); szErrorOut[sqlca.sqlerrm.sqlerrml-1]=0x00;
+        return false;
+}
+
+/************************************************************************************************************/
+bool ObtemDadosXml(char *pszIdLinhaTelefonica, TObtemDadosXml *ptObtemDadosXml)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLinhaTelefonica[21];
+
+        VARCHAR oszIdTipoPessoa[25];
+        VARCHAR oszIdPessoa[25];
+        VARCHAR oszTipoCliente[1];
+        VARCHAR oszNome[255];
+        VARCHAR oszConfidencial[1];
+        VARCHAR oszDataNascimento[14];
+        VARCHAR oszEstadoCivil[1];
+        VARCHAR oszCodSexo[1];
+        VARCHAR oszNmTipoLogradouro[255];
+        VARCHAR oszEndereco[512];
+        VARCHAR oszDsEnderecoComplemento[255];
+        VARCHAR oszNmBairro[255];
+        VARCHAR oszNrCep[255];
+        VARCHAR oszCidade[255];
+        VARCHAR oszEstado[25];
+        VARCHAR oszPais[3];
+        VARCHAR oszNumero[255];
+
+        short oiIdTipoPessoa = 0;
+        short oiIdPessoa = 0;
+        short oiTipoCliente = 0;
+        short oiNome = 0;
+        short oiConfidencial = 0;
+        short oiDataNascimento = 0;
+        short oiEstadoCivil = 0;
+        short oiCodSexo = 0;
+        short oiNmTipoLogradouro = 0;
+        short oiEndereco = 0;
+        short oiDsEnderecoComplemento = 0;
+        short oiNmBairro = 0;
+        short oiNrCep = 0;
+        short oiCidade = 0;
+        short oiEstado = 0;
+        short oiPais = 0;
+        short oiNumero = 0;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+
+    sprintf(szAux, "Inicio ObtemDadosXml()\n"); oLog.logDebug(szAux);
+    sprintf(szAux, "pszIdLinhaTelefonica[%s]\n", pszIdLinhaTelefonica); oLog.logDebug(szAux);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    STRCPY_TO_ORA(oszIdLinhaTelefonica, pszIdLinhaTelefonica);
+
+    EXEC SQL
+        SELECT
+            idtipopessoa,
+            idpessoa,
+            tipocliente,
+            nome,
+            confidencial,
+            datanascimento,
+            estadocivil,
+            codsexo,
+            nmtipologradouro,
+            endereco,
+            dsenderecocomplemento,
+            nmbairro,
+            nrcep,
+            cidade,
+            estado,
+            pais,
+            numero
+        INTO
+            :oszIdTipoPessoa:oiIdTipoPessoa,
+            :oszIdPessoa:oiIdPessoa,
+            :oszTipoCliente:oiTipoCliente,
+            :oszNome:oiNome,
+            :oszConfidencial:oiConfidencial,
+            :oszDataNascimento:oiDataNascimento,
+            :oszEstadoCivil:oiEstadoCivil,
+            :oszCodSexo:oiCodSexo,
+            :oszNmTipoLogradouro:oiNmTipoLogradouro,
+            :oszEndereco:oiEndereco,
+            :oszDsEnderecoComplemento:oiDsEnderecoComplemento,
+            :oszNmBairro:oiNmBairro,
+            :oszNrCep:oiNrCep,
+            :oszCidade:oiCidade,
+            :oszEstado:oiEstado,
+            :oszPais:oiPais,
+            :oszNumero:oiNumero
+        FROM
+        (
+                SELECT
+                    cp.idtipopessoa,
+                    cp.idpessoa,
+                    decode(atp.idtipopessoa, 1, 'P', decode(atp.idtipopessoa, 2, 'E', '')) as tipoCliente,
+                    cp.nmpessoa as nome,
+                    'N' as confidencial,
+                    to_char(nvl(cpf.dtnascimento, ''), 'DD/MM/YYYY') as dataNascimento,
+                    decode(cpf.idestadocivil, 1, 'S', decode(cpf.idestadocivil, 2, 'C', decode(cpf.idestadocivil, 4, 'V', decode(cpf.idestadocivil, 5, 'D', '')))) as estadoCivil,
+                    decode(cpf.idsexo, 1, 'M', decode(cpf.idsexo, 2, 'F', '')) as codSexo,
+                    cpe.nmtipologradouro as nmtipologradouro,
+                    cpe.nmtipologradouro || ' ' || cpe.nmtitulologradouro || ' ' || cpe.nmlogradouro as endereco,
+                    cpe.dsenderecocomplemento as dsenderecocomplemento,
+                    cpe.nmbairro as nmbairro,
+                    cpe.nrcep as nrcep,
+                    cpe.nmmunicipio as cidade,
+                    u.sguf AS estado,
+                    'BRA' as pais,
+                    cpe.nrendereco as numero
+                FROM
+                    customer.pessoa cp,
+                    customer.pessoadepara cpdp,
+                    customer.pessoalinhahistorico cplh,
+                    linha.linhatelefonica llt,
+                    customer.pessoafisica cpf,
+                    customer.pessoaendereco cpe,
+                    apoio.tipopessoa atp,
+                    apoio.estadocivil aec,
+                    apoio.sexo asex,
+					APOIO.UF U
+                WHERE
+                    llt.idlinhatelefonica = cplh.idlinhatelefonica
+                AND
+                    cplh.idpessoadepara = cpdp.idpessoadepara
+                AND
+                    cpdp.idpessoa = cp.idpessoa
+                AND
+                    cp.idpessoa = cpe.idpessoa
+                AND
+                    cp.idpessoa = cpf.idpessoa (+)
+                AND
+                    cpf.idestadocivil = aec.idestadocivil (+)
+                AND
+                    cpf.idsexo = asex.idsexo (+)
+				AND 
+					U.iduf=cpe.iduf
+                AND
+                    cp.idtipopessoa = atp.idtipopessoa
+                AND
+                    cplh.idtiporelacionamento = 2
+                AND
+                    llt.idlinhatelefonica = :oszIdLinhaTelefonica
+                ORDER BY
+                    cplh.dtultimaalteracao DESC
+        )
+        WHERE ROWNUM <= 1;
+
+
+    memset(ptObtemDadosXml, 0x00, sizeof(TObtemDadosXml));
+    if(oiIdTipoPessoa != -1)            { STRCPY_FROM_ORA(ptObtemDadosXml->szIdTipoPessoa, oszIdTipoPessoa); }
+    if(oiIdPessoa != -1)                { STRCPY_FROM_ORA(ptObtemDadosXml->szIdPessoa, oszIdPessoa); }
+    if(oiTipoCliente != -1)             { STRCPY_FROM_ORA(ptObtemDadosXml->szTipoCliente, oszTipoCliente); }
+    if(oiNome != -1)                    { STRCPY_FROM_ORA(ptObtemDadosXml->szNome, oszNome); }
+    if(oiConfidencial != -1)            { STRCPY_FROM_ORA(ptObtemDadosXml->szConfidencial, oszConfidencial); }
+    if(oiDataNascimento != -1)          { STRCPY_FROM_ORA(ptObtemDadosXml->szDataNascimento, oszDataNascimento); }
+    if(oiEstadoCivil != -1)             { STRCPY_FROM_ORA(ptObtemDadosXml->szEstadoCivil, oszEstadoCivil); }
+    if(oiCodSexo != -1)                 { STRCPY_FROM_ORA(ptObtemDadosXml->szCodSexo, oszCodSexo); }
+    if(oiNmTipoLogradouro != -1)        { STRCPY_FROM_ORA(ptObtemDadosXml->szNmTipoLogradouro, oszNmTipoLogradouro); }
+    if(oiEndereco != -1)                { STRCPY_FROM_ORA(ptObtemDadosXml->szEndereco, oszEndereco); }
+    if(oiDsEnderecoComplemento != -1)   { STRCPY_FROM_ORA(ptObtemDadosXml->szDsEnderecoComplemento, oszDsEnderecoComplemento); }
+    if(oiNmBairro != -1)                { STRCPY_FROM_ORA(ptObtemDadosXml->szNmBairro, oszNmBairro); }
+    if(oiNrCep != -1)                   { STRCPY_FROM_ORA(ptObtemDadosXml->szNrCep, oszNrCep); }
+    if(oiCidade != -1)                  { STRCPY_FROM_ORA(ptObtemDadosXml->szCidade, oszCidade); }
+    if(oiEstado != -1)                  { STRCPY_FROM_ORA(ptObtemDadosXml->szEstado, oszEstado); }
+    if(oiPais != -1)                    { STRCPY_FROM_ORA(ptObtemDadosXml->szPais, oszPais); }
+    if(oiNumero != -1)                  { STRCPY_FROM_ORA(ptObtemDadosXml->szNumero, oszNumero); }
+
+//    sprintf(szAux, "ptObtemDadosXml->szIdTipoPessoa[%s]\n", ptObtemDadosXml->szIdTipoPessoa); oLog.logDebug(szAux);
+//    sprintf(szAux, "ptObtemDadosXml->szIdPessoa[%s]\n", ptObtemDadosXml->szIdPessoa); oLog.logDebug(szAux);
+//    sprintf(szAux, "ptObtemDadosXml->szTipoCliente[%s]\n", ptObtemDadosXml->szTipoCliente); oLog.logDebug(szAux);
+//    sprintf(szAux, "ptObtemDadosXml->szNome[%s]\n", ptObtemDadosXml->szNome); oLog.logDebug(szAux);
+//    sprintf(szAux, "ptObtemDadosXml->szConfidencial[%s]\n", ptObtemDadosXml->szConfidencial); oLog.logDebug(szAux);
+//    sprintf(szAux, "ptObtemDadosXml->szDataNascimento[%s]\n", ptObtemDadosXml->szDataNascimento); oLog.logDebug(szAux);
+//    sprintf(szAux, "ptObtemDadosXml->szEstadoCivil[%s]\n", ptObtemDadosXml->szEstadoCivil); oLog.logDebug(szAux);
+//    sprintf(szAux, "ptObtemDadosXml->szCodSexo[%s]\n", ptObtemDadosXml->szCodSexo); oLog.logDebug(szAux);
+
+    sprintf(szAux, "Finalizando ObtemDadosXml()\n"); oLog.logDebug(szAux);
+    return true;
+
+    erro:
+        sprintf(szAux, "Finalizando ObtemDadosXml com erro\n"); oLog.logDebug(szAux);
+        sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+        return false;
+
+    naoexiste:
+        sprintf(szAux, "IdLinhaTelefonica nao encontrado[%s]\n", pszIdLinhaTelefonica); oLog.logDebug(szAux);
+        return false;
+}
+
+/************************************************************************************************************/
+bool ObtemIdLinhaTelefonica(char *pszNrLinha, char *pszIdLinhaTelefonica)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdLinhaTelefonica[25];
+        VARCHAR oszNrLinha[25];
+        VARCHAR oszCdAreaRegistro[25];
+
+        short oiIdLinhaTelefonica = 0;
+    EXEC SQL END DECLARE SECTION;
+
+    struct sqlca sqlca;
+    char szAux[25 + 1];
+
+    sprintf(szAux, "Inicio ObtemIdLinhaTelefonica\n"); oLog.logDebug(szAux);
+    sprintf(szAux, "pszNrLinha[%s]\n", pszNrLinha); oLog.logDebug(szAux);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    memcpy(szAux, pszNrLinha, 2); szAux[2]=0x00;
+    STRCPY_TO_ORA(oszNrLinha, pszNrLinha+2);
+    STRCPY_TO_ORA(oszCdAreaRegistro, szAux);
+
+    EXEC SQL
+        SELECT
+            llt.idlinhatelefonica
+        INTO
+            :oszIdLinhaTelefonica:oiIdLinhaTelefonica
+        FROM
+            linha.linhabase llb,
+            linha.linhatelefonica llt,
+            apoio.arearegistro aar
+        WHERE
+            llb.idarearegistro = aar.idarearegistro
+        AND
+            llt.idlinhabase = llb.idlinhabase
+        AND
+            aar.cdarearegistro = :oszCdAreaRegistro
+        AND
+            llb.nrlinha = :oszNrLinha;
+
+
+    if(oiIdLinhaTelefonica != -1)          { STRCPY_FROM_ORA(pszIdLinhaTelefonica, oszIdLinhaTelefonica); }
+    sprintf(szAux, "oszIdLinhaTelefonica[%.*s]\n", oszIdLinhaTelefonica.len, oszIdLinhaTelefonica.arr); oLog.logDebug(szAux);
+
+    sprintf(szAux, "Finalizando ObtemIdLinhaTelefonica <OK>\n"); oLog.logDebug(szAux);
+    return true;
+
+    erro:
+        sprintf(szAux, "Finalizando ObtemIdLinhaTelefonica <ERROR>\n"); oLog.logDebug(szAux);
+        sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+        return false;
+
+    naoexiste:
+        sprintf(szAux, "Finalizando ObtemIdLinhaTelefonica <NOT FOUND>\n"); oLog.logDebug(szAux);
+        sprintf(szAux, "NrLinha nao encontrado[%s]\n", pszNrLinha); oLog.logDebug(szAux);
+        return false;
+}
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logInformation(">>>DBConnect\n");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    oLog.logInformation("<<<DBConnect\n");
+
+    return (sqlca.sqlcode);
+
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]\n");
+    return -1;
+}
+
+/************************************************************************************************************/
+void DBDisconnect(void)
+{
+    oLog.logInformation(">>>DBDisconnect\n");
+
+    oLog.logDebug("Desconectando da BD...\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    EXEC SQL COMMIT WORK RELEASE;
+
+    oLog.logInformation("<<<DBDisconnect\n");
+    return;
+
+Error:
+    sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return;
+}
+
+/*******************************************************************************************************/
+TDadosDocumento *BuscaDocumentoPorIdPessoa(char *pszIdPessoa)
+{
+    static int iFlag=0;
+    static TDadosDocumento tDadosDocumentoAux;
+    static TDadosDocumento *ptDadosDocumentoAux;
+    static int iCount=0;
+
+    sprintf(szAux, "BuscaDocumentoPorIdPessoa()"); oLog.logDebug(szAux);
+    sprintf(szAux, "pszIdPessoa[%s]", pszIdPessoa); oLog.logDebug(szAux);
+
+    if(iFlag == 0) {
+        controleAlocacao();
+        proCBuscaDocumentoPorIdPessoa(pszIdPessoa);
+        ptDadosDocumentoAux=gptDadosDocumento;
+        iFlag=1;
+    }
+
+//    sprintf(szAux, "gptDadosDocumento(%p)ptDadosDocumentoAux(%p)", gptDadosDocumento, ptDadosDocumentoAux); oLog.logDebug(szAux);
+//    sprintf(szAux, "giQtdElementosAlocados(%d)giQtdElementosObtidos(%d)iCount(%d)", giQtdElementosAlocados, giQtdElementosObtidos, iCount); oLog.logDebug(szAux);
+
+    if(iCount < giQtdElementosObtidos)
+    {
+        memcpy(&tDadosDocumentoAux, ptDadosDocumentoAux, sizeof(TDadosDocumento));
+        iCount++;
+        ptDadosDocumentoAux++;
+
+        sprintf(szAux, "BuscaDocumentoPorIdPessoa() <NOT NULL>"); oLog.logDebug(szAux);
+        return &tDadosDocumentoAux;
+    }
+    else
+    {
+        // sprintf(szAux, "Desalocando memoria ->gptDadosDocumento(%p)", gptDadosDocumento); oLog.logDebug(szAux);
+        free(gptDadosDocumento);
+        gptDadosDocumento=NULL;
+        iFlag=0;
+        iCount=0;
+        giQtdElementosObtidos=0;
+
+        sprintf(szAux, "BuscaDocumentoPorIdPessoa() <NULL>"); oLog.logDebug(szAux);
+        return NULL;
+    }
+}
+
+/*************************************************************************************/
+bool proCBuscaDocumentoPorIdPessoa(char *pszIdPessoa)
+{
+    struct sqlca sqlca;
+    int iCount;
+    TDadosDocumento *ptDadosDocumentoAux;
+
+    sprintf(szAux, "proCBuscaDocumentoPorIdPessoa()"); oLog.logDebug(szAux);
+    sprintf(szAux, "pszIdPessoa[%s]", pszIdPessoa); oLog.logDebug(szAux);
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR oszIdPessoa[25];
+
+        VARCHAR oszSgTipoDocumento[255];
+        VARCHAR oszNrDocumento[255];
+        VARCHAR oszSgOrgaoExpedidor[255];
+
+        short iSgTipoDocumento;
+        short iNrDocumento;
+        short iSgOrgaoExpedidor;
+    EXEC SQL END DECLARE SECTION;
+
+
+    STRCPY_TO_ORA(oszIdPessoa, pszIdPessoa);
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    EXEC SQL DECLARE
+        CursorBuscaDocumentoPorIdPessoa CURSOR FOR
+            SELECT
+              DECODE(TIPODOCUMENTO.SGTIPODOCUMENTO, 'IF', 'IE', DECODE(TIPODOCUMENTO.SGTIPODOCUMENTO, 'IM', 'IE', TIPODOCUMENTO.SGTIPODOCUMENTO)) as SGTIPODOCUMENTO,
+              DOCUMENTO.NRDOCUMENTO,
+              DOCUMENTO.SGORGAOEXPEDIDOR
+            FROM
+              CUSTOMER.PESSOADOCUMENTO PESSOADOCUMENTO,
+              CUSTOMER.DOCUMENTO DOCUMENTO,
+              APOIO.TIPODOCUMENTO TIPODOCUMENTO
+            WHERE
+              DOCUMENTO.IDDOCUMENTO = PESSOADOCUMENTO.IDDOCUMENTO
+            AND
+              DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO
+            AND
+              TIPODOCUMENTO.INVISUALIZA = 1
+            AND
+              PESSOADOCUMENTO.IDPESSOA IN ( SELECT
+                                              PESSOADEPARA.IDPESSOAORIGEM
+                                            FROM
+                                              CUSTOMER.PESSOADEPARA
+                                            WHERE
+                                              PESSOADEPARA.IDPESSOA = :oszIdPessoa
+                                           );
+
+    EXEC SQL OPEN CursorBuscaDocumentoPorIdPessoa;
+
+    for(iCount=0, ptDadosDocumentoAux=gptDadosDocumento;;iCount++, ptDadosDocumentoAux++, giQtdElementosObtidos++)
+    {
+        EXEC SQL FETCH CursorBuscaDocumentoPorIdPessoa INTO
+               :oszSgTipoDocumento:iSgTipoDocumento,
+               :oszNrDocumento:iNrDocumento,
+               :oszSgOrgaoExpedidor:iSgOrgaoExpedidor;
+
+        /* Verifica se precisa realocar espaco */
+        if(iCount >= giQtdElementosAlocados) {
+            giQtdElementosAlocados++;
+
+            // sprintf(szAux, "Realocando memoria [%p]", gptDadosDocumento); oLog.logDebug(szAux);
+            gptDadosDocumento = (TDadosDocumento *) realloc(gptDadosDocumento, sizeof(TDadosDocumento) * (giQtdElementosAlocados));
+            // sprintf(szAux, "Memoria realocada [%p] bloco(%d)", gptDadosDocumento, sizeof(TDadosDocumento) * (giQtdElementosAlocados)); oLog.logDebug(szAux);
+
+            /* Atribui o novo endereco obtido e posiciona o ponteiro na posicao do ultimo registro obtido antes da realocacao */
+            ptDadosDocumentoAux = gptDadosDocumento+iCount;
+        }
+
+        /* copia as informacoes obtidas para o ponteiro */
+        memset(ptDadosDocumentoAux, 0x00, sizeof(TDadosDocumento));
+
+        if(iSgTipoDocumento != -1)   { STRCPY_FROM_ORA(ptDadosDocumentoAux->szSgTipoDocumento ,   oszSgTipoDocumento); }
+        if(iNrDocumento != -1)       { STRCPY_FROM_ORA(ptDadosDocumentoAux->szNrDocumento ,       oszNrDocumento); }
+        if(iSgOrgaoExpedidor != -1)  { STRCPY_FROM_ORA(ptDadosDocumentoAux->szSgOrgaoExpedidor ,  oszSgOrgaoExpedidor); }
+
+    }
+
+    EXEC SQL CLOSE CursorBuscaDocumentoPorIdPessoa;
+
+    sprintf(szAux, "proCBuscaDocumentoPorIdPessoa() <FOUND>"); oLog.logDebug(szAux);
+
+    return true;
+
+    erro:
+        sprintf(szAux, "proCBuscaDocumentoPorIdPessoa() <ERROR>"); oLog.logDebug(szAux);
+        sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+        return false;
+
+    naoexiste:
+        sprintf(szAux, "proCBuscaDocumentoPorIdPessoa() <NOT FOUND>"); oLog.logDebug(szAux);
+        return false;
+}
+
+/*******************************************************************************************************/
+void controleAlocacao(void)
+{
+    giQtdElementosAlocados=10;
+    giQtdElementosObtidos=0;
+
+//    sprintf(szAux, "giQtdElementosAlocados(%d)", giQtdElementosAlocados); oLog.logDebug(szAux);
+//    sprintf(szAux, "sizeof(TDadosDocumento)(%d)", sizeof(TDadosDocumento)); oLog.logDebug(szAux);
+
+    if((gptDadosDocumento = (TDadosDocumento *) malloc((sizeof(TDadosDocumento) * (giQtdElementosAlocados)))) == NULL )
+    {
+        oLog.logError("Erro de alocação de memoria.");
+        fflush(stdout);
+        exit(-1);
+    }
+//    sprintf(szAux, "Memoria alocada gptDadosDocumento (%p)", gptDadosDocumento); oLog.logDebug(szAux);
+}
+
+/************************************************************************************************************/
+DIR *OpenDir(char *pszDiretorio)
+{
+    static DIR *pDir;
+
+    if( (pDir = opendir(pszDiretorio)) == NULL)
+    {
+        sprintf(szAux, "Erro abrindo diretorio [%s]. errno(%d) strerror[%s]", pszDiretorio, errno, strerror(errno));
+        oLog.logError(szAux);
+        fflush(stdout);
+        exit(-1);
+    }
+
+    return pDir;
+}
+
+/************************************************************************************************************/
+char *ReadDir(DIR *pDir)
+{
+    static struct dirent *pDirent;
+    static char szArq[512 + 1];
+
+    while( (pDirent = readdir(pDir)) != NULL )
+    {
+        if( (!memcmp(pDirent->d_name+strlen(pDirent->d_name)-4,".TXT",4)) ||
+            (!memcmp(pDirent->d_name+strlen(pDirent->d_name)-4,".txt",4)) )
+        {
+            strcpy(szArq, pDirent->d_name);
+            sprintf(szAux, "Arquivo validado=[%s]", szArq); oLog.logDebug(szAux);
+
+            return szArq;
+        }
+    }
+
+    return NULL;
+}
+
+/************************************************************************************************************/
+void CloseDir(DIR *pDir)
+{
+    closedir(pDir);
+}
+
+/************************************************************************************************************/
+char *leArquivo(char *pszPath, char *pszFileName)
+{
+    static FILE *pFileIn=NULL;
+    static char szNomeArquivo[512 + 1];
+    static char szStringOut[256 + 1];
+
+    if(pFileIn == NULL) {
+        sprintf(szNomeArquivo, "%s%s", pszPath, pszFileName);
+        sprintf(szAux, "Abrindo arquivo[%s]", szNomeArquivo); oLog.logDebug(szAux);
+        if((pFileIn = fopen(szNomeArquivo, "r")) == NULL) {
+            sprintf(szAux, "Erro lendo arquivo[%s]", szNomeArquivo); oLog.logDebug(szAux);
+            return NULL;
+        }
+    }
+
+    if(pszPath != NULL)
+    {
+        if(fgets(szStringOut, sizeof(szStringOut), pFileIn) > 0)
+        {
+            // TrataDadosEntrada(szStringOut);
+            szStringOut[strlen(szStringOut) - 1] = 0x00;
+            return szStringOut;
+        }
+    }
+    else
+    {
+        sprintf(szAux, "Fechando arquivo de entrada[%s]", szNomeArquivo); oLog.logDebug(szAux);
+        fclose(pFileIn);
+        pFileIn=NULL;
+    }
+
+    return NULL;
+}
+
+/************************************************************************************************************/
+void TrataDadosEntrada(char *pszBuffer)
+{
+    char szTmp[512 + 1];
+    char *pTok;
+    int iCount;
+
+    strcpy(szTmp, pszBuffer);
+
+    for(iCount=0, pTok = strtok(szTmp, "|"); pTok != NULL && iCount < 5; pTok = strtok(NULL, "|"), iCount++)
+        strcpy(pszBuffer, pTok);
+
+    pszBuffer[strlen(pszBuffer) - 1] = 0x00;
+}
+
+/************************************************************************************************************/
+int geraArquivo(char *pszNrLinha, char *pszStatus, char *pszPath, char *pszFileName)
+{
+    static char szNomeArquivo[512 + 1];
+    static FILE *pFile=NULL;
+    static long iCounter=0;
+    char szBuffer[512 + 1];
+
+    if(pFile == NULL) {
+        sprintf(szNomeArquivo, "%s%s.OUT", pszPath, pszFileName);
+        sprintf(szAux, "Criando arquivo[%s]", szNomeArquivo); oLog.logDebug(szAux);
+        if((pFile = fopen(szNomeArquivo, "w")) == NULL) {
+            sprintf(szAux, "Erro criando arquivo[%s]", szNomeArquivo); oLog.logDebug(szAux);
+            return -1;
+        }
+    }
+
+    if(pszNrLinha != NULL)
+    {
+        sprintf(szAux, "Gravando linha no arquivo[%s]", szNomeArquivo); oLog.logDebug(szAux);
+        sprintf(szBuffer, "%06d - %s - %s\n", ++iCounter, pszNrLinha, pszStatus);
+        if(fputs(szBuffer, pFile) <= 0) {
+            sprintf(szAux, "Erro gravando linha no arquivo[%s]", szNomeArquivo); oLog.logDebug(szAux);
+            return -1;
+        }
+    }
+    else
+    {
+        sprintf(szAux, "Fechando arquivo de saida[%s]", szNomeArquivo); oLog.logDebug(szAux);
+        fclose(pFile);
+        pFile=NULL;
+        iCounter=0;
+    }
+
+    return 0;
+}
+
+
+
+
+
+/************************************************************************************************************/
+int sendXML(char *pXmlSaida, char *pRetMsg)
+{
+    char *sendbuf, *rcvbuf;
+    long rcvlen;
+
+    long sendlen = strlen(pXmlSaida);
+
+    sprintf(szAux, "XML para envio (tam=%d)= '%s'", sendlen,pXmlSaida);
+    oLog.logDebug(szAux);
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL)
+    {
+        oLog.logError("Error allocating send buffer\n");
+        tpterm();
+
+        return -1;
+    }
+
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, TUXFW_MAX_MSG_LEN)) == NULL)
+    {
+        oLog.logError("Error allocating receive buffer\n");
+        if (sendbuf) { tpfree(sendbuf);sendbuf=0;}
+        tpterm();
+
+        return -1;
+    }
+
+    strcpy(sendbuf, pXmlSaida);
+
+    if(tpcall("TUXPREPAGOBE", (char *)sendbuf, sendlen, (char **)&rcvbuf, &rcvlen, (long)0) == -1)
+    {
+        sprintf(szAux, "Tperrno = %d\n", tperrno); oLog.logError(szAux);
+        sprintf(szAux, "rcvbuf[%s]\n", rcvbuf?rcvbuf:"<<NULL>>"); oLog.logError(szAux);
+
+        iErrorNumber=tperrno;
+        strcpy(pRetMsg, rcvbuf);
+
+        if (sendbuf) { tpfree(sendbuf);sendbuf=0;}
+        if (rcvbuf) { tpfree(rcvbuf);rcvbuf=0;}
+
+        return 1;
+    }
+
+    iErrorNumber=0;
+    strcpy(pRetMsg, rcvbuf?rcvbuf:"");
+
+    if (sendbuf) { tpfree(sendbuf);sendbuf=0;}
+    if (rcvbuf) { tpfree(rcvbuf);rcvbuf=0;}
+
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemValorTag(char *pXml, char *pTag)
+{
+    static char szValue[255 + 1];
+
+    szValue[0] = 0;
+    if ( pXml )
+    {
+        if ( *pXml )
+        {
+            char *p0 = strstr(pXml,pTag) + strlen(pTag) + 1;
+            if ( p0 )
+            {
+                char *p1 = strstr(p0,pTag) - 2;
+                if ( p1 )
+                {
+                    if ( p1 > p0 )
+                    {
+                        int tam = p1-p0;
+                        if (tam > 255) tam = 255;
+                        strncpy(szValue,p0,tam);
+                        szValue[tam]=0;
+                    }
+                }
+            }
+        }
+    }
+
+    return szValue;
+}
+
+/************************************************************************************************************/
+char *TrataErroNGIN(char *pStatusText)
+{
+    char szStatusTextAux[255 + 1];
+    static char szCdErro[255 + 1];
+    register int iCont;
+    int iLen;
+
+    /* copia string a ser analisada para buffer local (strtok altera o ponteiro de entrada) */
+    strcpy(szStatusTextAux, pStatusText);
+
+    memset(szCdErro, 0x00, sizeof(szCdErro));
+    iLen=strlen(szStatusTextAux);
+    for(iCont=0; iCont < iLen && szStatusTextAux[iCont] != '.'; iCont++) {
+        szCdErro[iCont] = szStatusTextAux[iCont];
+    }
+
+    strcpy(pStatusText, szStatusTextAux+iCont+1);
+
+    return szCdErro;
+}

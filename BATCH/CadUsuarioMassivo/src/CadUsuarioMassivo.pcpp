@@ -1,0 +1,3671 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <sstream>
+#include <ctype.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <strings.h>
+
+extern "C" {
+#include <unistd.h>
+#include <sys/file.h>
+#include <sys/mode.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+}
+
+#include <tuxfw.h>
+#include <sys/shm.h>
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+#include "../../commons/Defines.h"
+
+extern errno;
+
+#include <string>
+#include <list>
+#include <iterator>
+
+#include <CadUsuarioMassivo.h>
+
+using namespace std;
+typedef list<long> ListGrupo;
+typedef list<long> ListPerfil;
+typedef list<long> ListOperadora;
+
+
+EXEC SQL INCLUDE SQLCA;
+
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+#define MSG_NOME_VAZIO             "*** Nome do Usuario vazio ***"
+#define MSG_UF_VAZIO               "*** UF do Usuario vazio ***"
+#define MSG_UF_INVALID             "*** UF Nao encontrado na base ***"
+#define MSG_EMAIL_VAZIO            "*** E-Mail do Usuario vazio ***"
+#define MSG_EMAIL_INVALID          "*** E-Mail invalido ***"
+#define MSG_LOGIN_VAZIO            "*** LOGIN do Usuario vazio ***"
+#define MSG_LOGIN_INVALID          "*** LOGIN ja existe na base ***"
+#define MSG_LOGIN_INVALID_DIFF     "*** LOGIN ja existe na base para outro CPF ***"
+#define MSG_REGIONAL_VAZIO         "*** REGIONAL do Usuario vazio ***"
+#define MSG_REGIONAL_INVALID       "*** REGIONAL do Usuario nao encontrado no banco ***"
+#define MSG_HIERARQUIA_VAZIO       "*** HIERARQUIA do Usuario vazio ***"
+#define MSG_HIERARQUIA_INVALID     "*** HIERARQUIA do Usuario nao encontrado no banco ***"
+#define MSG_CARGO_VAZIO            "*** CARGO do Usuario vazio ***"
+#define MSG_CARGO_INVALID          "*** CARGO do Usuario nao encontrado no banco ***"
+#define MSG_ORGANIZACAO_VAZIO      "*** ORGANIZACAO do Usuario vazio ***"
+#define MSG_ORGANIZACAO_INVALID    "*** ORGANIZACAO do Usuario nao encontrado no banco ***"
+#define MSG_DEPARTAMENTO_VAZIO     "*** DEPARTAMENTO do Usuario vazio ***"
+#define MSG_DEPARTAMENTO_INVALID   "*** DEPARTAMENTO do Usuario nao encontrado no banco ***"
+#define MSG_PERFIL_VAZIO           "*** PERFIL do usuario vazio ***"
+#define MSG_PERFIL_INVALID         "*** PERFIL do usuario nao encontrado no banco ***"
+#define MSG_FORNECEDOR_INVALID     "*** FORNECEDOR do usuario nao encontrado no banco ***"
+#define MSG_FORNECEDOR_NULL        "*** FORNECEDOR obrigatorio para o perfil de atendimento indicado ***"
+#define MSG_SITE_INVALID           "*** SITE do usuario nao encontrado no banco ***"
+#define MSG_SITE_NULL              "*** SITE obrigatorio para o perfil de atendimento indicado ***"
+#define MSG_LOGINSUP_VAZIO         "*** LOGIN SUPERIOR IMEDIATO do usuario vazio ***"
+#define MSG_LOGINSUP_INVALID       "*** LOGIN SUPERIOR IMEDIATO nao encontrado no banco ***"
+#define MSG_LOGINSUP_NULL          "*** LOGIN SUPERIOR IMEDIATO obrigatorio para o perfil de atendimento indicado ***"
+#define MSG_CPF_VAZIO              "*** CPF do usuario vazio ***"
+#define MSG_CPF_INVALID            "*** CPF do usuario ja existe na base ***"
+#define MSG_CPF_DIFF               "*** CPF do usuario é diferente do existente na base ***"
+#define MSG_CPF_DIFF_FCPF          "*** CPF do usuario é diferente do existente na base para FCPF ***"
+#define MSG_UFCPF_VAZIO            "*** UF - CPF do usuario vazio ***"
+#define MSG_UFCPF_INVALID          "*** UF - CPF do usuario nao encontrado no banco ***"
+#define MSG_GRUPO_VAZIO            "*** GRUPO para associacao vazio ***"
+#define MSG_GRUPO_INVALID          "*** GRUPO para associacao nao encontrado na base ***"
+#define MSG_PERFILASSOC_VAZIO      "*** PERFIL para associacao vazio ***"
+#define MSG_PERFILASSOC_INVALID    "*** PERFIL para associacao nao encontrado na base ***"
+#define MSG_OPERADORA_VAZIO        "*** OPERADORA para associacao vazio ***"
+#define MSG_OPERADORA_INVALID      "*** OPERADORA para associacao nao encontrado na base ***"
+#define MSG_REG_INVALID            "*** ERRO DE LAYOUT do arquivo ***"
+#define MSG_PAISCPF_VAZIO          "*** PAIS do CPF vazio ***"
+#define MSG_PAISCPF_INVALID        "*** PAIS do CPF nao encontrado no banco ***"
+#define MSG_TELEFONE_INVALID       "*** TELEFONE invalido ***"
+
+#define LEN_NOME          255
+#define LEN_EOS             1
+#define LEN_NOME_PRIMEIRO LEN_NOME
+#define LEN_NOME_MEIO     LEN_NOME
+#define LEN_NOME_FIM      LEN_NOME
+typedef struct {
+    char szNomeCompleto[2048];
+    char szNomePrimeiro[LEN_NOME_PRIMEIRO + LEN_EOS];
+    char szNomeMeio[LEN_NOME_MEIO + LEN_EOS];
+    char szNomeFim[LEN_NOME_FIM + LEN_EOS];
+} TDesmembraNome;
+
+
+char   szAux[256000 + 1];
+Log    oLog;
+long   iErrorNumber=0;
+//short  endExecl=0;
+short  sTotalPipe=0;
+	
+//==============================================================================
+// Protótipos
+short TrataRegistro( char * registro );
+void TrataBuffer( char * registro );
+int ProcessaRegistro( ofstream & output, char * registroPrm, long * LinhasLidas, long * LinhasRejeitadas );
+bool ValidaUF( char * buffer, char * idUFPrm );
+bool ValidaEMail( char * bf );
+bool ValidaLogin( char * buffer );
+bool ValidaLoginSup( char * buffer );
+bool ValidaRegional( char * buffer, char * idUFOperadrm );
+bool ValidaHierarquia( char * buffer, char * idNivelPrm, char * idNivelPaiPrm );
+bool ValidaCargo( char * buffer, char * idNivelPrm, char * idCargoPrm );
+bool ValidaOrganizacao( char * buffer, char * idOrganizacaoPaiPrm, char * idOrganizacaoPrm, char * idTipoOrganizacaoPrm );
+bool ValidaDepartamento( char * buffer, char * idOrganizacaoPrm,char * idDeptoPrm );
+bool ValidaPerfil( char * buffer, char * idPerfilPrm );
+bool ValidaFornecedor( char * buffer, char * idFornecedorPrm );
+bool ValidaSite( char * buffer, char * idSitePrm );
+bool ValidaCPF( char * buffer );
+bool ValidaPais( char * buffer, char * idPaisPrm );
+bool ValidaGrupo( char * buffer, list<long> &listaGrupos );
+bool ValidaPerfilAssoc( char * buffer, list<long> &listaPerfil );
+bool ValidaRegionalAssoc( char * buffer, list<long> &listaRegional );
+bool ValidaDtEnvio( char * buffer );
+bool ValidaNota( char * bf );
+bool ValidaNumerico( char * bf );
+char * alltrim( char * pszString );
+char * ltrim( char * pszString );
+char * rtrim( char * pszString );
+void findFileType( char *path, string &arquivo, char *type );
+void RemoveHistoricoArq( char *path, int DataLimite );
+void RetiraMultiplosEspacos( char * pszString );
+void NormalizaNome( char * pszString );
+void DesmembraNome( TDesmembraNome * ptDesmembraNome );
+void RetiraHifen( char * pszString );
+
+int main(int argc, char* argv[])
+{
+	// stdout/stderr sem buferizacao
+	setvbuf(stdout, NULL, _IONBF, 0);
+	setvbuf(stderr, NULL, _IONBF, 0);
+
+	long LinhasLidas;
+    long LinhasRejeitadas;
+    time_t      rawtime;
+	struct tm * timeinfo;
+	char        buffer[81];
+	char        sArqPrc[512];
+	char        sArqTxt[255+1];
+	char        sArqErr[512];
+	char        sArqAux[512];
+    string      arquivoTXT("-1");
+	string      arquivoERR;
+	string      registro;
+	//TParamConf  tParamConf;
+	
+    EXEC SQL BEGIN DECLARE SECTION;
+        
+		VARCHAR dataLimite[16];
+		short   i_dataLimite = -1;
+		VARCHAR qtdDias[4];
+		short   i_qtdDias = -1;
+
+		VARCHAR oszStatusCarga[1+1];
+		long 	oszQtdeRegErro;
+		long 	oszQtdeRegistros;
+		VARCHAR oszArquivo[255+1];
+		VARCHAR oszArqErr[255+1];
+				
+    EXEC SQL END DECLARE SECTION;
+
+    // Acertando o nivel de logs
+    oLog.setNivel(2);
+    oLog.logDebug(">>> CadUsuarioMassivo\n");
+
+
+    // Verifica execucao paralela
+    int plockfile = open(".lock", O_WRONLY | O_CREAT | O_NONBLOCK | O_NDELAY, S_IWUSR | S_IWGRP);
+	if (plockfile == -1) {
+		perror("open '.lock'");
+		oLog.logDebug("Ja existe um processo em execucao?!\n");
+		oLog.logDebug("<<< CadUsuarioMassivo\n");
+		//return -1;
+		exit(1);
+	}
+	if (flock(plockfile, LOCK_EX | LOCK_NB) == -1) {
+		perror("flock '.lock'");
+		oLog.logDebug("Ja existe um processo em execucao?!\n");
+		oLog.logDebug("<<< CadUsuarioMassivo\n");
+		//return -1;
+		exit(1);
+	}
+
+
+    if(ObtemParamConf(&tParamConf)) {
+        oLog.logError("Erro obtendo parametros de configuracao\n");
+		//return -1;
+		exit(1);
+    }
+
+    //==========================================================================
+    // Conecta
+    oLog.logDebug("Conectando na BD...");
+    /* Conecta no banco de dados */
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst)) {
+        oLog.logError("Erro conectando no banco de dados\n");
+		//return -1;
+		exit(1);
+    }
+    oLog.logDebug("Conectado na BD com sucesso...\n");
+
+    while ( !arquivoTXT.empty() )
+    {
+    ifstream infile;
+    ofstream outfile;
+
+    findFileType( "../data", arquivoTXT, ".TXT");
+	
+    if ( strlen(arquivoTXT.c_str()) < 8 )
+    {
+        if ( !memcmp(arquivoTXT.c_str(),"../data",7) )
+        {
+            arquivoTXT = "";
+				oLog.logDebug("Nao ha mais arquivos para carga...\n");
+				oLog.logDebug("Finalizando processo...\n");
+
+				oLog.logDebug("Desconectando da BD...\n");
+				DBDisconnect();
+
+				oLog.logDebug("<<< CadUsuarioMassivo\n");
+				//return 0;
+				exit(0);
+        }
+    }
+
+	memset(sArqTxt, 0x00, sizeof(sArqTxt) );
+	memcpy(sArqTxt, arquivoTXT.c_str() + 8, strlen(arquivoTXT.c_str())-8);
+    sprintf( sArqPrc, "%s", arquivoTXT.c_str() );
+    sprintf( sArqPrc, "%.*serr", strlen(sArqPrc)-3,sArqPrc );
+    memset(sArqAux, 0x00, sizeof(sArqAux) );
+    memcpy( sArqAux, "../error/", 9); 
+    strncat( sArqAux, sArqPrc + 8, strlen(sArqPrc)-8);
+    //sprintf(szAux, "sArqAux [%s]\n", sArqAux ); oLog.logDebug(szAux);
+    arquivoERR = sArqAux;
+
+	//Renomeando o arquivo de entrada txt para prc
+    time ( &rawtime );
+    timeinfo = localtime ( &rawtime );	
+    memset( buffer, 0x0, sizeof(buffer) );
+    strftime ( buffer,80,"_%Y%m%d_%H%M%S.prc", timeinfo );
+    sprintf( sArqPrc, "%s", arquivoTXT.c_str() );
+    sprintf( sArqPrc, "%.*s%s", strlen(sArqPrc)-4,sArqPrc,buffer );
+    
+    rename( arquivoTXT.c_str() , sArqPrc );
+    arquivoTXT = sArqPrc;
+	
+    infile.open ( arquivoTXT.c_str() );
+    outfile.open ( arquivoERR.c_str() );
+    sprintf(szAux, "Lendo arquivo [%s]\n", arquivoTXT.c_str() ); oLog.logDebug(szAux);
+    LinhasLidas = LinhasRejeitadas = 0;
+    if ( infile.is_open() )
+    {
+        while( !infile.eof() ) // To get you all the lines.
+        {
+            getline( infile, registro ); // Saves the line in registro.
+            if ( registro.length() > 1 )
+            {
+               ProcessaRegistro( outfile,(char*)registro.c_str(), & LinhasLidas, & LinhasRejeitadas );
+               //if (endExecl == 1)
+    		 //		break;
+    		   if (sTotalPipe != 22)
+    		        break;
+            }
+        }
+        //if (endExecl == 1)
+        //{ // end child process
+        //	endExecl=0;
+        //	return 0;
+        //}
+        infile.close();
+    }
+    sprintf(szAux, ">>> Total de Linhas Lidas......[%ld]\n", LinhasLidas ); oLog.logDebug(szAux);
+    sprintf(szAux, ">>> Total de Linhas Rejeitadas.[%ld]\n", LinhasRejeitadas ); oLog.logDebug(szAux);
+    sprintf(szAux, ">>> Total de Linhas Validas....[%ld]\n", LinhasLidas - LinhasRejeitadas ); oLog.logDebug(szAux);
+    
+    long tamArqErro = (long)outfile.tellp();
+    outfile.close();
+
+    if ( tamArqErro > 0)   /* Arquivo de Registros Invalidos Existe? */
+    {
+        memset( buffer, 0x0, sizeof(buffer) );
+        strftime ( buffer,80,"_%Y%m%d_%H%M%S.err", timeinfo );
+
+        sprintf( sArqPrc, "%s", arquivoERR.c_str() );
+        sprintf( sArqPrc, "%.*s%s", strlen(sArqPrc)-4,sArqPrc,buffer );
+
+        rename( arquivoERR.c_str() , sArqPrc );
+        memset(sArqErr, 0x00, sizeof(sArqErr) );
+        memcpy(sArqErr, sArqPrc + 9, strlen(sArqPrc)-8);
+    }
+    else
+    {
+        unlink ( arquivoERR.c_str() );   /* Arquivo de Registros Invalidos com tamanho ZERO */
+        memset(sArqErr, 0x00, strlen(sArqErr));
+    }
+
+	/* Atualiza na MANUTENCAOLOGINACESSO */
+	if (sTotalPipe != 22)
+	{
+		oLog.logDebug("Atualiza MANUTENCAOLOGINACESSO status=2.\n");
+		STRCPY_TO_ORA(oszArquivo, sArqTxt);
+		STRCPY_TO_ORA(oszArqErr, sArqErr);
+   		EXEC SQL 
+			UPDATE 	ACESSO.MANUTENCAOLOGINACESSO
+			SET		STATUS_CARGA = '2',
+					QTDE_REGISTROS_ERRO = NULL,
+					QTDE_REGISTROS = NULL,
+					DATA_PROC = sysdate,
+					ARQUIVO_ERR = :oszArqErr
+			WHERE UPPER(NOME_ARQUIVO) = UPPER(TRIM(:oszArquivo));
+	}
+	else if (LinhasLidas > 0)
+	{
+			oLog.logDebug("Atualiza MANUTENCAOLOGINACESSO status=3 ou 4.\n");
+			oszQtdeRegErro = LinhasRejeitadas;
+			oszQtdeRegistros = LinhasLidas;
+			STRCPY_TO_ORA(oszArquivo, sArqTxt);
+			STRCPY_TO_ORA(oszArqErr, sArqErr);
+    		EXEC SQL 
+				UPDATE 	ACESSO.MANUTENCAOLOGINACESSO
+				SET		STATUS_CARGA = DECODE(:oszQtdeRegErro, 0, '4', '3'),
+						QTDE_REGISTROS_ERRO = :oszQtdeRegErro,
+						QTDE_REGISTROS = :oszQtdeRegistros,
+						DATA_PROC = sysdate,
+						ARQUIVO_ERR = :oszArqErr
+				WHERE UPPER(NOME_ARQUIVO) = UPPER(TRIM(:oszArquivo));
+	}
+	
+		EXEC SQL COMMIT;
+    }
+
+    /*   Obtem a qtde de dias do historico de arquivos processados   */
+    //EXEC SQL
+    //SELECT DSVALORPARAMETRO INTO :qtdDias:i_qtdDias FROM APOIO.PARAMETRO WHERE CDPARAMETRO = 'QTD_DIAS_EXPURGO_NOTAS_URA';
+    //CONVIND( qtdDias,i_qtdDias );
+    //sprintf( szAux, "*** Qtde limite de dias [%s]\n", (char*)qtdDias.arr ); oLog.logDebug(szAux);
+
+    //EXEC SQL 
+    //SELECT TO_CHAR(TRUNC(SYSDATE - :qtdDias ),'YYYYMMDD') INTO :dataLimite:i_dataLimite FROM DUAL;
+    //CONVIND( dataLimite,i_dataLimite );
+
+    //RemoveHistoricoArq( "../data", atoi((char*)dataLimite.arr) );
+
+    EXEC SQL COMMIT WORK RELEASE;
+
+    oLog.logDebug("Desconectando da BD...\n");
+    DBDisconnect();
+
+    oLog.logDebug("Processamento encerrado com sucesso...\n");
+    oLog.logDebug("<<< CadUsuarioMassivo\n");
+
+    //return 0;
+    exit(0);
+
+    sqlError:
+        sprintf(szAux, "Finalizando processo com erro ORACLE (%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        //return -1;
+        exit(1);
+
+    /* Tratamento de erro de processamento */
+    finalizaProcess:
+        oLog.logDebug("Finalizando processo...\n");
+
+        oLog.logDebug("Desconectando da BD...\n");
+        DBDisconnect();
+
+        oLog.logDebug("<<< CadUsuarioMassivo\n");
+        //return -1;
+        exit(1);
+}
+
+
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[81];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    //oLog.logDebug("Obtendo parametros de configuracao...\n");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("CadUsuarioMassivo.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir()) {
+        oLog.logError("Erro abrindo arquivo de configuração!\n");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, 20);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, 20);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, 20);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, 10);
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, 10);
+        }
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    sprintf(szAux, "ptParamConf->szPws[%s]\n", ptParamConf->szPws); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]\n", ptParamConf->szUsr); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]\n", ptParamConf->szInst); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTux[%s]\n", ptParamConf->szPwsTux); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szUsrTux[%s]\n", ptParamConf->szUsrTux); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]\n", ptParamConf->szPwsTuxGen); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szCltTux[%s]\n", ptParamConf->szCltTux); oLog.logInformation(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0)
+    {
+        oLog.logError("Dados incompletos!\n");
+        return -1;
+    }
+
+    //oLog.logDebug("Parametros de configuracao obtidos com sucesso...\n");
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    //oLog.logInformation(">>>DBConnect\n");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    //oLog.logInformation("<<<DBConnect\n");
+
+    return (sqlca.sqlcode);
+    
+errConn:
+    sprintf(szAux, "sqlca.sqlcode [%d]\n", sqlca.sqlcode ); oLog.logDebug(szAux);
+    oLog.logInformation("<<<DBConnect [ERROR]\n");
+    return -1;
+}
+
+
+
+
+/************************************************************************************************************/
+void DBDisconnect(void)
+{
+    //oLog.logInformation(">>>DBDisconnect\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    //EXEC SQL COMMIT WORK RELEASE;
+
+    //oLog.logInformation("<<<DBDisconnect\n");
+    return;
+
+Error:
+    sprintf(szAux, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); oLog.logError(szAux);
+    return;
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemParametro(char *pCdParametro)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        //VARCHAR oszCdParametro[255];
+        char *oszCdParametro = pCdParametro;
+        VARCHAR oszDsValorParametro[255+1];
+        short i_oszDsValorParametro = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    static char szDsValorParametro[255 + 1];
+    struct sqlca sqlca;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    //STRCPY_TO_ORA(oszCdParametro, pCdParametro);
+
+    EXEC SQL 
+        SELECT dsvalorparametro
+          INTO :oszDsValorParametro:i_oszDsValorParametro
+          FROM apoio.parametro
+         WHERE parametro.cdparametro = :oszCdParametro;
+
+    STRCPY_FROM_ORA(szDsValorParametro, oszDsValorParametro);
+
+    return szDsValorParametro;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        exit(-1);
+
+    naoexiste:
+        sprintf(szAux, "Chave pesquisada nao encontrada[%s]\n", pCdParametro); oLog.logDebug(szAux);
+        return NULL;
+}
+
+
+
+short TrataRegistro( char * registro )
+{
+    int i,t;
+    char str_bkp[2048];
+    short iTotalPipe=0;
+    
+    for( t=i=0; i < strlen(registro); i++ )
+    {
+        if( registro[i]=='|' )
+        {
+            t++;
+        }
+        else
+            t=0;
+        if( t > 1 )
+        {
+            strcpy( str_bkp, registro );
+            str_bkp[i-1] = 0x0;
+            strcat( str_bkp, "|vazio|" );
+            i++;
+            strcat( str_bkp, (char*)&registro[i] );
+            i = t = 0;
+            strcpy( registro, str_bkp );
+        }
+    }
+    for( i=0; i < strlen(registro); i++ )
+    {
+        if( registro[i]=='|' )
+            iTotalPipe++;
+    }
+
+    return(iTotalPipe);
+}
+
+
+
+void TrataBuffer( char * registro )
+{
+    int i,t;
+    char str_bkp[4096];
+    for( t=i=0; i < strlen(registro); i++ )
+    {
+        if( registro[i]==';' )
+            t++;
+        else
+            t=0;
+        if( t > 1 )
+        {
+            strcpy( str_bkp, registro );
+            str_bkp[i-1] = 0x0;
+            strcat( str_bkp, ";vazio;" );
+            i++;
+            strcat( str_bkp, (char*)&registro[i] );
+            i = t = 0;
+            strcpy( registro, str_bkp );
+        }
+    }
+}
+
+
+
+int ProcessaRegistro( ofstream & output, char * registroPrm, long * LinhasLidas, long * LinhasRejeitadas )
+{
+    TDesmembraNome tDesmembraNome;
+    ListGrupo pGrupos;
+    ListGrupo pPerfilAssoc;
+    ListGrupo pOperadoraAssoc;
+    list<long>::iterator itCampos;
+
+    bool   erroRegistro = false;
+    char   buffer[2048];
+    string token;
+    string registro;
+    string stmt;
+	char   execJar[255];
+
+    int iSec, status=1;
+    pid_t  childID, endID;
+    time_t when;
+    short  endChild=0;
+    char   szPerfilAtendimento[256];
+	
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char * query;
+        int    idx = 0;
+        int    idx2 = 0;
+        char * v_str;
+        VARCHAR v_show[2048];
+        short   i_v_show = -1;
+        
+        char sNome[256];
+        char sNomePrimeiro[256];
+        char sNomeMeio[256];
+        char sNomeFim[256];
+        char sUF[3];
+        char sEMail[256];
+        char sDDD[256];
+        char sTelefone[256];
+        char sLogin[256];
+        char sLoginCTI[256];
+        char idUFOperadora[256];
+        char idNivelHierarquia[256];
+        char idNivelPaiHierarquia[256];
+        char idCargo[256];
+        char idOrganizacaoPai[256];
+        char idOrganizacao[256];
+        char idTipoOrganizacao[256];
+        char idDepto[256];
+        char idPerfilAtd[256];
+        char idFornecedor[256];
+        char idSite[256];
+        char sLoginSup[256];
+        char sLoginRot[256];
+        char sCPF[32];
+        char sUFCPF[3];
+        char idPais[256];
+        char sPerfil[2560];
+        char sOperadora[2560];
+        
+        VARCHAR sgTipoDocumento[256];
+        short 	i_sgTipoDocumento = -1;
+        VARCHAR nrDocumento[256];
+        short 	i_nrDocumento = -1;
+        VARCHAR sLoginBase[256];
+        short 	i_sLoginBase = -1;
+
+        char idUF[256];
+        char idUFCPF[256];
+        
+        int     idTipoCarteira = 0;
+        short i_idTipoCarteira = -1;
+        int     idSistemaOrigem = 0;
+        short i_idSistemaOrigem = -1;
+        int     idTipoPessoa = 0;
+        short i_idTipoPessoa = -1;
+        long    idPessoa = 0;
+        short   i_idPessoa = -1;
+        long    idPessoaDePara = 0;
+        short 	i_idPessoaDePara = -1;
+        long    idDocumento = 0;
+        short 	i_idDocumento = -1;
+        VARCHAR idDocumentoSistemaOrigem[256];
+        short i_idDocumentoSistemaOrigem = -1;
+        long    idPessoaDocumento = 0;
+        short 	i_idPessoaDocumento = -1;
+        int     idStatusAtual = 0;
+        short   sStatus = -1;
+        long    idUsuarioChefe = 0;
+        short 	i_idUsuarioChefe = -1;
+
+        long    idPessoaUsuario = 0;
+        int 	nrOldX = 0;
+
+        long idGrupo = 0;
+        long idRole = 0;
+        long idUFOperAssoc = 0;
+        int  idAreaRegistro = 0;
+        short i_idAreaRegistro = -1;
+        long idOrganizacaoDepartamento = 0;
+        short i_idOrganizacaoDepartamento = -1;
+        long idNivelCargo = 0;
+        short i_idNivelCargo = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    memset( sNome               , 0x0, sizeof(sNome) );
+    memset( sNomePrimeiro       , 0x0, sizeof(sNomePrimeiro) );
+    memset( sNomeMeio           , 0x0, sizeof(sNomeMeio) );
+    memset( sNomeFim            , 0x0, sizeof(sNomeFim) );
+    memset( sUF                 , 0x0, sizeof(sUF) );
+    memset( sEMail              , 0x0, sizeof(sEMail) );
+    memset( sDDD                , 0x0, sizeof(sDDD) );
+    memset( sTelefone           , 0x0, sizeof(sTelefone) );
+    memset( sLogin              , 0x0, sizeof(sLogin) );
+    memset( sLoginCTI           , 0x0, sizeof(sLoginCTI) );
+    memset( idUFOperadora       , 0x0, sizeof(idUFOperadora) );
+    memset( idNivelHierarquia   , 0x0, sizeof(idNivelHierarquia) );
+    memset( idNivelPaiHierarquia, 0x0, sizeof(idNivelPaiHierarquia) );
+    memset( idCargo             , 0x0, sizeof(idCargo) );
+    memset( idOrganizacaoPai    , 0x0, sizeof(idOrganizacaoPai) );
+    memset( idOrganizacao       , 0x0, sizeof(idOrganizacao) );
+    memset( idTipoOrganizacao   , 0x0, sizeof(idTipoOrganizacao) );
+    memset( idDepto             , 0x0, sizeof(idDepto) );
+    memset( idPerfilAtd         , 0x0, sizeof(idPerfilAtd) );
+    memset( idFornecedor        , 0x0, sizeof(idFornecedor) );
+    memset( idSite              , 0x0, sizeof(idSite) );
+    memset( sLoginSup           , 0x0, sizeof(sLoginSup) );
+    memset( sLoginRot           , 0x0, sizeof(sLoginRot) );
+    memset( sCPF                , 0x0, sizeof(sCPF) );
+    memset( sUFCPF              , 0x0, sizeof(sUFCPF) );
+    memset( sPerfil             , 0x0, sizeof(sPerfil) );
+    memset( sOperadora          , 0x0, sizeof(sOperadora) );
+    memset( idUF                , 0x0, sizeof(idUF) );
+    memset( idUFCPF             , 0x0, sizeof(idUFCPF) );
+    memset( idPais              , 0x0, sizeof(idPais) );
+    
+    bzero( &sgTipoDocumento, sizeof(sgTipoDocumento));
+    bzero( &nrDocumento, sizeof(nrDocumento));
+    bzero( &sLoginBase, sizeof(sLoginBase) );
+
+    registro = registroPrm;
+    *LinhasLidas = *LinhasLidas + 1;
+
+    istringstream iss( registro );
+
+    EXEC SQL WHENEVER SQLERROR CONTINUE;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+    int retcode = 0;
+
+    char delims[] = "|";
+    char *result = NULL;
+    sprintf(szAux, "Registro lido [%s]\n", registroPrm ); oLog.logInformation(szAux);
+    sTotalPipe = TrataRegistro( registroPrm );
+    if ( sTotalPipe != 22 )
+    {
+    	*LinhasRejeitadas = *LinhasRejeitadas + 1;
+        output << registro.c_str() << endl ;
+        output << MSG_REG_INVALID << endl ;
+        return -1;
+    }
+    
+    // Reprocessa ldap 1 vez
+    short reprocldap = 1;
+
+    EXEC SQL WHENEVER SQLERROR goto erroGravacao;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    sqlca.sqlcode = 0;
+	//Recupera o id de sistema origem
+	EXEC SQL
+    SELECT
+        SISTEMAORIGEM.IDSISTEMAORIGEM
+    INTO
+        :idSistemaOrigem:i_idSistemaOrigem
+    FROM
+        APOIO.SISTEMAORIGEM SISTEMAORIGEM
+    WHERE
+        SISTEMAORIGEM.SGSISTEMAORIGEM = 'CACS';
+
+    sprintf(szAux, ">>> Passou 1\n" ); oLog.logInformation(szAux);
+
+    sqlca.sqlcode = 0;
+    //Recupera o id de tipo de pessoa
+    EXEC SQL
+    SELECT
+        TIPOPESSOA.IDTIPOPESSOA
+    INTO
+        :idTipoPessoa:i_idTipoPessoa
+    FROM
+        APOIO.TIPOPESSOA TIPOPESSOA
+    WHERE
+        TIPOPESSOA.SGTIPOPESSOA = 'PF';
+
+    sprintf(szAux, ">>> Passou 2\n" ); oLog.logInformation(szAux);
+
+    sqlca.sqlcode = 0;
+    EXEC SQL
+    SELECT
+        CUSTOMER.PESSOASQ.NEXTVAL
+    INTO
+        :idPessoa
+    FROM DUAL;
+
+    sprintf(szAux, ">>> Passou 3\n" ); oLog.logInformation(szAux);
+
+    sqlca.sqlcode = 0;
+    EXEC SQL
+    SELECT
+        IDTIPOCARTEIRA
+    INTO
+        :idTipoCarteira:i_idTipoCarteira
+    FROM
+        APOIO.TIPOCARTEIRA
+    WHERE
+        UPPER(SGTIPOCARTEIRA) = 'NC'
+    AND
+        ROWNUM <= 1;
+
+    sprintf(szAux, ">>> Passou 4\n" ); oLog.logInformation(szAux);
+
+    sqlca.sqlcode = 0;
+    //Recupera o id do sistemas origem, no caso, Front Office
+    EXEC SQL
+    SELECT
+        SISTEMAORIGEM.IDSISTEMAORIGEM
+    INTO
+        :idSistemaOrigem:i_idSistemaOrigem
+    FROM
+        APOIO.SISTEMAORIGEM SISTEMAORIGEM
+    WHERE
+        UPPER(SISTEMAORIGEM.SGSISTEMAORIGEM) = 'FO';
+
+    sprintf(szAux, ">>> Passou 9\n" ); oLog.logInformation(szAux);
+
+    sqlca.sqlcode = 0;
+    EXEC SQL
+    SELECT
+        IDSTATUSUSUARIO
+    INTO
+        :idStatusAtual:sStatus
+    FROM
+        APOIO.STATUSUSUARIO
+    WHERE
+        UPPER(SGSTATUSUSUARIO) = 'ATIVO';
+
+    sprintf(szAux, ">>> Passou 13\n" ); oLog.logInformation(szAux);
+
+
+
+    v_str = registroPrm;
+    
+    for( idx=0; idx<23; idx++ )
+    {
+        idx2 = idx+1;
+        if ( idx == 0 )
+        {
+            exec sql
+            select substr( :v_str, 1, (instr(:v_str,'|',1,1)-1) ) into :v_show:i_v_show from dual;
+        }
+        else if ( idx < 22 && idx > 0 )
+        {
+            exec sql
+            select substr( :v_str, instr(:v_str,'|',1,:idx)+1, instr(:v_str,'|',1,:idx2)-(instr(:v_str,'|',1,:idx)+1) ) into :v_show:i_v_show from dual;
+        }
+        else
+        {
+            exec sql
+            select substr( :v_str, instr(:v_str,'|',1,:idx)+1 ) into :v_show:i_v_show from dual;
+        }
+        
+        CONVIND( v_show, i_v_show );
+        result = (char*)v_show.arr ;
+        
+        switch( idx )
+        {
+            case  0 :  /*   Coluna NOME   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "NOME [%s]\n", buffer ); oLog.logInformation(szAux);
+                       // CASO O NOME ESTEJA VAZIO
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            output << registro.c_str() << endl ;
+                            output << MSG_NOME_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 1\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                            *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                       }
+                       else
+                       {
+                            strcpy( sNome, buffer );
+
+                            memset( &tDesmembraNome, 0x00, sizeof(TDesmembraNome) );
+                    		strcpy( tDesmembraNome.szNomeCompleto, buffer );
+                    		DesmembraNome(&tDesmembraNome);
+
+                    		strcpy(sNomePrimeiro, tDesmembraNome.szNomePrimeiro);
+                    		strcpy(sNomeMeio, tDesmembraNome.szNomeMeio);
+                    		strcpy(sNomeFim, tDesmembraNome.szNomeFim);
+                       }
+                       break;
+
+            case  1  :     /*   Coluna UF   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "UF [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_UF_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 2\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( ValidaUF( buffer, idUF ) == false )
+                       {
+                             if ( erroRegistro == false )
+                             {
+                                 output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                             }
+                             output << MSG_UF_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 3\n", buffer ); oLog.logInformation(szAux);
+                             erroRegistro = true;
+                       }
+                       break;
+
+            case  2  :  /*   Coluna EMAIL   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "EMAIL [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            sEMail[0] = 0x0;
+                            /*
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_EMAIL_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 4\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                            */
+                       }
+                       else if ( ValidaEMail( buffer ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_EMAIL_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 5\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else
+                       {
+                            strcpy( sEMail, buffer );
+                       }
+                       break;
+
+            case  3  :  /*   Coluna DDD   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "DDD [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            sDDD[0] = 0x0;
+                       }
+                       else
+                       {
+                            strcpy( sDDD, buffer );
+                       }
+                       break;
+
+
+            case  4  :  /*   Coluna TELEFONE   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "TELEFONE [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            sTelefone[0] = 0x0;
+                       }
+                       else if (ValidaNumerico(buffer) == false)
+					   {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_TELEFONE_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 6\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+					   }                       
+                       else if ( strlen(buffer) < 8 || strlen(buffer) > 9 )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_TELEFONE_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 7\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else
+                       {
+                            strcpy( sTelefone, buffer );
+                       }
+                       break;
+
+            case   5 :     /*   Coluna LOGINFRONTOFFICE   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "LOGINFRONTOFFICE [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_LOGIN_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 8\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+
+#if 0
+                       else if ( ValidaLogin( buffer ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_LOGIN_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 9\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+#endif
+
+                       else
+                       {
+                            strcpy( sLogin, buffer );
+                       }
+                       break;
+
+            case  6  :  /*   Coluna LOGINCTI   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "LOGINCTI [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            sLoginCTI[0] = 0x0;
+                       }
+                       else
+                       {
+                            strcpy( sLoginCTI, buffer );
+                       }
+                       break;
+
+            case   7 :     /*   Coluna REGIONAL   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "REGIONAL [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_REGIONAL_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 10\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( ValidaRegional( buffer, idUFOperadora ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_REGIONAL_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 11\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       break;
+
+            case   8 :     /*   Coluna HIERARQUIAFUNCIONAL   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "HIERARQUIAFUNCIONAL [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_HIERARQUIA_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 12\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( ValidaHierarquia( buffer, idNivelHierarquia, idNivelPaiHierarquia ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_HIERARQUIA_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 13\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       break;
+
+            case   9 :     /*   Coluna CARGO   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "CARGO [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_CARGO_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 14\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( ValidaCargo( buffer, idNivelHierarquia, idCargo ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_CARGO_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 15\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       break;
+
+            case   10 :     /*   Coluna ORGANIZACAO   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "ORGANIZACAO [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_ORGANIZACAO_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 16\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( ValidaOrganizacao( buffer, idOrganizacaoPai, idOrganizacao, idTipoOrganizacao ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_ORGANIZACAO_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 17\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       break;
+
+            case   11 :     /*   Coluna DEPARTAMENTO   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "DEPARTAMENTO [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_DEPARTAMENTO_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 18\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( ValidaDepartamento( buffer, idOrganizacao, idDepto ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_DEPARTAMENTO_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 19\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       break;
+
+            case   12 :     /*   Coluna PERFILATENDIMENTO   */
+                       strcpy( buffer, result );
+                       strcpy( szPerfilAtendimento, result );
+                       sprintf(szAux, "PERFILATENDIMENTO [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_PERFIL_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 20\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( ValidaPerfil( buffer, idPerfilAtd ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_PERFIL_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 21\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       break;
+
+            case  13 :     /*   Coluna FORNECEDOR   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "FORNECEDOR [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) && strcmp( szPerfilAtendimento, "VIVO" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_FORNECEDOR_NULL << endl ;
+                            sprintf(szAux, "DESCARTE 22\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( strcmp( buffer, "vazio" ) )
+                       {
+                       		if ( ValidaFornecedor( buffer, idFornecedor ) == false )
+                       		{
+                            	if ( erroRegistro == false )
+                            	{
+                               		output << registro.c_str() << endl ;
+                               		*LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            	}
+                            	output << MSG_FORNECEDOR_INVALID << endl ;
+                            	sprintf(szAux, "DESCARTE 23\n", buffer ); oLog.logInformation(szAux);
+                            	erroRegistro = true;
+                       		}
+                       }
+                       break;
+
+            case  14 :     /*   Coluna SITE   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "SITE [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) && strcmp( szPerfilAtendimento, "VIVO" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_SITE_NULL << endl ;
+                            sprintf(szAux, "DESCARTE 24\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( strcmp( buffer, "vazio" ) )
+                       {
+                       		if ( ValidaSite( buffer, idSite ) == false )
+                       		{
+                            	if ( erroRegistro == false )
+                            	{
+                                	output << registro.c_str() << endl ;
+                                	*LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            	}
+                            	output << MSG_SITE_INVALID << endl ;
+                            	sprintf(szAux, "DESCARTE 25\n", buffer ); oLog.logInformation(szAux);
+                            	erroRegistro = true;
+                       		}
+                       }
+                       break;
+
+            case  15 :     /*   Coluna LOGINSUPERIORIMEDIATO   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "LOGINSUPERIORIMEDIATO [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) && strcmp( szPerfilAtendimento, "VIVO" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_LOGINSUP_NULL << endl ;
+                            sprintf(szAux, "DESCARTE 26\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_LOGINSUP_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 27\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( ValidaLoginSup( buffer ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_LOGINSUP_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 28\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else
+                       {
+                            strcpy( sLoginSup, buffer );
+                       }
+                       break;
+
+            case  16  :  /*   Coluna LOGINROTEAMENTO   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "LOGINROTEAMENTO [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( strcmp( buffer, "vazio" ) && !strcmp( szPerfilAtendimento, "Consultor de Relacionamento" ) )
+                       {
+                            strcpy( sLoginRot, buffer );
+                       }
+                       break;
+
+            case  17 :     /*   Coluna CPF   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "CPF [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_CPF_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 31\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+
+#if 0
+                       else if ( ValidaCPF( buffer ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_CPF_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 32\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+#endif
+
+                       else
+                       {
+                            strcpy( sCPF, buffer );
+                       }
+                       break;
+
+            case  18 : /*   Coluna UFCPF   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "UFCPF [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_UFCPF_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 33\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else if ( ValidaUF( buffer, idUFCPF ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                 output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_UFCPF_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 34\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       break;
+
+            case  19 : /*   Coluna PAISCPF   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "PAISCPF [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_PAISCPF_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 35\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       
+                       else if ( ValidaPais( buffer, idPais ) == false )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_PAISCPF_INVALID << endl ;
+                            sprintf(szAux, "DESCARTE 36\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       break;
+
+            case  20 : /*   Coluna GRUPO   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "GRUPO [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_GRUPO_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 37\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else
+                       {
+                       pGrupos.clear();
+                       if ( ValidaGrupo( buffer, pGrupos ) == false )
+                       {
+                                //if ( pGrupos.empty() )
+                                //{
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_GRUPO_INVALID << endl ;
+                                    sprintf(szAux, "DESCARTE 37_a\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                                //}
+                       }
+                       }
+                       break;
+
+            case  21 :     /*   Coluna PERFIL   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "PERFIL [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_PERFILASSOC_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 38\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else
+                       {
+                       pPerfilAssoc.clear();
+                       if ( ValidaPerfilAssoc( buffer, pPerfilAssoc ) == false )
+                       {
+                                //if ( pPerfilAssoc.empty() && strcmp( buffer, "vazio" ) )
+                                //{
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_PERFILASSOC_INVALID << endl ;
+                                    sprintf(szAux, "DESCARTE 38_a\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                                //}
+                       }
+                       }
+                       break;
+
+            case  22 :     /*   Coluna OPERADORA   */
+                       strcpy( buffer, result );
+                       sprintf(szAux, "OPERADORA [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( !strcmp( buffer, "vazio" ) )
+                       {
+                            if ( erroRegistro == false )
+                            {
+                                output << registro.c_str() << endl ;
+                                *LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            }
+                            output << MSG_OPERADORA_VAZIO << endl ;
+                            sprintf(szAux, "DESCARTE 39\n", buffer ); oLog.logInformation(szAux);
+                            erroRegistro = true;
+                       }
+                       else
+                       {
+                       pOperadoraAssoc.clear();
+                       sprintf(szAux, "OPERADORA [%s]\n", buffer ); oLog.logInformation(szAux);
+                       if ( ValidaRegionalAssoc( buffer, pOperadoraAssoc ) == false )
+                       {
+                                //if ( pOperadoraAssoc.empty() && strcmp( buffer, "vazio" ) )
+                                //{
+                            	if ( erroRegistro == false )
+                            	{
+                                	output << registro.c_str() << endl ;
+                                	*LinhasRejeitadas = *LinhasRejeitadas + 1;
+                            	}
+                            	output << MSG_OPERADORA_INVALID << endl ;
+                                    sprintf(szAux, "DESCARTE 39_a\n", buffer ); oLog.logInformation(szAux);
+                            	erroRegistro = true;
+                                //}
+                       		}
+                       }
+                       break;
+
+        }
+
+    }
+
+
+	if (strcmp(sDDD, NULL) != 0)
+	{
+	    sqlca.sqlcode = 0;
+	    EXEC SQL
+		SELECT
+			IDAREAREGISTRO
+		INTO
+			:idAreaRegistro:i_idAreaRegistro
+		FROM
+			APOIO.AREAREGISTRO
+		WHERE
+			CDAREAREGISTRO = :sDDD;
+	}
+	else
+		idAreaRegistro = 0;
+
+    sprintf(szAux, ">>> Passou 14\n" ); oLog.logInformation(szAux);
+
+
+
+	// Busca usuario atraves do login
+	sqlca.sqlcode = 0;
+    EXEC SQL
+	select usuario.idpessoausuario
+	  ,pessoadocumento.idpessoadocumento
+	  ,pessoadepara.idpessoadepara
+	  ,documento.iddocumento
+	  ,tipodocumento.sgtipodocumento
+	  ,documento.nrdocumento
+	into
+	  :idPessoa:i_idPessoa
+	  ,:idPessoaDocumento:i_idPessoaDocumento
+	  ,:idPessoaDePara:i_idPessoaDePara
+	  ,:idDocumento:i_idDocumento
+	  ,:sgTipoDocumento:i_sgTipoDocumento
+	  ,:nrDocumento:i_nrDocumento
+	from acesso.usuario usuario
+	  ,customer.pessoadocumento pessoadocumento
+	  ,customer.pessoadepara pessoadepara
+	  ,customer.documento documento
+	  ,apoio.tipodocumento tipodocumento
+	where usuario.idpessoausuario = pessoadocumento.idpessoa
+	and pessoadocumento.iddocumento = documento.iddocumento
+	and (pessoadocumento.dtexpiracao is null or pessoadocumento.dtexpiracao > trunc(sysdate))
+	and pessoadocumento.idpessoa = pessoadepara.idpessoa (+)
+	and documento.idtipodocumento = tipodocumento.idtipodocumento
+	and usuario.nmloginusuario = :sLogin
+	and rownum < 2
+	order by usuario.dtinclusao desc, tipodocumento.nrprioridade
+	;
+
+	// Se login/usuario encontrado na base
+	if (idPessoa && idPessoaDocumento && idDocumento) {
+		// Se login encontrado para outro cpf
+		if ( strcmp(sCPF, (char*)nrDocumento.arr) ) {
+			// Desativa login encontrado
+			EXEC SQL WHENEVER SQLERROR goto NROLDX;
+			sqlca.sqlcode = 0;
+
+NROLDX:
+			if (sqlca.sqlcode && sqlca.sqlcode != -1)
+				goto erroGravacao;
+
+			nrOldX++;
+			sqlca.sqlcode = 0;
+			EXEC SQL
+			UPDATE ACESSO.USUARIO
+			SET NMLOGINUSUARIO = :sLogin||'_OLD'||:nrOldX
+				,IDSTATUSUSUARIO = (select IDSTATUSUSUARIO from APOIO.STATUSUSUARIO where SGSTATUSUSUARIO = 'INATIVO')
+			WHERE
+				IDPESSOAUSUARIO = :idPessoa;
+
+			idDocumento = 0;
+			idPessoaDocumento = 0;
+			idPessoa = 0;
+			idPessoaDePara = 0;
+
+		    bzero( &sgTipoDocumento, sizeof(sgTipoDocumento));
+		    bzero( &nrDocumento, sizeof(nrDocumento));
+
+		    EXEC SQL WHENEVER SQLERROR goto erroGravacao;
+		}
+		// Se login encontrado para o mesmo cpf
+		else {
+			// Se tipo documento diferente de CPF (ex: FCPF)
+			if ( strcmp((char*)sgTipoDocumento.arr, "CPF") ) {
+				// Desativa login encontrado
+				EXEC SQL WHENEVER SQLERROR goto NROLDXCPF;
+				sqlca.sqlcode = 0;
+
+NROLDXCPF:
+				if (sqlca.sqlcode && sqlca.sqlcode != -1)
+					goto erroGravacao;
+
+				nrOldX++;
+				sqlca.sqlcode = 0;
+				EXEC SQL
+				UPDATE ACESSO.USUARIO
+				SET NMLOGINUSUARIO = :sLogin||'_OLD'||:nrOldX
+					,IDSTATUSUSUARIO = (select IDSTATUSUSUARIO from APOIO.STATUSUSUARIO where SGSTATUSUSUARIO = 'INATIVO')
+				WHERE
+					IDPESSOAUSUARIO = :idPessoa;
+
+				// Cria novo login
+				idDocumento = 0;
+				idPessoaDocumento = 0;
+				idPessoa = 0;
+				idPessoaDePara = 0;
+
+			    bzero( &sgTipoDocumento, sizeof(sgTipoDocumento));
+			    bzero( &nrDocumento, sizeof(nrDocumento));
+
+			    EXEC SQL WHENEVER SQLERROR goto erroGravacao;
+			}
+			// Se tipo documento CPF
+			else {
+				// Limpa perfil do usuario
+				EXEC SQL
+				DELETE FROM
+					ACESSO.USUARIOROLE
+				WHERE
+					IDPESSOAUSUARIO = :idPessoa;
+
+				EXEC SQL
+				DELETE FROM
+					ACESSO.USUARIOGRUPO
+				WHERE
+					IDPESSOAUSUARIO = :idPessoa;
+
+				EXEC SQL
+				DELETE FROM
+					ACESSO.USUARIOCARGO
+				WHERE
+					IDPESSOAUSUARIO = :idPessoa;
+
+				EXEC SQL
+				DELETE FROM
+					ACESSO.USUARIOHIERARQUIA
+				WHERE
+					IDPESSOAUSUARIO = :idPessoa;
+
+				EXEC SQL
+				DELETE FROM
+					ACESSO.USUARIOUFOPERADORA
+				WHERE
+					IDPESSOAUSUARIO = :idPessoa;
+
+				EXEC SQL
+				UPDATE ACESSO.USUARIO
+				SET DTULTIMAALTERACAO = sysdate
+				WHERE
+					IDPESSOAUSUARIO = :idPessoa;
+
+				EXEC SQL
+				UPDATE ACESSO.USUARIO
+				SET	NMLOGINUSUARIO = :sLogin
+					,INREINICIALIZASENHA = 1
+					,INPRONTOATENDER = 0
+					,INATRIBUICAOPROCESSOS = 0
+					,IDSTATUSUSUARIO = :idStatusAtual
+					,DTSTATUSUSUARIO = SYSDATE
+					,INDISPONIVELWF = 0
+					,IDUSUARIOALTERACAO = 11
+					,DTULTIMAALTERACAO = SYSDATE
+					,DSEMAIL = :sEMail
+					,IDAREAREGISTRO = :idAreaRegistro
+					,SGSENHAUSUARIO = :sLogin
+					,INCONSULTOR = '0'
+					,IDUFOPERADORA = :idUFOperadora
+					,IDPERFILCONSULTORATD = :idPerfilAtd
+					,IDFORNECEDORCONSULTORATD = :idFornecedor
+					,IDSITECONSULTORATD = :idSite
+					,NMNOME = :sNomePrimeiro
+					,NMNOMEMEIO = :sNomeMeio
+					,NMULTIMONOME = :sNomeFim
+					,NMLOGINUSUARIOCTI = :sLoginCTI
+					,NRTELEFONE = TO_NUMBER(:sTelefone)
+					,DSLOGINROTEAMENTO = :sLoginRot
+				WHERE IDPESSOAUSUARIO = :idPessoa
+				;
+
+				idPessoaUsuario = idPessoa;
+
+				// Atualiza pessoa
+				EXEC SQL
+				UPDATE CUSTOMER.PESSOA
+				SET IDSISTEMAORIGEM = :idSistemaOrigem
+					,NMPESSOA = :sNome
+					,NMNOME = :sNomePrimeiro
+					,NMNOMEMEIO = :sNomeMeio
+					,NMSOBRENOME = :sNomeFim
+					,INFALECIMENTOINFORMADO = 0
+					,IDTIPOPESSOA = :idTipoPessoa
+					,IDTIPOCARTEIRA = :idTipoCarteira
+					,IDUF = TO_NUMBER(:idUF)
+					,IDPROBINADIMPLENCIA = 0
+					,IDCHURNPROBABILIDADE = 0
+					,IDPESSOASISTEMAORIGEM = :idPessoa
+					,IDUSUARIOALTERACAO = 11
+					,DTULTIMAALTERACAO = SYSDATE
+				WHERE IDPESSOA = :idPessoa
+				;
+			}
+		}
+	}
+	// Se login/usuario nao encontrado na base
+	else {
+		idDocumento = 0;
+		idPessoaDocumento = 0;
+		idPessoa = 0;
+		idPessoaDePara = 0;
+
+	    bzero( &sgTipoDocumento, sizeof(sgTipoDocumento));
+	    bzero( &nrDocumento, sizeof(nrDocumento));
+
+	    // Busca usuario atraves do CPF
+	    sqlca.sqlcode = 0;
+	    EXEC SQL
+		select usuario.idpessoausuario
+		  ,pessoadocumento.idpessoadocumento
+		  ,pessoadepara.idpessoadepara
+		  ,documento.iddocumento
+		  ,tipodocumento.sgtipodocumento
+		  ,documento.nrdocumento
+		  ,usuario.nmloginusuario
+		into
+		  :idPessoa:i_idPessoa
+		  ,:idPessoaDocumento:i_idPessoaDocumento
+		  ,:idPessoaDePara:i_idPessoaDePara
+		  ,:idDocumento:i_idDocumento
+		  ,:sgTipoDocumento:i_sgTipoDocumento
+		  ,:nrDocumento:i_nrDocumento
+		  ,:sLoginBase:i_sLoginBase
+		from acesso.usuario usuario
+		  ,customer.pessoadocumento pessoadocumento
+		  ,customer.pessoadepara pessoadepara
+		  ,customer.documento documento
+		  ,apoio.tipodocumento tipodocumento
+		where usuario.idpessoausuario = pessoadocumento.idpessoa
+		and pessoadocumento.iddocumento = documento.iddocumento
+		and (pessoadocumento.dtexpiracao is null or pessoadocumento.dtexpiracao > trunc(sysdate))
+		and pessoadocumento.idpessoa = pessoadepara.idpessoa (+)
+		and documento.idtipodocumento = tipodocumento.idtipodocumento
+		and tipodocumento.sgclassificacao = 'CPF'
+		and documento.nrdocumento = :sCPF
+		and rownum < 2
+		order by usuario.dtinclusao desc
+		;
+
+		// Se CPF encontrado mas login diferente
+		if (idPessoa && idPessoaDocumento && idDocumento) {
+			// Cria o novo login, cria idpessoa, utilizando CPF encontrado
+			sqlca.sqlcode = 0;
+			EXEC SQL
+			UPDATE ACESSO.USUARIO
+			SET IDSTATUSUSUARIO = (select IDSTATUSUSUARIO from APOIO.STATUSUSUARIO where SGSTATUSUSUARIO = 'INATIVO')
+			WHERE
+				IDPESSOAUSUARIO = :idPessoa;
+
+			// Se tipo documento diferente de CPF (ex: FCPF)
+			if ( strcmp((char*)sgTipoDocumento.arr, "CPF") ) {
+				// Cria documento do tipo CPF caso nao exista
+				idDocumento = 0;
+			    bzero( &sgTipoDocumento, sizeof(sgTipoDocumento));
+			    bzero( &nrDocumento, sizeof(nrDocumento));
+			}
+
+			idPessoaDocumento = 0;
+			idPessoa = 0;
+			idPessoaDePara = 0;
+		}
+		// Usuario nao encontrado
+		else {
+			// CPF e LOGIN informados no arquivo não são existentes na base:
+			//    Realiza a criação do usuário na base.
+			idDocumento = 0;
+			idPessoaDocumento = 0;
+			idPessoa = 0;
+			idPessoaDePara = 0;
+
+		    bzero( &sgTipoDocumento, sizeof(sgTipoDocumento));
+		    bzero( &nrDocumento, sizeof(nrDocumento));
+		}
+	}
+
+    if ( erroRegistro == true)
+    {
+        sprintf(szAux, ">>> Registro descartado [%s]\n", (char*)registro.c_str() ); oLog.logInformation(szAux);
+        return -1;
+    }
+	
+    EXEC SQL WHENEVER SQLERROR goto erroGravacao;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+
+    // DOCUMENTO
+    // idDocumento = 0;
+    if ( !idDocumento )
+    {
+	EXEC SQL
+    SELECT
+		   IDDOCUMENTO
+    INTO
+		   :idDocumento:i_idDocumento
+    FROM
+		   CUSTOMER.DOCUMENTO
+    WHERE
+		   NRDOCUMENTO = :sCPF
+		   AND IDTIPODOCUMENTO IN (SELECT IDTIPODOCUMENTO FROM APOIO.TIPODOCUMENTO WHERE SGTIPODOCUMENTO = 'CPF')
+		   AND ROWNUM <= 1;
+
+		if ( idDocumento == 0 )
+		{
+			EXEC SQL
+			SELECT CUSTOMER.DOCUMENTOSQ.NEXTVAL
+				INTO :idDocumento
+				FROM DUAL;
+    
+			sprintf(szAux, ">>> idDocumento [%ld]\n",idDocumento ); oLog.logInformation(szAux);
+			sprintf(szAux, ">>> sCPF        [%s]\n" ,sCPF ); oLog.logInformation(szAux);
+			sprintf(szAux, ">>> idUFCPF     [%s]\n" ,idUFCPF ); oLog.logInformation(szAux);
+	
+    sqlca.sqlcode = 0;
+
+			//Insere um documento
+    EXEC SQL
+			INSERT INTO CUSTOMER.DOCUMENTO
+			(
+				IDDOCUMENTO
+				,NRDOCUMENTO
+				,IDPAIS
+				,IDUF
+				,IDTIPODOCUMENTO
+				,IDUSUARIOALTERACAO
+				,DTULTIMAALTERACAO
+			)
+			VALUES
+			(
+				:idDocumento
+				,TO_CHAR(:sCPF)
+				,TO_NUMBER(:idPais)
+				,TO_NUMBER(:idUFCPF)
+				,TO_NUMBER(1)
+				,TO_NUMBER(11)
+				,SYSDATE
+			);
+		}
+
+		sprintf(szAux, ">>> Passou 8\n" ); oLog.logInformation(szAux);
+    }
+	
+
+    // PESSOA
+    if ( !idPessoa )
+    {
+    sqlca.sqlcode = 0;
+    EXEC SQL
+    SELECT
+        CUSTOMER.PESSOASQ.NEXTVAL
+    INTO
+        :idPessoa
+    FROM DUAL;
+            
+
+
+    sprintf(szAux, ">>> Passou 3\n" ); oLog.logInformation(szAux);
+
+    //Insere a pessoa
+    sqlca.sqlcode = 0;
+    EXEC SQL
+    INSERT INTO CUSTOMER.PESSOA
+    ( 
+        IDPESSOA
+       ,IDSISTEMAORIGEM
+       ,NMPESSOA
+       ,NMNOME
+       ,NMNOMEMEIO
+       ,NMSOBRENOME
+       ,DTCADASTRO
+       ,INFALECIMENTOINFORMADO
+       ,IDTIPOPESSOA
+       ,IDTIPOCARTEIRA
+       ,IDUF
+       ,IDPROBINADIMPLENCIA
+       ,IDCHURNPROBABILIDADE
+       ,IDPESSOASISTEMAORIGEM
+       ,IDUSUARIOALTERACAO
+       ,DTULTIMAALTERACAO
+    )
+    VALUES
+    ( 
+        :idPessoa
+       ,:idSistemaOrigem
+       ,:sNome
+       ,:sNomePrimeiro
+       ,:sNomeMeio
+       ,:sNomeFim
+       ,SYSDATE //DTCADASTRO
+       ,0 //INFALECIMENTOINFORMADO
+       ,:idTipoPessoa
+       ,:idTipoCarteira //IDTIPOCARTEIRA
+       ,TO_NUMBER(:idUF)
+       ,0 //IDPROBINADIMPLENCIA
+       ,0 //IDCHURNPROBABILIDADE
+       ,:idPessoa
+       ,11
+       ,SYSDATE
+    );
+
+    sprintf(szAux, ">>> Passou 5\n" ); oLog.logInformation(szAux);
+
+    sqlca.sqlcode = 0;
+    EXEC SQL
+    SELECT
+        CUSTOMER.PESSOADEPARASQ.NEXTVAL
+    INTO
+        :idPessoaDePara
+    FROM DUAL;
+
+
+    sprintf(szAux, ">>> Passou 6\n" ); oLog.logInformation(szAux);
+
+    sqlca.sqlcode = 0;
+    //Insere em PessoaDePara
+    EXEC SQL
+    INSERT INTO 
+        CUSTOMER.PESSOADEPARA
+    ( 
+        IDPESSOADEPARA
+       ,IDPESSOA
+       ,IDPESSOAORIGEM
+       ,IDUSUARIOALTERACAO
+       ,DTULTIMAALTERACAO
+    )
+    VALUES
+    ( 
+        :idPessoaDePara
+       ,:idPessoa
+       ,:idPessoa
+       ,11
+       ,SYSDATE
+    );
+
+    sprintf(szAux, ">>> Passou 7\n" ); oLog.logInformation(szAux);
+	}
+	
+
+    if ( !idPessoaDocumento ) {
+    sqlca.sqlcode = 0;
+    //Definicao da VIVO:
+    //	gravar a sigla de tipo de documento em idDocumentoSistemaOrigem em pessoadocumento
+    EXEC SQL
+    SELECT
+        SGTIPODOCUMENTO
+    INTO
+        :idDocumentoSistemaOrigem:i_idDocumentoSistemaOrigem
+    FROM
+        CUSTOMER.DOCUMENTO DOCUMENTO,
+        APOIO.TIPODOCUMENTO TIPODOCUMENTO
+    WHERE
+        DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO
+    AND
+        DOCUMENTO.IDDOCUMENTO = :idDocumento;
+
+    CONVIND( idDocumentoSistemaOrigem, i_idDocumentoSistemaOrigem );
+    sprintf(szAux, ">>> Passou 10\n" ); oLog.logInformation(szAux);
+
+    sqlca.sqlcode = 0;
+    //Recupera uma UD unica
+    EXEC SQL
+    SELECT CUSTOMER.PESSOADOCUMENTOSQ.NEXTVAL
+      INTO :idPessoaDocumento
+      FROM DUAL;
+
+    sprintf(szAux, ">>> Passou 11\n" ); oLog.logInformation(szAux);
+
+    sqlca.sqlcode = 0;
+    //Insere um documento
+    EXEC SQL
+    INSERT INTO CUSTOMER.PESSOADOCUMENTO
+    (
+       IDPESSOADOCUMENTO
+      ,IDPESSOA
+      ,IDDOCUMENTO
+      ,IDSISTEMAORIGEM
+      ,IDDOCUMENTOSISTEMAORIGEM
+      ,IDUSUARIOALTERACAO
+      ,DTULTIMAALTERACAO
+    )
+    VALUES
+    (
+       :idPessoaDocumento
+      ,:idPessoa
+      ,:idDocumento
+      ,:idSistemaOrigem
+      ,:idDocumentoSistemaOrigem
+      ,11
+      ,SYSDATE
+    );
+
+    sprintf(szAux, ">>> Passou 12\n" ); oLog.logInformation(szAux);
+	}
+
+
+    if ( !idPessoaUsuario ) {
+    sqlca.sqlcode = 0;
+    //Insere usuario
+    EXEC SQL 
+    INSERT INTO ACESSO.USUARIO 
+    (
+         IDPESSOAUSUARIO
+        ,NMLOGINUSUARIO
+        ,INREINICIALIZASENHA
+        ,INPRONTOATENDER
+        ,INATRIBUICAOPROCESSOS
+        ,IDSTATUSUSUARIO
+        ,DTSTATUSUSUARIO
+        ,INDISPONIVELWF
+        ,IDUSUARIOALTERACAO
+        ,DTULTIMAALTERACAO
+        ,DSEMAIL
+        ,IDAREAREGISTRO
+        ,SGSENHAUSUARIO
+        ,INCONSULTOR
+        ,IDUFOPERADORA
+        ,IDPERFILCONSULTORATD
+        ,IDFORNECEDORCONSULTORATD
+        ,IDSITECONSULTORATD 
+        ,NMNOME
+        ,NMNOMEMEIO
+        ,NMULTIMONOME
+        ,NMLOGINUSUARIOCTI
+        ,NRTELEFONE
+        ,DSLOGINROTEAMENTO
+			,DTINCLUSAO
+    )
+    VALUES
+    (
+         :idPessoa
+        ,:sLogin
+        ,1
+        ,0
+        ,0
+        ,:idStatusAtual
+        ,SYSDATE
+        ,0
+        ,11
+        ,SYSDATE
+        ,:sEMail
+        ,:idAreaRegistro
+        ,:sLogin
+        ,'0'
+        ,:idUFOperadora
+        ,:idPerfilAtd
+        ,:idFornecedor
+        ,:idSite
+        ,:sNomePrimeiro
+        ,:sNomeMeio
+        ,:sNomeFim
+        ,:sLoginCTI
+        ,TO_NUMBER(:sTelefone)
+        ,:sLoginRot
+			,SYSDATE
+    );
+
+    sprintf(szAux, ">>> Passou 15\n" ); oLog.logInformation(szAux);
+    }
+
+    sqlca.sqlcode = 0;
+    EXEC SQL
+    SELECT 
+        USUARIO.IDPESSOAUSUARIO
+    INTO
+        :idUsuarioChefe:i_idUsuarioChefe
+    FROM
+        ACESSO.USUARIO USUARIO
+    WHERE
+        UPPER(TRIM(USUARIO.NMLOGINUSUARIO)) = UPPER(TRIM(:sLoginSup));
+			
+	
+    sprintf(szAux, ">>> Passou 16\n" ); oLog.logInformation(szAux);
+
+    sqlca.sqlcode = 0;
+    //Se existe um login de chefe, entao tenta apagar alguma relacao ja existente
+    EXEC SQL
+    DELETE FROM
+        ACESSO.USUARIOHIERARQUIA
+    WHERE
+        IDPESSOAUSUARIO = :idPessoa;
+		
+    sprintf(szAux, ">>> Passou 17.1\n" ); oLog.logInformation(szAux);
+
+    //Insere a relacao que indica o login do chefe
+    sqlca.sqlcode=0;
+    EXEC SQL
+    INSERT INTO ACESSO.USUARIOHIERARQUIA 
+    (
+       IDPESSOAUSUARIO
+      ,IDPESSOAUSUARIOCHEFE
+      ,IDUSUARIOALTERACAO
+      ,DTULTIMAALTERACAO
+    )
+    VALUES
+    (
+       :idPessoa
+      ,:idUsuarioChefe
+      ,11
+      ,SYSDATE
+    );
+
+	sprintf(szAux, ">>> Passou 17.2\n" ); oLog.logInformation(szAux);
+    sqlca.sqlcode=0;
+    EXEC SQL
+    INSERT INTO ACESSO.USUARIOCARGO
+      (IDUSUARIOCARGO,
+       IDCARGO,
+       IDPESSOAUSUARIO,
+       IDUSUARIOALTERACAO,
+       DTULTIMAALTERACAO)
+    VALUES
+      ( ACESSO.USUARIOCARGOSQ.NEXTVAL
+       ,:idCargo
+       ,:idPessoa
+       ,11
+       ,SYSDATE);
+
+	sprintf(szAux, ">>> Passou 17.3\n" ); oLog.logInformation(szAux);
+    sqlca.sqlcode=0;
+    EXEC SQL
+    SELECT 
+        IDORGANIZACAODEPARTAMENTO
+    INTO
+        :idOrganizacaoDepartamento:i_idOrganizacaoDepartamento
+    FROM
+       ORGANOGRAMA.ORGANIZACAODEPARTAMENTO
+    WHERE
+        IDDEPARTAMENTO = UPPER(TRIM(:idDepto))
+    AND IDORGANIZACAO  = :idOrganizacao;
+
+    sprintf(szAux, ">>> Passou 17.4\n" ); oLog.logInformation(szAux);
+    sqlca.sqlcode=0;
+    EXEC SQL
+    SELECT
+         IDNIVELCARGO
+    INTO
+        :idNivelCargo:i_idNivelCargo
+    FROM
+        ORGANOGRAMA.NIVELCARGO
+    WHERE
+        IDNIVEL = :idNivelHierarquia
+        AND IDCARGO  = :idCargo;
+
+	sprintf(szAux, ">>> Passou 17.5\n" ); oLog.logInformation(szAux);
+    sqlca.sqlcode = 0;
+    EXEC SQL 
+    DELETE FROM
+    	ORGANOGRAMA.HIERARQUIADEPTOPESSOA
+    WHERE
+    	IDPESSOA = :idPessoa
+    ;
+
+    EXEC SQL 
+    INSERT INTO ORGANOGRAMA.HIERARQUIADEPTOPESSOA 
+    ( 
+        IDHIERARQUIADEPTOPESSOA, 
+        IDNIVELCARGO, 
+        IDPESSOA, 
+        IDORGANIZACAODEPARTAMENTO,
+        IDUSUARIOALTERACAO, 
+        DTULTIMAALTERACAO 
+    )
+    VALUES
+    ( 
+        ORGANOGRAMA.HIERARQUIADEPTOPESSOASQ.nextval , 
+        :idNivelCargo,
+        :idPessoa , 
+        :idOrganizacaoDepartamento , 
+        11 , 
+        SYSDATE 
+    );
+
+    sprintf(szAux, ">>> Passou 18\n" ); oLog.logInformation(szAux);
+
+    for ( itCampos=pGrupos.begin();itCampos!=pGrupos.end();itCampos++ )
+    {
+        idGrupo = *itCampos;
+        
+        sqlca.sqlcode = 0;
+        //Realiza o insert
+        EXEC SQL 
+        INSERT INTO ACESSO.USUARIOGRUPO
+        (
+            IDUSUARIOGRUPO,
+            IDPESSOAUSUARIO,
+            IDGRUPO,
+            IDUSUARIOALTERACAO,
+            DTULTIMAALTERACAO,
+            INSUPERVISOR
+        )
+        VALUES
+        (
+            ACESSO.USUARIOGRUPOSQ.NEXTVAL ,
+            :idPessoa ,
+            :idGrupo ,
+            11 ,
+            SYSDATE ,
+            0
+        );
+    }
+
+    sprintf(szAux, ">>> Passou 19\n" ); oLog.logInformation(szAux);
+
+    // Associacao de Perfil
+    sqlca.sqlcode = 0;
+    EXEC SQL 
+    DELETE FROM acesso.UsuarioRole 
+    WHERE idPessoaUsuario = :idPessoa ;
+
+    sprintf(szAux, ">>> Passou 20\n" ); oLog.logInformation(szAux);
+
+    for ( itCampos=pPerfilAssoc.begin();itCampos!=pPerfilAssoc.end();itCampos++ )
+    {
+        idRole = *itCampos;
+
+        sqlca.sqlcode = 0;
+        EXEC SQL 
+        INSERT INTO ACESSO.USUARIOROLE 
+        ( 
+            IDUSUARIOROLE, 
+            IDPESSOAUSUARIO, 
+            IDROLE, 
+            IDUSUARIOALTERACAO, 
+            DTULTIMAALTERACAO 
+        )
+        VALUES
+        ( 
+            ACESSO.USUARIOROLESQ.nextval , 
+            :idPessoa , 
+            :idRole, 
+            11 , 
+            SYSDATE 
+        );
+    }
+
+    sprintf(szAux, ">>> Passou 21\n" ); oLog.logInformation(szAux);
+
+    sqlca.sqlcode = 0;
+    EXEC SQL 
+    DELETE FROM acesso.UsuarioUFOperadora 
+    WHERE idPessoaUsuario = :idPessoa ;
+
+    sprintf(szAux, ">>> Passou 22\n" ); oLog.logInformation(szAux);
+
+    for ( itCampos=pOperadoraAssoc.begin();itCampos!=pOperadoraAssoc.end();itCampos++ )
+    {
+        idUFOperAssoc = *itCampos;
+
+        sqlca.sqlcode = 0;
+        EXEC SQL 
+        INSERT INTO ACESSO.USUARIOUFOPERADORA 
+        ( 
+            IDUSUARIOUFOPERADORA, 
+            IDPESSOAUSUARIO, 
+            IDUFOPERADORA, 
+            IDUSUARIOALTERACAO, 
+            DTULTIMAALTERACAO 
+        )
+        VALUES
+        ( 
+            acesso.UsuarioUFOperadorasq.nextval , 
+            :idPessoa , 
+            :idUFOperAssoc , 
+            11 , 
+            SYSDATE 
+        );
+    }
+	sprintf(szAux, ">>> Passou 23\n" ); oLog.logInformation(szAux);
+
+#if 0
+	//sprintf(execJar,"java -jar LDAPUser.jar %s %s %s %s", sLogin, tDesmembraNome.szNomePrimeiro, tDesmembraNome.szNomeFim, sEMail);
+  	//sprintf(szAux, "### cmd java[%s]\n", execJar); oLog.logInformation(szAux);
+  	//system(execJar);
+  	
+    if ((childID = fork()) == -1) {
+       sprintf(szAux, "Fork error.\n"); oLog.logInformation(szAux);
+       EXEC SQL ROLLBACK;
+       return -1;
+    }
+    else if (childID == 0) {
+       execl("./LDAPUser.sh", "./LDAPUser.sh",  sLogin, tDesmembraNome.szNomePrimeiro, tDesmembraNome.szNomeFim, sEMail, NULL);
+       sprintf(szAux, "Executando ./LDAPUser.sh\n"); oLog.logInformation(szAux);
+       sprintf(szAux, "sLogin: %s\n", sLogin); oLog.logInformation(szAux);
+       sprintf(szAux, "szNomePrimeiro: %s\n", tDesmembraNome.szNomePrimeiro); oLog.logInformation(szAux);
+       sprintf(szAux, "szNomeFim: %s\n", tDesmembraNome.szNomeFim); oLog.logInformation(szAux);
+       sprintf(szAux, "sEMail: %s\n\n", sEMail); oLog.logInformation(szAux);
+
+       endExecl=1;
+    }
+    else {
+       	for(iSec = 0; iSec < 120 and endChild == 0; iSec++) {
+        	endID = waitpid(childID, &status, WNOHANG);
+          	if (endID == -1) {            /* error calling waitpid */
+             	sprintf(szAux, "Waitpid error.\n"); oLog.logInformation(szAux);
+             	endChild=1;
+          	}
+          	else if (endID == 0) {        /* child still running */
+             	sleep(1);
+          	}
+          	else {
+          		sprintf(szAux, "*** STATUS: %d\n", status); oLog.logDebug(szAux);
+
+          		if (endID == childID) {  /* child ended */
+	             	if (WIFEXITED(status)) {
+	                	sprintf(szAux, "Status LDAP [%d]. Sucesso.\n", status); oLog.logInformation(szAux);
+	                }
+	             	else if (WIFSIGNALED(status)) {
+	                	sprintf(szAux, "Status LDAP [%d]. Processo filho terminou com sinal.\n", status); oLog.logInformation(szAux);
+	                }
+	             	else if (WIFSTOPPED(status)) {
+	                	sprintf(szAux, "Status LDAP [%d]. Processo filho foi parado.\n", status); oLog.logInformation(szAux);
+	                } 
+	             	else {
+	             		sprintf(szAux, "Status LDAP [%d]. Processo terminou com status desconhecido.\n", status); oLog.logInformation(szAux);
+	             	}
+	             	endChild=1;
+          		}
+          	}
+    	}
+
+		sqlca.sqlcode = 0;
+		if (WIFEXITED(status))
+		{
+			sprintf(szAux, "*** SQL COMMIT ***\n"); oLog.logDebug(szAux);
+			EXEC SQL COMMIT;
+		}
+		else
+		{
+			sprintf(szAux, "*** SQL ROLLBACK ***\n"); oLog.logDebug(szAux);
+			EXEC SQL ROLLBACK;
+		}
+	}
+#else
+
+REPROCLDAP:
+
+	memset(execJar, 0, sizeof(execJar));
+
+	sprintf(execJar, "java -jar LDAPUser.jar \"%s\" \"%s\" \"%s\" \"%s\"", sLogin, tDesmembraNome.szNomePrimeiro, tDesmembraNome.szNomeFim, sEMail);
+  	sprintf(szAux, "### cmd [%s]\n", execJar); oLog.logInformation(szAux);
+  	retcode = system(execJar);
+  	sprintf(szAux, "### cmd retcode=[%d]\n", retcode); oLog.logInformation(szAux);
+
+	if (retcode == 0)
+	{
+		sprintf(szAux, "*** SQL COMMIT ***\n"); oLog.logDebug(szAux);
+		EXEC SQL COMMIT;
+	}
+	else
+	{
+		if (reprocldap--)
+			goto REPROCLDAP;
+
+		sprintf(szAux, "*** SQL ROLLBACK ***\n"); oLog.logDebug(szAux);
+		EXEC SQL ROLLBACK;
+
+        if ( erroRegistro == false )
+        {
+            output << registro.c_str() << endl ;
+            *LinhasRejeitadas = *LinhasRejeitadas + 1;
+        }
+        output << "*** ERRO LDAP ***" << endl ;
+        sprintf(szAux, "DESCARTE ERRO LDAP\n", buffer ); oLog.logInformation(szAux);
+        erroRegistro = true;
+
+		return -1;
+	}
+
+#endif
+
+	return 0;
+
+    erroGravacao:
+        sprintf(szAux, "*** ERRO ORACLE sqlca.sqlcode[%d] sqlca.sqlerrmc [%s]\n", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc ); oLog.logDebug(szAux);
+        EXEC SQL ROLLBACK;
+
+        if ( erroRegistro == false )
+        {
+            output << registro.c_str() << endl ;
+            *LinhasRejeitadas = *LinhasRejeitadas + 1;
+        }
+        output << "*** ERRO ORACLE sqlca.sqlcode[" << sqlca.sqlcode << "] sqlca.sqlerrmc [" << sqlca.sqlerrm.sqlerrmc << "]" << endl ;
+        sprintf(szAux, "DESCARTE ERRO ORACLE\n", buffer ); oLog.logInformation(szAux);
+        erroRegistro = true;
+
+        if (sqlca.sqlcode == -1012 || sqlca.sqlcode == 1012)
+        	exit(-1);
+        return -1 ;
+}
+
+
+bool ValidaDtEnvio( char * buffer )
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+		char * pQuery;
+		VARCHAR dtEnvio[64];
+		short i_dtEnvio = -1;
+    EXEC SQL END DECLARE SECTION;
+
+	if (strlen(buffer) != 19)
+	   return false;
+	   
+	string query;
+	memset( &dtEnvio, 0x0, sizeof(dtEnvio) );
+   
+    query = "select to_date('";
+	query += buffer;
+    query += "','dd/mm/yyyy hh24:mi:ss') from dual";
+	pQuery = (char*)query.c_str();
+	
+	sprintf(szAux, "QUERY Validacao de Data [%s]\n", pQuery ); oLog.logInformation(szAux);
+
+    EXEC SQL WHENEVER SQLERROR goto erroValData;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL PREPARE S1 FROM :pQuery; 
+	EXEC SQL DECLARE VERIFICADATA CURSOR FOR S1;
+	EXEC SQL OPEN VERIFICADATA;
+	EXEC SQL FETCH VERIFICADATA INTO :dtEnvio:i_dtEnvio;
+	EXEC SQL CLOSE VERIFICADATA;
+	
+	CONVIND( dtEnvio,i_dtEnvio );
+	//sprintf(szAux, "dtEnvio [%s]\n", (char*)dtEnvio.arr ); oLog.logInformation(szAux);
+	
+	return true;
+	
+    erroValData:
+        sprintf(szAux, "*** DATA INVALIDA ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+		return false;
+}
+
+bool ValidaUF( char * buffer, char * idUFPrm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pUF = buffer;
+        VARCHAR idUF[256];
+        short i_idUF = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &idUF, 0x0, sizeof(idUF) );
+
+    EXEC SQL WHENEVER SQLERROR goto erroValUF;
+    
+    EXEC SQL
+    SELECT IDUF INTO :idUF:i_idUF FROM APOIO.UF UF WHERE TRIM(UPPER(UF.SGUF)) = TRIM(UPPER(:pUF)) and inpreenchelista = 1 and rownum < 2;
+
+    if ( !idUF.len ) {
+    	memset( &idUF, 0x0, sizeof(idUF) );
+        EXEC SQL
+        SELECT IDUF INTO :idUF:i_idUF FROM APOIO.UF UF WHERE TRIM(UPPER(UF.NMUF)) = TRIM(UPPER(:pUF)) and inpreenchelista = 1 and rownum < 2;
+    }
+    
+    CONVIND( idUF, i_idUF );
+    sprintf(szAux, "*** Retornou idUF [%s]\n", (char*)idUF.arr ); oLog.logInformation(szAux);
+
+    if ( idUF.len > 1 )
+    {
+        strcpy( idUFPrm,(char*)idUF.arr );
+        return true;
+    }
+    else
+    {
+    	strcpy( idUFPrm,"0" );
+        return false;
+    }
+
+    erroValUF:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+bool ValidaLogin( char * buffer )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pLogin = buffer;
+        int ct;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erroValidaLogin;
+    
+    if ( strlen(pLogin) < 6 || strlen(pLogin) > 9 )
+    {
+        sprintf(szAux, "!!! ERRO: login deve ter no minimo 6 e no maximo 9 caracteres\n" ); oLog.logDebug(szAux);
+        return false;
+    }
+    
+    EXEC SQL
+    select count(1) into :ct from acesso.usuario where TRIM(upper(nmloginusuario)) = TRIM(upper(:pLogin));
+    
+    if ( ct > 0 )
+    {
+        return false;
+    }
+
+    return true;
+
+    erroValidaLogin:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+bool ValidaLoginSup( char * buffer )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pLogin = buffer;
+        int ct;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erroValidaLogin;
+    
+    if ( strlen(pLogin) < 6 || strlen(pLogin) > 9 )
+    {
+        sprintf(szAux, "!!! ERRO: login do superior deve ter no minimo 6 e no maximo 9 caracteres\n" ); oLog.logDebug(szAux);
+        return false;
+    }
+
+    EXEC SQL
+    select count(1) into :ct from acesso.usuario where TRIM(upper(nmloginusuario)) = TRIM(upper(:pLogin));
+    
+    if ( ct == 0 )
+    {
+        return false;
+    }
+
+    return true;
+
+    erroValidaLogin:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+bool ValidaRegional( char * buffer, char * idUFOperadrm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pUF = buffer;
+        VARCHAR idUFOperad[256];
+        short i_idUFOperad = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &idUFOperad, 0x0, sizeof(idUFOperad) );
+
+    EXEC SQL WHENEVER SQLERROR goto erroValRegional;
+    
+    EXEC SQL
+    SELECT
+       TMP.IDUFOPERADORA
+    INTO
+       :idUFOperad:i_idUFOperad
+    FROM
+    (
+                SELECT 
+                    UFOPERADORA.IDUFOPERADORA AS IDUFOPERADORA ,
+                    UF.SGUF|| ' - '||PESSOA.NMPESSOA AS NMUFOPERADORA
+                FROM 
+                    CUSTOMER.UFOPERADORA UFOPERADORA,
+                    CUSTOMER.OPERADORA OPERADORA,
+                    CUSTOMER.PESSOA PESSOA,
+                    APOIO.UF UF,
+                    CUSTOMER.PESSOADEPARA PESSOADEPARA
+                WHERE 
+                    UFOPERADORA.IDUF = UF.IDUF
+                    AND UFOPERADORA.IDPESSOADEPARAOPERADORA = OPERADORA.IDPESSOADEPARAOPERADORA
+                    AND PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+                    AND PESSOADEPARA.IDPESSOADEPARA = OPERADORA.IDPESSOADEPARAOPERADORA 
+     ) TMP
+     WHERE
+        TRIM(UPPER(TMP.NMUFOPERADORA)) = TRIM(UPPER(:pUF)) ;               
+                
+    CONVIND( idUFOperad, i_idUFOperad );
+    
+    sprintf(szAux, "*** Retornou idUFOperad [%s]\n", (char*)idUFOperad.arr ); oLog.logInformation(szAux);
+
+    strcpy( idUFOperadrm,(char*)idUFOperad.arr );
+    if ( strlen(idUFOperadrm) > 0 )
+    { 
+        sprintf(szAux, "*** Encontrou idUFOperadrm\n" ); oLog.logInformation(szAux);
+        return true;
+    }
+    else
+    {
+        sprintf(szAux, "*** Nao encontrou idUFOperadrm\n" ); oLog.logInformation(szAux);
+        return false;
+    }
+
+    erroValRegional:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+bool ValidaHierarquia( char * buffer, char * idNivelPrm, char * idNivelPaiPrm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pNivel = buffer;
+        VARCHAR idNivel[256];
+        short i_idNivel = -1;
+        VARCHAR idNivelPai[256];
+        short i_idNivelPai = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &idNivel   , 0x0, sizeof(idNivel) );
+    memset( &idNivelPai, 0x0, sizeof(idNivelPai) );
+
+    EXEC SQL WHENEVER SQLERROR goto erroValHierarquia;
+    
+    EXEC SQL
+     SELECT nivel.idnivel
+          , nivelhierarquia.idnivelpai
+     INTO :idNivel:i_idNivel ,
+          :idNivelPai:i_idNivelPai
+       FROM organograma.nivel nivel
+          , organograma.nivelhierarquia nivelhierarquia
+      WHERE nivelhierarquia.idnivel = nivel.idnivel
+      AND TRIM(UPPER(nivel.dsnivel)) = TRIM(UPPER(:pNivel)) ;
+          
+    CONVIND( idNivel   , i_idNivel );
+    CONVIND( idNivelPai, i_idNivelPai );
+    sprintf(szAux, "*** Retornou idNivel    [%s]\n", (char*)idNivel.arr ); oLog.logInformation(szAux);
+    sprintf(szAux, "*** Retornou idNivelPai [%s]\n", (char*)idNivelPai.arr ); oLog.logInformation(szAux);
+
+    if ( idNivel.len > 1 )
+    {
+        strcpy( idNivelPrm   ,(char*)idNivel.arr );
+        strcpy( idNivelPaiPrm,(char*)idNivelPai.arr );
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+    erroValHierarquia:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+
+
+bool ValidaCargo( char * buffer, char * idNivelPrm, char * idCargoPrm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pCargo = buffer;
+        char * idNivel = idNivelPrm;
+        VARCHAR idCargo[256];
+        short i_idCargo = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &idCargo, 0x0, sizeof(idCargo) );
+
+    EXEC SQL WHENEVER SQLERROR goto erroValCargo;
+    
+    EXEC SQL
+     SELECT cargo.idcargo
+     INTO :idCargo:i_idCargo
+       FROM acesso.cargo cargo
+          , organograma.nivelcargo nivelcargo
+      WHERE cargo.idcargo = nivelcargo.IDCARGO
+        AND nivelcargo.IDNIVEL = :idNivel
+        AND TRIM(UPPER(cargo.nmcargo)) = TRIM(UPPER(:pCargo)) ;
+          
+    CONVIND( idCargo, i_idCargo );
+    sprintf(szAux, "*** Retornou idCargo [%s]\n", (char*)idCargo.arr ); oLog.logInformation(szAux);
+
+    if ( idCargo.len > 1 )
+    {
+        strcpy( idCargoPrm,(char*)idCargo.arr );
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+    erroValCargo:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+
+
+bool ValidaOrganizacao( char * buffer, char * idOrganizacaoPaiPrm, char * idOrganizacaoPrm, char * idTipoOrganizacaoPrm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pOrganiz = buffer;
+        
+        VARCHAR idOrganizacaoPai[256];
+        short i_idOrganizacaoPai = -1;
+        VARCHAR idOrganizacao[256];
+        short i_idOrganizacao = -1;
+        VARCHAR idTipoOrganizacao[256];
+        short i_idTipoOrganizacao = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &idOrganizacaoPai, 0x0, sizeof(idOrganizacaoPai) );
+    memset( &idOrganizacao, 0x0, sizeof(idOrganizacao) );
+    memset( &idTipoOrganizacao, 0x0, sizeof(idTipoOrganizacao) );
+
+    EXEC SQL WHENEVER SQLERROR goto erroValOrganizacao;
+    
+    EXEC SQL
+     SELECT TO_CHAR( organizacaohierarquia.idorganizacaopai )
+          , TO_CHAR( organizacao.idorganizacao      )
+          , TO_CHAR( organizacao.idtipoorganizacao  )
+     INTO
+        :idOrganizacaoPai:i_idOrganizacaoPai ,
+        :idOrganizacao:i_idOrganizacao ,
+        :idTipoOrganizacao:i_idTipoOrganizacao
+       FROM organograma.organizacao      organizacao
+          , organograma.tipoorganizacao  tipo
+          , organograma.organizacaohierarquia organizacaohierarquia
+      WHERE organizacao.idtipoorganizacao = tipo.idtipoorganizacao
+        AND organizacaohierarquia.idorganizacao = organizacao.idorganizacao
+        AND UPPER(TRIM(tipo.dstipoorganizacao)) = UPPER(TRIM( :pOrganiz )) 
+        AND ROWNUM < 2;
+                
+    CONVIND( idOrganizacaoPai, i_idOrganizacaoPai );
+    CONVIND( idOrganizacao, i_idOrganizacao );
+    CONVIND( idTipoOrganizacao, i_idTipoOrganizacao );
+
+    sprintf(szAux, "*** Retornou idOrganizacaoPai  [%s]\n", (char*)idOrganizacaoPai.arr ); oLog.logInformation(szAux);
+    sprintf(szAux, "*** Retornou idOrganizacao     [%s]\n", (char*)idOrganizacao.arr ); oLog.logInformation(szAux);
+    sprintf(szAux, "*** Retornou idTipoOrganizacao [%s]\n", (char*)idTipoOrganizacao.arr ); oLog.logInformation(szAux);
+
+    if ( idOrganizacao.len > 1 )
+    {
+        strcpy( idOrganizacaoPaiPrm,(char*)idOrganizacaoPai.arr );
+        strcpy( idOrganizacaoPrm,(char*)idOrganizacao.arr );
+        strcpy( idTipoOrganizacaoPrm,(char*)idTipoOrganizacao.arr );
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+    erroValOrganizacao:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+
+
+bool ValidaDepartamento( char * buffer, char * idOrganizacaoPrm,char * idDeptoPrm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pDepto = buffer;
+        char * pidOrganizacao = idOrganizacaoPrm;
+        
+        VARCHAR idDepto[256];
+        short i_idDepto = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &idDepto, 0x0, sizeof(idDepto) );
+
+    EXEC SQL WHENEVER SQLERROR goto erroValDepto;
+    
+    EXEC SQL
+    SELECT departamento.iddepartamento
+    INTO :idDepto:i_idDepto
+      FROM organograma.departamento departamento
+         , organograma.organizacaodepartamento organizacaodepartamento
+     WHERE departamento.iddepartamento = organizacaodepartamento.iddepartamento
+       AND organizacaodepartamento.idorganizacao = :pidOrganizacao
+       AND UPPER(trim( departamento.nmdepartamento )) = UPPER(trim( :pDepto )) ;
+                
+    CONVIND( idDepto, i_idDepto );
+
+    sprintf(szAux, "*** Retornou idDepto [%s]\n", (char*)idDepto.arr ); oLog.logInformation(szAux);
+
+    if ( idDepto.len > 1 )
+    {
+        strcpy( idDeptoPrm,(char*)idDepto.arr );
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+    erroValDepto:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+
+
+bool ValidaPerfil( char * buffer, char * idPerfilPrm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pPerfil = buffer;
+        
+        VARCHAR idPerfil[256];
+        short i_idPerfil = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &idPerfil, 0x0, sizeof(idPerfil) );
+
+    EXEC SQL WHENEVER SQLERROR goto erroValPerfil;
+    
+    EXEC SQL
+    SELECT
+        idPerfilConsultorAtd
+    INTO :idPerfil:i_idPerfil
+    FROM
+        APOIO.PERFILCONSULTORATD
+    WHERE
+       UPPER(dsPerfilConsultorAtd) = UPPER(trim( :pPerfil )) ;
+                
+    CONVIND( idPerfil, i_idPerfil );
+
+    sprintf(szAux, "*** Retornou idPerfil [%s]\n", (char*)idPerfil.arr ); oLog.logInformation(szAux);
+
+    if ( idPerfil.len > 1 )
+    {
+        strcpy( idPerfilPrm,(char*)idPerfil.arr );
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+    erroValPerfil:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+
+
+bool ValidaFornecedor( char * buffer, char * idFornecedorPrm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pFornecedor = buffer;
+        
+        VARCHAR idFornecedor[256];
+        short i_idFornecedor = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &idFornecedor, 0x0, sizeof(idFornecedor) );
+
+    EXEC SQL WHENEVER SQLERROR goto erroValFornecedor;
+    
+    EXEC SQL
+    SELECT
+        idFornecedorConsultorAtd
+    INTO :idFornecedor:i_idFornecedor
+    FROM
+        APOIO.FORNECEDORCONSULTORATD
+    WHERE
+       UPPER(dsFornecedorConsultorAtd) = UPPER(TRIM( :pFornecedor )) ;
+
+    CONVIND( idFornecedor, i_idFornecedor );
+
+    sprintf(szAux, "*** Retornou idFornecedor [%s]\n", (char*)idFornecedor.arr ); oLog.logInformation(szAux);
+
+    if ( idFornecedor.len > 1 )
+    {
+        strcpy( idFornecedorPrm,(char*)idFornecedor.arr );
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+    erroValFornecedor:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+
+
+bool ValidaSite( char * buffer, char * idSitePrm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pSite = buffer;
+        
+        VARCHAR idSite[256];
+        short i_idSite = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &idSite, 0x0, sizeof(idSite) );
+
+    EXEC SQL WHENEVER SQLERROR goto erroValSite;
+    
+    EXEC SQL
+    SELECT
+        idSiteConsultorAtd
+    INTO :idSite:i_idSite
+    FROM
+        APOIO.SITECONSULTORATD
+    WHERE
+        UPPER(TRIM(dsSiteConsultorAtd)) = UPPER(TRIM ( :pSite )) ;
+
+    CONVIND( idSite, i_idSite );
+
+    sprintf(szAux, "*** Retornou idSite [%s]\n", (char*)idSite.arr ); oLog.logInformation(szAux);
+
+    if ( idSite.len > 1 )
+    {
+        strcpy( idSitePrm,(char*)idSite.arr );
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+    erroValSite:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+
+
+bool ValidaCPF( char * buffer )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pCPF = buffer;
+        int ctCPF;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR goto erroValCPF;
+    
+    EXEC SQL
+    select 
+       count (pessoa.idpessoa)
+    into
+       :ctCPF
+    from
+       acesso.usuario                      usuario ,
+       customer.pessoa                   pessoa ,
+       customer.documento             documento ,
+       customer.pessoadocumento   pd ,
+       apoio.tipodocumento td
+    where
+       PD.IDPESSOA = USUARIO.IDPESSOAUSUARIO
+    and DOCUMENTO.IDDOCUMENTO = PD.IDDOCUMENTO
+    and PD.IDPESSOA = PESSOA.IDPESSOA
+    and DOCUMENTO.NRDOCUMENTO = :pCPF
+    and DOCUMENTO.IDTIPODOCUMENTO = td.IDTIPODOCUMENTO
+    and td.sgtipodocumento = 'CPF'
+    ;
+
+    sprintf(szAux, "*** Retornou ctCPF [%d]\n", ctCPF ); oLog.logInformation(szAux);
+
+    if ( ctCPF == 0 )
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+    erroValCPF:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+bool ValidaPais( char * buffer, char * idPaisPrm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * pPais = buffer;
+        VARCHAR idPais[256];
+        short i_idPais = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( &idPais, 0x0, sizeof(idPais) );
+
+    EXEC SQL WHENEVER SQLERROR goto erroValPais;
+    
+    EXEC SQL
+    SELECT PAIS.IDPAIS INTO :idPais:i_idPais FROM APOIO.PAIS PAIS WHERE PAIS.INPREENCHELISTA = 1 AND TRIM(UPPER(PAIS.NMPAIS)) = TRIM(UPPER(:pPais)) AND ROWNUM < 2;
+    
+    CONVIND( idPais, i_idPais );
+    sprintf(szAux, "*** Retornou idPais [%s]\n", (char*)idPais.arr ); oLog.logInformation(szAux);
+
+    if ( idPais.len > 0 )
+    {
+        strcpy( idPaisPrm,(char*)idPais.arr );
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+
+    erroValPais:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+
+bool ValidaGrupo( char * buffer, list<long> &listaGrupos )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char nmGrupo[200][256];
+        VARCHAR   idGrupo[200][256];
+        short   i_idGrupo[200];
+    EXEC SQL END DECLARE SECTION;
+    
+    TrataBuffer( buffer );
+
+    char delims[] = ";";
+    char *result = NULL;
+    sprintf(szAux, "buffer [%s]\n", buffer ); oLog.logInformation(szAux);
+    
+    int idx;
+    for ( idx=0; idx < 200; idx++ )
+    {
+        memset( &idGrupo[idx], 0x0, 256 );
+        i_idGrupo[idx] = -1;
+    }
+    
+    idx = 0;
+    result = strtok( buffer, delims );
+    while( result != NULL ) 
+    {
+        if ( !strcmp(result,"vazio") )
+           continue;
+        if ( idx > 199 ) 
+           break;
+        strcpy( nmGrupo[idx], result );
+        idx++;
+        result = strtok( NULL, delims );
+    }
+    
+    bool flgGrupo = false;
+    
+    EXEC SQL WHENEVER SQLERROR goto erroValGrupo;
+    
+    for ( idx=0; idx < 200; idx++ )
+    {
+        sprintf(szAux, "nmGrupo[%d] = [%s]\n", idx, nmGrupo[idx] ); oLog.logInformation(szAux);
+        if ( nmGrupo[idx][0] != 0x0 )
+        {
+            EXEC SQL
+            select 
+               idGrupo
+            into
+               :idGrupo[idx]:i_idGrupo[idx]
+            from 
+               acesso.grupo 
+            where 
+               dtexclusao is null 
+            and upper(trim(nmgrupo)) = upper(trim(:nmGrupo[idx])) ;
+            
+            if ( i_idGrupo[idx] < 0 )
+            {
+                continue;
+            }
+            else
+            {
+                CONVIND( idGrupo[idx], i_idGrupo[idx] );
+                sprintf(szAux, "*** Retornou idGrupo [%s]\n", (char*)idGrupo[idx].arr ); oLog.logInformation(szAux);
+                listaGrupos.push_back( atol((char*)idGrupo[idx].arr) );
+                flgGrupo = true;
+            }
+        }
+        else
+           break;
+    }
+    
+    return flgGrupo;
+
+    erroValGrupo:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+
+
+bool ValidaPerfilAssoc( char * buffer, list<long> &listaPerfil )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char nmPerfil[200][256];
+        VARCHAR   idPerfil[200][256];
+        short   i_idPerfil[200];
+    EXEC SQL END DECLARE SECTION;
+    
+    TrataBuffer( buffer );
+
+    char delims[] = ";";
+    char *result = NULL;
+    sprintf(szAux, "buffer [%s]\n", buffer ); oLog.logInformation(szAux);
+    
+    int idx;
+    for ( idx=0; idx < 200; idx++ )
+    {
+        memset( &idPerfil[idx], 0x0, 256 );
+        i_idPerfil[idx] = -1;
+    }
+    
+    idx = 0;
+    result = strtok( buffer, delims );
+    while( result != NULL ) 
+    {
+        if ( !strcmp(result,"vazio") )
+           continue;
+        if ( idx > 199 ) 
+           break;
+        strcpy( nmPerfil[idx], result );
+        idx++;
+        result = strtok( NULL, delims );
+    }
+    
+    bool flgPerfil = false;
+    
+    EXEC SQL WHENEVER SQLERROR goto erroValPerfilAssoc;
+    
+    for ( idx=0; idx < 200; idx++ )
+    {
+        sprintf(szAux, "nmPerfil[%d] = [%s]\n", idx, nmPerfil[idx] ); oLog.logInformation(szAux);
+        if ( nmPerfil[idx][0] != 0x0 )
+        {
+            EXEC SQL
+            SELECT 
+                IDROLE 
+            INTO 
+               :idPerfil[idx]:i_idPerfil[idx]
+            FROM 
+                ACESSO.ROLE 
+            WHERE
+                UPPER(NMROLE) = UPPER(TRIM(:nmPerfil[idx])) ;
+               
+            if ( i_idPerfil[idx] < 0 )
+            {
+                continue;
+            }
+            else
+            {
+                CONVIND( idPerfil[idx], i_idPerfil[idx] );
+                sprintf(szAux, "*** Retornou idRole [%s]\n", (char*)idPerfil[idx].arr ); oLog.logInformation(szAux);
+                listaPerfil.push_back( atol((char*)idPerfil[idx].arr) );
+                flgPerfil = true;
+            }
+        }
+        else
+           break;
+    }
+    
+    return flgPerfil;
+
+    erroValPerfilAssoc:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+
+
+bool ValidaRegionalAssoc( char * buffer, list<long> &listaRegional )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char nmRegional[200][256];
+        VARCHAR   idUFOperadora[200][256];
+        short   i_idUFOperadora[200];
+    EXEC SQL END DECLARE SECTION;
+    
+    TrataBuffer( buffer );
+
+    char delims[] = ";";
+    char *result = NULL;
+    sprintf(szAux, "buffer [%s]\n", buffer ); oLog.logInformation(szAux);
+    
+    int idx;
+    for ( idx=0; idx < 200; idx++ )
+    {
+        memset( &idUFOperadora[idx], 0x0, 256 );
+        i_idUFOperadora[idx] = -1;
+    }
+    
+    idx = 0;
+    result = strtok( buffer, delims );
+    while( result != NULL ) 
+    {
+        if ( !strcmp(result,"vazio") )
+           continue;
+        if ( idx > 199 ) 
+           break;
+        strcpy( nmRegional[idx], result );
+        idx++;
+        result = strtok( NULL, delims );
+    }
+    
+    bool flgPerfil = false;
+    
+    EXEC SQL WHENEVER SQLERROR goto erroValRegionalAssoc;
+    
+    for ( idx=0; idx < 200; idx++ )
+    {
+        sprintf(szAux, "nmRegional[%d] = [%s]\n", idx, nmRegional[idx] ); oLog.logInformation(szAux);
+        if ( nmRegional[idx][0] != 0x0 )
+        {
+            EXEC SQL
+            SELECT
+               TMP.IDUFOPERADORA
+            INTO
+               :idUFOperadora[idx]:i_idUFOperadora[idx]
+            FROM
+            (
+                SELECT 
+                    UFOPERADORA.IDUFOPERADORA AS IDUFOPERADORA ,
+                    UF.SGUF|| ' - '||PESSOA.NMPESSOA AS NMUFOPERADORA
+                FROM 
+                    CUSTOMER.UFOPERADORA UFOPERADORA,
+                    CUSTOMER.OPERADORA OPERADORA,
+                    CUSTOMER.PESSOA PESSOA,
+                    APOIO.UF UF,
+                    CUSTOMER.PESSOADEPARA PESSOADEPARA
+                WHERE 
+                    UFOPERADORA.IDUF = UF.IDUF
+                    AND UFOPERADORA.IDPESSOADEPARAOPERADORA = OPERADORA.IDPESSOADEPARAOPERADORA
+                    AND PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA
+                    AND PESSOADEPARA.IDPESSOADEPARA = OPERADORA.IDPESSOADEPARAOPERADORA 
+             ) TMP
+             WHERE
+                UPPER(TRIM(TMP.NMUFOPERADORA)) = UPPER(TRIM(:nmRegional[idx])) ;               
+
+            if ( i_idUFOperadora[idx] < 0 )
+            {
+                continue;
+            }
+            else
+            {
+                CONVIND( idUFOperadora[idx], i_idUFOperadora[idx] );
+                sprintf(szAux, "*** Retornou idUFOperadora [%s]\n", (char*)idUFOperadora[idx].arr ); oLog.logInformation(szAux);
+                listaRegional.push_back( atol((char*)idUFOperadora[idx].arr) );
+                flgPerfil = true;
+            }
+        }
+        else
+           break;
+    }
+    
+    return flgPerfil;
+
+    erroValRegionalAssoc:
+        sprintf(szAux, "*** ERRO sqlca.sqlcode[%d]\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return false;
+}
+
+
+
+bool ValidaEMail( char * bf )
+{
+    int i;
+    int tambf;
+    int chk = 0;
+    alltrim( bf );
+    tambf = strlen( bf );
+    for ( i=0;i<tambf;i++)
+    {
+        if ( bf[i] == '@' )
+           chk++;
+        if ( bf[i] == '.' )
+           chk++;
+        if ( chk > 1 )
+           return true;
+    }
+    return false;
+
+}
+
+
+
+bool ValidaNumerico( char * bf )
+{
+	int i;
+	int tambf;
+	alltrim( bf );
+	RetiraHifen( bf );
+	tambf = strlen( bf );
+	for ( i=0;i<tambf;i++)
+	{
+		if ( !isdigit(bf[i]) )
+		   return false;
+	}
+	return true;
+	
+}
+
+
+
+bool ValidaNota( char * bf )
+{
+	int i;
+	int tambf;
+	alltrim( bf );
+	tambf = strlen( bf );
+	for ( i=0;i<tambf;i++)
+	{
+		if ( !isdigit(bf[i]) )
+		   return false;
+	}
+	if ( atoi(bf) < 0 ) return false;
+	if ( atoi(bf) > 10 ) return false;
+	
+	return true;
+	
+}
+
+
+
+char * alltrim( char * pszString )
+{
+    ltrim(pszString);
+    rtrim(pszString);
+    return pszString;
+}
+
+char * ltrim( char * pszString )
+{
+    unsigned int iPos;
+    unsigned int iLen;
+    char *pszTmp, *pszAlocado;
+
+    iLen=strlen(pszString);
+
+    pszAlocado = (char *)malloc(LEN_NOME + LEN_EOS);
+    if (!pszAlocado) {
+    	perror("ERRO:malloc");
+    	exit(-1);
+    }
+    memset(pszAlocado, 0, LEN_NOME + LEN_EOS);
+    
+    strcpy(pszAlocado, pszString);
+
+    pszTmp=pszAlocado;
+    
+
+    for(iPos=0; iPos < iLen; iPos++)
+        if(pszString[iPos] == 0x20)
+            pszTmp++;
+        else
+            break;
+
+    strcpy(pszString, pszTmp);
+    
+    free(pszAlocado);
+    return pszString;
+}
+
+
+
+char * rtrim( char * pszString )
+{
+    int iPos;
+
+    for(iPos=strlen(pszString)-1; iPos >= 0; iPos--)
+        if(pszString[iPos] == 0x20)
+            pszString[iPos] = 0x00;
+        else
+            break;
+    return pszString;
+}
+
+
+
+void findFileType( char *path, string &arquivo, char *type)
+{
+    DIR *dirp;
+    struct dirent *dp;
+    char nameLog[1024];
+	char nmArquivo[512];
+	char exten[5];
+
+    // inicializando nameLog
+    memset(nameLog,0,sizeof(nameLog));
+
+    // copiando o path
+    arquivo = path;
+
+    // vai abrir o diretório
+    if ((dirp = opendir(path)) == NULL) {
+        oLog.logError("Erro ao abrir diretório");
+        return;
+    }
+
+    do {
+        if ((dp = readdir(dirp)) != NULL) {
+            sprintf(nameLog,"encontrado: %s size = %d\n", dp->d_name, sizeof(dp->d_name));     
+			strcpy( nmArquivo, dp->d_name );
+			sprintf( exten, "%s", (char*)&nmArquivo[strlen(dp->d_name)-4] );
+             if( !stricmp(exten, type) ) {
+                arquivo += "/";
+                arquivo += dp->d_name;
+                closedir(dirp);
+                return;
+             }
+        }
+    } while (dp != NULL);
+
+    closedir(dirp);
+}
+
+
+
+void RemoveHistoricoArq( char *path, int DataLimite )
+{
+    DIR *dirp;
+    struct dirent *dp;
+    char nameLog[1024];
+	char nmArquivo[512];
+	char Data_Arquivo[16];
+
+    // inicializando nameLog
+    memset(nameLog,0,sizeof(nameLog));
+
+    if ((dirp = opendir(path)) == NULL) {
+        oLog.logError("Erro ao abrir diretório");
+        return;
+    }
+
+    do 
+	{
+        if ((dp = readdir(dirp)) != NULL) 
+		{
+		    if ( strlen(dp->d_name) < 9 )
+			{
+			   continue;
+			}
+			//sprintf( nameLog, "))) Encontrou arquivo [%s]\n", dp->d_name ); oLog.logDebug(nameLog);
+			
+			sprintf( Data_Arquivo, "%.*s", 8, (char*)&dp->d_name[strlen(dp->d_name)-19] );
+			//sprintf( nameLog, "@@@ Data do arquivo [%s]\n", Data_Arquivo ); oLog.logDebug(nameLog);
+			//sprintf( nameLog, "@@@ Data limite do arquivo [%d]\n", DataLimite ); oLog.logDebug(nameLog);
+			
+			if ( DataLimite > atoi(Data_Arquivo) )
+			{
+				//sprintf( nameLog, "))) Removendo arquivo [%s]\n", dp->d_name ); oLog.logDebug(nameLog);
+				unlink( dp->d_name );
+			}
+        }
+    } while (dp != NULL);
+
+    closedir(dirp);
+}
+
+
+
+void RetiraMultiplosEspacos( char * pszString )
+{
+    register unsigned int iPosOrigem, iPosDestino;
+    unsigned int iLen;
+    char *pszTmp;
+
+    iLen=strlen(pszString);
+
+    if((pszTmp = (char *)malloc(iLen + LEN_EOS)) == NULL) {
+    	perror("ERRO:malloc");
+        throw "CSafePointer::RetiraMultiplosEspacos():Falha na alocação de memória";
+    }
+
+    memset(pszTmp, 0x00, iLen + LEN_EOS);
+
+    for(iPosOrigem=iPosDestino=0; iPosOrigem<iLen; iPosOrigem++)
+        if(pszString[iPosOrigem] == 0x20 && pszString[iPosOrigem + 1] == 0x20)
+            continue;
+        else
+            pszTmp[iPosDestino++] = pszString[iPosOrigem];
+
+    strcpy(pszString, pszTmp);
+
+    free(pszTmp);
+}
+
+
+
+void NormalizaNome( char * pszString )
+{
+    alltrim( pszString );
+    RetiraMultiplosEspacos( pszString );
+}
+
+
+
+void DesmembraNome( TDesmembraNome * ptDesmembraNome )
+{
+    struct TNomeAux {
+        char szParteDoNome[LEN_NOME + LEN_EOS];
+        struct TNomeAux *ptNomeNext;
+    } *ptNomeAux=NULL, *ptNomeAtual=NULL, *ptNomeNovo=NULL;
+
+    char szAux[2048], *pszAux=NULL;
+    memset(szAux, 0, sizeof(szAux));
+    strcpy(szAux, ptDesmembraNome->szNomeCompleto);
+
+    NormalizaNome(szAux);
+
+    ptDesmembraNome->szNomePrimeiro[0] = ptDesmembraNome->szNomeMeio[0] = ptDesmembraNome->szNomeFim[0] = 0x00;
+
+
+    for(pszAux = strtok(szAux, " "); pszAux != NULL; pszAux = strtok(NULL, " "))
+    {
+        /* Aloca memoria para o fragmento da parte do nome */
+        if((ptNomeNovo = (struct TNomeAux *)malloc(sizeof(struct TNomeAux))) == NULL) {
+        	perror("ERRO:malloc");
+        throw "CSafePointer::DesmembraNome():Falha na alocação de memória";
+        }
+
+        /* Processo da lista encadeada */
+        if(ptNomeAux == NULL)
+            ptNomeAux = ptNomeNovo;
+        else
+        {
+            ptNomeAtual = ptNomeAux;
+            while(ptNomeAtual->ptNomeNext != NULL)
+                ptNomeAtual=ptNomeAtual->ptNomeNext;
+
+            ptNomeAtual->ptNomeNext = ptNomeNovo;
+        }
+
+        /* Copia a parte desmembrada do nome */
+        strcpy(ptNomeNovo->szParteDoNome, pszAux);
+        ptNomeNovo->ptNomeNext=NULL;
+
+        ptNomeAtual=ptNomeNovo;
+    }
+
+    /* Copia o PrimeiroNome */
+    ptNomeAtual = ptNomeAux;
+    if(ptNomeAtual != NULL)
+    {
+        strcpy(ptDesmembraNome->szNomePrimeiro, ptNomeAtual->szParteDoNome);
+        ptNomeAtual = ptNomeAtual->ptNomeNext;
+    }
+
+    /* Copia o(s) Nome(s) do Meio */
+    while(ptNomeAtual != NULL && ptNomeAtual->ptNomeNext != NULL)
+    {
+        strcat(ptDesmembraNome->szNomeMeio, ptNomeAtual->szParteDoNome);
+
+        ptNomeAtual = ptNomeAtual->ptNomeNext;
+
+        if(ptNomeAtual->ptNomeNext != NULL)
+            strcat(ptDesmembraNome->szNomeMeio, " ");
+    }
+
+    /* Copia o UltimoNome */
+    if(ptNomeAtual != NULL)
+        strcpy(ptDesmembraNome->szNomeFim, ptNomeAtual->szParteDoNome);
+
+    /* Desaloca memoria da lista encadeada */
+    ptNomeAtual = ptNomeAux;
+    while(ptNomeAtual != NULL)
+    {
+        ptNomeAtual = ptNomeAux->ptNomeNext;
+        free(ptNomeAux);
+        ptNomeAux = ptNomeAtual;
+    }
+}
+
+void RetiraHifen( char * pszString )
+{
+    register unsigned int iPosOrigem, iPosDestino;
+    unsigned int iLen;
+    char *pszTmp;
+
+    iLen=strlen(pszString);
+
+    if((pszTmp = (char *)malloc(iLen + LEN_EOS)) == NULL) {
+    	perror("ERRO:malloc");
+        throw "CSafePointer::RetiraMultiplosEspacos():Falha na alocação de memória";
+    }
+
+    memset(pszTmp, 0x00, iLen + LEN_EOS);
+
+    for(iPosOrigem=iPosDestino=0; iPosOrigem<iLen; iPosOrigem++)
+        if(pszString[iPosOrigem] == 0x2d)
+            continue;
+        else
+            pszTmp[iPosDestino++] = pszString[iPosOrigem];
+
+    strcpy(pszString, pszTmp);
+
+    free(pszTmp);
+}
+

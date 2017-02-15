@@ -1,0 +1,566 @@
+#include <sys/time.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <ctype.h>
+
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+
+#ifndef WIN32
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/socketvar.h>
+#include  <sys/types.h>
+#include  <netinet/in.h>
+#include <arpa/inet.h>
+#endif // AIX
+
+#ifndef WIN32
+#include <unistd.h>
+#endif
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+#include "../include/sittelMonitor.h"
+
+#include <string>
+using namespace std;
+
+EXEC SQL INCLUDE SQLCA;
+
+double getRealTime( void );
+void ElapsedTime( double StartTime, double EndTime, char * UsedTime );
+int IdentificaBusca( void );
+int AlimentaTabAuxiliar( char * idFilaProcessum_Prm, char * sCodReq_Prm );
+int Normaliza( char * sCodReq_Prm );
+int FragementaReq ( char * sCodReq );
+void ErroOracle ( struct sqlca * sqlca );
+
+//==============================================================================
+// Globals
+char szAux[1024 + 1];   // Usado nas linhas de LOG
+Log oLog;
+//==============================================================================
+// Run
+int main( int argc, char *argv[] )
+{
+    char sCodReq[128];
+    double startTime, endTime;
+    char UsedTime[16];
+    memset( UsedTime, 0x0, sizeof(UsedTime) );
+    memset( sCodReq , 0x0, sizeof(sCodReq) );
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+
+    TParamConf tParamConf;
+    
+    oLog.setNivel(2);
+    oLog.logDebug(">>> sittel_ID");
+
+
+    //==========================================================================
+    // Parâmetros de configuração
+    if(ObtemParamConf(&tParamConf))
+    {
+        oLog.logError("*** ERRO AO OBTER PARAMETROS DE CONFIGURACAO ***");
+        endTime = getRealTime();   // Finaliza Cronometro de Operacao
+        ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+        sprintf( szAux, "### Tempo Total de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+        oLog.logDebug( "<<< sittel_ID" );
+        exit(1);
+    }
+
+    //==========================================================================
+    // Conecta ao banco
+    oLog.logDebug("### Conectando com Banco de Dados. ###");
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst))
+    {
+        oLog.logError("*** ERRO DE CONEXAO AO BANCO DE DADOS ***");
+        endTime = getRealTime();   // Finaliza Cronometro de Operacao
+        ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS&&& Vai Executar [.FFFF em UsedTime - Tempo Gasto 
+        sprintf( szAux, "### Tempo Total de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+        oLog.logDebug( "<<< sittel_ID" );
+        exit(1);
+    }
+    
+    int operacao = IdentificaBusca();
+    
+    DBDisconnect();
+    
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    sprintf( szAux, "### Tempo Total de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+
+    oLog.logDebug( "<<< sittel_ID" );
+    exit(0);
+    
+}
+
+
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[101];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug(">>> Obtendo parametros de configuracao...");
+
+    // Zera variáveis
+    memset(ptParamConf, 0, sizeof(TParamConf));
+    memset(szLinha, 0, sizeof(szLinha));
+    memset(szDivArq, 0, sizeof(szDivArq));
+    memset(szDivPre, 0, sizeof(szDivPre));
+
+    // Define o arquivo de configuração
+    mfConfig.setPath("sittel.cfg");
+
+    // Verificar se conseguiu abrir o arquivo
+    if(!mfConfig.abrir())
+    {
+        oLog.logError("!!! ERRO AO ABRIR ARQUIVO DE CONFIGURACAO !!!");
+        return -1;
+    }
+
+    // Capturando usuario, senha, path e instance de banco do arquivo
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        // Verifica qual parâmetro foi encontrado.
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, TAM_BD_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, TAM_BD_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, TAM_BD_INST);
+        }
+
+        memset(szLinha,  0, sizeof(szLinha));
+        memset(szDivPre, 0, sizeof(szDivPre));
+        memset(szDivArq, 0, sizeof(szDivArq));
+    }
+
+    // Fechando o arquivo de configuracao aberto
+    mfConfig.fechar();
+
+    sprintf(szAux, "ptParamConf->szUsr[%s]", ptParamConf->szUsr); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]", ptParamConf->szInst); oLog.logDebug(szAux);
+
+    // Verifica se todos os dados foram recuperados do arquivo de configuração.
+    if (strlen(ptParamConf->szInst) == 0)
+    {
+        oLog.logError("!!! CONFIGURACAO INCOMPLETA !!!");
+        return -1;
+    }
+
+    oLog.logDebug("### Sucesso na Configuracao ###");
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[64];
+    EXEC SQL END DECLARE SECTION;
+
+    // String de conexao
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    // Marca ponto de erro
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    // Conecta
+    EXEC SQL CONNECT :connString;
+
+    return 0;
+
+errConn:
+    sprintf(szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return -1;
+}
+
+
+
+/************************************************************************************************************/
+int DBDisconnect(void)
+{
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    EXEC SQL COMMIT WORK RELEASE;
+    return 0;
+
+Error:
+    oLog.logDebug("*** ERRO AO DESCONECTAR DO BANCO ***");
+    sprintf(szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return -1;
+}
+
+
+
+/**
+ * Returns the real time, in seconds, or -1.0 if an error occurred.
+ *
+ * Time is measured since an arbitrary and OS-dependent start time.
+ * The returned real time is only useful for computing an elapsed time
+ * between two calls to this function.
+ */
+double getRealTime(void)
+{
+    /* AIX, BSD, Cygwin, HP-UX, Linux, OSX, POSIX, Solaris. ----- */
+    struct timeval tm;
+    gettimeofday( &tm, NULL );
+    return (double)tm.tv_sec + (double)tm.tv_usec / 1000000.0;
+}
+
+
+
+/*
+ *   Retorna Tempo Usado
+ *   StartTime - Tempo Inicial
+ *   EndTime - Tempo Final
+ *   UsedTime - Tempo Gasto
+ */
+void ElapsedTime(double StartTime, double EndTime, char * UsedTime)
+{
+    int hora, minuto, segundo;
+
+    char Tempo[16];
+    char Segundos[8];
+    char Miliseg[8];
+    char * Result = NULL;
+
+    sprintf ( Tempo, "%lf.", (EndTime - StartTime) );
+    Result = strtok(Tempo,".");
+    sprintf(Segundos,"%s", Result);
+    //printf("Segundos [%s]\n",Segundos);
+    Result = strtok(NULL,".");
+    sprintf(Miliseg, "%.4s", Result);
+    //printf("Miliseg [%s]\n",Miliseg);
+
+    hora = (atoi(Segundos)/3600);
+    minuto = (atoi(Segundos)-(3600*hora))/60;
+    segundo = (atoi(Segundos)-(3600*hora)-(minuto*60));
+    sprintf( UsedTime, "%02d:%02d:%02d.%s", hora, minuto, segundo, Miliseg );
+
+}
+
+
+
+int IdentificaBusca( void )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR v_idFilaProcessum[256];
+        short i_v_idFilaProcessum;
+        int v_temAlvo;
+    EXEC SQL END DECLARE SECTION;
+    
+    oLog.logDebug( ">>> IdentificaBusca()" );
+
+    time_t      rawtime;
+    struct tm * timeinfo;
+    
+    char sData[32] = {0};
+    char sInstancia[256] = {0};
+    char sProcessoFilho[256] = {0};
+    char idFila[256] = {0};
+    int retorno;
+    char sCodreq[32] = {0};
+    bool TemRegistros = false;
+    
+    struct sqlca sqlca;
+    
+
+    EXEC SQL WHENEVER SQLERROR DO ErroOracle( &sqlca );
+
+    EXEC SQL DECLARE cFila CURSOR FOR
+    select 
+       idfilaprocessum 
+    from 
+       CUSTOMER.FILAPROCESSUM 
+    where 
+       nvl(inprocessado, 0) = 0 
+    order by DTINCLUSAO ;    
+
+    EXEC SQL OPEN cFila;
+    for( ;; )   
+    {
+        memset( &v_idFilaProcessum, 0x0, sizeof(v_idFilaProcessum) );
+
+        EXEC SQL FETCH cFila
+        INTO :v_idFilaProcessum:i_v_idFilaProcessum;
+        if ( v_idFilaProcessum.arr[0] == 0x0 )
+            break;
+
+        CONVIND( v_idFilaProcessum, i_v_idFilaProcessum );
+        TemRegistros = true;
+
+        sprintf( szAux, "### idFilaProcessum [%s]", (char*)v_idFilaProcessum.arr ); oLog.logDebug(szAux);
+
+        EXEC SQL
+        SELECT 
+           COUNT(1)
+        INTO
+           :v_temAlvo
+        FROM
+           CUSTOMER.ALVOPROCESSUM AP 
+        WHERE
+            AP.CPF  IS NULL
+        AND AP.CNPJ IS NULL 
+        AND AP.DOCUMENTOASSINANTE IS NULL 
+        AND AP.NOMEASSINANTE IS NULL 
+        AND AP.NRTERMINALASSINANTE IS NOT NULL
+        AND AP.IDFILAPROCESSUM = :v_idFilaProcessum 
+        AND ROWNUM = 1;
+
+        //sprintf( szAux, "### v_temAlvo [%d]", v_temAlvo ); oLog.logDebug(szAux); 
+
+        if ( v_temAlvo > 0 )   // Fluxo alternativo para pesquisa por linha
+        {
+            strcpy( idFila, (char*)v_idFilaProcessum.arr );
+
+            EXEC SQL
+            UPDATE CUSTOMER.FILAPROCESSUM
+            set DTINICIOPROCESSAMENTO = sysdate
+            Where
+               IDFILAPROCESSUM = :v_idFilaProcessum ; 
+            EXEC SQL COMMIT;
+
+            AlimentaTabAuxiliar( idFila, sCodreq );   // Popula Tabelas Auxiliares
+            Normaliza( sCodreq );
+            FragementaReq ( idFila );   // Fragmenta Requisicao
+
+            time ( &rawtime );
+            timeinfo = localtime ( &rawtime );
+            strftime( sData, 17, "%Y%m%d-%H%M%S", timeinfo );
+            sprintf( sInstancia, "sittelMonitor_%s", sData );
+            sprintf( sProcessoFilho, "nohup ./sittelMonitor %s 2>&1 >> ../log/%s.log &", idFila, sInstancia );
+            //sprintf ( szAux, "===> Instanciando [%s] <===", sProcessoFilho ); oLog.logDebug(szAux);
+            retorno = system ( sProcessoFilho );
+            if ( retorno < 0 )
+            {
+                sprintf ( szAux, "*** system: [%s]", strerror(errno) );oLog.logDebug(szAux);
+            }
+
+        }
+        else   // AQUI DESVIA O FLUXO PARA O SITTEL ORIGINAL
+        {
+            time ( &rawtime );
+            timeinfo = localtime ( &rawtime );
+            strftime( sData, 17, "%Y%m%d-%H%M%S", timeinfo );
+            sprintf( sInstancia, "sittel_%s", sData );
+            sprintf( sProcessoFilho, "nohup ./sittel 2>&1 >> ../log/%s.log &", sInstancia );
+            sprintf ( szAux, "===> Instanciando [%s] <===", sProcessoFilho ); oLog.logDebug(szAux);
+            retorno = system ( sProcessoFilho );
+            if ( retorno < 0 )
+            {
+                sprintf ( szAux, "*** system: [%s]", strerror(errno) );oLog.logDebug(szAux);
+            }
+        }
+        sleep(3);
+        
+    }
+    EXEC SQL CLOSE cFila;
+
+    if ( TemRegistros == false )
+    {
+        oLog.logDebug( ">>> NAO HA REGISTROS PARA PROCESSAMENTO EM CUSTOMER.FILAPROCESSUM <<<" );
+    }
+    
+    oLog.logDebug( "<<< IdentificaBusca()" );
+
+    return 0;
+}
+
+
+
+int AlimentaTabAuxiliar( char * idFilaProcessum_Prm, char * sCodReq_Prm )
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char * idFilaProcessum = idFilaProcessum_Prm;
+        VARCHAR CodReq[32];
+        short i_CodReq = -1;
+    EXEC SQL END DECLARE SECTION;
+    
+    double startTime, endTime;
+    char UsedTime[16];
+    memset( UsedTime, 0x0, sizeof(UsedTime) );
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+
+    oLog.logDebug( ">>> AlimentaTabAuxiliar()" );
+    
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR DO ErroOracle( &sqlca );
+
+    EXEC SQL
+    INSERT INTO CUSTOMER.REQSITTEL
+    (
+        IDREQSITTEL ,
+        CODREQ ,
+        NRTERMINALCARGA ,
+        DATAFIM ,
+        DATAINICIO ,
+        NRTERMINAL ,
+        TAMANHOTERMINAL ,
+        INEXISTE ,
+        SGTIPOLINHA ,
+        NRFRAGMENTO 
+    )
+    SELECT
+       CUSTOMER.REQSITTELSQ.NEXTVAL AS IDREQSITTEL, 
+       AL.IDFILAPROCESSUM AS CODREQ,
+       AL.NRTERMINALASSINANTE AS NRTERMINALCARGA,
+       /*TO_CHAR(AL.FIMPERIODOQUEBRA,'DDMMRRRR') AS DATAFIM,
+       TO_CHAR(AL.INICIOPERIODOQUEBRA,'DDMMRRRR') AS DATAINICIO,*/
+       AL.FIMPERIODOQUEBRA AS DATAFIM,
+       AL.INICIOPERIODOQUEBRA AS DATAINICIO,
+       SUBSTR(AL.NRTERMINALASSINANTE,3) AS NRTERMINAL, 
+       LENGTH(AL.NRTERMINALASSINANTE) AS TAMANHOTERMINAL,
+       NULL AS INEXISTE,     
+       NULL AS SGTIPOLINHA, 
+       NULL AS NRFRAGMENTO 
+    FROM
+       CUSTOMER.ALVOPROCESSUM AL 
+    WHERE
+       AL.IDFILAPROCESSUM = :idFilaProcessum ;
+       
+    EXEC SQL COMMIT;
+
+    EXEC SQL
+    SELECT codigorequisicao
+      INTO :CodReq:i_CodReq
+      FROM customer.filaprocessum
+     WHERE idfilaprocessum = :idFilaProcessum ;
+     
+    CONVIND( CodReq, i_CodReq );
+    strcpy( sCodReq_Prm, (char*)CodReq.arr );
+
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    sprintf( szAux, "*** Tempo de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+
+    oLog.logDebug( "<<< AlimentaTabAuxiliar()" );
+
+    return 0;
+}
+
+
+
+int Normaliza( char * sCodReq_Prm )
+{
+    oLog.logDebug( ">>> Normaliza()" );
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+       char * sCodReq = sCodReq_Prm;
+    EXEC SQL END DECLARE SECTION;
+    
+    double startTime, endTime;
+    char UsedTime[16];
+    memset( UsedTime, 0x0, sizeof(UsedTime) );
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+
+    sprintf( szAux, "### sCodReq [%s] ###", sCodReq ); oLog.logDebug(szAux); 
+
+    EXEC SQL WHENEVER SQLERROR DO ErroOracle( &sqlca );
+    
+    EXEC SQL
+    UPDATE CUSTOMER.REQSITTEL
+       SET TAMANHOTERMINAL = LENGTH(NRTERMINALCARGA)
+     WHERE CODREQ = :sCodReq ;
+
+    EXEC SQL
+    UPDATE CUSTOMER.REQSITTEL
+       SET NRTERMINAL = SUBSTR(NRTERMINALCARGA,3)
+     WHERE TAMANHOTERMINAL IN (12,13) 
+       AND SUBSTR(NRTERMINALCARGA,1,2) = 55
+       AND CODREQ = :sCodReq ;
+
+    EXEC SQL
+    UPDATE CUSTOMER.REQSITTEL
+       SET NRTERMINAL = NRTERMINALCARGA
+     WHERE TAMANHOTERMINAL <= 11
+       AND CODREQ = :sCodReq ;
+
+    EXEC SQL
+    UPDATE CUSTOMER.REQSITTEL
+       SET NRTERMINAL = NRTERMINALCARGA
+     WHERE NRTERMINAL IS NULL
+       AND CODREQ = :sCodReq ;
+
+    EXEC SQL COMMIT;
+
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    sprintf( szAux, "*** Tempo de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+
+    oLog.logDebug( "<<< Normaliza()" );
+
+    return 0;
+}
+
+
+
+int FragementaReq ( char * sCodReq )
+{
+    oLog.logDebug( ">>> FragementaReq()" );
+
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+       char szProcedure[256];
+    EXEC SQL END DECLARE SECTION;
+    
+    double startTime, endTime;
+    char UsedTime[16];
+    memset( UsedTime, 0x0, sizeof(UsedTime) );
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+
+    memset ( szProcedure, 0x0, sizeof(szProcedure) );
+    
+    EXEC SQL WHENEVER SQLERROR DO ErroOracle( &sqlca );
+
+    sprintf( szAux, "### sCodReq [%s] ###", sCodReq ); oLog.logDebug(szAux); 
+    
+    sprintf(szProcedure, "BEGIN CUSTOMER.SITTEL.EXECUTAR( \'%s\' ); END;", sCodReq );
+    EXEC SQL PREPARE CALLPROC FROM :szProcedure;
+    EXEC SQL EXECUTE CALLPROC;
+    
+    EXEC SQL COMMIT;
+
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    sprintf( szAux, "*** Tempo de execucao: %s", UsedTime ); oLog.logDebug(szAux);
+
+    oLog.logDebug( "<<< FragementaReq()" );
+
+    return 0;
+}
+
+
+
+void ErroOracle ( struct sqlca * sqlca )
+{
+    sprintf( szAux, "!!! ERRO ORACLE: [%d] - [%s]", sqlca->sqlcode, sqlca->sqlerrm.sqlerrmc ); oLog.logDebug(szAux);
+    exit( 1 );
+}

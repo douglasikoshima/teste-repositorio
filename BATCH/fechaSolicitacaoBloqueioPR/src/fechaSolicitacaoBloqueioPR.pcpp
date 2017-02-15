@@ -1,0 +1,1368 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <iostream.h>
+#include <ctype.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <dirent.h>
+
+#include <tuxfw.h>
+#include <sys/shm.h>
+
+#include <fechaSolicitacaoBloqueioPR.h>
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+#include "../../commons/Defines.h"
+
+extern errno;
+struct Atendimento
+{
+    char sIMEI[65];
+    char nrDocumento[32];
+    char sClassificacao[256];
+    char dsObservacao[256];
+};
+
+#include <string>
+#include <list>
+#include <iterator>
+using namespace std;
+
+typedef list<Atendimento> ListaAtd;
+typedef list<string> ListaReg;
+
+EXEC SQL INCLUDE SQLCA;
+
+#define MAX_RETRIES     10
+#define LOCK            1
+#define UNLOCK          0
+#define KILL            2
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+#define CONVIND(O,I) \
+{\
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+char szAux[256000 + 1];
+Log oLog;
+long iErrorNumber=0;
+
+//==============================================================================
+// Protótipos
+void findFileType( char * path, string & arquivo, char * type );
+void RemoveHistoricoArq( char *path, int DataLimite );
+
+
+int main(int argc, char* argv[])
+{
+    list<Atendimento>::iterator itAtd;
+	list<string>::iterator itReg;
+	
+	time_t rawtime;
+	struct tm * timeinfo;
+	char   buffer[81];
+	char   sArqPrc[512];
+
+	
+	ListaAtd lista_Atd;	
+	ListaReg lista_reg;
+	
+    lista_Atd.clear();
+    lista_reg.clear();
+	
+    Atendimento pAtendimento;
+	
+	bool flagGrv = false;
+
+    char *pPointer;
+    char szIdFila[38 + 1];
+    char szRetMsg[2000 + 1];
+    char szStatusCode[255 + 1];
+    char szStatusText[255 + 1];
+    char szXml[64000 + 1];
+    char szXmlTmp[512 + 1];
+    int iSleep=0;
+    
+    char sRegLido[4096];
+	char sRegErro[4096];
+    char tmpReg[4096];
+	int len;
+	int indx;
+    int i;
+    int j;
+    int k;
+	int z;
+	string strbuffer;
+    char *result = NULL;
+    string tmp;
+    string str_nrProtocolo;
+	string str_Observacao;
+    string arquivoTXT;
+	string arquivoERR;
+	string arquivoPRC;
+	bool saiLista;
+    bool temAtendimento;
+    bool erroRegistro;
+    bool isDigito;
+    bool NotBranco;
+    char sIMEI[65];
+    char sProtocolo[65];
+    char sClassificacao[256];
+    char sFrases[256];
+    char sBrancos[256];
+	char aux[1024];
+
+    memset( sBrancos, 0x0, sizeof(sBrancos) );
+    memset( sBrancos, ' ', 255 );
+
+    
+    int iRetSendXML;
+
+    TParamConf tParamConf;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        char nrProtocolo[64];
+        int  qtdLidos;
+        int  qtdRejeitados;
+        
+        VARCHAR idAtendimentoMain[64+1];
+        short   i_idAtendimentoMain = -1;
+        VARCHAR idAtendimento[64+1];
+        short   i_idAtendimento = -1;
+        char sgFuncionalidade[16];
+        
+		char bf[129];
+        char nmArquivo[129];
+        char nmArquivoErro[129];
+		
+        char dsProcessamento[256];
+        VARCHAR idAgrupaTpProc[64];
+        short   i_idAgrupaTpProc = -1;
+        VARCHAR idContato[64];
+        short   i_idContato = -1;
+        VARCHAR idBaixa[64];
+        short   i_idBaixa = -1;
+		VARCHAR dataLimite[16];
+		short   i_dataLimite = -1;
+		VARCHAR qtdDias[4];
+		short   i_qtdDias = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+
+
+    // Acertando o nivel de logs
+    oLog.setNivel(2);
+    oLog.logDebug(">>>fechaSolicitacaoBloqueioPR\n");
+
+    if(ObtemParamConf(&tParamConf)) {
+        oLog.logError("Erro obtendo parametros de configuracao\n");
+        return -1;
+    }
+
+    //==========================================================================
+    // Conecta
+    oLog.logDebug("Conectando na BD...");
+    /* Conecta no banco de dados */
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst)) {
+        oLog.logError("Erro conectando no banco de dados\n");
+        return -1;
+    }
+    oLog.logDebug("Conectado na BD com sucesso...\n");
+
+    oLog.logDebug("Inicializando TUXEDO...\n");
+    /* Inicializa o TUXEDO */
+    if(TUXinit(&tParamConf)) {
+        oLog.logError("Erro inicializando TUXEDO\n");
+        return -2;
+    }
+    oLog.logDebug("Inicializado com sucesso...\n");
+
+    findFileType( "../data", arquivoTXT, ".txt");
+	long szFile;
+	if ( strlen(arquivoTXT.c_str()) == 7 )
+	{
+		if ( !memcmp(arquivoTXT.c_str(),"../data",7) )
+		{
+			arquivoTXT = "";
+		}
+	}
+	FILE * fpArquivo = fopen( arquivoTXT.c_str(), "r" );
+    if ( fpArquivo != NULL )
+    {
+		sprintf( sArqPrc, "%s", arquivoTXT.c_str() );
+		sprintf( sArqPrc, "%.*serr", strlen(sArqPrc)-3,sArqPrc );
+
+		arquivoERR = sArqPrc;
+		//sprintf( szAux, "*** Arquivo BAD [%s]\n", arquivoERR.c_str() ); oLog.logDebug(szAux);
+
+		FILE * fpArqErr = fopen( arquivoERR.c_str(), "a" );
+		if ( fpArqErr != NULL )
+		{
+			memset( sIMEI, 0x0, sizeof(sIMEI) );
+			memset( sProtocolo, 0x0, sizeof(sProtocolo) );
+			memset( sClassificacao, 0x0, sizeof(sClassificacao) );
+			memset( sFrases, 0x0, sizeof(sFrases) );
+
+			erroRegistro = false;
+			qtdRejeitados = qtdLidos = 0;
+			
+			strcpy( nmArquivo, arquivoTXT.c_str() );
+			sprintf( szAux, "*** Lendo arquivo de carga [%s]\n", nmArquivo ); oLog.logDebug(szAux);
+            sprintf( bf, "%s", (char*)&nmArquivo[8] );
+            strcpy( nmArquivo, bf );
+
+
+			bool flageol = false;
+			int idxeol;
+			while ( !feof(fpArquivo) ) 
+			{
+				isDigito = true;
+				memset( sRegLido ,    0x0, sizeof(sRegLido) );
+				memset( sRegErro ,    0x0, sizeof(sRegErro) );
+				
+				fgets ( sRegLido , sizeof(sRegLido) , fpArquivo );
+				memcpy( sRegErro, sRegLido,sizeof(sRegErro) );
+				
+				if ( sRegLido[0] == ' ' ) continue;
+				if ( sRegLido[0] == 0x0 ) continue;
+				if ( sRegLido[0] == 0x0a ) continue;
+				if ( sRegLido[0] == 0x0d ) continue;
+				//if ( sRegLido[0] == 0x09 ) continue;
+				//if ( sRegLido[0] == 0x11 ) continue;
+				
+				len = strlen(sRegLido);
+				
+				sprintf( szAux, "### Lendo registro [%s]\n", sRegLido ); oLog.logDebug(szAux);
+				flageol = false;
+				for ( idxeol=0;idxeol<=len+1;idxeol++ )
+				{
+					if ( sRegLido[idxeol] == 0x0a || sRegLido[idxeol] == 0x0d )
+					{
+						flageol = true;
+					    break;
+					}
+				}
+				if ( flageol == false )
+				{
+					//sprintf( szAux, "### Valor de idxeol [%d]\n", idxeol ); oLog.logDebug(szAux);
+				    sRegLido[idxeol-2] = '\n';
+				}
+				else
+				{
+					flageol = false;
+				}
+				
+				strbuffer = sRegLido;
+				
+				//sprintf( szAux, "### Inserindo registro [%s]\n", strbuffer.c_str() ); oLog.logDebug(szAux);
+				lista_reg.push_back(strbuffer);
+			
+				for ( i=0;i<strlen(sRegLido);i++ )
+				{
+				   if ( sRegLido[i] == 0x0a ) 
+					  sRegLido[i] = '|';
+				   if ( sRegLido[i] == 0x0d ) 
+					  sRegLido[i] = '|';
+				}
+				
+				qtdLidos++;
+			    sprintf( szAux, "*** Registro lido ***\n" ); oLog.logDebug(szAux);
+				for ( i=0;i<4;i++ )
+				{
+			    memset(aux,0x0,sizeof(aux));
+				
+				/*
+				if ( i != 1 )
+				   sProtocolo[0] = 0x0;
+				*/
+				
+				if ( i != 2 )
+				   sClassificacao[0] = 0x0;
+				if ( i != 3 )
+				   sFrases[0] = 0x0;
+				
+					if ( i == 0)
+                {
+                    if ( sRegLido[0] == 0x7c ) // Separador Pipe na primeira posicao do registro
+                    {
+                       //sprintf( szAux, ">>>>>> sRegLido Lido [%s]\n", sRegLido ); oLog.logDebug(szAux);
+
+                       sprintf( tmpReg,"NNN%s",sRegLido );
+
+                       //sprintf( szAux, ">>>>>> sRegLido Tratado [%s]\n", tmpReg ); oLog.logDebug(szAux);
+                       strcpy( sRegLido, tmpReg );
+					   
+                    }
+					result = strtok( sRegLido, "|" );
+                }
+					else
+                {
+					   result = strtok( NULL, "|" );
+                }
+					   
+				//sprintf( szAux, ">>>>>> result [%s]\n", result ); oLog.logDebug(szAux);				
+				//sprintf( szAux, ">>>>>> i [%d]\n", i ); oLog.logDebug(szAux);
+				
+                //sprintf( szAux, ">>>>>> sRegLido [%s]\n", sRegLido ); oLog.logDebug(szAux);
+					//if ( result[0] == 0x0 ) break;
+					if ( result[0] == 0x0a ) continue;
+					if ( result[0] == 0x0d ) continue;
+					
+                if ( i == 0 )
+                {
+                   if ( !strcmp(result,"NNN") )
+                       result = NULL;
+                }
+                
+					//sprintf( szAux, "*** result [%s]\n", result ); oLog.logDebug(szAux);
+					if ( i == 0 ) 
+					{
+					   if ( result[0] == 0x0 )
+						  sIMEI[0] = 0x0;
+					   else
+					   strcpy( sIMEI, result );
+					   for(k=0;k<strlen(sIMEI);k++)
+					   {
+						   if ( sIMEI[k] == 0x0a || sIMEI[k] == 0x0d )
+						   {
+							   sIMEI[k] = 0x0;
+						   }
+					   }
+					   sprintf( szAux, "*** Encontrado IMEI [%s]\n", sIMEI ); oLog.logDebug(szAux);
+					}  
+					if ( i == 1 ) 
+					{
+					//if ( sProtocolo[0] == 0x0 )
+					//{
+						if ( result[0] == 0x0 )
+							sProtocolo[0] = 0x0;
+						else
+							strcpy( sProtocolo, result );
+					//}
+						  
+						for(k=0;k<strlen(sProtocolo);k++)
+						{
+							if ( sProtocolo[k] == 0x0a || sProtocolo[k] == 0x0d )
+							{
+								sProtocolo[k] = 0x0;
+							}
+						}
+
+				   sprintf( aux, "||%s", sProtocolo );
+				   if ( strstr(sRegErro,aux) )
+				   {
+						strcpy( sIMEI, sProtocolo );
+						sProtocolo[0] = 0x0;
+				   }
+
+						sprintf( szAux, "*** Encontrado nrProtocolo [%s]\n", sProtocolo ); oLog.logDebug(szAux);
+				   
+						if ( sProtocolo[0] == 0x0 )
+						{
+							sprintf( szAux, "*** Parametro Pr_NrProtocolo deve ser obrigatorio e numerico\n" ); oLog.logDebug(szAux);
+							erroRegistro = true;
+						}
+						else
+						{
+							for(k=0;k<strlen(sProtocolo);k++)
+							{
+								if ( !isdigit(sProtocolo[k]) )
+								{
+									isDigito = false;
+									erroRegistro = true;
+								}
+							}
+							if ( isDigito == false )
+							{
+								sprintf( szAux, "*** Parametro Pr_NrProtocolo deve ser obrigatorio e numerico\n" ); oLog.logDebug(szAux);
+								isDigito = true;
+							}
+						}
+					}  
+					if ( i == 2 ) 
+					{
+					if ( sClassificacao[0] == 0x0 )
+					{
+						if ( result[0] == 0x0 )
+							sClassificacao[0] = 0x0;
+						else
+							strcpy( sClassificacao, result );
+					}
+					
+						for(k=0;k<strlen(sClassificacao);k++)
+						{
+							if ( sClassificacao[k] == 0x0a || sClassificacao[k] == 0x0d )
+							{
+								sClassificacao[k] = 0x0;
+							}
+						}
+						/*   Verificando a existencia de campo nulo   */
+				   sprintf( aux, "||%s", sClassificacao );
+				   if ( strstr(sRegErro,aux) )
+				   {
+						sprintf( sFrases, "%.255s", sClassificacao );
+						sClassificacao[0] = 0x0;
+				   }
+				   
+						sprintf( szAux, "*** Encontrado nmClassificacao [%s]\n", sClassificacao ); oLog.logDebug(szAux);
+						if ( sClassificacao[0] == 0x0 )
+						{
+							sprintf( szAux, "*** Parametro Pr_NmClassificacao deve ser obrigatorio\n" ); oLog.logDebug(szAux);
+							erroRegistro = true;
+						}
+						else
+						{
+							NotBranco = false;
+							for(k=0;k<strlen(sClassificacao);k++)
+							{
+								if ( sClassificacao[k] != ' ' )
+								{ 
+									NotBranco = true;
+								}
+							}
+							if ( NotBranco == false )
+							{
+								sprintf( szAux, "*** Parametro Pr_NmClassificacao deve ser preenchido\n" ); oLog.logDebug(szAux);
+								erroRegistro = true;
+								//sprintf( szAux, "5. Registro mal formatado\n" ); oLog.logDebug(szAux);
+							}
+						}
+					}  
+					if ( i == 3 ) 
+					{
+					if ( sFrases[0] == 0x0 )
+					{
+						if ( result[0] == 0x0 )
+							sFrases[0] = 0x0;
+						else
+                      sprintf( sFrases, "%.255s", result );
+				    }
+							
+					   for(k=0;k<strlen(sFrases);k++)
+					   {
+						  if ( sFrases[k] == 0x0a || sFrases[k] == 0x0d )
+						  {
+							  sFrases[k] = 0x0;
+						  }
+					   }
+					   
+						sprintf( szAux, "*** Encontrado nmFraseologia [%s]\n", sFrases ); oLog.logDebug(szAux);
+						if ( sFrases[0] == 0x0 )
+						{
+							sprintf( szAux, "*** Parametro Pr_NmFraseologia deve ser obrigatorio\n" ); oLog.logDebug(szAux);
+							erroRegistro = true;
+						}
+						else
+						{
+							NotBranco = false;
+							for(k=0;k<strlen(sFrases);k++)
+							{
+								if ( sFrases[k] != ' ' )
+								{ 
+									NotBranco = true;
+								}
+							}
+							if ( NotBranco == false )
+							{
+								sprintf( szAux, "*** Parametro Pr_NmFraseologia deve ser preenchido\n" ); oLog.logDebug(szAux);
+								erroRegistro = true;
+							}
+						}
+					}  
+					
+					//sprintf( szAux, "### Valor de erroRegistro [%d] - i [%d]\n", erroRegistro, i ); oLog.logDebug(szAux);
+					if ( i < 3 ) continue;
+					
+					if ( erroRegistro == true )
+					{
+						indx = strlen(sRegErro);
+						if ( sRegErro[indx-1] != 0x0d && sRegErro[indx-1] != 0x0a )
+						{
+						    sRegErro[indx] = 0x0a;
+						}
+					    sprintf( szAux, "*** Gravando Invalido Formatacao[%s]\n", sRegErro ); oLog.logDebug(szAux);
+						fprintf( fpArqErr, "%s" , sRegErro );
+						qtdRejeitados++;
+					    lista_reg.pop_back();
+						erroRegistro = false;
+						saiLista = false;
+						continue;
+			        }
+			
+                memset( nrProtocolo, 0x0, sizeof(nrProtocolo) );
+                strcpy( nrProtocolo,sProtocolo );
+
+                sprintf( szAux, "*** Obteve nrProtocolo [%s]\n", nrProtocolo ); oLog.logDebug(szAux);
+
+                sprintf( szAux, "*** Obteve dsObservacao [%s]\n", sFrases ); oLog.logDebug(szAux);
+
+                strcpy( pAtendimento.sIMEI         , sIMEI );
+                strcpy( pAtendimento.nrDocumento   , sProtocolo );
+                strcpy( pAtendimento.sClassificacao, sClassificacao );
+                strcpy( pAtendimento.dsObservacao  , sFrases );
+			
+                lista_Atd.push_back( pAtendimento );
+			
+                break;
+
+            }
+			
+        }
+        fclose( fpArquivo );
+			
+			tmp  = "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>";
+			tmp += "<msg><msgHdr><user>1</user><service>CERRAMEFEC</service></msgHdr><msgBody>";
+			tmp += "<atendimentos><xml-fragment><AtendimentoWorkflowVO xmlns:vo=\"workflow.fo.vivo.com.br/vo\">";
+			tmp += "<AtendimentoWorkflowComumVO><dsObservacao>";
+        tmp += sFrases;
+			tmp += "</dsObservacao><WFGrupoVO><idGrupo/></WFGrupoVO>";
+			tmp += "<WFMotivoVO><idMotivo/></WFMotivoVO><UsuarioVIVO xmlns:vo1=\"usuario.fo.vivo.com.br/vo\">";
+			tmp += "<idPessoaUsuario/></UsuarioVIVO></AtendimentoWorkflowComumVO>";
+			tmp += "<AtendimentoWorkflowEncerramentoVO>";
+			tmp += "<ArvoreEncerramentoVO xmlns:vo1=\"admsistemas.fo.vivo.com.br/vo\">";
+			tmp += "<EncerramentoVO>";
+			tmp += "<idBaixa>1</idBaixa>";
+			tmp += "<idBaixaMensagem>1</idBaixaMensagem><dsComentario>";
+        tmp += sFrases; 
+			tmp += "</dsComentario>";
+			tmp += "<dsDocumentoAssociado/>";
+			tmp += "</EncerramentoVO>";
+			tmp += "</ArvoreEncerramentoVO>";
+			tmp += "</AtendimentoWorkflowEncerramentoVO>";
+			tmp += "</AtendimentoWorkflowVO>";
+			j = 0;
+			temAtendimento = false;
+			for ( itAtd=lista_Atd.begin();itAtd!=lista_Atd.end();itAtd++ )
+			{
+
+				if ( j < 11 )
+				{
+					
+					str_nrProtocolo = (char*)(*itAtd).nrDocumento ;
+					//sprintf( szAux, "*** str_nrProtocolo [%s]\n", str_nrProtocolo.c_str() ); oLog.logDebug(szAux);
+				
+					str_Observacao = (char*)(*itAtd).dsObservacao ;
+					//sprintf( szAux, "*** str_Observacao [%s]\n", str_Observacao.c_str() ); oLog.logDebug(szAux);
+				
+					strcpy( nrProtocolo,str_nrProtocolo.c_str() );
+					sprintf( szAux, "*** Buscando idAtendimento pelo nrProtocolo [%s]\n", nrProtocolo ); oLog.logDebug(szAux);
+				
+					memset(&idAtendimento,0x0,sizeof(idAtendimento));
+					i_idAtendimento = -1;
+				
+					memset(&idAtendimentoMain,0x0,sizeof(idAtendimentoMain));
+					i_idAtendimentoMain = -1;
+				
+					EXEC SQL
+					select
+					   ap.idAtendimento ,
+					   ap.idcontato
+					into
+					   :idAtendimento:i_idAtendimento ,
+					   :idContato:i_idContato
+					from
+					   atendimento.atendimento ap
+					where
+					   rownum < 2
+					and
+					   ap.idAtendimentoProtocolo = :nrProtocolo
+					and
+					   ap.idContato = (SELECT dsvalorparametro 
+										   FROM apoio.parametro 
+										   WHERE cdparametro = 'RELATORIOIMEI');
+					CONVIND( idAtendimento,i_idAtendimento );
+					CONVIND( idContato,i_idContato );
+					sprintf( szAux, "*** Obteve idAtendimento [%s]\n", (char*)idAtendimento.arr ); oLog.logDebug(szAux);
+					
+					EXEC SQL
+					SELECT
+					   IDBAIXA
+					INTO
+					   :idBaixa:i_idBaixa
+					FROM
+					   CONTATOADM.CONTATOFOLHABAIXA
+					WHERE
+					   IDCONTATO = :idContato
+					and rownum < 2;
+
+					CONVIND( idBaixa,i_idBaixa );
+					
+
+					CONVIND( idAgrupaTpProc,i_idAgrupaTpProc );
+					   
+					sprintf( szAux, "*** Preparando para envio idAtendimento [%s]\n", (char*)idAtendimento.arr ); oLog.logDebug(szAux);
+					/* formata o XML para envio */
+					if ( i_idAtendimento != -1 )
+					{
+						temAtendimento = true;
+					
+                    //sprintf( szXmlTmp, "<AtdWFVO xmlns:vo=\"workflow.fo.vivo.com.br/vo\"><idAtendimento>%s</idAtendimento><WFExecucao><dsObservacaoBlq>%s</dsObservacaoBlq><idAgrupamentoEstadoTProcFut>10</idAgrupamentoEstadoTProcFut><idAgrupamentoEstadoTProcAt>%s</idAgrupamentoEstadoTProcAt><idAtividade>10</idAtividade><idAtividadeMassa>10</idAtividadeMassa><idBaixa>%s</idBaixa></WFExecucao></AtdWFVO>", (char*)idAtendimento.arr, (char*)(*itAtd).dsObservacao, (char*)idAgrupaTpProc.arr, (char*)idBaixa.arr );
+                    sprintf( szXmlTmp, "<AtdWFVO xmlns:vo=\"workflow.fo.vivo.com.br/vo\"><idAtendimento>%s</idAtendimento><WFExecucao><dsObservacaoBlq>%s</dsObservacaoBlq><idAgrupamentoEstadoTProcFut>10</idAgrupamentoEstadoTProcFut><idAgrupamentoEstadoTProcAt>%s</idAgrupamentoEstadoTProcAt><idAtividade>10</idAtividade><idAtividadeMassa>10</idAtividadeMassa><idBaixa>%s</idBaixa></WFExecucao></AtdWFVO>", (char*)idAtendimento.arr, str_Observacao.c_str(), (char*)idAgrupaTpProc.arr, (char*)idBaixa.arr );
+						tmp += szXmlTmp;
+						//sprintf( szAux, "*** tmp [%s]\n", tmp.c_str() ); oLog.logDebug(szAux);
+						j++;
+					}
+					else
+					{
+						qtdRejeitados++;
+
+						for ( itReg=lista_reg.begin();itReg!=lista_reg.end();itReg++ )
+						{
+							memset( sRegLido, 0x0, sizeof(sRegLido) );
+							memset( sRegErro, 0x0, sizeof(sRegErro) );
+							
+							strbuffer = (*itReg);
+							memcpy( sRegLido, (char*)strbuffer.c_str(), strbuffer.length() );
+							memcpy( sRegErro, sRegLido, strlen(sRegLido) );
+							
+							//sprintf( szAux, "*** Registro memoria [%s]\n", sRegErro ); oLog.logDebug(szAux);
+							
+								
+						
+							for ( z = 0; z < 2; z++ )
+							{
+								if ( z == 0)
+								{
+									if ( sRegLido[0] == 0x7c ) // Separador Pipe na primeira posicao do registro
+									{
+									   //sprintf( szAux, ">>>>>> sRegLido Lido [%s]\n", sRegLido ); oLog.logDebug(szAux);
+
+									   sprintf( tmpReg,"NNN%s",sRegLido );
+
+									   //sprintf( szAux, ">>>>>> sRegLido Tratado [%s]\n", tmpReg ); oLog.logDebug(szAux);
+									   strcpy( sRegLido, tmpReg );
+									   
+									}
+									result = strtok( sRegLido, "|" );
+								}
+								else
+								{
+									result = strtok( NULL, "|" );
+								}
+								/*
+								if ( i == 0 )
+								{
+								   if ( !strcmp(result,"NNN") )
+									   result = NULL;
+								}
+								*/
+								if ( z < 1) 
+								   continue;
+								
+								if ( z == 1 ) 
+								{
+								  strcpy( sProtocolo, result );
+								}  
+								
+								//sprintf( szAux, "*** nrProtocolo [%s] sProtocolo [%s]\n", nrProtocolo, sProtocolo ); oLog.logDebug(szAux);
+								
+								if( !strcmp(nrProtocolo,sProtocolo) )
+								{
+									indx = strlen(sRegErro);
+									if ( sRegErro[indx-1] != 0x0d && sRegErro[indx-1] != 0x0a )
+									{
+										sRegErro[indx] = 0x0a;
+									}
+								    //sprintf( szAux, "2. *** Gravando registro de erro [%s]\n", sRegErro ); oLog.logDebug(szAux);
+									fprintf( fpArqErr, "%s" , sRegErro );
+									flagGrv = true;
+									//lista_reg.pop_back();
+								    break;
+								}
+							}
+							if ( flagGrv == true )
+							{
+							   flagGrv = false;
+							   break;
+							}
+						}
+					}
+					// j++;
+				}
+				else
+				{
+					if ( temAtendimento == true )
+					{
+                    j = 1;
+						tmp += "<WFAcaoVO xmlns:vo=\"workflow.fo.vivo.com.br/vo\">";
+						tmp += "<idAtividade>13</idAtividade>";
+						tmp += "<inCRI>0</inCRI>";
+						tmp += "</WFAcaoVO>";
+						tmp += "</xml-fragment>";
+						tmp += "</atendimentos>";
+						tmp += "<idFase>2</idFase>";
+						tmp += "</msgBody>";
+						tmp += "</msg>";
+						
+						strcpy( szXml, tmp.c_str() );
+						sprintf(szAux, "szXml[%s]", szXml); oLog.logDebug(szAux);
+
+						memset(szRetMsg, 0x00, sizeof(szRetMsg));
+						iRetSendXML = sendXML( szXml,szRetMsg );
+						if ( iErrorNumber != 0 )
+						{
+							sprintf( szXmlTmp, "<AtdWFVO xmlns:vo=\"workflow.fo.vivo.com.br/vo\"><idAtendimento>%s</idAtendimento><WFExecucao><dsObservacao>%s</dsObservacao><idAgrupamentoEstadoTProcFut>10</idAgrupamentoEstadoTProcFut><idAgrupamentoEstadoTProcAt>%s</idAgrupamentoEstadoTProcAt><idAtividade>10</idAtividade><idAtividadeMassa>10</idAtividadeMassa><idBaixa>%s</idBaixa></WFExecucao></AtdWFVO>", (char*)idAtendimento.arr, (char*)(*itAtd).dsObservacao, (char*)idAgrupaTpProc.arr, (char*)idBaixa.arr );
+						}
+						sleep(1);
+						temAtendimento = false;
+
+						tmp  = "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>";
+						tmp += "<msg><msgHdr><user>1</user><service>CERRAMEFEC</service></msgHdr><msgBody>";
+						tmp += "<atendimentos><xml-fragment><AtendimentoWorkflowVO xmlns:vo=\"workflow.fo.vivo.com.br/vo\">";
+						tmp += "<AtendimentoWorkflowComumVO><dsObservacao>";
+                    tmp += sFrases;
+						tmp += "</dsObservacao><WFGrupoVO><idGrupo/></WFGrupoVO>";
+						tmp += "<WFMotivoVO><idMotivo/></WFMotivoVO><UsuarioVIVO xmlns:vo1=\"usuario.fo.vivo.com.br/vo\">";
+						tmp += "<idPessoaUsuario/></UsuarioVIVO></AtendimentoWorkflowComumVO>";
+						tmp += "<AtendimentoWorkflowEncerramentoVO>";
+						tmp += "<ArvoreEncerramentoVO xmlns:vo1=\"admsistemas.fo.vivo.com.br/vo\">";
+						tmp += "<EncerramentoVO>";
+						tmp += "<idBaixa>1</idBaixa>";
+						tmp += "<idBaixaMensagem>1</idBaixaMensagem><dsComentario>";
+                    tmp += sFrases; 
+						tmp += "</dsComentario>";
+						tmp += "<dsDocumentoAssociado/>";
+						tmp += "</EncerramentoVO>";
+						tmp += "</ArvoreEncerramentoVO>";
+						tmp += "</AtendimentoWorkflowEncerramentoVO>";
+						tmp += "</AtendimentoWorkflowVO>";
+						
+					}
+				}
+			}
+			
+            //sprintf(szAux, "*** Valor de J [%d]\n", j ); oLog.logDebug(szAux);
+
+			if ( j > 0 )
+			{
+				if ( temAtendimento == true )
+				{
+					tmp += "<WFAcaoVO xmlns:vo=\"workflow.fo.vivo.com.br/vo\">";
+					tmp += "<idAtividade>23</idAtividade>";
+					tmp += "<inCRI>0</inCRI>";
+					tmp += "</WFAcaoVO>";
+					tmp += "</xml-fragment>";
+					tmp += "</atendimentos>";
+					tmp += "<idFase>2</idFase>";
+					tmp += "</msgBody>";
+					tmp += "</msg>";
+					
+					strcpy( szXml, tmp.c_str() );
+					sprintf(szAux, "szXml[%s]", szXml); oLog.logDebug(szAux);
+
+					memset(szRetMsg, 0x00, sizeof(szRetMsg));
+					iRetSendXML = sendXML( szXml,szRetMsg );
+					if ( iErrorNumber != 0 )
+					{
+						sprintf( szXmlTmp, "<AtdWFVO xmlns:vo=\"workflow.fo.vivo.com.br/vo\"><idAtendimento>%s</idAtendimento><WFExecucao><dsObservacao>%s</dsObservacao><idAgrupamentoEstadoTProcFut>10</idAgrupamentoEstadoTProcFut><idAgrupamentoEstadoTProcAt>%s</idAgrupamentoEstadoTProcAt><idAtividade>10</idAtividade><idAtividadeMassa>10</idAtividadeMassa><idBaixa>%s</idBaixa></WFExecucao></AtdWFVO>", (char*)idAtendimento.arr, (char*)(*itAtd).dsObservacao, (char*)idAgrupaTpProc.arr, (char*)idBaixa.arr );
+					}
+				}
+			}
+
+		    fclose( fpArqErr );
+
+			if ( qtdRejeitados == 0 )
+			{
+				strcpy( dsProcessamento, "SUCESSO" );
+			}
+			else
+			{
+				strcpy( dsProcessamento, "FALHA" );
+			}
+
+		/*--- Renomeando arquivo processado ---*/
+		time ( &rawtime );
+		timeinfo = localtime ( &rawtime );
+
+		if ( qtdRejeitados > 0)   /* Arquivo de Registros Invalidos Existe? */
+		{
+			memset( buffer, 0x0, sizeof(buffer) );
+			strftime ( buffer,80,"_%Y%m%d_%H%M%S.err", timeinfo );
+
+			sprintf( sArqPrc, "%s", arquivoERR.c_str() );
+			sprintf( sArqPrc, "%.*s%s", strlen(sArqPrc)-4,sArqPrc,buffer );
+
+			rename( arquivoERR.c_str() , sArqPrc );
+			//sprintf( szAux, "### Renomeando [%s] ==> [%s]\n", arquivoERR.c_str() , sArqPrc ); oLog.logDebug(szAux);
+			sprintf( nmArquivoErro, "%s", sArqPrc );
+		}
+		else
+		{
+			unlink ( arquivoERR.c_str() );   /* Arquivo de Registros Invalidos com tamanho ZERO */
+			//nmArquivo[0] = 0x0;
+		}
+		
+		
+		memset( buffer, 0x0, sizeof(buffer) );
+		strftime ( buffer,80,"_%Y%m%d_%H%M%S.prc", timeinfo );
+		
+		sprintf( sArqPrc, "%s", arquivoTXT.c_str() );
+		sprintf( sArqPrc, "%.*s%s", strlen(sArqPrc)-4,sArqPrc,buffer );
+
+		rename( arquivoTXT.c_str() , sArqPrc );
+		//sprintf( szAux, "### Renomeando [%s] ==> [%s]\n", arquivoTXT.c_str() , sArqPrc ); oLog.logDebug(szAux);
+		
+
+			sprintf( szAux, "*** Inserindo NMARQUIVO              [%s]\n", nmArquivo ); oLog.logDebug(szAux);
+			sprintf( szAux, "*** Inserindo QTREGISTROSPROCESSADOS [%d]\n", qtdLidos ); oLog.logDebug(szAux);
+			sprintf( szAux, "*** Inserindo QTREGISTROSDESCARTADOS [%d]\n", qtdRejeitados ); oLog.logDebug(szAux);
+			
+			EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+        //sprintf( szAux, "### nmArquivoErro [%s]\n", nmArquivoErro ); oLog.logDebug(szAux);
+        sprintf( bf, "%s", (char*)&nmArquivoErro[8] );
+        //sprintf( szAux, "### bf [%s]\n", bf ); oLog.logDebug(szAux);
+        strcpy( nmArquivoErro, bf );
+		
+        //sprintf( szAux, "*** nmArquivo     [%s]\n", nmArquivo ); oLog.logDebug(szAux);
+        //sprintf( szAux, "*** nmArquivoErro [%s]\n", nmArquivoErro ); oLog.logDebug(szAux);
+
+        if ( qtdRejeitados > 0 )
+		{
+		    sprintf( szAux, "Vai gravar arquivo [%s] com falha\n", nmArquivoErro ); oLog.logDebug(szAux);
+			EXEC SQL
+			UPDATE INFRA.ARQUIVOFUNCIONALIDADE
+				SET INCONTROLEPROCESSAMENTO = 3,
+					QTREGISTROSPROCESSADOS=:qtdLidos,
+					QTREGISTROSDESCARTADOS=:qtdRejeitados,
+					DTPROCESSAMENTO=SYSDATE,
+					DSERROPROCESSAMENTO=:dsProcessamento,
+                nmarquivo=:nmArquivoErro
+				WHERE NMARQUIVO=:nmArquivo;
+			EXEC SQL COMMIT;
+	    }
+		else
+		{
+		    sprintf( szAux, "Vai gravar arquivo [%s] sem falha\n", nmArquivo ); oLog.logDebug(szAux);
+			EXEC SQL
+			UPDATE INFRA.ARQUIVOFUNCIONALIDADE
+				SET INCONTROLEPROCESSAMENTO = 3,
+					QTREGISTROSPROCESSADOS=:qtdLidos,
+					QTREGISTROSDESCARTADOS=:qtdRejeitados,
+					DTPROCESSAMENTO=SYSDATE,
+					DSERROPROCESSAMENTO=:dsProcessamento,
+					nmarquivo=:nmArquivo
+				WHERE NMARQUIVO=:nmArquivo;
+			EXEC SQL COMMIT;
+		}
+			
+		}  /* if ( fpArqErr != NULL ) */
+		else
+		{
+			sprintf(szAux, "### ERRO: Arquivo [%s] -> [%s]\n", arquivoERR.c_str(), strerror(errno)); oLog.logDebug(szAux);
+		}
+    }
+    else   /*   if ( fpArquivo != NULL )   */
+    {
+        sprintf(szAux, "### ERRO: Arquivo [%s] -> [%s]\n", arquivoTXT.c_str(), strerror(errno)); oLog.logDebug(szAux);
+    }
+
+	/*   Obtem a qtde de dias do historico de arquivos processados   */
+	EXEC SQL
+	SELECT DSVALORPARAMETRO INTO :qtdDias:i_qtdDias FROM APOIO.PARAMETRO WHERE CDPARAMETRO = 'QTD_DIAS_EXPURGO_BLOQUEIO_PR';
+	CONVIND( qtdDias,i_qtdDias );
+	//sprintf( szAux, "*** Qtde limite de dias [%s]\n", (char*)qtdDias.arr ); oLog.logDebug(szAux);
+	
+	EXEC SQL 
+	SELECT TO_CHAR(TRUNC(SYSDATE - :qtdDias ),'YYYYMMDD') INTO :dataLimite:i_dataLimite FROM DUAL;
+	CONVIND( dataLimite,i_dataLimite );
+	
+	RemoveHistoricoArq( "../data", atoi((char*)dataLimite.arr) );
+
+    oLog.logDebug("Desconectando da BD...\n");
+    DBDisconnect();
+
+    oLog.logDebug("Finalizando conexao TUXEDO...\n");
+    tpterm(); 
+
+    oLog.logDebug("Processamento encerrado com sucesso...\n");
+    oLog.logDebug("<<<fechaSolicitacaoBloqueioPR\n");
+
+    return 0;
+
+    sqlError:
+        sprintf(szAux, "Finalizando processo com erro ORACLE (%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        return -1;
+
+    /* Tratamento de erro de processamento */
+    finalizaProcess:
+        oLog.logDebug("Finalizando processo...\n");
+
+        oLog.logDebug("Desconectando da BD...\n");
+        DBDisconnect();
+        oLog.logDebug("Finalizando conexao TUXEDO...\n");
+        tpterm(); 
+
+        oLog.logDebug("<<<fechaSolicitacaoBloqueioPR\n");
+        return -1;
+}
+
+
+
+/************************************************************************************************************/
+void ObtemParamBase( int *piSleep )
+{
+    sprintf(szAux, "Antes->*piSleep(%d)\n", *piSleep); oLog.logDebug(szAux);
+
+    *piSleep=ObtemTempoSleep();
+
+    sprintf(szAux, "Depois->*piSleep(%d)\n", *piSleep); oLog.logDebug(szAux);
+}
+
+
+
+/************************************************************************************************************/
+int ObtemParamQtRetriesMax(void)
+{
+    char *pPointer= ObtemParametro("FILASETCLIENTINFO_QTRETRYMAX");
+    if(pPointer == NULL) {
+        oLog.logDebug("Parametro de configuracao 'FILASETCLIENTINFO_QTRETRYMAX' nao encontrado\n");
+        pPointer = "10"; // qtde máxima de retries
+    }
+
+    sprintf(szAux, "Retries Max=%s\n", pPointer);oLog.logDebug(szAux);
+
+    return (atoi(pPointer));
+}
+
+
+
+/************************************************************************************************************/
+int ObtemTempoSleep(void)
+{
+    char *pPointer = ObtemParametro("ENVIA_CAD_PREPAGO_SLEEP_EOF");
+    if(pPointer == NULL) {
+        oLog.logDebug("Parametro de configuracao 'ENVIA_CAD_PREPAGO_SLEEP_EOF' nao encontrado\n");
+
+        exit(-1);
+    }
+
+    return (atoi(pPointer));
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemDataHora(void)
+{
+    struct tm *ptTime;
+    time_t tTimeNow;
+    static char szDataHora[14 + 1];
+
+    time(&tTimeNow);
+    ptTime=localtime(&tTimeNow);
+    sprintf(szDataHora, "%04d%02d%02d%02d%02d%02d", 
+                        ptTime->tm_year + 1900, 
+                        ptTime->tm_mon + 1, 
+                        ptTime->tm_mday, 
+                        ptTime->tm_hour, 
+                        ptTime->tm_min, 
+                        ptTime->tm_sec );
+
+    return szDataHora;
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemValorTag(char *pXml, char *pTag)
+{
+    static char szValue[255 + 1];
+
+    szValue[0] = 0;
+    if ( pXml )
+    {
+        if ( *pXml )
+        {
+            char *p0 = strstr(pXml,pTag) + strlen(pTag) + 1;
+            if ( p0 )
+            {
+                char *p1 = strstr(p0,pTag) - 2;
+                if ( p1 )
+                {
+                    if ( p1 > p0 )
+                    {
+                        int tam = p1-p0;
+                        if (tam > 255) tam = 255;
+                        strncpy(szValue,p0,tam);
+                        szValue[tam]=0;
+                    }
+                }
+            }
+        }
+    }
+
+    return szValue;
+}
+
+
+
+/************************************************************************************************************/
+int TUXinit(TParamConf *ptParamConf)
+{
+    TPINIT *tpInitInfo;
+    int i;
+
+    oLog.logInformation(">>>TUXinit\n");
+
+    if((tpInitInfo = (TPINIT *)tpalloc("TPINIT", (char *)NULL, TPINITNEED(strlen(VIVO_GENERIC_PASSWORD) - 1) )) == (TPINIT *)NULL)
+    return tperrno;
+
+    strcpy(tpInitInfo->usrname, ptParamConf->szUsrTux);
+    strcpy(tpInitInfo->cltname, ptParamConf->szCltTux);
+    strcpy(tpInitInfo->passwd, ptParamConf->szPwsTux);
+    strcpy((char *)&tpInitInfo->data, ptParamConf->szPwsTuxGen);
+
+    i = tpinit(tpInitInfo);
+    sprintf(szAux, "TPINIT: %i, TPERRNO: %i\n", i, tperrno); oLog.logDebug(szAux);
+
+    oLog.logInformation("<<<TUXinit\n");
+
+//    printf("TUX_USRNAME[%s]\n", TUX_USRNAME);
+//    printf("TUX_CLTNAME[%s]\n", TUX_CLTNAME);
+//    printf("VIVO_APP_PASSWORD[%s]\n", VIVO_APP_PASSWORD);
+//    printf("VIVO_GENERIC_PASSWORD[%s]\n", VIVO_GENERIC_PASSWORD);
+
+    if (i == -1)
+        return 1;
+    else  
+        return 0;
+}
+
+
+
+/************************************************************************************************************/
+int sendXML(char *pXmlSaida, char *pRetMsg) {
+
+    char *sendbuf, *rcvbuf;
+    long sendlen, rcvlen;
+
+    sendlen = strlen(pXmlSaida);
+
+    // sprintf(szAux, "Tamanho da msg = (%d)\n", sendlen); oLog.logInformation(szAux);
+
+    if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        oLog.logError("Error allocating send buffer\n");
+        tpterm();
+
+        return -1;
+    }
+
+    if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+        oLog.logError("Error allocating receive buffer\n");
+        tpfree(sendbuf);
+        tpterm();
+
+        return -1;
+    }
+
+    strcpy(sendbuf, pXmlSaida);
+
+    if(tpacall("CERRAMEFEC", (char *)sendbuf, sendlen, TPNOTRAN|TPNOREPLY ) == -1) {
+        sprintf(szAux, "Tperrno = %d\n", tperrno); oLog.logError(szAux);
+        sprintf(szAux, "rcvbuf [%s]\n", rcvbuf); oLog.logError(szAux);
+
+        iErrorNumber=tperrno;
+        strcpy(pRetMsg, rcvbuf);
+
+        tpfree(sendbuf);
+        tpfree(rcvbuf);
+
+        return 1;
+    }
+
+    iErrorNumber=0;
+    strcpy(pRetMsg, rcvbuf);
+
+    tpfree(sendbuf);
+    tpfree(rcvbuf);
+
+    return 0;
+}
+
+
+
+
+/************************************************************************************************************/
+int ObtemParamConf(TParamConf *ptParamConf)
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[81];
+    char szDivArq[256];
+    char szDivPre[21];
+
+    oLog.logDebug("Obtendo parametros de configuracao...\n");
+
+    /* Zera variáveis */
+    memset(ptParamConf, 0x00, sizeof(TParamConf));
+    memset(szLinha, 0x00, sizeof(szLinha));
+    memset(szDivArq, 0x00, sizeof(szDivArq));
+    memset(szDivPre, 0x00, sizeof(szDivPre));
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("fechaSolicitacaoBloqueioPR.cfg");
+
+    /* Verificar se conseguiu abrir o arquivo */
+    if(!mfConfig.abrir()) {
+        oLog.logError("Erro abrindo arquivo de configuração!\n");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+    while(mfConfig.getLine(szLinha) != 0)
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, 20);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, 10);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, 10);
+        }
+        else if (strcmp(szDivPre, "clt_tux")==0)
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, 10);
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    //sprintf(szAux, "ptParamConf->szPws[%s]\n", ptParamConf->szPws); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]\n", ptParamConf->szUsr); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]\n", ptParamConf->szInst); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTux[%s]\n", ptParamConf->szPwsTux); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szUsrTux[%s]\n", ptParamConf->szUsrTux); oLog.logInformation(szAux);
+    //sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]\n", ptParamConf->szPwsTuxGen); oLog.logInformation(szAux);
+    sprintf(szAux, "ptParamConf->szCltTux[%s]\n", ptParamConf->szCltTux); oLog.logInformation(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0 )
+    {
+        oLog.logError("Dados incompletos!\n");
+        return -1;
+    }
+
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...\n");
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    //oLog.logInformation(">>>DBConnect\n");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+
+    /* Marca ponto de erro */
+    EXEC SQL WHENEVER SQLERROR GOTO errConn;
+
+    /* Conecta */
+    EXEC SQL CONNECT :connString;
+
+    //oLog.logInformation("<<<DBConnect\n");
+
+    return (sqlca.sqlcode);
+    
+errConn:
+    oLog.logInformation("<<<DBConnect [ERROR]\n");
+    return -1;
+}
+
+
+
+
+/************************************************************************************************************/
+void DBDisconnect(void)
+{
+    //oLog.logInformation(">>>DBDisconnect\n");
+
+    EXEC SQL WHENEVER SQLERROR GOTO Error;
+    //EXEC SQL COMMIT WORK RELEASE;
+
+    //oLog.logInformation("<<<DBDisconnect\n");
+    return;
+
+Error:
+    sprintf(szAux, "Erro! sqlca.sqlcode = %i\n", sqlca.sqlcode); oLog.logError(szAux);
+    return;
+}
+
+
+
+/************************************************************************************************************/
+char *ObtemParametro(char *pCdParametro)
+{
+    EXEC SQL BEGIN DECLARE SECTION;
+        //VARCHAR oszCdParametro[255];
+        char *oszCdParametro = pCdParametro;
+        VARCHAR oszDsValorParametro[255+1];
+    EXEC SQL END DECLARE SECTION;
+
+    static char szDsValorParametro[255 + 1];
+    struct sqlca sqlca;
+
+
+    EXEC SQL WHENEVER SQLERROR goto erro;
+    EXEC SQL WHENEVER NOT FOUND goto naoexiste;
+
+    //STRCPY_TO_ORA(oszCdParametro, pCdParametro);
+
+    EXEC SQL 
+        SELECT dsvalorparametro
+          INTO :oszDsValorParametro
+          FROM apoio.parametro
+         WHERE parametro.cdparametro = :oszCdParametro;
+
+    STRCPY_FROM_ORA(szDsValorParametro, oszDsValorParametro);
+
+    return szDsValorParametro;
+
+    erro:
+        sprintf(szAux, "Finalizando com erro sqlca.sqlcode(%d)\n", sqlca.sqlcode); oLog.logDebug(szAux);
+        exit(-1);
+
+    naoexiste:
+        sprintf(szAux, "Chave pesquisada nao encontrada[%s]\n", pCdParametro); oLog.logDebug(szAux);
+        return NULL;
+}
+
+
+
+void findFileType( char *path, string &arquivo, char *type)
+{
+    oLog.logDebug("localizar arquivo");
+    DIR *dirp;
+    struct dirent *dp;
+    char nameLog[1024];
+	char nmArquivo[512];
+	char exten[5];
+
+    // inicializando nameLog
+    memset(nameLog,0,sizeof(nameLog));
+
+    // copiando o path
+    arquivo = path;
+
+    // vai abrir o diretório
+    if ((dirp = opendir(path)) == NULL) {
+        oLog.logError("Erro ao abrir diretório");
+        return;
+    }
+
+    do {
+        if ((dp = readdir(dirp)) != NULL) {
+            sprintf(nameLog,"encontrado: %s size = %d\n", dp->d_name, sizeof(dp->d_name));     
+            //oLog.logDebug(nameLog);
+			strcpy( nmArquivo, dp->d_name );
+			sprintf( exten, "%s", (char*)&nmArquivo[strlen(dp->d_name)-4] );
+			//oLog.logDebug(exten);
+             if((!memcmp(exten,type,4))) {
+                arquivo += "/";
+                arquivo += dp->d_name;
+                closedir(dirp);
+                return;
+             }
+        }
+    } while (dp != NULL);
+
+    closedir(dirp);
+}
+
+
+
+void RemoveHistoricoArq( char *path, int DataLimite )
+{
+    oLog.logDebug("localizar arquivo");
+    DIR *dirp;
+    struct dirent *dp;
+    char nameLog[1024];
+	char nmArquivo[512];
+	char Data_Arquivo[16];
+
+    // inicializando nameLog
+    memset(nameLog,0,sizeof(nameLog));
+
+    if ((dirp = opendir(path)) == NULL) {
+        oLog.logError("Erro ao abrir diretório");
+        return;
+    }
+
+    do 
+	{
+        if ((dp = readdir(dirp)) != NULL) 
+		{
+		    if ( strlen(dp->d_name) < 9 )
+			{
+			   continue;
+			}
+			//sprintf( nameLog, "))) Encontrou arquivo [%s]\n", dp->d_name ); oLog.logDebug(nameLog);
+			
+			sprintf( Data_Arquivo, "%.*s", 8, (char*)&dp->d_name[strlen(dp->d_name)-19] );
+			//sprintf( nameLog, "@@@ Data do arquivo [%s]\n", Data_Arquivo ); oLog.logDebug(nameLog);
+			//sprintf( nameLog, "@@@ Data limite do arquivo [%d]\n", DataLimite ); oLog.logDebug(nameLog);
+			
+			if ( DataLimite > atoi(Data_Arquivo) )
+			{
+				//sprintf( nameLog, "))) Removendo arquivo [%s]\n", dp->d_name ); oLog.logDebug(nameLog);
+				unlink( dp->d_name );
+			}
+        }
+    } while (dp != NULL);
+
+    closedir(dirp);
+}

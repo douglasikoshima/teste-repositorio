@@ -1,0 +1,126 @@
+/* ListaCampanha.cpp : Defines the entry point for the console application.
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+EXEC SQL INCLUDE "Lista.h";
+
+#include "MFile.h"
+#include "SplitLine.h"
+
+int main(int argc, char* argv[])
+{
+	struct sqlca sqlca;
+	MFile mfConfig;
+
+	SplitLine NewLinha;
+	int iConfig=0;
+
+	char szPath[1025];
+	char szInst[21];
+	char szLinha[81];
+	char szDivArq[256];
+	char szDivPre[21];
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		char szConnStr[512];
+	EXEC SQL END DECLARE SECTION;
+
+	/* Zera variáveis */
+	memset(szPath, 0, 1025);
+	memset(szInst, 0, 21);
+	memset(szLinha, 0, 81);
+	memset(szDivArq, 0, 256);
+	memset(szConnStr, 0, 512);
+	
+	/* Define o arquivo de configuração */
+	mfConfig.setPath("lista.cfg");
+
+	/* Verificar se conseguiu abrir o arquivo */
+	if(!mfConfig.abrir()) 
+		{
+		printf("Erro abrindo arquivo de configuração!\n");
+		return -1;
+	}
+   
+	/* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv('=');
+
+	while(mfConfig.getLine(szLinha) != 0)
+	{
+		NewLinha.SetLine(szLinha);
+		NewLinha.GetBeforeDiv(szDivPre);
+		NewLinha.GetAfterDiv(szDivArq);
+
+		/* Verifica qual parâmetro foi encontrado. */
+		if (!strcmp(szDivPre, "pth")) 
+			{
+				strncpy(szPath, szDivArq, 1024);
+				printf("Path: %s\n", szPath);
+			} 
+		else if (!strcmp(szDivPre, "inst")) 
+			{
+				strncpy(szInst, szDivArq, 10);
+				printf("Instance Oracle: %s\n", szInst);
+			}
+	}
+
+	/* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+	if (!*szPath || !*szInst) 
+	{
+		printf("Dados incompletos!\n");
+		return -1;
+	}
+
+	/* Conecta no banco de dados. */
+	sprintf(szConnStr,"/@%s",szInst);
+	
+	EXEC SQL CONNECT :szConnStr;
+	if (sqlca.sqlcode) 
+	{
+		printf("Erro conectando no banco de dados! Erro oracle: %d.\n", sqlca.sqlcode);
+		return -1;
+	}
+
+	/* Verifica no banco de dados quais arquivos devem ser trabalhados. */
+	int iQtLinhas = 0;
+	int iNroObjetos = 0;
+	
+	CLista* listas;
+	listas = CLista::recuperaAProcessar(&iNroObjetos);
+	if (iNroObjetos == -1) 
+		{
+			printf("Erro recuperando listas a serem processadas!\n");
+			EXEC SQL ROLLBACK WORK RELEASE;
+			return -1;
+		}
+	for(int iAux = 0; iAux < iNroObjetos; iAux++) 
+		{
+			/* Para cada lista recuperada, processa */
+			printf("Iniciando o processamento da lista: %s.\n", listas[iAux].getNmLista());
+			iQtLinhas = listas[iAux].processaLista(szPath);
+			printf("Processados %d registros nessa lista.\n", iQtLinhas);
+		}
+
+	/* Desaloca memória. */
+	if (listas)
+		free(listas);
+
+	/* Desconcta do banco de dados. */
+	EXEC SQL COMMIT WORK RELEASE;
+	if (sqlca.sqlcode!=-2292) 
+		{
+			printf("Erro desconectando no banco de dados! Erro oracle: %d.\n", sqlca.sqlcode);
+			return -1;
+		}
+
+	/* Encerra. */
+	printf("Encerrando processamento com %d listas trabalhadas.\n", iNroObjetos);
+	return 0;
+}
+

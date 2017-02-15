@@ -1,0 +1,325 @@
+
+#include "../include/procMatrizesRetencaoPC.h"
+#include <string>
+#include <list>
+#include <iterator>
+using namespace std;
+
+list<int>::iterator itTpLinha;
+list<int>::iterator itMtzAparelho;
+typedef list<int> LISTA_ID;
+
+EXEC SQL BEGIN DECLARE SECTION;
+   #define  NRO_MAX_REG_ORA     40000
+EXEC SQL END DECLARE SECTION;
+
+void cprocMatrizesRetencaoPC::processa()
+{
+    Log log;
+    struct sqlca sqlca;
+
+    char* szPws;
+    char* szUsr;
+    char* szPath;
+    char* szInst;
+    char msgErro[2048];
+    int  vlLog = ERROR;
+    LISTA_ID       pTpLinha;
+    LISTA_ID       pMtzAparelho;
+
+    Propriedade prop("procMatrizesRetencao.cfg");
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    	char s[4096];
+        char szConnStr[512];
+        int  transacao;
+        int  idPsq;
+        int  idUser;
+        int  idMtzAparelho;
+        int  idTpLinha;
+        int  idUsuario;
+        int  idMatrizAparelho;
+        int  idTipoLinha;
+        int  nrLinhas = 1;
+    EXEC SQL END DECLARE SECTION;
+    //
+    // ===============================================================================
+    // CARREGA PARÂMETROS
+    // ===============================================================================
+    szPws = prop.getParametro("pwd");
+    szUsr = prop.getParametro("usr");
+    szPath= prop.getParametro("pth");
+    szInst= prop.getParametro("inst");
+
+    vlLog = atoi( prop.getParametro("log") );
+
+    // Verifica se todos os dados foram recuperados do arquivo de configuração
+    if (!szPws || !szUsr || !szPath || !szInst || vlLog == 0)
+    {
+        log.logError("Dados para conexão estão incompletos!\n");
+        return;
+    }
+
+    log.setNivel( vlLog );
+    //
+    // ===============================================================================
+    // CONECTA AO BANCO DE DADOS
+    // ===============================================================================
+    sprintf(szConnStr, "%s/%s@%s", szUsr, szPws, szInst);
+    EXEC SQL CONNECT :szConnStr;
+    if (sqlca.sqlcode)
+    {
+        sprintf(msgErro,"Erro ao conectar ao Banco de Dados - "
+                      "Erro Oracle [%d] - Mensagem [%s].\n"
+                      ,sqlca.sqlcode, sqlca.sqlerrm.sqlerrmc);
+        log.logError(msgErro);
+        return;
+    }
+
+    //
+    // ===============================================================================
+    // ===============================================================================
+    log.logDebug("Processando RETENCAO.MATRIZAPARELHOS ...\n");
+	char bf[2048];
+
+
+	EXEC SQL
+	SELECT 
+	   MIN(IDTIPOAPARELHO)
+	INTO
+	   :idPsq
+	FROM
+	   RETENCAO.MATRIZAPARELHOTMP;
+
+    sprintf( bf,"Obteve idPsq [%d]\n",idPsq);
+	log.logDebug(bf);
+	
+	
+	EXEC SQL
+	SELECT 
+	   NRTRANS ,
+	   IDUSUARIOALTERACAO
+	INTO
+	   :transacao ,
+	   :idUser
+	FROM
+	   RETENCAO.MATRIZAPARELHOTMP
+	WHERE
+	   IDTIPOAPARELHO = :idPsq;
+
+	sprintf( bf,"Pesquisando transacao [%d]\n",transacao);
+	log.logDebug(bf);
+	
+	sprintf( bf,"Usuario solicitante [%d]\n",idUser);
+	log.logDebug(bf);
+    
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    EXEC SQL DECLARE CrsTipoLinha CURSOR FOR
+    SELECT
+       nrElementos
+    FROM
+       retencao.controlematrizaparelho
+    WHERE
+       nrtransacao = :transacao
+    AND
+       nrProcessados = -1;
+            
+	   
+	   
+	//Tipos de Linha
+	EXEC SQL OPEN CrsTipoLinha;
+	for ( ;; )
+	{
+		EXEC SQL FETCH CrsTipoLinha INTO :idTpLinha;
+		pTpLinha.push_back(idTpLinha);
+    	sprintf( bf,"Tipo de Linha a ser processada [%d]\n",idTpLinha);
+    	log.logDebug(bf);
+    }
+	EXEC SQL CLOSE CrsTipoLinha;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    
+    sprintf( s,
+    "MERGE INTO RETENCAO.MATRIZAPARELHO a"
+        " USING ("
+                " SELECT"
+                   " IDTIPOPESSOA ,"
+                   " IDAPARELHO ,"
+                   " VLPERCENTUALDESCONTO ,"
+                   " IDPESSOAUSUARIOINCLUSAO ,"
+                   " DTINCLUSAO ,"
+                   " IDPESSOAUSUARIOALTERACAO ,"
+                   " DTALTERACAO ,"
+                   " INATIVO ,"
+                   " IDSEGMENTACAO ,"
+                   " IDUFOPERADORA ,"
+                   " VLMULTA ,"
+                   " IDUSUARIOALTERACAO ,"
+                   " DTULTIMAALTERACAO ,"
+                   " IDGRUPO"
+                " FROM"
+                   " RETENCAO.MATRIZAPARELHOTMP"
+                " WHERE"
+                   " NRTRANS = %d"
+              " ) b"
+        " ON (a.IDAPARELHO = b.IDAPARELHO AND a.IDUFOPERADORA = b.IDUFOPERADORA AND a.IDSEGMENTACAO = b.IDSEGMENTACAO AND a.IDGRUPO = b.IDGRUPO AND a.IDTIPOPESSOA = b.IDTIPOPESSOA)"
+        " WHEN MATCHED THEN"
+           " UPDATE SET"
+                        " a.VLPERCENTUALDESCONTO = b.VLPERCENTUALDESCONTO,"
+                        " a.IDPESSOAUSUARIOINCLUSAO = b.IDPESSOAUSUARIOALTERACAO,"
+                        " a.DTINCLUSAO = b.DTINCLUSAO,"
+                        " a.IDPESSOAUSUARIOALTERACAO = b.IDPESSOAUSUARIOALTERACAO,"
+                        " a.DTALTERACAO = b.DTALTERACAO,"
+                        " a.INATIVO = b.INATIVO,"
+                        " a.VLMULTA = b.VLMULTA,"
+                        " a.IDUSUARIOALTERACAO = b.IDUSUARIOALTERACAO,"
+                        " a.DTULTIMAALTERACAO = b.DTULTIMAALTERACAO"
+        " WHEN NOT MATCHED THEN"
+           " INSERT (a.IDMATRIZAPARELHO,"
+                       " a.IDTIPOPESSOA,"
+                       " a.IDAPARELHO,"
+                       " a.VLPERCENTUALDESCONTO,"
+                       " a.IDPESSOAUSUARIOINCLUSAO,"
+                       " a.DTINCLUSAO,"
+                       " a.IDPESSOAUSUARIOALTERACAO,"
+                       " a.DTALTERACAO,"
+                       " a.INATIVO,"
+                       " a.IDSEGMENTACAO,"
+                       " a.IDUFOPERADORA,"
+                       " a.VLMULTA,"
+                       " a.IDUSUARIOALTERACAO,"
+                       " a.DTULTIMAALTERACAO,"
+                       " a.IDGRUPO)"
+               " VALUES (MATRIZAPARELHOSQ.NEXTVAL ,"
+                       " b.IDTIPOPESSOA,"
+                       " b.IDAPARELHO,"
+                       " b.VLPERCENTUALDESCONTO,"
+                       " b.IDPESSOAUSUARIOALTERACAO,"
+                       " b.DTINCLUSAO,"
+                       " b.IDPESSOAUSUARIOALTERACAO,"
+                       " b.DTALTERACAO,"
+                       " b.INATIVO,"
+                       " b.IDSEGMENTACAO,"
+                       " b.IDUFOPERADORA,"
+                       " b.VLMULTA,"
+                       " b.IDUSUARIOALTERACAO,"
+                       " b.DTULTIMAALTERACAO,"
+                       " b.IDGRUPO)", transacao );
+    
+ 	 log.logDebug( s );
+ 	 
+     EXEC SQL EXECUTE IMMEDIATE :s;
+    	
+    /*
+    EXEC SQL 
+    CALL MERGEMATRIZAPARELHO( :transacao );
+    */
+
+     EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    EXEC SQL DECLARE CrsMtzAparelho CURSOR FOR
+            SELECT DISTINCT a.idmatrizaparelho 
+             FROM retencao.matrizaparelho a,
+                  retencao.matrizaparelhotmp b,
+                  retencao.controlematrizaparelho c 
+            WHERE 
+                  a.idufoperadora = b.idufoperadora
+              AND a.idsegmentacao = b.idsegmentacao
+              AND a.idgrupo = b.idgrupo
+              and c.nrProcessados = -1
+              and c.nrtransacao = :transacao
+              AND a.idtipopessoa = b.idtipopessoa
+              AND b.nrtrans = :transacao
+              AND a.idaparelho = b.idaparelho;              
+
+	// Matrizes de Aparelho
+	EXEC SQL OPEN CrsMtzAparelho;
+	for ( ;; )
+	{
+		EXEC SQL FETCH CrsMtzAparelho INTO :idMatrizAparelho;
+
+		pMtzAparelho.push_back(idMatrizAparelho);
+
+    	sprintf( bf,"idMatrizAparelho a ser processada [%d]\n",idMatrizAparelho);
+    	log.logDebug(bf);
+	}
+	EXEC SQL CLOSE CrsMtzAparelho;
+                  
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    log.logDebug( "Vai atualizar RETENCAO.MATRIZAPARELHOTIPOLINHA\n" );
+	nrLinhas = 1;
+	for ( itTpLinha = pTpLinha.begin(); itTpLinha != pTpLinha.end(); itTpLinha++ )
+	{
+		idTipoLinha = *itTpLinha;
+    	sprintf( bf,"Processando tipo de linha [%d]\n",idTipoLinha);
+    	log.logDebug(bf);
+    			
+		for ( itMtzAparelho = pMtzAparelho.begin(); itMtzAparelho != pMtzAparelho.end(); itMtzAparelho++ )
+		{
+	    	idMatrizAparelho = *itMtzAparelho;
+        	sprintf( bf,"Processando idMatrizAparelho [%d]\n",idMatrizAparelho);
+        	log.logDebug(bf);
+	    	
+			sprintf( bf,"idMatrizAparelho [%d]",idMatrizAparelho);
+			log.logDebug(bf);
+	    	
+		    EXEC SQL
+			update RETENCAO.MATRIZAPARELHOTIPOLINHA
+			set inativo = 1 ,
+			    IDUSUSARIOALTERACAO = :idUser ,
+			    DTULTIMAALTERACAO = SYSDATE
+			where idmatrizaparelho = :idMatrizAparelho
+		    and   idTipoLinha = :idTipoLinha ;
+            
+            log.logDebug( "Executou update RETENCAO.MATRIZAPARELHOTIPOLINHA\n" );
+        	sprintf( bf,"Valor de sqlca.sqlerrd[2] [%d]\n",sqlca.sqlerrd[2]);
+        	log.logDebug(bf);
+
+			if (sqlca.sqlerrd[2] == 0)
+			{
+                log.logDebug( "Inserindo em RETENCAO.MATRIZAPARELHOTIPOLINHA\n" );
+
+                sprintf( bf,"Inserindo idMatrizAparelho[%d], idTipoLinha [%d], idUser [%d]\n",idMatrizAparelho,idTipoLinha,idUser );
+                log.logDebug(bf);
+
+				EXEC SQL
+				INSERT INTO RETENCAO.MATRIZAPARELHOTIPOLINHA
+				(
+					IDMATRIZAPARELHO ,
+					IDTIPOLINHA ,
+					INATIVO ,
+					IDUSUSARIOALTERACAO ,
+					DTULTIMAALTERACAO 
+				)
+				VALUES
+				(
+					:idMatrizAparelho ,
+					:idTipoLinha ,
+					1 ,
+					:idUser ,
+					SYSDATE 
+				);
+			}
+
+		}
+
+		
+
+	}    	
+    
+    EXEC SQL
+    DELETE FROM RETENCAO.MATRIZAPARELHOTMP WHERE NRTRANS = :transacao;
+
+    EXEC SQL
+    DELETE FROM RETENCAO.CONTROLEMATRIZAPARELHO WHERE NRTRANSACAO = :transacao;
+
+    EXEC SQL COMMIT;
+    log.logDebug( "Executou COMMIT para matriz de aparelhos\n" );
+
+
+    //
+    // ===============================================================================
+
+}

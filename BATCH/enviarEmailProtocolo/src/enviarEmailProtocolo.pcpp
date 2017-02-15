@@ -1,0 +1,2092 @@
+/*
+ * enviarEmailProtocolo.pcpp
+ *
+ *  Created on: 23/02/2013
+ *      Author: Jones Randis
+ *
+ *  Alteracao: Agora email invalido È removido da fila de consumo.
+ *             Este registro sera guardado na tabela de historico, para nao honerar a fila de consumo.
+ *             Marcelo Nunes - Marco/2015
+ */
+
+
+#include <exception>
+#include <iostream>
+#include <string>
+#include <sstream>
+#include <fstream>
+#include <memory>
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cerrno>
+using namespace std;
+
+extern "C" {
+#include <libgen.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <sqlca.h>
+#include <regex.h>
+#include <sys/file.h>
+#include <sys/mode.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+}
+
+#include "enviarEmailProtocolo.h"
+
+int main(int argC, char *argV[])
+{
+	char* me = basename(argV[0]);
+    char nrMaxRegistros[16];
+
+	try
+	{
+		string configFile = me + string(".cfg");
+
+		CEnviarEmailProtocolo::log() << ">>>" << me << endl;
+		CEnviarEmailProtocolo EEP(configFile);
+        sprintf( nrMaxRegistros, "%s", argV[1] );
+        CEnviarEmailProtocolo::log() << "*** Parametrizado para " << nrMaxRegistros << " Registros a Processar ***" << endl;
+		EEP.Run( nrMaxRegistros );
+		CEnviarEmailProtocolo::log() << "<<<" << me << endl;
+	}
+	catch(exception& e)
+	{
+		CEnviarEmailProtocolo::log() << "Processo finalizado com erro: " << e.what() << endl;
+		CEnviarEmailProtocolo::log() << "<<<" << me << endl;
+		exit(EXIT_FAILURE);
+	}
+	catch(...)
+	{
+		CEnviarEmailProtocolo::log() << "Processo finalizado com erro!" << endl;
+		CEnviarEmailProtocolo::log() << "<<<" << me << endl;
+		exit(EXIT_FAILURE);
+	}
+
+	exit(EXIT_SUCCESS);
+}
+
+
+CEnviarEmailProtocolo::CEnviarEmailProtocolo(string& configFile) :
+	ExceptionConfigFile("Erro ao ler arquivo de configuracao!"),
+	ExceptionConfigParam("Parametros incompletos!"),
+	ExceptionTUXinit("Erro ao inicializar o TUXEDO!"),
+	ExceptionParamDatabase("Parametro usr_db e/ou pwd_db invalido!"),
+	ExceptionDatabaseConnect("Erro ao conectar no banco de dados!"),
+	ExceptionDatabaseDisonnect("Erro ao desconectar do banco de dados!"),
+	ExceptionDatabaseSqlError("Erro ao executar query SQL!"),
+	ExceptionRegexCompilation("Erro ao compilar REGEX!"),
+	connected(false),
+	tpInitInfo(0),
+	regok(false),
+	pattern("<statusCode>(.+)</statusCode>.*<statusText>(.+)</statusText>"),
+	nmatch(3)
+{
+    if( regcomp(&this->regex, this->pattern.c_str(), REG_EXTENDED) ) {
+    	log() << "ERRO: regcomp - " << strerror(errno) << endl;
+    	throw ExceptionRegexCompilation;
+    }
+    regok = true;
+
+
+	GetParamConf(configFile);
+}
+
+CEnviarEmailProtocolo::~CEnviarEmailProtocolo()
+{
+	if ( regok )
+		regfree(&this->regex);
+
+	DBDisconnect();
+}
+
+void CEnviarEmailProtocolo::GetParamConf(string& configFile)
+{
+	log() << "Obtendo parametros de configuracao..." << endl;
+
+	ifstream file(configFile.c_str());
+	if (file.fail()) {
+		log() << "ERRO ifstream: " << configFile << " - " << strerror(errno) << endl;
+		throw ExceptionConfigFile;
+	}
+
+	string buff;
+	while( file.good() )
+	{
+		getline(file, buff);
+
+		if (buff.empty() && file.eof())
+			break;
+
+		if (!buff.empty() && *buff.rbegin() == '\r')
+				buff.resize(buff.size() - 1);
+
+		istringstream line(buff);
+		string key, val;
+		getline(line, key, '=');
+		getline(line, val);
+
+		if (key == "usr_db")
+			ParamConf.usr_db = auto_ptr<string> (new string(val));
+
+		if (key == "pwd_db")
+			ParamConf.pwd_db = auto_ptr<string> (new string(val));
+
+		if (key == "inst_db")
+			ParamConf.inst_db = auto_ptr<string> (new string(val));
+
+		if (key == "usr_tux")
+			ParamConf.usr_tux = auto_ptr<string> (new string(val));
+
+		if (key == "pwd_tux")
+			ParamConf.pwd_tux = auto_ptr<string> (new string(val));
+
+		if (key == "pwd_tux_gen")
+			ParamConf.pwd_tux_gen = auto_ptr<string> (new string(val));
+
+		if (key == "clt_tux")
+			ParamConf.clt_tux = auto_ptr<string> (new string(val));
+	}
+	file.close();
+
+	if ( !ParamConf.verify() )
+		throw ExceptionConfigParam;
+
+	//if ( ParamConf.usr_db.get()->empty() || ParamConf.pwd_db.get()->empty() )
+	//	throw ExceptionParamDatabase;
+
+	stringstream conn_str;
+	//if ( !ParamConf.usr_db.get()->empty() && !ParamConf.pwd_db.get()->empty() )
+		conn_str << *ParamConf.usr_db << "/" << *ParamConf.pwd_db;
+
+	if ( !ParamConf.inst_db.get()->empty() )
+		conn_str << "@" << *ParamConf.inst_db; 	// ,setenv("TWO_TASK", ParamConf.inst_db.get()->c_str(), 1);
+
+	this->conn_str = conn_str.str();
+}
+
+bool CEnviarEmailProtocolo::TUXinit()
+{
+	log() << "Inicializando TUXEDO." << endl;
+
+    if((this->tpInitInfo = (TPINIT *)tpalloc("TPINIT", (char *)NULL, TPINITNEED(strlen(VIVO_GENERIC_PASSWORD) - 1) )) == (TPINIT *)NULL) {
+        log() << "Executando..." << endl;
+    	return false;
+    }
+
+    strcpy(this->tpInitInfo->usrname, ParamConf.usr_tux.get()->c_str());
+    strcpy(this->tpInitInfo->cltname, ParamConf.clt_tux.get()->c_str());
+    strcpy(this->tpInitInfo->passwd, ParamConf.pwd_tux.get()->c_str());
+    strcpy((char*)&this->tpInitInfo->data, ParamConf.pwd_tux_gen.get()->c_str());
+
+    int ret = tpinit(this->tpInitInfo);
+    if (ret == -1) {
+    	log() << "TPINIT: " << ret << ", TPERRNO: " << tperrno << endl;
+    	return false;
+    }
+
+    return true;
+}
+
+void CEnviarEmailProtocolo::Run( char * nrMaxRegistros )
+{
+/*
+	int plockfile = open(".lock", O_WRONLY|O_CREAT|O_NONBLOCK|O_NDELAY|O_NSHARE, S_ISGID|S_ENFMT|S_IWUSR|S_IWGRP|S_IWOTH);
+	if (plockfile == -1) {
+		log() << "open: .lock - " << strerror(errno);
+		throw CException("Ja existe outro processo em execucao!");
+	}
+*/
+
+	if ( !TUXinit() )
+		throw ExceptionTUXinit;
+
+	DBConnect();
+	getApoioParameto();
+    
+    // Quando este valor eh passado por argumento
+    // Sobrepoe qualquer parametrizacao do Banco
+    if ( nrMaxRegistros[0] == 0x0 )
+    {
+        sprintf( nrMaxRegistros, "%s", NroMaxLeitura.c_str() );
+    }
+    
+    DBLoadTable( nrMaxRegistros );
+    
+    ReenvioMail();
+    ReenvioAgrupadoMail();
+	DBDisconnect();
+	TUXterm();
+
+	//close(plockfile);
+}
+
+void CEnviarEmailProtocolo::DBConnect()
+{
+	EXEC SQL BEGIN DECLARE SECTION;
+	char connString[256];
+	EXEC SQL END DECLARE SECTION;
+
+	strncpy(connString, conn_str.c_str(), sizeof(connString));
+
+	log() << "Conectando em " << *ParamConf.usr_db << "@" << *ParamConf.inst_db << endl;
+
+	EXEC SQL WHENEVER SQLERROR GOTO ERRCONN;
+	EXEC SQL CONNECT :connString;
+	connected = true;
+
+	log() << "Conectado com sucesso!" << endl;
+
+	return;
+	ERRCONN:
+		log() << "ERRO ORACLE: sqlcode=" << sqlca.sqlcode << ", sqlerrmc=" << sqlca.sqlerrm.sqlerrmc << endl;
+		throw ExceptionDatabaseConnect;
+}
+
+void CEnviarEmailProtocolo::DBDisconnect()
+{
+	if ( !connected )
+		return;
+
+	log() << "Encerrando conexao " << *ParamConf.usr_db << "@" << *ParamConf.inst_db << endl;
+
+	EXEC SQL WHENEVER SQLERROR GOTO ERRDISCONN;
+    EXEC SQL COMMIT WORK RELEASE;
+    connected = false;
+
+    return;
+    ERRDISCONN:
+    	log() << "ERRO ORACLE: sqlcode=" << sqlca.sqlcode << ", sqlerrmc=" << sqlca.sqlerrm.sqlerrmc << endl;
+    	throw ExceptionDatabaseDisonnect;
+}
+
+void CEnviarEmailProtocolo::TUXterm()
+{
+	if ( !tpInitInfo )
+		return;
+
+	log() << "Finalizando TUXEDO." << endl;
+	tpterm();
+	this->tpInitInfo = 0;
+}
+
+
+
+void CEnviarEmailProtocolo::DBLoadTable( char * nrMaxRegistros )
+{
+    long regcount=0;
+    long enviados=0;
+    long erroenvio=0;
+    long insmszero=0;
+    char szDsValorParametro[256];
+    char szDsMsg[2048];
+    char szDtAtual[64];
+    long iIdAtendimentoProtocolo;
+    
+    char buffer[256];
+    char email[256];
+    char idProtocolo[256];
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR IDATENDIMENTOPROTOCOLO[256];
+        short i_IDATENDIMENTOPROTOCOLO;
+        VARCHAR CDAREAREGISTRO[256];
+        short i_CDAREAREGISTRO;
+        VARCHAR NRLINHA[256];
+        short i_NRLINHA;
+        VARCHAR DSMENSAGEMENVIO[1001];
+        short iDSMENSAGEMENVIO=0;
+        VARCHAR DTULTIMAALTERACAO[64];
+        short i_DTULTIMAALTERACAO;
+        VARCHAR IDUSUARIOALTERACAO[256];
+        short i_IDUSUARIOALTERACAO;
+        VARCHAR IDATENDIMENTOPROTOCOLOFILHO[256];
+        short iIDATENDIMENTOPROTOCOLOFILHO=0;
+        VARCHAR TPENVIO[256];
+        short i_TPENVIO;
+        VARCHAR DSEMAIL[256];
+        short iDSEMAIL=0;
+        VARCHAR RID[256];
+        VARCHAR INSMS[256];
+        short i_INSMS;
+        VARCHAR DSMOTIVONAOENVIO[256];
+        short i_DSMOTIVONAOENVIO=-1;
+        VARCHAR EMAIL_INVALIDO[256];
+        short i_EMAIL_INVALIDO = -1;
+        VARCHAR DSVALORPARAMETRO[256];
+        short iDSVALORPARAMETRO=0;
+        VARCHAR DTATUAL[256];
+        short i_DTATUAL;
+        char idControleFilaSMS[256];
+
+		VARCHAR PlanoB[2];
+        short i_PlanoB = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+
+	//---------------pogmaster-------------------------
+	  log() << "VERS√O POGMASTER 6.66..." << endl;
+
+    memset( idControleFilaSMS, 0x0, sizeof(idControleFilaSMS) );
+
+    EXEC SQL WHENEVER SQLERROR GOTO ERRSQL;
+
+    memset( &DSMOTIVONAOENVIO , 0x0, sizeof(DSMOTIVONAOENVIO) );
+    EXEC SQL
+    SELECT
+        'E-mail n„o enviado para este protocolo pois todas folhas de contato foram configuradas com INSMS=0.'
+    INTO
+        :DSMOTIVONAOENVIO
+    FROM
+        DUAL;
+
+    endOraStr( DSMOTIVONAOENVIO );
+
+    memset( &EMAIL_INVALIDO , 0x0, sizeof(EMAIL_INVALIDO) );
+    EXEC SQL
+    SELECT
+        'E-mail inv·lido.'
+    INTO
+        :EMAIL_INVALIDO
+    FROM
+        DUAL;
+    endOraStr( EMAIL_INVALIDO );
+    
+    ReservaLoteRegistros( idControleFilaSMS, nrMaxRegistros );
+    
+    AtualizaEstadoProcesso( idControleFilaSMS, "2" );   // Ajusta Controle para: "EM CONSUMO"
+
+	//---------------pogmaster-------------------------
+	  log() << "VERS√O POGMASTER 6.66..." << endl;
+	EXEC SQL
+    SELECT DSVALORPARAMETRO INTO :PlanoB:i_PlanoB FROM Apoio.Parametro Where CDPARAMETRO = 'CHAVE_PROTO_EMAIL';
+    CONVIND( PlanoB, i_PlanoB );
+	
+	if ( atoi((char*)PlanoB.arr) == 1 ) 
+	{
+      log() << "VERS√O ANTIGA..." << endl;
+	  EXEC SQL DECLARE cEnviarEmailProtocoloPG CURSOR FOR
+	  SELECT
+      FILASMSPROTOCOLO.IDATENDIMENTOPROTOCOLO,
+      FILASMSPROTOCOLO.CDAREAREGISTRO,
+      FILASMSPROTOCOLO.NRLINHA,
+      (
+        CASE WHEN (LENGTH(FILASMSPROTOCOLO.DSMENSAGEMENVIO) + 69 <= 140) THEN
+          FILASMSPROTOCOLO.DSMENSAGEMENVIO || '. ' || NVL(COMPLEMENTOSMS.DSCOMPLEMENTO, 'Fale conosco tambem pelo vivo.com.br/meuvivo ou envie SMS para 1058')
+        ELSE
+          FILASMSPROTOCOLO.DSMENSAGEMENVIO || '.'
+        END
+      )
+      AS DSMENSAGEMENVIO,
+      TO_CHAR(FILASMSPROTOCOLO.DTULTIMAALTERACAO,'DD/MM/RRRR HH24:MI:SS.FF') AS DTULTIMAALTERACAO,
+      FILASMSPROTOCOLO.IDUSUARIOALTERACAO,
+      FILASMSPROTOCOLO.IDATENDIMENTOPROTOCOLOFILHO,
+      FILASMSPROTOCOLO.TPENVIO,
+      FILASMSPROTOCOLO.INENVIOSMS,
+      FILASMSPROTOCOLO.DSEMAIL,
+      FILASMSPROTOCOLO.ROWID AS RID
+    FROM
+      ATENDIMENTO.FILASMSPROTOCOLO FILASMSPROTOCOLO,
+      ATENDIMENTO.COMPLEMENTOSMS COMPLEMENTOSMS
+    WHERE
+        FILASMSPROTOCOLO.CDAREAREGISTRO = COMPLEMENTOSMS.CDAREAREGISTRO (+)
+    AND FILASMSPROTOCOLO.IDTIPOLINHA = COMPLEMENTOSMS.IDTIPOLINHA (+)
+    AND FILASMSPROTOCOLO.SGTIPOPESSOA = COMPLEMENTOSMS.SGTIPOPESSOA (+)
+    AND FILASMSPROTOCOLO.SGUF = COMPLEMENTOSMS.SGUF (+)
+    AND NVL(COMPLEMENTOSMS.STATUS,1) = 1
+    AND FILASMSPROTOCOLO.IDCONTROLEFILASMS = :idControleFilaSMS ;
+
+		EXEC SQL OPEN cEnviarEmailProtocoloPG;
+	}
+	else
+	{
+    log() << "VERS√O AMDOCS 6.66v2..." << endl;
+    EXEC SQL DECLARE cEnviarEmailProtocolo CURSOR FOR
+    SELECT 
+      FILASMSPROTOCOLO.IDATENDIMENTOPROTOCOLO,
+      FILASMSPROTOCOLO.CDAREAREGISTRO,
+      FILASMSPROTOCOLO.NRLINHA,
+      (
+        CASE WHEN (LENGTH(FILASMSPROTOCOLO.DSMENSAGEMENVIO) + 69 <= 140) THEN
+          FILASMSPROTOCOLO.DSMENSAGEMENVIO || '. ' || NVL(COMPLEMENTOSMS.DSCOMPLEMENTO, 'Fale conosco tambem pelo vivo.com.br/meuvivo ou envie SMS para 1058')
+        ELSE
+          FILASMSPROTOCOLO.DSMENSAGEMENVIO || '.'
+        END
+      )
+      AS DSMENSAGEMENVIO,
+      TO_CHAR(FILASMSPROTOCOLO.DTULTIMAALTERACAO,'DD/MM/RRRR HH24:MI:SS.FF') AS DTULTIMAALTERACAO,
+      FILASMSPROTOCOLO.IDUSUARIOALTERACAO,
+      FILASMSPROTOCOLO.IDATENDIMENTOPROTOCOLOFILHO,
+      FILASMSPROTOCOLO.TPENVIO,
+      FILASMSPROTOCOLO.INENVIOSMS,
+      FILASMSPROTOCOLO.DSEMAIL,
+      FILASMSPROTOCOLO.ROWID AS RID
+    FROM
+      ATENDIMENTO.FILASMSPROTOCOLO FILASMSPROTOCOLO,
+     (SELECT NVL (C.IDSISTEMAORIGEM, 0) IDSISO2, C.* 
+      FROM ATENDIMENTO.COMPLEMENTOSMS C) COMPLEMENTOSMS
+    WHERE
+        FILASMSPROTOCOLO.CDAREAREGISTRO = COMPLEMENTOSMS.CDAREAREGISTRO (+)
+    AND FILASMSPROTOCOLO.IDTIPOLINHA = COMPLEMENTOSMS.IDTIPOLINHA (+)
+    AND FILASMSPROTOCOLO.SGTIPOPESSOA = COMPLEMENTOSMS.SGTIPOPESSOA (+)
+    AND FILASMSPROTOCOLO.SGUF = COMPLEMENTOSMS.SGUF (+)
+    AND NVL(COMPLEMENTOSMS.STATUS,1) = 1
+	AND DECODE (FILASMSPROTOCOLO.IDSISTEMAORIGEM, 333, 333, 0) = IDSISO2(+)
+    AND FILASMSPROTOCOLO.IDCONTROLEFILASMS = :idControleFilaSMS ;
+
+
+    EXEC SQL OPEN cEnviarEmailProtocolo;
+	}
+
+    //log() << "Processando registros em ATENDIMENTO.FILASMSPROTOCOLO..." << endl;
+
+    while(true) 
+    {
+        memset( &IDATENDIMENTOPROTOCOLO  , 0x0, sizeof(IDATENDIMENTOPROTOCOLO) );
+        memset( &IDATENDIMENTOPROTOCOLOFILHO  , 0x0, sizeof(IDATENDIMENTOPROTOCOLOFILHO) );
+        memset( &CDAREAREGISTRO     , 0x0, sizeof(CDAREAREGISTRO) );
+        memset( &NRLINHA            , 0x0, sizeof(NRLINHA) );
+        memset( &DSMENSAGEMENVIO    , 0x0, sizeof(DSMENSAGEMENVIO) );
+        memset( &DTULTIMAALTERACAO  , 0x0, sizeof(DTULTIMAALTERACAO) );
+        memset( &DSEMAIL            , 0x0, sizeof(DSEMAIL) );
+        memset( &RID                , 0x0, sizeof(RID) );
+        memset( &IDUSUARIOALTERACAO , 0x0, sizeof(IDUSUARIOALTERACAO) );
+        memset( &TPENVIO            , 0x0, sizeof(TPENVIO) );
+        memset( &INSMS            , 0x0, sizeof(INSMS) );
+        memset( &szDsMsg, 0, sizeof(szDsMsg));
+      
+        
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+		
+		if ( atoi((char*)PlanoB.arr) == 1 ) 
+		{
+			EXEC SQL FETCH cEnviarEmailProtocoloPG
+        		INTO :IDATENDIMENTOPROTOCOLO:i_IDATENDIMENTOPROTOCOLO,
+                 :CDAREAREGISTRO:i_CDAREAREGISTRO,
+                 :NRLINHA:i_NRLINHA,
+                 :DSMENSAGEMENVIO:iDSMENSAGEMENVIO,
+                 :DTULTIMAALTERACAO:i_DTULTIMAALTERACAO,
+                 :IDUSUARIOALTERACAO:i_IDUSUARIOALTERACAO,
+                 :IDATENDIMENTOPROTOCOLOFILHO:iIDATENDIMENTOPROTOCOLOFILHO,
+                 :TPENVIO:i_TPENVIO ,
+                 :INSMS:i_INSMS,
+                 :DSEMAIL:iDSEMAIL,
+                 :RID
+                 ;
+		}
+		else
+		{
+        EXEC SQL FETCH cEnviarEmailProtocolo
+        		INTO :IDATENDIMENTOPROTOCOLO:i_IDATENDIMENTOPROTOCOLO,
+                 :CDAREAREGISTRO:i_CDAREAREGISTRO,
+                 :NRLINHA:i_NRLINHA,
+                 :DSMENSAGEMENVIO:iDSMENSAGEMENVIO,
+                 :DTULTIMAALTERACAO:i_DTULTIMAALTERACAO,
+                 :IDUSUARIOALTERACAO:i_IDUSUARIOALTERACAO,
+                 :IDATENDIMENTOPROTOCOLOFILHO:iIDATENDIMENTOPROTOCOLOFILHO,
+                 :TPENVIO:i_TPENVIO ,
+                 :INSMS:i_INSMS,
+                 :DSEMAIL:iDSEMAIL,
+                 :RID
+                 ;
+		}
+        regcount++;
+
+        endOraStr( IDUSUARIOALTERACAO );
+        endOraStr( IDATENDIMENTOPROTOCOLO );
+        endOraStr( IDATENDIMENTOPROTOCOLOFILHO );
+        endOraStr( CDAREAREGISTRO );
+        endOraStr( NRLINHA );
+        endOraStr( DSMENSAGEMENVIO );
+        endOraStr( DSEMAIL );
+        endOraStr( DTULTIMAALTERACAO );
+        endOraStr( TPENVIO );
+        endOraStr( INSMS );
+        endOraStr( RID );
+
+        sprintf( email, "%s", (char*)DSEMAIL.arr );
+        if ( EmailValido(email) ) 
+        {
+        sprintf( buffer, "%s", (char*)INSMS.arr );
+        if ( atoi(buffer) == 1 )
+        {
+            memset( &DSVALORPARAMETRO , 0x0, sizeof(DSVALORPARAMETRO) );
+            memset( &DTATUAL          , 0x0, sizeof(DTATUAL) );
+
+            //log() << "Processando registros em ATENDIMENTO.ATENDIMENTOPROTOCOLO..." << endl;
+            EXEC SQL WHENEVER NOT FOUND CONTINUE;
+            EXEC SQL
+            select dsvalorparametro, dtatual
+            into   :DSVALORPARAMETRO:iDSVALORPARAMETRO, :DTATUAL
+            from
+                  (select parm.dsvalorparametro,
+                          to_char(ap.dtabertura,'dd/mm/rrrr')||' as '||to_char(ap.dtabertura,'hh24:mi') as dtatual
+                   from apoio.parametro parm,
+                        atendimento.atendimentoprotocolo ap
+                   where ap.idatendimentoprotocolo = :IDATENDIMENTOPROTOCOLO
+                   and (((upper(ap.cdorigem) ='MOVEL' or upper(ap.cdorigem) IS NULL) and ap.idlinhatelefonica IS NULL) or (upper(ap.cdorigem) ='FIXO'))
+                   and parm.cdparametro = (case
+                                        when (upper(ap.cdorigem) ='MOVEL' or upper(ap.cdorigem) IS NULL) and ap.idlinhatelefonica IS NULL THEN 'MSG_PROT_MOVEL_PROS'
+                                        when (upper(ap.cdorigem) ='FIXO') and ap.idlinhatelefonica IS NOT NULL THEN 'MSG_PROT_FIXA_CLIE'
+                                        else 'MSG_PROT_FIXA_PROS'
+                                        end));
+
+                endOraStr( DSVALORPARAMETRO );
+                endOraStr( DTATUAL );
+            
+
+            if (sqlca.sqlcode == NO_DATA_FOUND)
+            {
+                STRCPY_FROM_ORA(szDsMsg, DSMENSAGEMENVIO);
+                    //log() << "DSMENSAGEMENVIO= [" << szDsMsg << "]" << endl;
+            }
+            else
+            {
+                STRCPY_FROM_ORA(szDsValorParametro, DSVALORPARAMETRO);
+                STRCPY_FROM_ORA(szDtAtual, DTATUAL);
+                sprintf( buffer, "%s", (char*)IDATENDIMENTOPROTOCOLO.arr );
+                sprintf(szDsMsg, szDsValorParametro, atol(buffer), szDtAtual);
+                //log() << "szDsMsg= [" << szDsMsg << "]" << endl;
+            }
+
+            stringstream xml;
+            xml << "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>";
+            xml << "<msg><msgHdr><user>1</user><service>SMTPSEND</service></msgHdr><msgBody>";
+            xml << "<from>" << EMAIL_FROM << "</from>";
+            xml << "<to>" << (char*)DSEMAIL.arr << "</to>";
+            xml << "<subject>" << EMAIL_SUBJECT << "</subject>";
+            xml << "<data>" << szDsMsg << "</data>";
+            xml << "</msgBody></msg>";
+
+            char *sendbuf=0;
+            char *rcvbuf=0;
+            long sendlen=xml.str().size();
+            long rcvlen=0;
+
+            if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+                log() << "Error allocating send buffer: tpalloc" << endl;
+                //tpterm();
+                erroenvio++;
+                continue;
+            }
+
+            if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+                log() << "Error allocating receive buffer: tpalloc" << endl;
+                tpfree(sendbuf);
+                //tpterm();
+                erroenvio++;
+                continue;
+            }
+
+            //log() << "sendbuf[" << xml.str() << "]" << endl;
+
+            strcpy(sendbuf, xml.str().c_str());
+
+            if(tpcall((char*)EMAIL_SERVICO, (char*)sendbuf, sendlen, (char**)&rcvbuf, &rcvlen, (long)0) == -1)
+            {
+                log() << "Tpcall = " << EMAIL_SERVICO << endl;
+                log() << "Tperrno = " << tperrno << endl;
+                log() << "rcvbuf[" << rcvbuf << "]" << endl;
+                tpfree(sendbuf);
+                tpfree(rcvbuf);
+                erroenvio++;
+                continue;
+            }
+
+            string retMsg(rcvbuf);
+            tpfree(sendbuf);
+            tpfree(rcvbuf);
+
+            regmatch_t pmatch[this->nmatch];
+            int r = regexec(&this->regex, retMsg.c_str(), (size_t)this->nmatch, pmatch, 0);
+            if( !r ) {
+                string statusCode = retMsg.substr(pmatch[1].rm_so, (pmatch[1].rm_eo - pmatch[1].rm_so));
+                string statusText = retMsg.substr(pmatch[2].rm_so, (pmatch[2].rm_eo - pmatch[2].rm_so));
+
+                if (statusCode.size() > 2 && statusCode[2] == 'I') {
+                    log() << "Sucesso: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "], statusCode = [" << statusCode << "], statusText = [" << statusText << "]" << endl;
+                    enviados++;
+                } else {
+                        //  log() << "ERRO: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "], statusCode = [" << statusCode << "], statusText = [" << statusText << "]" << endl;
+                        log() << "*** ERRO: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "], VERIFIQUE E-MAIL ["  << email << "]" << endl;
+                    erroenvio++;
+
+                        EXEC SQL SELECT '-11' INTO :INSMS FROM DUAL;
+                            endOraStr( INSMS );
+                }
+            }
+            else if( r == REG_NOMATCH ) {
+                log() << "ERRO: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "] - statusCode/statusText nao encontrado!" << endl;
+                log() << "ERRO: rcvbuf[" << retMsg << "]" << endl;
+                erroenvio++;
+                continue;
+            }
+            else {
+                    char msgbuf[256];
+                    regerror(r, &regex, msgbuf, sizeof(msgbuf));
+                    log() << "ERRO: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "], regexec - Regex match failed: " << msgbuf << endl;
+                    log() << "ERRO: rcvbuf[" << retMsg << "]" << endl;
+                    erroenvio++;
+                    continue;
+            }
+            } 
+            else 
+            {
+            log() << "Nao enviado: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "], INSMS=0" << endl;
+            insmszero++;
+        }
+        }
+        else   /*   e-mail invalido   */
+        {
+            log() << "*** ERRO: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "], EMAIL DESTINO INVALIDO [" << email << "]" << endl;
+            erroenvio++;
+            EXEC SQL SELECT '-11' INTO :INSMS FROM DUAL;
+            endOraStr( INSMS );
+        }
+
+HIST:
+
+        if ( TPENVIO.arr[0] == '3' )
+        {
+            EXEC SQL
+            UPDATE atendimento.filasmsprotocolo
+            SET TPENVIO = 1 ,
+                idControleFilaSms = NULL
+            WHERE ROWID = :RID;
+        }
+
+        EXEC SQL COMMIT;
+    }
+
+    AtualizaEstadoProcesso( idControleFilaSMS, "9" );   // Ajusta coluna DTFIMCONSUMO com timestamp final
+    
+
+	if ( atoi((char*)PlanoB.arr) == 1 ) 
+		{
+			EXEC SQL CLOSE cEnviarEmailProtocoloPG;
+		}
+	else
+	{	EXEC SQL CLOSE cEnviarEmailProtocolo;
+	
+		}
+
+    AtualizaEstadoProcesso( idControleFilaSMS, "3" );   // Ajusta Controle para: "FINALIZADO"
+
+    log() << "=== Selecionou " << regcount << " registro(s) ===" << endl;
+
+    if (insmszero)
+        log() << "*** Nao enviado(s) " << insmszero << " por INSMS = 0 ***" << endl;
+
+    if (enviados)
+        log() << "*** Enviado(s) " << enviados << " via SMTPSEND ***" << endl;
+
+    if (erroenvio)
+        log() << "*** Nao enviado(s) " << erroenvio << " por erro em SMTPSEND ***" << endl;
+
+    return;
+    ERRSQL:
+        log() << "ERRO ORACLE: sqlcode=" << sqlca.sqlcode << ", sqlerrmc=" << sqlca.sqlerrm.sqlerrmc << endl;
+        log() << "Executando ROLLBACK!" << endl;
+        EXEC SQL ROLLBACK WORK;
+        throw ExceptionDatabaseSqlError;
+}
+
+
+
+bool CEnviarEmailProtocolo::EmailValido( char * email )
+{
+   int i;
+   int k;
+   int len;
+   int len_invalid;
+   int isValid;
+   char invalidos[50];
+   
+   sprintf( invalidos, "%s", "\"\';:,<>[]{}/\\+=Á«&%$#()#!*„√·¡È…ÌÕÛ”˙⁄‡¡Ù‘Í | " );
+   
+   len = strlen( email );
+   len_invalid = strlen(invalidos);
+   
+   if ( len < 5 )  /* ".com" -> por isso da comparacao menor que 5, um email assim eh invalido */
+   {
+       return false;
+   }
+   
+   if ( !strcmp( email, "www.") )
+   {
+       return false;
+   }
+   
+   if ( !strcmp( email, "WWW.") )
+   {
+       return false;
+   }
+
+   for ( isValid = i = 0; i < len; i++ )
+   {
+      for ( k = 0; k < len_invalid ; k++ )
+      {
+          if ( email[i] == invalidos[k] )
+          {
+             return false;
+          }
+      }
+      if ( email[i] == '@' )
+      {
+          isValid++;
+      }
+
+   }
+   
+   if ( isValid > 0 )
+      return true;
+   else
+      return false;
+}
+
+
+
+void CEnviarEmailProtocolo::ReenvioMail()
+{
+    long regcount=0;
+    long enviados=0;
+    long erroenvio=0;
+    long inenvionl=0;
+    char szDsValorParametro[256];
+    char szDsMsg[2048];
+    char szDtAtual[64];
+    long iIdAtendimentoProtocolo;
+    
+    char buffer[512];
+    char email[256];
+    char idProtocolo[256];
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+        
+        char dsMotivo[256];
+
+        VARCHAR IDATENDIMENTOPROTOCOLO[256];
+        short i_IDATENDIMENTOPROTOCOLO;
+
+        VARCHAR  DTENCERRAMENTO[256];
+        short  i_DTENCERRAMENTO = -1;
+
+        VARCHAR  SGTIPOPESSOA[256];
+        short  i_SGTIPOPESSOA = -1;
+        
+        VARCHAR  IDTIPOLINHA[11];
+        short  i_IDTIPOLINHA = -1;
+
+        VARCHAR  SGUF[256];
+        short  i_SGUF = -1;
+
+        VARCHAR CDAREAREGISTRO[256];
+        short i_CDAREAREGISTRO;
+        
+        VARCHAR NRLINHA[256];
+        short i_NRLINHA;
+        
+        VARCHAR DSMENSAGEMENVIO[1001];
+        short iDSMENSAGEMENVIO=0;
+        
+        VARCHAR DTULTIMAALTERACAO[64];
+        short i_DTULTIMAALTERACAO;
+        
+        VARCHAR IDUSUARIOALTERACAO[256];
+        short i_IDUSUARIOALTERACAO;
+        
+        VARCHAR IDATENDIMENTOPROTOCOLOFILHO[256];
+        short iIDATENDIMENTOPROTOCOLOFILHO=0;
+        
+        VARCHAR TPENVIO[256];
+        short i_TPENVIO;
+        
+        VARCHAR DSEMAIL[256];
+        short iDSEMAIL=0;
+        
+        VARCHAR RID[256];
+        
+        VARCHAR INENVIO[256];
+        short i_INENVIO;
+        
+        VARCHAR DSMOTIVONAOENVIO[256];
+        short i_DSMOTIVONAOENVIO=-1;
+        
+        VARCHAR EMAIL_INVALIDO[256];
+        short i_EMAIL_INVALIDO = -1;
+
+        VARCHAR DSVALORPARAMETRO[256];
+        short iDSVALORPARAMETRO=0;
+        
+        VARCHAR DTATUAL[256];
+        short i_DTATUAL;
+        
+        VARCHAR CDORIGEM[64];
+        short i_CDORIGEM=0;
+
+        VARCHAR DTABERTURAPROTOCOLO[128];
+        short i_DTABERTURAPROTOCOLO=0;
+
+        VARCHAR IDLINHATELEFONICA[256];
+        short i_IDLINHATELEFONICA;
+
+        VARCHAR DTABERTURA[128];
+        short i_DTABERTURA=0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR GOTO ERRSQL;
+
+    stringstream MsgEnvio;
+
+    memset( &DSMOTIVONAOENVIO , 0x0, sizeof(DSMOTIVONAOENVIO) );
+    EXEC SQL
+    SELECT
+        'E-mail n„o enviado para este protocolo pois todas folhas de contato foram configuradas com INSMS=0.'
+    INTO
+        :DSMOTIVONAOENVIO
+    FROM
+        DUAL;
+
+    endOraStr( DSMOTIVONAOENVIO );
+
+    memset( &EMAIL_INVALIDO , 0x0, sizeof(EMAIL_INVALIDO) );
+    EXEC SQL
+    SELECT
+        'E-mail inv·lido.'
+    INTO
+        :EMAIL_INVALIDO
+    FROM
+        DUAL;
+    endOraStr( EMAIL_INVALIDO );
+
+    EXEC SQL DECLARE cReenvioEmail CURSOR FOR
+    select   /*+  INDEX_DESC(FilaReenvioProtocolo) */
+      FilaReenvioProtocolo.IDATENDIMENTOPROTOCOLO ,
+      TO_CHAR(FilaReenvioProtocolo.DTENCERRAMENTO,'DD/MM/RRRR HH24:MI:SS') as DTENCERRAMENTO,
+      FilaReenvioProtocolo.SGTIPOPESSOA ,
+      FilaReenvioProtocolo.IDTIPOLINHA ,
+      FilaReenvioProtocolo.SGUF ,
+      FilaReenvioProtocolo.CDAREAREGISTRO ,
+      FilaReenvioProtocolo.NRLINHA,
+      (
+        case when (length(FilaReenvioProtocolo.DSMENSAGEMENVIO) + 69 <= 140) then
+          FilaReenvioProtocolo.DSMENSAGEMENVIO || '. ' || NVL(COMPLEMENTOSMS.DSCOMPLEMENTO, 'Fale conosco tambem pelo vivo.com.br/meuvivo ou envie SMS para 1058')
+        else
+          FilaReenvioProtocolo.DSMENSAGEMENVIO || '.'
+        end
+      )
+      AS dsmensagemenvio,
+      TO_CHAR(FilaReenvioProtocolo.DTULTIMAALTERACAO,'DD/MM/RRRR HH24:MI:SS') as DTULTIMAALTERACAO,
+      FilaReenvioProtocolo.IDUSUARIOALTERACAO,
+      FilaReenvioProtocolo.IDATENDIMENTOPROTOCOLOFILHO,
+      FilaReenvioProtocolo.tpenvio,
+      FilaReenvioProtocolo.inenvio,
+      FilaReenvioProtocolo.dsemail,
+      FilaReenvioProtocolo.rowid AS RID,
+      FilaReenvioProtocolo.CDORIGEM,
+      (case when FilaReenvioProtocolo.DTABERTURAPROTOCOLO is not null
+        then TO_CHAR(FilaReenvioProtocolo.DTABERTURAPROTOCOLO,'DD/MM/RRRR HH24:MI:SS')
+        else null
+      end) as DTABERTURAPROTOCOLO
+	  ,ap.IDLINHATELEFONICA
+	  ,(to_char(ap.dtabertura,'dd/mm/rrrr')||' as '||to_char(ap.dtabertura,'hh24:mi')) as dtatual
+    from
+      atendimento.FilaReenvioProtocolo FilaReenvioProtocolo,
+     (SELECT NVL (C.IDSISTEMAORIGEM, 0) IDSISO2, C.* 
+      FROM ATENDIMENTO.COMPLEMENTOSMS C) COMPLEMENTOSMS ,
+      atendimento.atendimentoprotocolo ap
+    where
+	  FilaReenvioProtocolo.idatendimentoprotocolo = ap.idatendimentoprotocolo
+    AND FilaReenvioProtocolo.inenvio = 1
+    AND NVL(FilaReenvioProtocolo.IDAGRUPADOR,0) = 0
+    AND FilaReenvioProtocolo.tpenvio in ( 2, 3 )
+    AND FilaReenvioProtocolo.dtencerramento < SYSDATE
+    AND FilaReenvioProtocolo.cdarearegistro = complementosms.cdarearegistro (+)
+    AND FilaReenvioProtocolo.IDTIPOLINHA = COMPLEMENTOSMS.IDTIPOLINHA (+)
+    AND FilaReenvioProtocolo.SGTIPOPESSOA = COMPLEMENTOSMS.SGTIPOPESSOA (+)
+    AND FilaReenvioProtocolo.SGUF = COMPLEMENTOSMS.SGUF (+)
+    AND NVL(COMPLEMENTOSMS.STATUS,1) = 1
+    AND DECODE (FilaReenvioProtocolo.IDSISTEMAORIGEM, 333, 333, 0) = IDSISO2(+) ;
+
+    EXEC SQL OPEN cReenvioEmail;
+
+    //log() << "Processando registros em ATENDIMENTO.FILAREENVIOPROTOCOLO..." << endl;
+
+    while(true) 
+    {
+        memset( &IDATENDIMENTOPROTOCOLO       , 0x0, sizeof(IDATENDIMENTOPROTOCOLO) );
+        memset( &DTENCERRAMENTO               , 0x0, sizeof(DTENCERRAMENTO) );
+        memset( &SGTIPOPESSOA                 , 0x0, sizeof(SGTIPOPESSOA) );
+        memset( &IDTIPOLINHA                  , 0x0, sizeof(IDTIPOLINHA) );
+        memset( &SGUF                         , 0x0, sizeof(SGUF) );
+        memset( &IDATENDIMENTOPROTOCOLOFILHO  , 0x0, sizeof(IDATENDIMENTOPROTOCOLOFILHO) );
+        memset( &CDAREAREGISTRO               , 0x0, sizeof(CDAREAREGISTRO) );
+        memset( &NRLINHA                      , 0x0, sizeof(NRLINHA) );
+        memset( &DSMENSAGEMENVIO              , 0x0, sizeof(DSMENSAGEMENVIO) );
+        memset( &DTULTIMAALTERACAO            , 0x0, sizeof(DTULTIMAALTERACAO) );
+        memset( &DSEMAIL                      , 0x0, sizeof(DSEMAIL) );
+        memset( &RID                          , 0x0, sizeof(RID) );
+        memset( &IDUSUARIOALTERACAO           , 0x0, sizeof(IDUSUARIOALTERACAO) );
+        memset( &TPENVIO                      , 0x0, sizeof(TPENVIO) );
+        memset( &INENVIO            , 0x0, sizeof(INENVIO) );
+        memset( &CDORIGEM                     , 0x0, sizeof(CDORIGEM) );
+        memset( &DTABERTURAPROTOCOLO          , 0x0, sizeof(DTABERTURAPROTOCOLO) );
+        memset( &szDsMsg                      , 0x0, sizeof(szDsMsg));
+        memset( &IDLINHATELEFONICA  , 0x0, sizeof(IDLINHATELEFONICA) );
+        memset( &DTABERTURA  , 0x0, sizeof(DTABERTURA) );
+        
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+        EXEC SQL FETCH cReenvioEmail
+            INTO :IDATENDIMENTOPROTOCOLO:i_IDATENDIMENTOPROTOCOLO,
+                 :DTENCERRAMENTO:i_DTENCERRAMENTO,
+                 :SGTIPOPESSOA:i_SGTIPOPESSOA,
+                 :IDTIPOLINHA:i_IDTIPOLINHA,
+                 :SGUF:i_SGUF,
+                 :CDAREAREGISTRO:i_CDAREAREGISTRO,
+                 :NRLINHA:i_NRLINHA,
+                 :DSMENSAGEMENVIO:iDSMENSAGEMENVIO,
+                 :DTULTIMAALTERACAO:i_DTULTIMAALTERACAO,
+                 :IDUSUARIOALTERACAO:i_IDUSUARIOALTERACAO,
+                 :IDATENDIMENTOPROTOCOLOFILHO:iIDATENDIMENTOPROTOCOLOFILHO,
+                 :TPENVIO:i_TPENVIO ,
+                 :INENVIO:i_INENVIO,
+                 :DSEMAIL:iDSEMAIL,
+                 :RID,
+                 :CDORIGEM:i_CDORIGEM,
+                 :DTABERTURAPROTOCOLO:i_DTABERTURAPROTOCOLO,
+				 :IDLINHATELEFONICA:i_IDLINHATELEFONICA,
+				 :DTABERTURA:i_DTABERTURA
+                 ;
+
+        regcount++;
+
+        endOraStr( IDATENDIMENTOPROTOCOLO );
+        endOraStr( DTENCERRAMENTO );
+        endOraStr( SGTIPOPESSOA );
+        endOraStr( IDTIPOLINHA );
+        endOraStr( SGUF );
+        endOraStr( CDAREAREGISTRO );
+        endOraStr( NRLINHA );
+        endOraStr( DSMENSAGEMENVIO );
+        endOraStr( DTULTIMAALTERACAO );
+        endOraStr( IDUSUARIOALTERACAO );
+        endOraStr( IDATENDIMENTOPROTOCOLOFILHO );
+        endOraStr( TPENVIO );
+        endOraStr( INENVIO );
+        endOraStr( DSEMAIL );
+        endOraStr( RID );
+        endOraStr( CDORIGEM );
+        endOraStr( DTABERTURAPROTOCOLO );
+        endOraStr( IDLINHATELEFONICA );
+        endOraStr( DTABERTURA );
+
+        memset( dsMotivo, 0x0, sizeof(dsMotivo) );
+        stringstream MsgEnvio;
+        
+        sprintf( email, "%s", (char*)DSEMAIL.arr );
+        if ( EmailValido(email) ) 
+        {
+        sprintf( buffer, "%s", (char*)INENVIO.arr );
+        if ( atoi(buffer) == 1 )
+        {
+#if 0
+            memset( &DSVALORPARAMETRO , 0x0, sizeof(DSVALORPARAMETRO) );
+            memset( &DTATUAL          , 0x0, sizeof(DTATUAL) );
+
+            //log() << "Processando registros em ATENDIMENTO.ATENDIMENTOPROTOCOLO..." << endl;
+            EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+            EXEC SQL
+            select dsvalorparametro, dtatual
+            into   :DSVALORPARAMETRO:iDSVALORPARAMETRO, :DTATUAL
+            from
+                  (select parm.dsvalorparametro,
+                          to_char(ap.dtabertura,'dd/mm/rrrr')||' as '||to_char(ap.dtabertura,'hh24:mi') as dtatual
+                   from apoio.parametro parm,
+                        atendimento.atendimentoprotocolo ap
+                   where ap.idatendimentoprotocolo = :IDATENDIMENTOPROTOCOLO
+                   and (((upper(ap.cdorigem) ='MOVEL' or upper(ap.cdorigem) IS NULL) and ap.idlinhatelefonica IS NULL) or (upper(ap.cdorigem) ='FIXO'))
+                   and parm.cdparametro = (case
+                                        when (upper(ap.cdorigem) ='MOVEL' or upper(ap.cdorigem) IS NULL) and ap.idlinhatelefonica IS NULL THEN 'MSG_PROT_MOVEL_PROS'
+                                        when (upper(ap.cdorigem) ='FIXO') and ap.idlinhatelefonica IS NOT NULL THEN 'MSG_PROT_FIXA_CLIE'
+                                        else 'MSG_PROT_FIXA_PROS'
+                                        end));
+
+            endOraStr( DSVALORPARAMETRO );
+            endOraStr( DTATUAL );
+            
+
+            if (sqlca.sqlcode == NO_DATA_FOUND)
+            {
+                STRCPY_FROM_ORA(szDsMsg, DSMENSAGEMENVIO);
+                    //log() << "DSMENSAGEMENVIO= [" << szDsMsg << "]" << endl;
+            }
+            else
+            {
+                STRCPY_FROM_ORA(szDsValorParametro, DSVALORPARAMETRO);
+                STRCPY_FROM_ORA(szDtAtual, DTATUAL);
+                sprintf( buffer, "%s", (char*)IDATENDIMENTOPROTOCOLO.arr );
+                sprintf(szDsMsg, szDsValorParametro, atol(buffer), szDtAtual);
+                //log() << "szDsMsg= [" << szDsMsg << "]" << endl;
+            }
+#else
+
+            STRCPY_FROM_ORA(szDtAtual, DTABERTURA);
+            sprintf( buffer, "%s", (char*)IDATENDIMENTOPROTOCOLO.arr );
+
+            // 4.1
+            if ( ((i_CDORIGEM == -1) || !strcmp((char*)CDORIGEM.arr, "MOVEL")) && i_IDLINHATELEFONICA >= 0 ) {
+            	STRCPY_FROM_ORA(szDsMsg, DSMENSAGEMENVIO);
+            }
+            // 4.2
+            else if ( ((i_CDORIGEM == -1) || !strcmp((char*)CDORIGEM.arr, "MOVEL")) && i_IDLINHATELEFONICA == -1 ) {
+            	sprintf(szDsMsg, msg_prot_movel_pros.c_str(), atol(buffer), szDtAtual);
+            }
+            // 4.3
+            else if ( ((i_CDORIGEM >= 0) && !strcmp((char*)CDORIGEM.arr, "FIXO")) && i_IDLINHATELEFONICA >= 0 ) {
+            	sprintf(szDsMsg, msg_prot_fixa_clie.c_str(), atol(buffer), szDtAtual);
+            }
+            // 4.4
+            else if ( ((i_CDORIGEM >= 0) && !strcmp((char*)CDORIGEM.arr, "FIXO")) && i_IDLINHATELEFONICA == -1 ) {
+            	sprintf(szDsMsg, msg_prot_fixa_pros.c_str(), atol(buffer), szDtAtual);
+            }
+            else {
+                STRCPY_FROM_ORA(szDsMsg, DSMENSAGEMENVIO);
+            }
+
+            //log() << "IDATENDIMENTOPROTOCOLO=["<< buffer << "], szDsMsg=[" << szDsMsg << "]" << endl;
+#endif
+
+            stringstream xml;
+            xml << "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>";
+            xml << "<msg><msgHdr><user>1</user><service>SMTPSEND</service></msgHdr><msgBody>";
+            xml << "<from>" << EMAIL_FROM << "</from>";
+            xml << "<to>" << (char*)DSEMAIL.arr << "</to>";
+            xml << "<subject>" << EMAIL_SUBJECT << "</subject>";
+            xml << "<data>" << szDsMsg << "</data>";
+            xml << "</msgBody></msg>";
+
+            char *sendbuf=0;
+            char *rcvbuf=0;
+            long sendlen=xml.str().size();
+            long rcvlen=0;
+
+            if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+                log() << "Error allocating send buffer: tpalloc" << endl;
+                //tpterm();
+                erroenvio++;
+                continue;
+            }
+
+            if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+                log() << "Error allocating receive buffer: tpalloc" << endl;
+                tpfree(sendbuf);
+                //tpterm();
+                erroenvio++;
+                continue;
+            }
+
+            //log() << "sendbuf[" << xml.str() << "]" << endl;
+
+            strcpy(sendbuf, xml.str().c_str());
+
+            if(tpcall((char*)EMAIL_SERVICO, (char*)sendbuf, sendlen, (char**)&rcvbuf, &rcvlen, (long)0) == -1)
+            {
+                log() << "Tpcall = " << EMAIL_SERVICO << endl;
+                log() << "Tperrno = " << tperrno << endl;
+                log() << "rcvbuf[" << rcvbuf << "]" << endl;
+                tpfree(sendbuf);
+                tpfree(rcvbuf);
+                erroenvio++;
+                continue;
+            }
+
+            string retMsg(rcvbuf);
+            tpfree(sendbuf);
+            tpfree(rcvbuf);
+
+            MsgEnvio.clear();
+            regmatch_t pmatch[this->nmatch];
+            int r = regexec(&this->regex, retMsg.c_str(), (size_t)this->nmatch, pmatch, 0);
+            if( !r ) {
+                string statusCode = retMsg.substr(pmatch[1].rm_so, (pmatch[1].rm_eo - pmatch[1].rm_so));
+                string statusText = retMsg.substr(pmatch[2].rm_so, (pmatch[2].rm_eo - pmatch[2].rm_so));
+
+                if (statusCode.size() > 2 && statusCode[2] == 'I') {
+                    log() << "Sucesso: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "], statusCode = [" << statusCode << "], statusText = [" << statusText << "]" << endl;
+                    enviados++;
+                } else {
+                        log() << "*** ERRO: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "], VERIFIQUE E-MAIL ["  << email << "]" << endl;
+                    erroenvio++;
+
+                    EXEC SQL SELECT '-11' INTO :INENVIO FROM DUAL;
+                    endOraStr( INENVIO );
+                }
+            }
+            else if( r == REG_NOMATCH ) {
+                log() << "ERRO: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "] - statusCode/statusText nao encontrado!" << endl;
+                log() << "ERRO: rcvbuf[" << retMsg << "]" << endl;
+                erroenvio++;
+                memset( dsMotivo, 0x0, sizeof(dsMotivo) );
+                MsgEnvio << "ERRO: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "] - statusCode/statusText nao encontrado!" << endl;
+                strcpy( dsMotivo, MsgEnvio.str().c_str() );
+                    continue;
+            }
+            else {
+                    char msgbuf[256];
+                    regerror(r, &regex, msgbuf, sizeof(msgbuf));
+                    log() << "ERRO: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "], regexec - Regex match failed: " << msgbuf << endl;
+                    log() << "ERRO: rcvbuf[" << retMsg << "]" << endl;
+                    erroenvio++;
+	                memset( dsMotivo, 0x0, sizeof(dsMotivo) );
+	                MsgEnvio << "ERRO: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "], regexec - Regex match failed: " << msgbuf << endl;
+	                strcpy( dsMotivo, MsgEnvio.str().c_str() );
+                        continue;
+            }
+        } else {
+            log() << "E-mail nao reenviado para este protocolo pois DTABERTURAPROTOCOLO vazia: IDATENDIMENTOPROTOCOLO=" << (char*)IDATENDIMENTOPROTOCOLO.arr << endl;
+            inenvionl++;
+
+            MsgEnvio << "E-mail nao reenviado para este protocolo pois DTABERTURAPROTOCOLO vazia: IDATENDIMENTOPROTOCOLO=" << (char*)IDATENDIMENTOPROTOCOLO.arr << endl;
+            strcpy( dsMotivo, MsgEnvio.str().c_str() );
+
+            EXEC SQL select '01/01/1900 00:00:00' INTO :DTABERTURAPROTOCOLO FROM DUAL;
+        }
+        }
+        else   /*   e-mail invalido   */
+        {
+            log() << "*** ERRO: IDATENDIMENTOPROTOCOLO = [" << (char*)IDATENDIMENTOPROTOCOLO.arr << "], EMAIL DESTINO INVALIDO [" << email << "]" << endl;
+            erroenvio++;
+            EXEC SQL SELECT '-11' INTO :INENVIO FROM DUAL;
+            endOraStr( INENVIO );
+        }
+
+        if ( TPENVIO.arr[0] == '2' )
+        {
+            EXEC SQL
+            INSERT INTO ATENDIMENTO.FilaReenvioProtocoloHist (
+                IDATENDIMENTOPROTOCOLO ,
+                DTENCERRAMENTO ,
+                CDAREAREGISTRO ,
+                NRLINHA ,
+                DSMENSAGEMENVIO ,
+                INENVIO ,
+                SGTIPOPESSOA ,
+                IDTIPOLINHA ,
+                SGUF ,
+                TPENVIO ,
+                DSEMAIL ,
+                IDATENDIMENTOPROTOCOLOFILHO ,
+                CDORIGEM ,
+                DTABERTURAPROTOCOLO ,
+                DSMOTIVONAOENVIO ,
+                DTULTIMAALTERACAO ,
+                IDUSUARIOALTERACAO 
+            ) 
+            VALUES 
+            (
+                :IDATENDIMENTOPROTOCOLO ,
+                TO_DATE(:DTENCERRAMENTO,'DD/MM/RRRR HH24:MI:SS') ,
+                :CDAREAREGISTRO ,
+                :NRLINHA ,
+                DECODE( :INENVIO, -11, :EMAIL_INVALIDO, :DSMENSAGEMENVIO ),
+                :INENVIO:i_INENVIO ,
+                :SGTIPOPESSOA ,
+                :IDTIPOLINHA ,
+                :SGUF ,
+                :TPENVIO:i_TPENVIO ,
+                :DSEMAIL ,
+                :IDATENDIMENTOPROTOCOLOFILHO:iIDATENDIMENTOPROTOCOLOFILHO ,
+                :CDORIGEM ,
+                TO_DATE(:DTABERTURAPROTOCOLO,'DD/MM/RRRR HH24:MI:SS') ,
+                :dsMotivo ,
+                TO_DATE(:DTULTIMAALTERACAO,'DD/MM/RRRR HH24:MI:SS'),
+                :IDUSUARIOALTERACAO
+            );
+        }
+        
+        if ( TPENVIO.arr[0] == '2' )
+        {
+            EXEC SQL
+            DELETE FROM atendimento.FilaReenvioProtocolo
+            WHERE ROWID = :RID;
+        }
+        else
+        {
+            EXEC SQL
+            UPDATE atendimento.FilaReenvioProtocolo
+            SET TPENVIO = 1
+            WHERE ROWID = :RID;
+        }
+        
+        EXEC SQL COMMIT WORK;
+    }
+
+    EXEC SQL CLOSE cReenvioEmail;
+
+    log() << "Selecionado(s) " << regcount << " registro(s) em ATENDIMENTO.FILAREENVIOPROTOCOLO." << endl;
+
+    if (inenvionl)
+        log() << "Nao enviado(s) " << inenvionl << " por DTABERTURAPROTOCOLO=NULL." << endl;
+
+    if (enviados)
+        log() << "Enviado(s) " << enviados << " via SMTPSEND." << endl;
+
+    if (erroenvio)
+        log() << "Nao enviado(s) " << erroenvio << " por erro em SMTPSEND!" << endl;
+
+    log() << "======================================================================" << endl;
+
+    return;
+    ERRSQL:
+        log() << "ERRO ORACLE: sqlcode=" << sqlca.sqlcode << ", sqlerrmc=" << sqlca.sqlerrm.sqlerrmc << endl;
+        log() << "Executando ROLLBACK!" << endl;
+        EXEC SQL ROLLBACK WORK;
+        throw ExceptionDatabaseSqlError;
+}
+
+
+void CEnviarEmailProtocolo::ReenvioAgrupadoMail()
+{
+    long regcount=0;
+    long enviados=0;
+    long erroenvio=0;
+    char szDsValorParametro[256];
+    char szDsMsg[2048];
+    char szDsMsgAgrupado[32768];
+    long lTempIdAgrupador=0;
+    long lLastIdAgrupador=0;
+    char szDtAtual[64];
+    long iIdAtendimentoProtocolo;
+
+    char buffer[256];
+    char email[256];
+    char idProtocolo[256];
+
+    TmapEmailAgrupado mapEmailAgrupado;
+    TmapEmailAgrupado::iterator itea;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char dsMotivo[256];
+        short i_dsmotivonaoenvio = 0;
+
+        VARCHAR IDATENDIMENTOPROTOCOLO[256];
+        short i_IDATENDIMENTOPROTOCOLO;
+
+        VARCHAR  DTENCERRAMENTO[256];
+        short  i_DTENCERRAMENTO = -1;
+
+        VARCHAR  SGTIPOPESSOA[256];
+        short  i_SGTIPOPESSOA = -1;
+
+        VARCHAR  IDTIPOLINHA[11];
+        short  i_IDTIPOLINHA = -1;
+
+        VARCHAR  SGUF[256];
+        short  i_SGUF = -1;
+
+        VARCHAR CDAREAREGISTRO[256];
+        short i_CDAREAREGISTRO;
+
+        VARCHAR NRLINHA[256];
+        short i_NRLINHA;
+
+        VARCHAR DSMENSAGEMENVIO[1001];
+        short iDSMENSAGEMENVIO=0;
+
+        VARCHAR DTULTIMAALTERACAO[64];
+        short i_DTULTIMAALTERACAO;
+
+        VARCHAR IDUSUARIOALTERACAO[256];
+        short i_IDUSUARIOALTERACAO;
+
+        VARCHAR IDATENDIMENTOPROTOCOLOFILHO[256];
+        short iIDATENDIMENTOPROTOCOLOFILHO=0;
+
+        VARCHAR TPENVIO[256];
+        short i_TPENVIO;
+
+        VARCHAR DSEMAIL[256];
+        short iDSEMAIL=0;
+
+        VARCHAR RID[256];
+
+        VARCHAR INENVIO[256];
+        short i_INENVIO;
+
+        VARCHAR DSVALORPARAMETRO[256];
+        short iDSVALORPARAMETRO=0;
+
+        VARCHAR DTATUAL[256];
+        short i_DTATUAL;
+
+        VARCHAR CDORIGEM[64];
+        short i_CDORIGEM=0;
+
+        VARCHAR IDAGRUPADOR[64];
+        short i_IDAGRUPADOR=0;
+
+
+        VARCHAR DTABERTURAPROTOCOLO[64];
+        short i_DTABERTURAPROTOCOLO=0;
+
+        VARCHAR IDLINHATELEFONICA[256];
+        short i_IDLINHATELEFONICA;
+
+        VARCHAR DTABERTURA[128];
+        short i_DTABERTURA=0;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER SQLERROR GOTO ERRSQL;
+
+    EXEC SQL DECLARE cReenvioAgrupadoEmail CURSOR FOR
+    select
+      FilaReenvioProtocolo.IDATENDIMENTOPROTOCOLO ,
+      TO_CHAR(FilaReenvioProtocolo.DTENCERRAMENTO,'DD/MM/RRRR HH24:MI:SS') as DTENCERRAMENTO,
+      FilaReenvioProtocolo.SGTIPOPESSOA ,
+      FilaReenvioProtocolo.IDTIPOLINHA ,
+      FilaReenvioProtocolo.SGUF ,
+      FilaReenvioProtocolo.CDAREAREGISTRO ,
+      FilaReenvioProtocolo.NRLINHA,
+      (
+        case when (length(FilaReenvioProtocolo.DSMENSAGEMENVIO) + 69 <= 140) then
+          FilaReenvioProtocolo.DSMENSAGEMENVIO || '. ' || NVL(COMPLEMENTOSMS.DSCOMPLEMENTO, 'Fale conosco tambem pelo vivo.com.br/meuvivo ou envie SMS para 1058')
+        else
+          FilaReenvioProtocolo.DSMENSAGEMENVIO || '.'
+        end
+      )
+      AS dsmensagemenvio,
+      TO_CHAR(FilaReenvioProtocolo.DTULTIMAALTERACAO,'DD/MM/RRRR HH24:MI:SS') as DTULTIMAALTERACAO,
+      FilaReenvioProtocolo.IDUSUARIOALTERACAO,
+      FilaReenvioProtocolo.IDATENDIMENTOPROTOCOLOFILHO,
+      FilaReenvioProtocolo.tpenvio,
+      FilaReenvioProtocolo.inenvio,
+      FilaReenvioProtocolo.dsemail,
+      FilaReenvioProtocolo.rowid AS RID,
+      FilaReenvioProtocolo.CDORIGEM,
+      (case when FilaReenvioProtocolo.DTABERTURAPROTOCOLO is not null
+        then TO_CHAR(FilaReenvioProtocolo.DTABERTURAPROTOCOLO,'DD/MM/RRRR HH24:MI')
+        else null
+      end) as DTABERTURAPROTOCOLO
+	  ,FilaReenvioProtocolo.idagrupador
+	  ,ap.IDLINHATELEFONICA
+	  ,(to_char(ap.dtabertura,'dd/mm/rrrr')||' as '||to_char(ap.dtabertura,'hh24:mi')) as dtatual
+    from
+      atendimento.FilaReenvioProtocolo FilaReenvioProtocolo,
+      (
+         SELECT NVL (C.IDSISTEMAORIGEM, 0) IDSISO2, C.* 
+         FROM ATENDIMENTO.COMPLEMENTOSMS C
+      ) COMPLEMENTOSMS ,
+        atendimento.atendimentoprotocolo ap
+    where
+	  FilaReenvioProtocolo.idatendimentoprotocolo = ap.idatendimentoprotocolo
+    AND FilaReenvioProtocolo.inenvio = 1
+    AND FilaReenvioProtocolo.IDAGRUPADOR > 0
+    AND FilaReenvioProtocolo.tpenvio = 2
+    AND FilaReenvioProtocolo.dtencerramento < SYSDATE
+    AND FilaReenvioProtocolo.cdarearegistro = complementosms.cdarearegistro (+)
+    AND FilaReenvioProtocolo.IDTIPOLINHA = COMPLEMENTOSMS.IDTIPOLINHA (+)
+    AND FilaReenvioProtocolo.SGTIPOPESSOA = COMPLEMENTOSMS.SGTIPOPESSOA (+)
+    AND FilaReenvioProtocolo.SGUF = COMPLEMENTOSMS.SGUF (+)
+    AND DECODE (FilaReenvioProtocolo.IDSISTEMAORIGEM, 333, 333, 0) = IDSISO2(+)
+    AND nvl(COMPLEMENTOSMS.STATUS,1) = 1 ;
+
+    //log() << "Processando registros em ATENDIMENTO.FILAREENVIOPROTOCOLO..." << endl;
+
+    EXEC SQL OPEN cReenvioAgrupadoEmail;
+
+
+    while(true) {
+        memset( &IDATENDIMENTOPROTOCOLO  , 0x0, sizeof(IDATENDIMENTOPROTOCOLO) );
+        memset( &DTENCERRAMENTO               , 0x0, sizeof(DTENCERRAMENTO) );
+        memset( &SGTIPOPESSOA                 , 0x0, sizeof(SGTIPOPESSOA) );
+        memset( &IDTIPOLINHA                  , 0x0, sizeof(IDTIPOLINHA) );
+        memset( &SGUF                         , 0x0, sizeof(SGUF) );
+        memset( &IDATENDIMENTOPROTOCOLOFILHO  , 0x0, sizeof(IDATENDIMENTOPROTOCOLOFILHO) );
+        memset( &CDAREAREGISTRO     , 0x0, sizeof(CDAREAREGISTRO) );
+        memset( &NRLINHA            , 0x0, sizeof(NRLINHA) );
+        memset( &DSMENSAGEMENVIO    , 0x0, sizeof(DSMENSAGEMENVIO) );
+        memset( &DTULTIMAALTERACAO  , 0x0, sizeof(DTULTIMAALTERACAO) );
+        memset( &DSEMAIL            , 0x0, sizeof(DSEMAIL) );
+        memset( &RID                , 0x0, sizeof(RID) );
+        memset( &IDUSUARIOALTERACAO , 0x0, sizeof(IDUSUARIOALTERACAO) );
+        memset( &TPENVIO            , 0x0, sizeof(TPENVIO) );
+        memset( &INENVIO            , 0x0, sizeof(INENVIO) );
+        memset( &CDORIGEM  , 0x0, sizeof(CDORIGEM) );
+        memset( &DTABERTURAPROTOCOLO  , 0x0, sizeof(DTABERTURAPROTOCOLO) );
+        memset( &szDsMsg                      , 0x0, sizeof(szDsMsg));
+        memset( &IDAGRUPADOR                      , 0x0, sizeof(IDAGRUPADOR));
+        memset( &IDLINHATELEFONICA  , 0x0, sizeof(IDLINHATELEFONICA) );
+        memset( &DTABERTURA  , 0x0, sizeof(DTABERTURA) );
+
+
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+        EXEC SQL FETCH cReenvioAgrupadoEmail
+            INTO :IDATENDIMENTOPROTOCOLO:i_IDATENDIMENTOPROTOCOLO,
+                 :DTENCERRAMENTO:i_DTENCERRAMENTO,
+                 :SGTIPOPESSOA:i_SGTIPOPESSOA,
+                 :IDTIPOLINHA:i_IDTIPOLINHA,
+                 :SGUF:i_SGUF,
+                 :CDAREAREGISTRO:i_CDAREAREGISTRO,
+                 :NRLINHA:i_NRLINHA,
+                 :DSMENSAGEMENVIO:iDSMENSAGEMENVIO,
+                 :DTULTIMAALTERACAO:i_DTULTIMAALTERACAO,
+                 :IDUSUARIOALTERACAO:i_IDUSUARIOALTERACAO,
+                 :IDATENDIMENTOPROTOCOLOFILHO:iIDATENDIMENTOPROTOCOLOFILHO,
+                 :TPENVIO:i_TPENVIO ,
+                 :INENVIO:i_INENVIO,
+                 :DSEMAIL:iDSEMAIL,
+                 :RID,
+                 :CDORIGEM:i_CDORIGEM,
+                 :DTABERTURAPROTOCOLO:i_DTABERTURAPROTOCOLO,
+				 :IDAGRUPADOR:i_IDAGRUPADOR,
+				 :IDLINHATELEFONICA:i_IDLINHATELEFONICA,
+				 :DTABERTURA:i_DTABERTURA
+                 ;
+
+        regcount++;
+
+        endOraStr( IDATENDIMENTOPROTOCOLO );
+        endOraStr( DTENCERRAMENTO );
+        endOraStr( SGTIPOPESSOA );
+        endOraStr( IDTIPOLINHA );
+        endOraStr( SGUF );
+        endOraStr( CDAREAREGISTRO );
+        endOraStr( NRLINHA );
+        endOraStr( DSMENSAGEMENVIO );
+        endOraStr( DTULTIMAALTERACAO );
+        endOraStr( IDUSUARIOALTERACAO );
+        endOraStr( IDATENDIMENTOPROTOCOLOFILHO );
+        endOraStr( TPENVIO );
+        endOraStr( INENVIO );
+        endOraStr( DSEMAIL );
+        endOraStr( RID );
+        endOraStr( CDORIGEM );
+        endOraStr( DTABERTURAPROTOCOLO );
+        endOraStr( IDAGRUPADOR );
+        endOraStr( IDLINHATELEFONICA );
+        endOraStr( DTABERTURA );
+
+        // 4.1
+        if ( ((i_CDORIGEM == -1) || !strcmp((char*)CDORIGEM.arr, "MOVEL")) && i_IDLINHATELEFONICA >= 0 ) {
+        	STRCPY_FROM_ORA(szDsMsg, DSMENSAGEMENVIO);
+        }
+        // 4.2
+        else if ( ((i_CDORIGEM == -1) || !strcmp((char*)CDORIGEM.arr, "MOVEL")) && i_IDLINHATELEFONICA == -1 ) {
+        	sprintf(szDsMsg, msg_prot_movel_pros.c_str(), atol((char*)IDATENDIMENTOPROTOCOLO.arr), (char*)DTABERTURA.arr);
+        }
+        // 4.3
+        else if ( ((i_CDORIGEM >= 0) && !strcmp((char*)CDORIGEM.arr, "FIXO")) && i_IDLINHATELEFONICA >= 0 ) {
+        	sprintf(szDsMsg, msg_prot_fixa_clie.c_str(), atol((char*)IDATENDIMENTOPROTOCOLO.arr), (char*)DTABERTURA.arr);
+        }
+        // 4.4
+        else if ( ((i_CDORIGEM >= 0) && !strcmp((char*)CDORIGEM.arr, "FIXO")) && i_IDLINHATELEFONICA == -1 ) {
+        	sprintf(szDsMsg, msg_prot_fixa_pros.c_str(), atol((char*)IDATENDIMENTOPROTOCOLO.arr), (char*)DTABERTURA.arr);
+        }
+        else {
+            STRCPY_FROM_ORA(szDsMsg, DSMENSAGEMENVIO);
+        }
+
+
+        TEmailAgrupadoRec rec;
+        rec.idatendimentoprotocolo = (char*)IDATENDIMENTOPROTOCOLO.arr;
+        rec.dtencerramento = (char*)DTENCERRAMENTO.arr;
+        rec.sgtipopessoa = (char*)SGTIPOPESSOA.arr;
+        rec.idtipolinha = (char*)IDTIPOLINHA.arr;
+        rec.sguf = (char*)SGUF.arr;
+        rec.cdarearegistro = (char*)CDAREAREGISTRO.arr;
+        rec.nrlinha = (char*)NRLINHA.arr;
+        rec.dsmensagemenvio = (char*)DSMENSAGEMENVIO.arr;
+        rec.dtultimaalteracao = (char*)DTULTIMAALTERACAO.arr;
+        rec.idusuarioalteracao = (char*)IDUSUARIOALTERACAO.arr;
+        rec.idatendimentoprotocolofilho = (char*)IDATENDIMENTOPROTOCOLOFILHO.arr;
+        rec.tpenvio = (char*)TPENVIO.arr;
+        rec.inenvio = (char*)INENVIO.arr;
+        rec.dsemail = (char*)DSEMAIL.arr;
+        rec.rid = (char*)RID.arr;
+        rec.cdorigem = (char*)CDORIGEM.arr;
+        rec.dtaberturaprotocolo = (char*)DTABERTURAPROTOCOLO.arr;
+        rec.idagrupador = (char*)IDAGRUPADOR.arr;
+        rec.dsmsg = szDsMsg;
+        mapEmailAgrupado[atol((char*)IDAGRUPADOR.arr)].push_back(rec);
+    }
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    for(itea = mapEmailAgrupado.begin(); itea != mapEmailAgrupado.end(); itea++) {
+    	log() << "Enviando: IDAGRUPADOR = [" << itea->first << "]" << endl;
+
+    	TvecEmailAgrupadoRec::iterator itr;
+    	stringstream dsmsgagrupado;
+    	for(itr = itea->second.begin(); itr != itea->second.end(); itr++) {
+    		log() << "Agrupando: IDATENDIMENTOPROTOCOLO = [" << itr->idatendimentoprotocolo << "]" << endl;
+    		dsmsgagrupado << itr->dsmsg;
+    		dsmsgagrupado << endl;
+    		dsmsgagrupado << "\r\n";
+    	}
+
+    	itr = itea->second.begin();
+
+    	stringstream dsmotivonaoenvio;
+        stringstream xml;
+        xml << "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>";
+        xml << "<msg><msgHdr><user>1</user><service>SMTPSEND</service></msgHdr><msgBody>";
+        xml << "<from>" << EMAIL_FROM << "</from>";
+        xml << "<to>" << itr->dsemail << "</to>";
+        xml << "<subject>" << EMAIL_SUBJECT << "</subject>";
+        xml << "<data>" << dsmsgagrupado.str() << "</data>";
+        xml << "</msgBody></msg>";
+
+        char *sendbuf=0;
+        char *rcvbuf=0;
+        long sendlen=xml.str().size();
+        long rcvlen=0;
+
+        if((sendbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+            log() << "Error allocating send buffer: tpalloc" << endl;
+            //tpterm();
+            erroenvio++;
+            continue;
+        }
+
+        if((rcvbuf = (char *) tpalloc("STRING", NULL, sendlen+1)) == NULL) {
+            log() << "Error allocating receive buffer: tpalloc" << endl;
+            tpfree(sendbuf);
+            //tpterm();
+            erroenvio++;
+            continue;
+        }
+
+        //log() << "sendbuf[" << xml.str() << "]" << endl;
+
+        strcpy(sendbuf, xml.str().c_str());
+
+        if(tpcall((char*)EMAIL_SERVICO, (char*)sendbuf, sendlen, (char**)&rcvbuf, &rcvlen, (long)0) == -1)
+        {
+            log() << "Tpcall = " << EMAIL_SERVICO << endl;
+            log() << "Tperrno = " << tperrno << endl;
+            log() << "rcvbuf[" << rcvbuf << "]" << endl;
+            tpfree(sendbuf);
+            tpfree(rcvbuf);
+            erroenvio++;
+            continue;
+        }
+
+        string retMsg(rcvbuf);
+        tpfree(sendbuf);
+        tpfree(rcvbuf);
+
+        regmatch_t pmatch[this->nmatch];
+        int r = regexec(&this->regex, retMsg.c_str(), (size_t)this->nmatch, pmatch, 0);
+        if( !r ) {
+            string statusCode = retMsg.substr(pmatch[1].rm_so, (pmatch[1].rm_eo - pmatch[1].rm_so));
+            string statusText = retMsg.substr(pmatch[2].rm_so, (pmatch[2].rm_eo - pmatch[2].rm_so));
+
+            if (statusCode.size() > 2 && statusCode[2] == 'I') {
+                log() << "Sucesso: IDAGRUPADOR = [" << itea->first << "], statusCode = [" << statusCode << "], statusText = [" << statusText << "]" << endl;
+                enviados++;
+            } else {
+                log() << "ERRO: IDAGRUPADOR = [" << itea->first << "], statusCode = [" << statusCode << "], statusText = [" << statusText << "]" << endl;
+                erroenvio++;
+
+                dsmotivonaoenvio << "ERRO: IDAGRUPADOR = [" << itea->first << "], statusCode = [" << statusCode << "], statusText = [" << statusText << "]";
+
+                //continue;
+            }
+        }
+        else if( r == REG_NOMATCH ) {
+            log() << "ERRO: IDAGRUPADOR = [" << itea->first << "] - statusCode/statusText nao encontrado!" << endl;
+            log() << "ERRO: rcvbuf[" << retMsg << "]" << endl;
+            erroenvio++;
+
+            dsmotivonaoenvio << "ERRO: IDAGRUPADOR = [" << itea->first << "] - statusCode/statusText nao encontrado!";
+
+            //continue;
+        }
+        else {
+                char msgbuf[256];
+                regerror(r, &regex, msgbuf, sizeof(msgbuf));
+                log() << "ERRO: IDAGRUPADOR = [" << itea->first << "], regexec - Regex match failed: " << msgbuf << endl;
+                log() << "ERRO: rcvbuf[" << retMsg << "]" << endl;
+                erroenvio++;
+
+                dsmotivonaoenvio << "ERRO: IDAGRUPADOR = [" << itea->first << "], regexec - Regex match failed: " << msgbuf;
+
+                //continue;
+        }
+
+        memset( dsMotivo, 0x0, sizeof(dsMotivo) );
+        strcpy( dsMotivo, dsmotivonaoenvio.str().c_str() );
+
+    	for(; itr != itea->second.end(); itr++) {
+            memset( &IDATENDIMENTOPROTOCOLO  , 0x0, sizeof(IDATENDIMENTOPROTOCOLO) );
+            memset( &DTENCERRAMENTO               , 0x0, sizeof(DTENCERRAMENTO) );
+            memset( &SGTIPOPESSOA                 , 0x0, sizeof(SGTIPOPESSOA) );
+            memset( &IDTIPOLINHA                  , 0x0, sizeof(IDTIPOLINHA) );
+            memset( &SGUF                         , 0x0, sizeof(SGUF) );
+            memset( &IDATENDIMENTOPROTOCOLOFILHO  , 0x0, sizeof(IDATENDIMENTOPROTOCOLOFILHO) );
+            memset( &CDAREAREGISTRO     , 0x0, sizeof(CDAREAREGISTRO) );
+            memset( &NRLINHA            , 0x0, sizeof(NRLINHA) );
+            memset( &DSMENSAGEMENVIO    , 0x0, sizeof(DSMENSAGEMENVIO) );
+            memset( &DTULTIMAALTERACAO  , 0x0, sizeof(DTULTIMAALTERACAO) );
+            memset( &DSEMAIL            , 0x0, sizeof(DSEMAIL) );
+            memset( &RID                , 0x0, sizeof(RID) );
+            memset( &IDUSUARIOALTERACAO , 0x0, sizeof(IDUSUARIOALTERACAO) );
+            memset( &TPENVIO            , 0x0, sizeof(TPENVIO) );
+            memset( &INENVIO            , 0x0, sizeof(INENVIO) );
+            memset( &CDORIGEM  , 0x0, sizeof(CDORIGEM) );
+            memset( &DTABERTURAPROTOCOLO  , 0x0, sizeof(DTABERTURAPROTOCOLO) );
+            memset( &IDAGRUPADOR                      , 0x0, sizeof(IDAGRUPADOR));
+
+            STRCPY_TO_ORA(IDATENDIMENTOPROTOCOLO, itr->idatendimentoprotocolo.c_str());
+            STRCPY_TO_ORA(DTENCERRAMENTO, itr->dtencerramento.c_str());
+            STRCPY_TO_ORA(SGTIPOPESSOA, itr->sgtipopessoa.c_str());
+            STRCPY_TO_ORA(IDTIPOLINHA, itr->idtipolinha.c_str());
+            STRCPY_TO_ORA(SGUF, itr->sguf.c_str());
+            STRCPY_TO_ORA(IDATENDIMENTOPROTOCOLOFILHO, itr->idatendimentoprotocolofilho.c_str());
+            STRCPY_TO_ORA(CDAREAREGISTRO, itr->cdarearegistro.c_str());
+            STRCPY_TO_ORA(NRLINHA, itr->nrlinha.c_str());
+            STRCPY_TO_ORA(DSMENSAGEMENVIO, itr->dsmensagemenvio.c_str());
+            STRCPY_TO_ORA(DTULTIMAALTERACAO, itr->dtultimaalteracao.c_str());
+            STRCPY_TO_ORA(DSEMAIL, itr->dsemail.c_str());
+            STRCPY_TO_ORA(RID, itr->rid.c_str());
+            STRCPY_TO_ORA(IDUSUARIOALTERACAO, itr->idusuarioalteracao.c_str());
+            STRCPY_TO_ORA(TPENVIO, itr->tpenvio.c_str());
+            STRCPY_TO_ORA(INENVIO, itr->inenvio.c_str());
+            STRCPY_TO_ORA(CDORIGEM, itr->cdorigem.c_str());
+            STRCPY_TO_ORA(DTABERTURAPROTOCOLO, itr->dtaberturaprotocolo.c_str());
+            STRCPY_TO_ORA(IDAGRUPADOR, itr->idagrupador.c_str());
+
+
+            i_CDAREAREGISTRO = itr->cdarearegistro.empty() ? -1 : 0;
+            i_NRLINHA = itr->nrlinha.empty() ? -1 : 0;
+            iDSMENSAGEMENVIO = itr->dsmensagemenvio.empty() ? -1 : 0;
+            i_INENVIO = itr->inenvio.empty() ? -1 : 0;
+            i_SGTIPOPESSOA = itr->sgtipopessoa.empty() ? -1 : 0;
+            i_IDTIPOLINHA = itr->idtipolinha.empty() ? -1 : 0;
+            i_IDAGRUPADOR = itr->idagrupador.empty() ? -1 : 0;
+            i_SGUF = itr->sguf.empty() ? -1 : 0;
+            i_TPENVIO = itr->tpenvio.empty() ? -1 : 0;
+            iDSEMAIL = itr->dsemail.empty() ? -1 : 0;
+            iIDATENDIMENTOPROTOCOLOFILHO = itr->idatendimentoprotocolofilho.empty() ? -1 : 0;
+            i_CDORIGEM = itr->cdorigem.empty() ? -1 : 0;
+            i_DTABERTURAPROTOCOLO = itr->dtaberturaprotocolo.empty() ? -1 : 0;
+			i_dsmotivonaoenvio = dsmotivonaoenvio.str().empty() ? -1 : 0;
+
+
+            EXEC SQL
+            INSERT INTO ATENDIMENTO.FilaReenvioProtocoloHist (
+    			IDATENDIMENTOPROTOCOLO ,
+    			DTENCERRAMENTO ,
+    			CDAREAREGISTRO ,
+    			NRLINHA ,
+    			DSMENSAGEMENVIO ,
+    			INENVIO ,
+    			SGTIPOPESSOA ,
+    			IDTIPOLINHA ,
+    			SGUF ,
+    			TPENVIO ,
+    			DSEMAIL ,
+    			IDATENDIMENTOPROTOCOLOFILHO ,
+    			CDORIGEM ,
+    			DTABERTURAPROTOCOLO ,
+    			DSMOTIVONAOENVIO ,
+    			DTULTIMAALTERACAO ,
+    			IDUSUARIOALTERACAO,
+    			IDAGRUPADOR
+            ) VALUES (
+                :IDATENDIMENTOPROTOCOLO ,
+                TO_DATE(:DTENCERRAMENTO,'DD/MM/RRRR HH24:MI:SS') ,
+                :CDAREAREGISTRO:i_CDAREAREGISTRO ,
+                :NRLINHA:i_NRLINHA ,
+                :DSMENSAGEMENVIO:iDSMENSAGEMENVIO ,
+                :INENVIO:i_INENVIO ,
+                :SGTIPOPESSOA:i_SGTIPOPESSOA ,
+                :IDTIPOLINHA:i_IDTIPOLINHA ,
+                :SGUF:i_SGUF ,
+                :TPENVIO:i_TPENVIO ,
+                :DSEMAIL:iDSEMAIL ,
+                :IDATENDIMENTOPROTOCOLOFILHO:iIDATENDIMENTOPROTOCOLOFILHO ,
+                :CDORIGEM:i_CDORIGEM ,
+    			TO_DATE(:DTABERTURAPROTOCOLO,'DD/MM/RRRR HH24:MI:SS') ,
+                :dsMotivo:i_dsmotivonaoenvio ,
+                TO_DATE(:DTULTIMAALTERACAO,'DD/MM/RRRR HH24:MI:SS'),
+                :IDUSUARIOALTERACAO,
+    			:IDAGRUPADOR:i_IDAGRUPADOR
+            );
+
+            EXEC SQL
+            DELETE FROM atendimento.FilaReenvioProtocolo
+            WHERE ROWID = :RID;
+    	}
+
+        EXEC SQL COMMIT;
+    }
+
+    EXEC SQL CLOSE cReenvioAgrupadoEmail;
+
+
+    log() << "Selecionado(s) " << regcount << " registro(s) em ATENDIMENTO.FILAREENVIOPROTOCOLO." << endl;
+
+    if (enviados)
+        log() << "Enviado(s) " << enviados << " via SMTPSEND." << endl;
+
+    if (erroenvio)
+        log() << "Nao enviado(s) " << erroenvio << " por erro em SMTPSEND!" << endl;
+
+    log() << "======================================================================" << endl;
+
+    return;
+    ERRSQL:
+        log() << "ERRO ORACLE: sqlcode=" << sqlca.sqlcode << ", sqlerrmc=" << sqlca.sqlerrm.sqlerrmc << endl;
+        log() << "Executando ROLLBACK!" << endl;
+        EXEC SQL ROLLBACK;
+        throw ExceptionDatabaseSqlError;
+}
+
+
+
+void CEnviarEmailProtocolo::getApoioParameto() {
+	EXEC SQL BEGIN DECLARE SECTION;
+
+	VARCHAR DSVALORPARAMETRO[3][255];
+	short i_DSVALORPARAMETRO[3];
+
+    // 156141 - Desligamento Tibco
+    VARCHAR dsNroMaxReg[16];
+    short i_dsNroMaxReg = -1;
+
+	EXEC SQL END DECLARE SECTION;
+
+	memset( &DSVALORPARAMETRO, 0, sizeof(DSVALORPARAMETRO));
+
+	EXEC SQL WHENEVER SQLERROR GOTO ERRSQL;
+
+	EXEC SQL SELECT DSVALORPARAMETRO
+		 INTO :DSVALORPARAMETRO:i_DSVALORPARAMETRO
+		 from apoio.parametro
+		 where cdparametro in ('MSG_PROT_FIXA_CLIE', 'MSG_PROT_FIXA_PROS', 'MSG_PROT_MOVEL_PROS')
+		 order by cdparametro asc;
+
+	endOraStr( DSVALORPARAMETRO[0] );
+	endOraStr( DSVALORPARAMETRO[1] );
+	endOraStr( DSVALORPARAMETRO[2] );
+
+	log() << "MSG_PROT_FIXA_CLIE: '" << (char*)DSVALORPARAMETRO[0].arr << "'" << endl;
+	log() << "MSG_PROT_FIXA_PROS: '" << (char*)DSVALORPARAMETRO[1].arr << "'" << endl;
+	log() << "MSG_PROT_MOVEL_PROS: '" << (char*)DSVALORPARAMETRO[2].arr << "'" << endl;
+
+	msg_prot_fixa_clie = (char*)DSVALORPARAMETRO[0].arr;
+	msg_prot_fixa_pros = (char*)DSVALORPARAMETRO[1].arr;
+	msg_prot_movel_pros = (char*)DSVALORPARAMETRO[2].arr;
+
+    // 156141 - Desligamento Tibco
+    EXEC SQL 
+    SELECT 
+        DSVALORPARAMETRO
+    INTO 
+       :dsNroMaxReg:i_dsNroMaxReg
+    FROM 
+        APOIO.PARAMETRO
+    WHERE 
+        CDPARAMETRO = 'NRO_MAX_EMAIL_PROTO';
+    
+    endOraStr( dsNroMaxReg );
+    NroMaxLeitura = (char*)dsNroMaxReg.arr;
+
+return;
+ERRSQL:
+    log() << "ERRO ORACLE: sqlcode = " << sqlca.sqlcode << ", sqlerrmc = " << sqlca.sqlerrm.sqlerrmc << endl;
+    EXEC SQL ROLLBACK WORK;
+    throw ExceptionDatabaseSqlError;
+}
+
+
+
+int CEnviarEmailProtocolo::ReservaLoteRegistros( char * idControleFilaSMS, char * nrMaxRegistros_PRM )
+{
+    double startTime, endTime;
+    char UsedTime[16];
+    memset(UsedTime, 0x0, sizeof(UsedTime));
+
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    
+        VARCHAR idCtlFilaSMS[256];
+        short i_idCtlFilaSMS = -1;
+        char * nrMaxRegistros = nrMaxRegistros_PRM;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    log() <<  ">>> ReservaLoteRegistros()"  << endl;
+    log() << "Nro. Maximo de Registros: " << nrMaxRegistros << endl;
+    struct sqlca sqlca;
+    
+    memset ( &idCtlFilaSMS, 0x0, sizeof(idCtlFilaSMS) ) ;
+
+    EXEC SQL WHENEVER SQLERROR goto erroLog;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+
+    EXEC SQL
+    SELECT ATENDIMENTO.CONTROLEFILASMSSEQ.NEXTVAL
+      INTO :idCtlFilaSMS
+      FROM DUAL;
+    
+    endOraStr( idCtlFilaSMS );
+    
+    EXEC SQL
+    INSERT INTO ATENDIMENTO.CONTROLEFILASMS  
+    (
+      IDCONTROLEFILASMS ,
+      DTINICIO ,
+      INPROCESSADO 
+    )
+    Values
+    (
+       :idCtlFilaSMS ,
+       SYSTIMESTAMP ,
+       0
+    );
+    
+    EXEC SQL COMMIT;
+
+    EXEC SQL
+    UPDATE ATENDIMENTO.FILASMSPROTOCOLO FILASMSPROTOCOLO
+    SET IDCONTROLEFILASMS = :idCtlFilaSMS
+    WHERE
+       ROWNUM <= :nrMaxRegistros
+    AND FILASMSPROTOCOLO.IDCONTROLEFILASMS IS NULL
+    AND FILASMSPROTOCOLO.TPENVIO IN ( 2, 3 )
+    AND FILASMSPROTOCOLO.DTENCERRAMENTO < SYSTIMESTAMP ;
+
+    EXEC SQL COMMIT;
+    
+    sprintf( idControleFilaSMS, "%s", (char*)idCtlFilaSMS.arr );
+
+    AtualizaEstadoProcesso( idControleFilaSMS, "1" );   // Ajusta Controle para: "DISPONIVEL"
+
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    
+    log() << "### [ReservaLoteRegistros()] Tempo de execucao: " << UsedTime << endl;
+
+    log() << "<<< ReservaLoteRegistros()" << endl;
+    return 0;
+
+erroLog:
+    log() << "!!! ERRO ORACLE: [" << sqlca.sqlcode << "] - [" << sqlca.sqlerrm.sqlerrmc << "]" << endl;
+    log() << "<<< ReservaLoteRegistros()" << endl;
+    return -1;
+}
+
+
+
+/**
+ * Returns the real time, in seconds, or -1.0 if an error occurred.
+ *
+ * Time is measured since an arbitrary and OS-dependent start time.
+ * The returned real time is only useful for computing an elapsed time
+ * between two calls to this function.
+ */
+double getRealTime(void)
+{
+    /* AIX, BSD, Cygwin, HP-UX, Linux, OSX, POSIX, Solaris. ----- */
+    struct timeval tm;
+    gettimeofday( &tm, NULL );
+    return (double)tm.tv_sec + (double)tm.tv_usec / 1000000.0;
+}
+
+
+
+/*
+ *   Retorna Tempo Usado
+ *   StartTime - Tempo Inicial
+ *   EndTime - Tempo Final
+ *   UsedTime - Tempo Gasto
+ */
+void ElapsedTime(double StartTime, double EndTime, char * UsedTime)
+{
+    int hora, minuto, segundo;
+
+    char Tempo[16];
+    char Segundos[8];
+    char Miliseg[4];
+    char * Result = NULL;
+
+    sprintf ( Tempo, "%lf.", (EndTime - StartTime) );
+    Result = strtok(Tempo,".");
+    sprintf(Segundos,"%s", Result);
+    //printf("Segundos [%s]\n",Segundos);
+    Result = strtok(NULL,".");
+    sprintf(Miliseg, "%.4s", Result);
+    //printf("Miliseg [%s]\n",Miliseg);
+
+    hora = (atoi(Segundos)/3600);
+    minuto = (atoi(Segundos)-(3600*hora))/60;
+    segundo = (atoi(Segundos)-(3600*hora)-(minuto*60));
+    sprintf( UsedTime, "%02d:%02d:%02d.%s", hora, minuto, segundo, Miliseg );
+
+}
+
+
+
+int CEnviarEmailProtocolo::AtualizaEstadoProcesso ( char * idCtlFilaSMS_PRM, char * Status_Prm )
+{
+    double startTime, endTime;
+    char UsedTime[16];
+    memset(UsedTime, 0x0, sizeof(UsedTime));
+
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+    
+    string pSQL;
+    char   buffer[128];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    
+        char* stmt;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    log() << ">>> AtualizaEstadoProcesso()" << endl;
+    
+    log() << "*** idCtlFilaSMS_PRM [" << idCtlFilaSMS_PRM << "]" << endl;
+    log() << "*** Status_Prm       [" << Status_Prm << "]" << endl;
+
+    struct sqlca sqlca;
+
+    EXEC SQL WHENEVER SQLERROR goto erroStatus;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    /* 
+     *
+     * Onde INPROCESSADO admite os seguintes valores:
+     *
+     * 0 - EM PROCESSAMENTO
+     * 1 - DISPONIVEL
+     * 2 - EM CONSUMO
+     * 3 - FINALIZADO
+     *
+     */
+    if ( atoi(Status_Prm) == 1 )
+    {
+        pSQL = 
+        "UPDATE ATENDIMENTO.CONTROLEFILASMS "
+        "SET INPROCESSADO = " ;
+        pSQL += Status_Prm ;
+        pSQL +=
+        " WHERE IDCONTROLEFILASMS = ";
+        sprintf ( buffer, "%s", idCtlFilaSMS_PRM );
+        pSQL += buffer ;
+    }
+    if ( atoi(Status_Prm) == 2 )
+    {
+        pSQL = 
+        "UPDATE ATENDIMENTO.CONTROLEFILASMS "
+        "SET INPROCESSADO = " ;
+        pSQL += Status_Prm ;
+        pSQL +=
+        " , DTINICIOCONSUMO = SYSTIMESTAMP "
+        " WHERE IDCONTROLEFILASMS = ";
+        sprintf ( buffer, "%s", idCtlFilaSMS_PRM );
+        pSQL += buffer ;
+    }
+    if ( atoi(Status_Prm) == 3 )
+    {
+        pSQL = 
+        "UPDATE ATENDIMENTO.CONTROLEFILASMS "
+        "SET INPROCESSADO = " ;
+        pSQL += Status_Prm ;
+        pSQL +=
+        " , DTFIM = SYSTIMESTAMP "
+        " WHERE IDCONTROLEFILASMS = ";
+        sprintf ( buffer, "%s", idCtlFilaSMS_PRM );
+        pSQL += buffer ;
+    }
+    if ( atoi(Status_Prm) == 9 )  // Este Status nao existe, eh usado apenas para marcar o tempo final do consumo
+    {
+        pSQL = 
+        "UPDATE ATENDIMENTO.CONTROLEFILASMS "
+        "SET DTFIMCONSUMO = SYSTIMESTAMP " 
+        " WHERE IDCONTROLEFILASMS = ";
+        sprintf ( buffer, "%s", idCtlFilaSMS_PRM );
+        pSQL += buffer ;
+    }
+
+    stmt = (char *)pSQL.c_str();
+    log() << "&&& Vai Executar [" << stmt << "]" << endl;
+    
+    EXEC SQL EXECUTE IMMEDIATE :stmt ;	
+    
+    EXEC SQL COMMIT;
+    
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    
+    log() << "### [AtualizaEstadoProcesso()] Tempo de execucao: " << UsedTime << endl;
+
+    log() << "<<< AtualizaEstadoProcesso()" << endl;
+    return 0;
+
+erroStatus:
+    log() << "!!! ERRO ORACLE: [" << sqlca.sqlcode << "] - [" << sqlca.sqlerrm.sqlerrmc << "]" << endl;
+    log() << "<<< AtualizaEstadoProcesso()" << endl;
+    return -1;
+}
+
+
+
+int CEnviarEmailProtocolo::VoltaEstadoOriginal( char * idControleFilaSMS )
+{
+    double startTime, endTime;
+    char UsedTime[16];
+    memset(UsedTime, 0x0, sizeof(UsedTime));
+
+    startTime = getRealTime();   // Inicia cronometro de Operacao
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    
+        char* idCtlFilaSMS = idControleFilaSMS ;
+        
+    EXEC SQL END DECLARE SECTION;
+
+    log() << ">>> VoltaEstadoOriginal()" << endl;
+    struct sqlca sqlca;
+    
+    EXEC SQL WHENEVER SQLERROR goto erroRollBack;
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    
+    EXEC SQL
+    UPDATE ATENDIMENTO.FILASMSPROTOCOLO
+       SET IDCONTROLEFILASMS = NULL
+    WHERE IDCONTROLEFILASMS = :idCtlFilaSMS ;
+    
+    EXEC SQL COMMIT;
+
+    EXEC SQL
+    DELETE FROM ATENDIMENTO.CONTROLEFILASMS  
+    WHERE IDCONTROLEFILASMS = :idCtlFilaSMS ;
+    
+    EXEC SQL COMMIT;
+    
+    endTime = getRealTime();   // Finaliza Cronometro de Operacao
+    ElapsedTime(startTime, endTime, UsedTime);   // Retorna HH:MM:SS.FFFF em UsedTime - Tempo Gasto 
+    
+    log() << "### [VoltaEstadoOriginal()] Tempo de execucao: " << UsedTime << endl;
+
+    log() << "<<< VoltaEstadoOriginal()" << endl;
+    return 0;
+
+erroRollBack:
+    log() << "!!! ERRO ORACLE: [" << sqlca.sqlcode << "] - [" << sqlca.sqlerrm.sqlerrmc << "]" << endl;
+    log() << "<<< VoltaEstadoOriginal()" << endl;
+    return -1;
+}

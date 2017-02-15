@@ -1,0 +1,22 @@
+set timi on
+set echo on
+spool A_L1169.log
+
+ALTER TABLE ATENDIMENTO.ATENDIMENTOANATELANEXO
+ADD 
+   (
+      IDUSUARIOALTERACAO            NUMBER,
+      IDUSUARIOEXCLUSAO             NUMBER,
+      DESCRICAO                     VARCHAR2(255 BYTE)
+   );
+
+
+COMMENT ON COLUMN ATENDIMENTO.ATENDIMENTOANATELANEXO.IDUSUARIOALTERACAO IS 'usuário que fez a alteração do anexo';
+COMMENT ON COLUMN ATENDIMENTO.ATENDIMENTOANATELANEXO.IDUSUARIOEXCLUSAO IS 'usuário que fez a exclusão do anexo';
+COMMENT ON COLUMN ATENDIMENTO.ATENDIMENTOANATELANEXO.DESCRICAO IS 'descrição do anexo';
+
+
+
+spool off
+set echo off
+set timi off

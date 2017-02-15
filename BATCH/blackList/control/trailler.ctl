@@ -1,0 +1,10 @@
+LOAD DATA
+INFILE  '/home/ytinos/testeDAT.txt'
+BADFILE '/home/ytinos/bad/trailler.bad'
+REPLACE
+INTO TABLE TRAILLER WHEN (1:2) = '99'
+FIELDS TERMINATED BY "\n"
+TRAILING NULLCOLS
+(
+	QTREGISTRO  POSITION(3:11) CHAR(9)
+)

@@ -1,0 +1,1960 @@
+/**
+ * 
+ * @modulo  Batch
+ * @usecase Batch
+ * @author  Cassio
+ * @version $Revision: 1.1.2.3.2.16.10.7 $
+ * @CVS     $Author: a5114878 $ - $Date: 2012/07/12 19:27:33 $
+ **/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <iostream.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <string>
+
+
+#ifndef WIN32
+#include <unistd.h>
+#endif
+#include <ctype.h>
+#include <dirent.h>
+
+#include "../include/pupProcon.h"
+
+#include "../../commons/Propriedade/include/MFile.h"
+#include "../../commons/Log/include/Log.h"
+#include "../../commons/SplitLine.h"
+
+
+using namespace std;
+
+extern errno;
+
+EXEC SQL INCLUDE SQLCA;
+
+
+typedef enum OrigemArquivo{
+	ORIGEM_PB,
+	ORIGEM_MS,
+	ORIGEM_RS,
+	ORIGEM_FULL
+}ORIGEM_ARQUIVO;
+
+typedef enum TipoFormato
+{
+	FORMATO_V02, //
+	FORMATO_V03  // (Numero;Cadastrado em;Evento;a partir de ) Ex.:  -->  4391420734;18/10/2011;desbloqueado;18/10/2011 
+}TIPOFORMATO;
+
+
+//char szAux[512];
+Log oLog;
+//int iSignalProcessa=1;
+//bool ObterQtRegistro(char *pszFile,char* szQt);
+
+int OpenDir(char *pszDiretorio,char*pfile);
+int obtemRegistro(char*pszLinha,char*pLinha,char*pLinha2, char *pLinha3, char* pdtCadastro,char *pstatus,char *dtstatus, ORIGEM_ARQUIVO origem);
+//int processarRegistro(ORIGEM_ARQUIVO origem, int &qtRegistros,int &qtlinhas,int &qtdiasProcon,int &qtdiasOutros, char* s_idUsuarioAlteracao, char * szBuffer );
+//int AtualizarRegistro(char *pLinha, char* pdtCadastro,char *pstatus,char *dtstatus,int &qtdiasProcon,int &qtdiasOutros,char* s_idUsuarioAlteracao );
+ORIGEM_ARQUIVO identificarTipoArquivo(string &strNomeArquivo);
+bool validaTelefone(char *cTelefone);
+void removeNaoNumericos(char *cValor);
+void removeEspacosETABs(char *cValor);
+void limparCaracteres(char *cTelefone, string &strCaracteres);
+void compactarArquivo(const char *pszNomeArquivo);
+bool ObterListaEmail(char *pszListaEnderecos,int sizeofszListaEnderecos);
+void enviarEmail(char *pszNomeArquivo, const char *listaEnderecos);
+int gravarRegistro(FILE *pFile,char *pszRegistro);
+int abrirArquivo(FILE **pFile,const char *pszNomeArquivo);
+void fecharArquivo(FILE *pFile);
+
+// *** OS 1498  -- INICIO
+int processarRegistroV2(int &qtRegistros,int &qtlinhas,int &qtdiasProcon,int &qtdiasOutros, char* s_idUsuarioAlteracao, char * szBuffer, TIPOFORMATO eFormato );
+int obtemRegistroV2(char*pszLinha,char*pLinha, char* pdtCadastro,char *pstatus,char *dtstatus);
+int obtemRegistroV3(char*pszLinha,char*pLinha, char* pdtCadastro,char *pstatus,char *dtstatus);
+int AtualizarRegistroV2(char *pLinha, char* pdtCadastro,char *pstatus,char *dtstatus,int &qtdiasProcon,int &qtdiasOutros,char* s_idUsuarioAlteracao );
+// *** OS 1498  -- FIM
+
+int main(void)
+{
+    //variaveis para controle
+	TParamConf tParamConf;
+    int retorno = 0;
+    FILE *arquivo;
+    char szAux[1024];
+	char szBuffer[1024];
+	char szBufferloop[1024];
+	char szNome_Arquivo[1024];
+	char szNomeArquivoFull[1024]; 
+
+	 char snrlinha[128];
+	 char sDtCadastro[128];
+	 char sStatus[128];
+	 char sDtStatus[128];
+	 bool bArquivoTratado = false;
+
+	//variaveis oracle
+    EXEC SQL BEGIN DECLARE SECTION;
+
+         VARCHAR szNomeArquivo[256];
+         VARCHAR szNomeArquivoBad[256];
+         VARCHAR szDsObservacao[128];
+         VARCHAR szDsStatus[128];
+         VARCHAR szLoader[256];
+         int     qtRegistros=0;
+		 int	 qtlinhas=0;
+		 VARCHAR idUsuarioAlteracao[40];
+		 int	 qtdiasProcon=0;
+		 int	 qtdiasOutros=0;
+
+		 //estrutura do arquivo
+		 VARCHAR sznrlinha[128];
+		 VARCHAR szDtCadastro[128];
+		 VARCHAR szStatus[128];
+		 VARCHAR szDtStatus[128];
+
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.setNivel(2);
+    oLog.logDebug(">>>pupProcon");
+
+    // parametros de configuração
+	memset( (char *)&tParamConf, 0x00, sizeof(tParamConf) );
+    if ( ObtemParamConf( &tParamConf ) )
+    {
+        oLog.logError("Erro obtendo parametros de configuracao");
+        oLog.logDebug("<<<pupProcon");
+        return -1;
+    }
+
+    oLog.logDebug("Conectando na BD...");
+    if (DBConnect(tParamConf.szUsr, tParamConf.szPws, tParamConf.szInst))
+    {
+        oLog.logError("Erro conectando no banco de dados");
+        oLog.logDebug("<<<pupProcon");
+        return -1;
+    }
+    oLog.logDebug("Conectado na BD com sucesso...");
+
+
+    //EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+/**********************************************************************************/
+/*					CODIGO DE NEGOCIO											  */
+/**********************************************************************************/
+EXEC SQL
+	SELECT dsvalorparametro  
+	into   :idUsuarioAlteracao
+	FROM   APOIO.PARAMETRO
+	WHERE CDPARAMETRO LIKE 'PUP_USUARIO_PROCON';
+
+EXEC SQL
+	SELECT dsvalorparametro  
+	into   :qtdiasProcon
+	FROM   APOIO.PARAMETRO
+	WHERE CDPARAMETRO LIKE 'PUP_PROCON_DIAS';
+
+EXEC SQL
+	SELECT dsvalorparametro  
+	into   :qtdiasOutros
+	FROM   APOIO.PARAMETRO
+	WHERE CDPARAMETRO LIKE 'PUP_OUTROS_DIAS';
+
+	endOraStr(idUsuarioAlteracao);
+	
+	oLog.logDebug("Inicio da carga...\n");
+		oLog.logDebug("Inicio da carga...\n");
+	oLog.logDebug((char*)idUsuarioAlteracao.arr );
+	
+	try
+	{
+	
+	memset(&szNomeArquivoFull,0,sizeof(szNomeArquivoFull));
+	memset(&szNome_Arquivo,0,sizeof(szNome_Arquivo));
+	
+	
+		while(OpenDir(tParamConf.szPath,szNome_Arquivo) != 0)
+		{
+			oLog.logDebug("Inicio da carga...\n");
+			sprintf(szNomeArquivoFull,"%s/%s",tParamConf.szPath,szNome_Arquivo);
+			
+			arquivo=fopen(szNomeArquivoFull,"r");
+			if ( arquivo == NULL )
+			{
+				oLog.logDebug("Arquivo nao aberto..\n");
+				return 0;
+			}
+			else
+			{
+				sprintf(szAux,"Arquivo [%s]aberto com sucesso...",szNomeArquivoFull); oLog.logDebug(szAux);
+			}
+			
+			//oLog.logDebug("Obtendo Parametros para o arquvio %s",szNomeArquivoFull);
+			
+			strToOra(szNomeArquivo,szNome_Arquivo);
+
+			EXEC SQL
+				SELECT dsvalorparametro  
+				into   :qtRegistros
+				FROM APOIO.PARAMETRO
+				WHERE  :szNomeArquivo LIKE dsparametro 
+				and CDPARAMETRO LIKE 'PROCON_NMARQUIVO%';
+
+				sprintf(szAux,"qtregistros:%d",qtRegistros); oLog.logDebug(szAux);
+				
+				string strNomeFull = szNomeArquivoFull;
+				// *** OS 1498  -- INICIO
+				//ORIGEM_ARQUIVO orig_arq = identificarTipoArquivo(strNomeFull);
+				// *** OS 1498  -- FIM
+				
+				bool iErroProcessamento = false;
+				char pszNomeArquivoErros[_MAX_PATH+9];
+				strcpy(pszNomeArquivoErros, "relatoriopupProcon.txt");
+				
+				FILE *pFileErros=0;
+				if( abrirArquivo(&pFileErros,pszNomeArquivoErros) < 0 )
+				{
+					sprintf(szAux,"Erro ao tentar criar o arquivo [%s]",pszNomeArquivoErros); oLog.logDebug(szAux);
+					oLog.logDebug("<<<pupProcon");
+					return -1;
+				}
+				
+				TIPOFORMATO eFormato;
+				if (strstr(szNome_Arquivo, "CAMP" ) == NULL )
+				{
+					eFormato = FORMATO_V02;
+					oLog.logDebug("Tratamento para o formato FORMATO_V02");
+				}
+				else
+				{
+					eFormato = FORMATO_V03;
+					oLog.logDebug("Tratamento para o formato FORMATO_V03");
+				}
+				
+				//gravarRegistro(pFile,"IMEI|NRPROTOCOLO|NRPROCESSO|UF|DTABERTURA\n");
+				while(!feof(arquivo))
+				{
+					bArquivoTratado = true;
+					oLog.logDebug("Obtendo buffer de tamanho maximo 500 do arquivo");
+				
+					memset(&szBufferloop,0,sizeof(szBufferloop));
+					
+					
+					
+					if ( fgets(szBuffer,500,arquivo) == NULL )
+					{
+						oLog.logDebug("fgets return NULL "); 
+						continue;
+					}
+					else
+					{
+						oLog.logDebug("fgets return not NULL "); 
+						sprintf(szBufferloop,"%s",szBuffer);
+					}
+					
+					sprintf(szAux,"Quantidade de bytes lidos do arquivo foi:%d",strlen(szBuffer)); oLog.logDebug(szAux);
+					sprintf(szAux,"Linha do arquivo lida --> [%s]",szBuffer); oLog.logDebug(szAux);
+					//oLog.logDebug(szBuffer);
+					
+					// *** OS 1498  -- INICIO
+					//if ( 0  > processarRegistro(orig_arq, qtRegistros,qtlinhas,qtdiasProcon,qtdiasOutros, (char*)idUsuarioAlteracao.arr, szBuffer) )
+					// *** OS 1498  -- FIM
+					if( qtlinhas != 0 ) //ignora o cabeçalho
+					{
+						if ( 0  > processarRegistroV2(qtRegistros,qtlinhas,qtdiasProcon,qtdiasOutros, (char*)idUsuarioAlteracao.arr, szBuffer, eFormato) )
+						{
+							iErroProcessamento = true;
+							sprintf(szAux,"Erro processando o arquivo [%s] REGISTRO --> %s \n", szNome_Arquivo, szBufferloop);
+							gravarRegistro(pFileErros, szAux);
+							sprintf(szAux,"Erro no processamento da linha[%s].", szBufferloop); oLog.logDebug(szAux);
+						}
+					}
+				qtlinhas++;
+				}
+				
+				fecharArquivo(pFileErros);
+				
+				if ( iErroProcessamento )
+				{
+					char szListaEnderecos[10000]; // ~200 pessoas na lista?
+					if(false == ObterListaEmail(szListaEnderecos,sizeof(szListaEnderecos)) )
+					{
+						oLog.logError("Erro obtendo lista de emails.");
+						oLog.logDebug("<<<pupProcon");
+					}
+					else
+					{
+						enviarEmail(pszNomeArquivoErros, szListaEnderecos);
+					}
+				}
+				
+				sprintf(szAux,"Processamento finalizado para o arquivo [%s].",szNomeArquivoFull); oLog.logDebug(szAux);
+				if (arquivo != NULL)
+				{
+					sprintf(szAux,"Fechando o arquivo [%s].",szNomeArquivoFull); oLog.logDebug(szAux);
+					fclose(arquivo);
+				}
+				
+				if(bArquivoTratado == true)
+				{
+					string strArquivoOrigem;
+					string strArquivoDestino;
+					
+					strArquivoOrigem = szNomeArquivoFull;
+					strArquivoDestino = szNomeArquivoFull;
+					strArquivoDestino += ".out";
+					moverArquivo(strArquivoOrigem.c_str(), strArquivoDestino.c_str());
+					bArquivoTratado = false;
+				}
+				else
+				{
+					sprintf(szAux,"O arquivo [%s] nao teve registros processados.",szNomeArquivoFull); oLog.logDebug(szAux);
+				}
+			//oLog.logDebug("Processando arquvio %s",szNomeArquivoFull);
+		}
+	}
+	catch(...)
+	{
+		oLog.logDebug("<<<pupProcon main() exception "); 
+	}
+
+/**********************************************************************************/
+
+    // finaliza
+    oLog.logDebug( "Fechando conexao com o banco" );
+    DBDisconnect();
+
+    if ( 0 == retorno )
+    {
+        oLog.logDebug("Processamento encerrado com sucesso...");
+    }
+    else
+    {
+        oLog.logDebug("Processamento encerrado com ERRO!");
+    }
+
+    oLog.logDebug("<<<pupProcon");
+
+    return retorno;
+
+    sqlError:
+        sprintf(szAux, "*** ERRO: Processo FINALIZADO com erro ORACLE (%s)", sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+        return -1;
+}
+
+
+/************************************************************************************************************/
+void moverArquivo(const char *pszNomeArquivoOrigem,const char *pszNomeArquivoDestino)
+{
+    char sComando[_MAX_PATH*2+16];
+    char szAux[1024];
+
+    sprintf(sComando,"/usr/bin/mv -f %s %s", pszNomeArquivoOrigem, pszNomeArquivoDestino);
+
+    oLog.logDebug(" Vai mover o arquivo");
+    sprintf(szAux," Arquivo Origem [%s]", pszNomeArquivoOrigem); oLog.logDebug(szAux);
+    sprintf(szAux,"Arquivo Destino [%s]", pszNomeArquivoDestino); oLog.logDebug(szAux);
+    sprintf(szAux,"        Comando [%s]", sComando); oLog.logDebug(szAux);
+
+    system(sComando);
+}
+
+
+
+/************************************************************************************************************/
+int ObtemParamConf( TParamConf * ptParamConf )
+{
+    MFile mfConfig;
+    SplitLine NewLinha;
+    char szLinha[256];
+    char szDivArq[256];
+    char szDivPre[256];
+    char szAux[1024];
+
+    oLog.logDebug("Obtendo parametros de configuracao...");
+
+    memset( szLinha    , 0x00, sizeof(szLinha) );
+    memset( szDivArq   , 0x00, sizeof(szDivArq) );
+    memset( szDivPre   , 0x00, sizeof(szDivPre) );
+	memset( szAux      , 0x00, sizeof(szAux) );
+
+
+    /* Define o arquivo de configuração */
+    mfConfig.setPath("pupProcon.cfg");
+
+    if( !mfConfig.abrir() )
+    {
+        oLog.logError("Erro abrindo arquivo de configuração!");
+        return -1;
+    }
+
+    /* Capturando usuario, senha, path e instance de banco do arquivo */
+    NewLinha.SetDiv( '=' );
+    while( mfConfig.getLine(szLinha) )
+    {
+        NewLinha.SetLine(szLinha);
+        NewLinha.GetBeforeDiv(szDivPre);
+        NewLinha.GetAfterDiv(szDivArq);
+
+        /* Verifica qual parâmetro foi encontrado. */
+        if (!strcmp(szDivPre, "pwd_db"))
+        {
+            strncpy(ptParamConf->szPws, szDivArq, TAM_BD_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_db"))
+        {
+            strncpy(ptParamConf->szUsr, szDivArq, TAM_BD_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "inst_db"))
+        {
+            strncpy(ptParamConf->szInst, szDivArq, TAM_BD_INST);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux"))
+        {
+            strncpy(ptParamConf->szPwsTux, szDivArq, TAM_TX_PASSWD);
+        }
+        else if (!strcmp(szDivPre, "usr_tux"))
+        {
+            strncpy(ptParamConf->szUsrTux, szDivArq, TAM_TX_USRNAME);
+        }
+        else if (!strcmp(szDivPre, "pwd_tux_gen"))
+        {
+            strncpy(ptParamConf->szPwsTuxGen, szDivArq, TAM_TX_GEN);
+        }
+        else if (!strcmp(szDivPre, "clt_tux"))
+        {
+            strncpy(ptParamConf->szCltTux, szDivArq, TAM_TX_CLT);
+        }
+        else if (!strcmp(szDivPre, "path"))
+        {
+            strncpy(ptParamConf->szPath, szDivArq, _MAX_PATH);
+        }
+        else if (!strcmp(szDivPre, "path_togo"))
+        {
+            strncpy(ptParamConf->szPathToGo, szDivArq, _MAX_PATH);
+        }
+
+        memset(szLinha,  0x00, sizeof(szLinha));
+        memset(szDivPre, 0x00, sizeof(szDivPre));
+        memset(szDivArq, 0x00, sizeof(szDivArq));
+    }
+
+    /* Fechando o arquivo de configuracao aberto */
+    mfConfig.fechar();
+
+    sprintf(szAux, "ptParamConf->szPws[%s]", ptParamConf->szPws); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUsr[%s]", ptParamConf->szUsr); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szInst[%s]", ptParamConf->szInst); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szPwsTux[%s]", ptParamConf->szPwsTux); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szUsrTux[%s]", ptParamConf->szUsrTux); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szPwsTuxGen[%s]", ptParamConf->szPwsTuxGen); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szCltTux[%s]", ptParamConf->szCltTux); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szPath[%s]", ptParamConf->szPath); oLog.logDebug(szAux);
+    sprintf(szAux, "ptParamConf->szPathToGo[%s]", ptParamConf->szPathToGo); oLog.logDebug(szAux);
+
+    /* Verifica se todos os dados foram recuperados do arquivo de configuração. */
+    if (strlen(ptParamConf->szInst) == 0 ||
+        strlen(ptParamConf->szPwsTux) == 0 ||
+        strlen(ptParamConf->szUsrTux) == 0 ||
+        strlen(ptParamConf->szPwsTuxGen) == 0 ||
+        strlen(ptParamConf->szPath) == 0 ||
+        //strlen(ptParamConf->szPathToGo) == 0 ||
+        strlen(ptParamConf->szCltTux) == 0)
+    {
+        oLog.logError("Dados incompletos!");
+        return -1;
+    }
+
+    oLog.logDebug("Parametros de configuracao obtidos com sucesso...");
+    return 0;
+}
+
+
+
+/************************************************************************************************************/
+int DBConnect(char *pUsr, char *pPwd, char *pInst)
+{
+    char szAux[1024];
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+        char connString[256];
+    EXEC SQL END DECLARE SECTION;
+
+    oLog.logInformation(">>>DBConnect");
+
+    /* String de conexao */
+    sprintf(connString, "%s/%s@%s", pUsr, pPwd, pInst);
+    oLog.logInformation(connString);
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+
+    EXEC SQL CONNECT :connString;
+
+    oLog.logInformation("<<<DBConnect");
+
+    return (sqlca.sqlcode);
+
+sqlError:
+    //oLog.logInformation("<<<DBConnect [ERROR]");
+    sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+    return -1;
+}
+
+
+
+/************************************************************************************************************/
+void DBDisconnect( void )
+{
+    char szAux[1024];
+    
+    oLog.logInformation(">>>DBDisconnect");
+
+    EXEC SQL WHENEVER SQLERROR GOTO sqlError;
+    EXEC SQL COMMIT WORK RELEASE;
+
+    oLog.logInformation("<<<DBDisconnect");
+    return;
+
+sqlError:
+    sprintf(szAux, "ERRO ORACLE -> sqlcode=%d,sqlerrmc=%.70s",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+}
+
+int OpenDir(char *pszDiretorio,char*pfile)
+{
+    static DIR *pDir;
+    static struct dirent *pDirent;
+    static char szArq[512 + 1];
+    static int iFlag=1;
+
+	char szAux[1024];
+
+    oLog.logDebug(">>> OpenDir");
+    sprintf(szAux, "pszDiretorio[%s]", pszDiretorio); oLog.logDebug(szAux);
+
+    if(iFlag == 1)
+    {
+        /* Abre diretorio e verifica sucesso */
+        if( (pDir = opendir(pszDiretorio)) == NULL)
+        {
+            sprintf(szAux, "Erro abrindo diretorio [%s]. errno(%d) strerror[%s]", pszDiretorio, errno, strerror(errno)); oLog.logError(szAux);
+            exit(-1);
+        }
+
+        iFlag=0;
+    }
+	
+	try
+	{
+		/* Efetua a leitura dos nomes dos arquivos do diretorio */
+		while((pDirent = readdir(pDir)) != NULL )
+		{
+			sprintf(szAux, "Arquivo obtido[%s]", pDirent->d_name); oLog.logDebug(szAux);
+
+			/* valida arquivo */
+			if((!memcmp(pDirent->d_name+strlen(pDirent->d_name)-4, ".txt", 4)))
+			{
+				/* Monta path + nome do arquivo a ser processado */
+				strcpy(szArq, pDirent->d_name);
+				sprintf(szAux, "Arquivo validado [%s]", szArq); oLog.logDebug(szAux);
+
+				oLog.logDebug("<<< OpenDir <NOT NULL>");
+				strcpy(pfile,szArq);
+				return 1;
+			}
+		}
+	}
+	catch(...)
+	{
+		oLog.logDebug("<<< OpenDir (exception).");
+	}
+
+    closedir(pDir);
+    iFlag=1;
+    oLog.logDebug("<<< OpenDir <NULL>");
+    return 0;
+}
+
+
+int obtemRegistro(char*pszLinha, char *pLinha, char*pLinha2, char *pLinha3, char* pdtCadastro,char *pstatus,char *dtstatus,ORIGEM_ARQUIVO origem)
+{
+	int	iSeparador=0;
+	char szAux[1024]; memset(szAux,0,sizeof(szAux));
+	char cTemp1[256]; memset(cTemp1,0,sizeof(cTemp1));
+	char cTemp2[256]; memset(cTemp2,0,sizeof(cTemp2));
+	//	printf("\n>>obtemRegistro");
+	oLog.logDebug(">>>obtemRegistro");
+	char* pValue = NULL;
+	
+	switch( origem)
+	{
+		case ORIGEM_FULL:
+		{	
+			pValue = strtok(pszLinha,";");
+			if ( pValue != NULL )
+			{
+				do
+				{
+					
+						switch(iSeparador)
+							{
+								case 0:
+									strcpy(pLinha,pValue);
+									break;
+								case 1:
+									strcpy(pdtCadastro,pValue);
+									break;
+								case 2:
+									strcpy(pstatus,pValue);
+									break;
+								case 3:
+									strcpy(dtstatus,pValue);
+									break;
+								default:
+									break;
+							}
+					iSeparador++;
+				}
+				while( ( iSeparador < 4 ) && (pValue = strtok(NULL,";")) != NULL );
+			}
+			if ( iSeparador != 4 ) 
+			{
+				sprintf(szAux,"Erro no processamento de uma linha do arquivo de carga ORIGEM_FULL. QUANTIDADE DE SEPARADOR[%d] INESPERADA.", iSeparador); oLog.logDebug(szAux);
+				return -1;
+			}
+			sprintf(szAux, "obtemRegistro: Parametros obtidos pLinha[%s], pdtCadastro[%s],pstatus[%s],dtstatus[%s]",pLinha, pdtCadastro,pstatus,dtstatus); oLog.logDebug(szAux);
+			break;
+		}
+		case ORIGEM_PB:
+		{
+			pValue = strtok(pszLinha,";");
+			if ( pValue != NULL )
+			{
+				do		
+				{
+						//printf("\n while.. qtParam=>%d",qtParam);
+						switch(iSeparador)
+							{
+								case 0:
+									break;
+								case 1:
+									break;
+								case 2:
+									break;
+								case 3:
+									strcpy(pLinha,pValue);
+									break;
+								case 4:
+									strcpy(pLinha2,pValue);
+									break;
+								case 5:
+									strcpy(pLinha3,pValue);
+									break;
+								case 6:
+									strcpy(pdtCadastro,pValue);
+									break;
+								default:
+									break;
+							}
+					iSeparador++;
+				}
+				while( iSeparador<7 && (pValue = strtok(NULL,";")) != NULL );
+			}
+			sprintf(pstatus,"bloqueado");
+			if ( iSeparador != 7 ) 
+			{
+				sprintf(szAux,"Erro no processamento de uma linha do arquivo de carga ORIGEM_PB.QUANTIDADE DE SEPARADOR[%d] INESPERADA.", iSeparador); oLog.logDebug(szAux);
+				return -1;
+			}
+			sprintf(szAux, "obtemRegistro: Parametros obtidos pLinha[%s], pLinha2[%s], pLinha3[%s], pdtCadastro[%s]", pLinha, pLinha2, pLinha3, pdtCadastro); oLog.logDebug(szAux);
+			break;
+		}
+		case ORIGEM_RS:
+		{
+			pValue = strtok(pszLinha,";");
+			if ( pValue != NULL )
+			{
+				do
+				{
+						//printf("\n while.. qtParam=>%d",qtParam);
+						switch(iSeparador)
+							{
+								case 0:
+									strcpy(cTemp1,pValue);
+									break;
+								case 1:
+									strcpy(cTemp2,pValue);
+									break;
+								case 2:
+									sprintf(pLinha,"%s%s ",cTemp1,cTemp2);
+									strcpy(pdtCadastro,pValue);
+									break;
+								case 3:
+									strcpy(dtstatus,pValue);
+									break;
+							}
+					iSeparador++;
+				}
+				while(iSeparador<4 && (pValue = strtok(NULL,";")) != NULL );
+			}
+			sprintf(pstatus,"bloqueado");
+			if ( iSeparador != 4 ) 
+			{
+				sprintf(szAux,"Erro no processamento de uma linha do arquivo de carga ORIGEM_RS. QUANTIDADE DE SEPARADOR[%d] INESPERADA.", iSeparador); oLog.logDebug(szAux);
+				return -1;
+			}
+			sprintf(szAux, "obtemRegistro: Parametros obtidos pLinha[%s], dtstatus[%s]", pLinha, dtstatus); oLog.logDebug(szAux);
+			break;
+		}
+		case ORIGEM_MS:
+		{
+			pValue = strtok(pszLinha,";");
+			if ( pValue != NULL )
+			{
+				do
+				{
+						//printf("\n while.. qtParam=>%d",qtParam);
+						switch(iSeparador)
+							{
+								case 0:
+									break;
+								case 1:
+									strcpy(pLinha,pValue);
+									break;
+								case 2:
+									strcpy(pdtCadastro,pValue);
+									break;
+								case 3:
+									strcpy(dtstatus,pValue);
+									break;
+								case 4:
+									strcpy(pstatus,pValue);
+									break;
+							}
+					iSeparador++;
+				}
+				while(iSeparador<5 && (pValue = strtok(NULL,";")) != NULL );
+			}
+			if ( iSeparador != 5 ) 
+			{
+				sprintf(szAux,"Erro no processamento de uma linha do arquivo de carga ORIGEM_MS. QUANTIDADE DE SEPARADOR[%d] INESPERADA.", iSeparador); oLog.logDebug(szAux);
+				return -1;
+			}
+			break;
+			sprintf(szAux, "obtemRegistro: Parametros obtidos pLinha[%s], pdtCadastro[%s], dtstatus[%s], pstatus[%s]", pLinha, pdtCadastro, dtstatus, pstatus); oLog.logDebug(szAux);
+		}
+		default:
+		{
+			break;
+		}
+	}
+	oLog.logDebug("<<<obtemRegistro");
+	return 1;
+}
+
+int obtemRegistroV2(char*pszLinha, char *pLinha, char* pdtCadastro,char *pstatus,char *dtstatus)
+{
+	int	iSeparador=0;
+	char szAux[1024]; memset(szAux,0,sizeof(szAux));
+	char cTemp1[256]; memset(cTemp1,0,sizeof(cTemp1));
+	char cTemp2[256]; memset(cTemp2,0,sizeof(cTemp2));
+	//	printf("\n>>obtemRegistro");
+	oLog.logDebug(">>>obtemRegistroV2");
+	char* pValue = NULL;
+	
+	pValue = strtok(pszLinha,";");
+	if ( pValue != NULL )
+	{
+		do
+		{ 
+			/*	switch(iSeparador)
+					{
+						case 0:
+							strcpy(pLinha,pValue);
+							break;
+						case 1:
+							strcpy(pdtCadastro,pValue);
+							break;
+						case 2:
+							strcpy(pstatus,pValue);
+							break;
+						case 3:
+							strcpy(dtstatus,pValue);
+							break;
+						default:
+							break;
+					}*/
+					
+				switch(iSeparador)
+					{
+						case 0:
+							// copia DDD
+							strcpy(pLinha,pValue);
+							break;
+						case 1:
+							// copia NRLINHA
+							strcat(pLinha,pValue);
+							break;
+						case 2:
+							// Ignora UF
+							break;
+						case 3:
+							// copia data status
+							//strcpy(dtstatus,pValue);
+							strcpy(szAux,pValue);
+							strcpy(dtstatus,szAux);
+							dtstatus[4] = '/';
+							strncpy(dtstatus+5,szAux+4,2);
+							dtstatus[7] = '/';
+							strncpy(dtstatus+8,szAux+6,2);
+							dtstatus[10] = '\0';
+							break;
+						case 4:
+							// copia data cadastro
+							//strcpy(pdtCadastro,pValue);
+							strcpy(szAux,pValue);
+							strcpy(pdtCadastro,szAux);
+							pdtCadastro[4] = '/';
+							strncpy(pdtCadastro+5,szAux+4,2);
+							pdtCadastro[7] = '/';
+							strncpy(pdtCadastro+8,szAux+6,2);
+							pdtCadastro[10] = '\0';
+							break;
+						case 5:
+							// copia status
+							if( strncmp(pValue, "1", 1) == 0)
+							{
+								strcpy(pstatus,"0");
+							}
+							else
+							{
+								strcpy(pstatus,"1");
+							}
+							pstatus[1] = '\0';
+							break;
+						default:
+							break;
+					}
+					
+			iSeparador++;
+		}
+		while( ( iSeparador < 6 ) && (pValue = strtok(NULL,";")) != NULL );
+	}
+	if ( iSeparador != 6 ) 
+	{
+		sprintf(szAux,"Erro no processamento de uma linha do arquivo de carga. QUANTIDADE DE SEPARADOR[%d] INESPERADA.", iSeparador); oLog.logDebug(szAux);
+		return -1;
+	}
+	sprintf(szAux, "obtemRegistro: Parametros obtidos pLinha[%s], pdtCadastro[%s],pstatus[%s],dtstatus[%s]",pLinha, pdtCadastro,pstatus,dtstatus); oLog.logDebug(szAux);
+	oLog.logDebug("<<<obtemRegistroV2");
+	return 1;
+}
+
+int obtemRegistroV3(char*pszLinha, char *pLinha, char* pdtCadastro,char *pstatus,char *dtstatus)
+{
+	int	iSeparador=0;
+	char szAux[1024]; memset(szAux,0,sizeof(szAux));
+	char cTemp1[256]; memset(cTemp1,0,sizeof(cTemp1));
+	char cTemp2[256]; memset(cTemp2,0,sizeof(cTemp2));
+	//	printf("\n>>obtemRegistro");
+	oLog.logDebug(">>>obtemRegistroV3");
+	char* pValue = NULL;
+	
+	pValue = strtok(pszLinha,";");
+	if ( pValue != NULL )
+	{
+		do
+		{ 
+		//4391420734;18/10/2011;desbloqueado;18/10/2011 
+			switch(iSeparador)
+			{
+				case 0:
+					// copia DDD+NRLINHA
+					strcpy(pLinha,pValue);
+					break;
+				case 1:
+					// copia data cadastro
+					strcpy(pdtCadastro,pValue);
+					break;
+				case 2:
+					// copia status
+					if (strcmp(pValue,"desbloqueado") == 0)
+					{
+						strcpy(pstatus,"1");
+						pstatus[1] = '\0';
+					}
+					else //desbloqueado
+					{
+						strcpy(pstatus,"0");
+						pstatus[1] = '\0';
+					}
+					break;
+				case 3:
+					// copia data status
+					strcpy(dtstatus,pValue);
+					break;
+				default:
+					break;
+			}
+			iSeparador++;
+		}
+		while( ( iSeparador < 4 ) && (pValue = strtok(NULL,";")) != NULL );
+	}
+	if ( iSeparador != 4 ) 
+	{
+		sprintf(szAux,"Erro no processamento de uma linha do arquivo de carga. QUANTIDADE DE SEPARADOR[%d] INESPERADA.", iSeparador); oLog.logDebug(szAux);
+		return -1;
+	}
+	sprintf(szAux, "obtemRegistro: Parametros obtidos pLinha[%s], pdtCadastro[%s],pstatus[%s],dtstatus[%s]",pLinha, pdtCadastro,pstatus,dtstatus); oLog.logDebug(szAux);
+	oLog.logDebug("<<<obtemRegistroV3");
+	return 1;
+}
+
+ORIGEM_ARQUIVO identificarTipoArquivo(string &strNomeArquivo)
+{
+	oLog.logDebug(">>>identificarTipoArquivo");
+	size_t found;
+	ORIGEM_ARQUIVO orig_arq = ORIGEM_FULL;
+	
+	found = strNomeArquivo.find("_PB_");
+	if (found!=string::npos)
+	{
+		oLog.logDebug("Identificado arquivo PB");
+		orig_arq = ORIGEM_PB;
+	}
+	
+	found = strNomeArquivo.find("_MS_");
+	if (found!=string::npos)
+	{
+		oLog.logDebug("Identificado arquivo MS");
+		orig_arq = ORIGEM_MS;
+	}
+	
+	found = strNomeArquivo.find("_RS_");
+	if (found!=string::npos)
+	{
+		oLog.logDebug("Identificado arquivo RS");
+		orig_arq = ORIGEM_RS;
+	}
+	
+	if (orig_arq == ORIGEM_FULL)
+	{
+		oLog.logDebug("Identificado arquivo FULL");
+	}
+	
+	oLog.logDebug("<<<identificarTipoArquivo");
+	return orig_arq;
+}
+
+int processarRegistroV2(int &qtRegistros,int &qtlinhas,int &qtdiasProcon,int &qtdiasOutros, char* s_idUsuarioAlteracao, char * szBuffer, TIPOFORMATO eFormato)
+{
+	char szAux[1024];
+	char snrlinha[256];
+	char sDtCadastro[256];
+	char sStatus[256];
+	char sDtStatus[256];
+
+	memset(&szAux,0,sizeof(szAux));
+	memset(&snrlinha,0,sizeof(snrlinha));
+	memset(&sDtCadastro,0,sizeof(sDtCadastro));
+	memset(&sStatus,0,sizeof(sStatus));
+	memset(&sDtStatus,0,sizeof(sDtStatus));
+
+	bool bFinalArquivo;
+	
+	if(szBuffer != NULL)
+		bFinalArquivo = false;
+	else 
+		bFinalArquivo = true;
+	
+	
+	try
+	{
+		sprintf(szAux,"Processando registro de arquivo."); oLog.logDebug(szAux);
+		if(bFinalArquivo == false)
+		{
+			oLog.logDebug("nao é fim de arquivo. ");
+			if(qtlinhas>=qtRegistros )
+			{
+				if(eFormato == FORMATO_V02)
+				{
+					if ( 0 > obtemRegistroV2(szBuffer,snrlinha,sDtCadastro,sStatus,sDtStatus))
+					{
+						sprintf(szAux,"Ocorreu um erro no processamento de uma linha do arquivo de carga."); oLog.logDebug(szAux);
+						return -1;
+					}
+				}
+				else
+				{
+					if ( 0 > obtemRegistroV3(szBuffer,snrlinha,sDtCadastro,sStatus,sDtStatus))
+					{
+						sprintf(szAux,"Ocorreu um erro no processamento de uma linha do arquivo de carga."); oLog.logDebug(szAux);
+						return -1;
+					}
+				}
+				removeNaoNumericos(snrlinha);
+				if ( validaTelefone(snrlinha) == false )
+				{
+					sprintf(szAux,"Erro. Telefone[%s] nao valido.",snrlinha); oLog.logDebug(szAux);
+					return -2;
+				}
+				removeEspacosETABs(sDtCadastro);
+				removeEspacosETABs(sDtStatus);
+				removeEspacosETABs(sStatus);
+				if ( 0 > AtualizarRegistroV2(snrlinha,sDtCadastro,sStatus,sDtStatus,qtdiasProcon,qtdiasOutros,s_idUsuarioAlteracao) )
+				{
+					sprintf(szAux,"Ocorreu um erro ao atualizar o registro."); oLog.logDebug(szAux);
+					return -2;
+				}
+			}
+		}
+		else 
+		{
+			return 1;
+		}
+	}
+	catch(...)
+	{
+		sprintf(szAux, "*** ERRO: Ocorreu um erro no processamento de um registro "); oLog.logDebug(szAux);
+	}
+	return 0;
+}
+/*
+int processarRegistro(ORIGEM_ARQUIVO origem, int &qtRegistros,int &qtlinhas,int &qtdiasProcon,int &qtdiasOutros, char* s_idUsuarioAlteracao, char * szBuffer)
+{
+	char szAux[1024];
+	char snrlinha[256];
+	char snrlinha2[256];
+	char snrlinha3[256];
+	char sDtCadastro[256];
+	char sStatus[256];
+	char sDtStatus[256];
+
+	memset(&szAux,0,sizeof(szAux));
+	memset(&snrlinha,0,sizeof(snrlinha));
+	memset(&snrlinha2,0,sizeof(snrlinha2));
+	memset(&snrlinha3,0,sizeof(snrlinha3));
+	memset(&sDtCadastro,0,sizeof(sDtCadastro));
+	memset(&sStatus,0,sizeof(sStatus));
+	memset(&sDtStatus,0,sizeof(sDtStatus));
+
+	bool bFinalArquivo;
+	
+	if(szBuffer != NULL)
+		bFinalArquivo = false;
+	else 
+		bFinalArquivo = true;
+	
+	
+	try
+	{
+		switch(origem)
+		{
+			case ORIGEM_FULL:
+			{
+				sprintf(szAux,"Processando registro de arquivo ORIGEM_FULL."); oLog.logDebug(szAux);
+				if(strncmp(szBuffer,"END OF FILE",11)!=0)
+				{	
+					bFinalArquivo = false;
+				}
+				else 
+				{
+					bFinalArquivo = true;
+				}
+				
+				if(bFinalArquivo == false)
+				{
+				
+				
+					oLog.logDebug("nao é fim de arquivo ORIGEM_FULL ");
+					if(qtlinhas>=qtRegistros )
+					{
+						if ( 0 > obtemRegistro(szBuffer,snrlinha,snrlinha2,snrlinha3,sDtCadastro,sStatus,sDtStatus,origem))
+						{
+							sprintf(szAux,"Ocorreu um erro no processamento de uma linha do arquivo de carga."); oLog.logDebug(szAux);
+							return -1;
+						}
+						removeNaoNumericos(snrlinha);
+						if ( validaTelefone(snrlinha) == false )
+						{
+							sprintf(szAux,"Erro. Telefone[%s] nao valido.",snrlinha); oLog.logDebug(szAux);
+							return -2;
+						}
+						removeEspacosETABs(sDtCadastro);
+						removeEspacosETABs(sDtStatus);
+						removeEspacosETABs(sStatus);
+						if ( 0 > AtualizarRegistro(snrlinha,sDtCadastro,sStatus,sDtStatus,qtdiasProcon,qtdiasOutros,s_idUsuarioAlteracao) )
+						{
+							sprintf(szAux,"Ocorreu um erro ao atualizar o registro."); oLog.logDebug(szAux);
+							return -2;
+						}
+					}
+				}
+				else 
+				{
+					return 1;
+				}
+				break;
+			}
+			case ORIGEM_PB:
+			{
+				sprintf(szAux,"Processando registro de arquivo ORIGEM_PB."); oLog.logDebug(szAux);
+				if(bFinalArquivo == false)
+				{
+					oLog.logDebug("nao é fim de arquivo ORIGEM_PB");
+					if(qtlinhas>=qtRegistros )
+					{
+						bool bErroTelefone1 = false;
+						bool bErroTelefone2 = false;
+						bool bErroTelefone3 = false;
+						if ( 0 > obtemRegistro(szBuffer,snrlinha,snrlinha2,snrlinha3,sDtCadastro,sStatus,sDtStatus,origem))
+						{
+							sprintf(szAux,"Ocorreu um erro no processamento de uma linha do arquivo de carga."); oLog.logDebug(szAux);
+							return -1;
+						}
+						removeNaoNumericos(snrlinha);
+						if ( validaTelefone(snrlinha) == false )
+						{
+							sprintf(szAux,"Erro. Telefone1[%s] nao valido.",snrlinha); oLog.logDebug(szAux);
+							//return -2;
+							bErroTelefone1 = true;
+						}
+						removeNaoNumericos(snrlinha2);
+						if ( validaTelefone(snrlinha2) == false )
+						{
+							sprintf(szAux,"Erro. Telefone2[%s] nao valido.",snrlinha2); oLog.logDebug(szAux);
+							//return -2;
+							bErroTelefone2 = true;
+						}
+						removeNaoNumericos(snrlinha3);
+						if ( validaTelefone(snrlinha3) == false )
+						{
+							sprintf(szAux,"Erro. Telefone3[%s] nao valido.",snrlinha3); oLog.logDebug(szAux);							
+							//return -2;
+							bErroTelefone3 = true;
+						}
+						
+						removeEspacosETABs(sDtCadastro);
+						removeEspacosETABs(sDtStatus);
+						removeEspacosETABs(sStatus);
+						if( false == bErroTelefone1 )
+						{
+							if ( 0 > AtualizarRegistro(snrlinha,sDtCadastro,sStatus,sDtStatus,qtdiasProcon,qtdiasOutros,s_idUsuarioAlteracao) )
+							{
+								sprintf(szAux,"Ocorreu um erro ao atualizar o registro."); oLog.logDebug(szAux);
+								//return -2;
+								bErroTelefone1 = true;
+							}
+						}
+						
+						if( false == bErroTelefone2 )
+						{
+							if ( 0 > AtualizarRegistro(snrlinha2,sDtCadastro,sStatus,sDtStatus,qtdiasProcon,qtdiasOutros,s_idUsuarioAlteracao) )
+							{
+								sprintf(szAux,"Ocorreu um erro ao atualizar o registro."); oLog.logDebug(szAux);
+								//return -2;
+								bErroTelefone2 = true;
+							}
+						}
+						
+						if( false == bErroTelefone3 )
+						{
+							if ( 0 > AtualizarRegistro(snrlinha3,sDtCadastro,sStatus,sDtStatus,qtdiasProcon,qtdiasOutros,s_idUsuarioAlteracao) )
+							{
+								sprintf(szAux,"Ocorreu um erro ao atualizar o registro."); oLog.logDebug(szAux);
+								//return -2;
+								bErroTelefone3 = true;
+							}
+						}
+						
+						if( bErroTelefone1 || bErroTelefone2 || bErroTelefone3 )
+							return -2;
+					}
+				}
+				else 
+				{
+					return 1;
+				}
+				break;
+			}			
+			case ORIGEM_MS:
+			{
+				sprintf(szAux,"Processando registro de arquivo ORIGEM_MS."); oLog.logDebug(szAux);			
+				if(bFinalArquivo == false)
+				{
+					oLog.logDebug("nao é fim de arquivo ORIGEM_MS");
+					if(qtlinhas>=qtRegistros )
+					{
+						if ( 0 > obtemRegistro(szBuffer,snrlinha,snrlinha2,snrlinha3,sDtCadastro,sStatus,sDtStatus,origem))
+						{
+							sprintf(szAux,"Ocorreu um erro no processamento de uma linha do arquivo de carga."); oLog.logDebug(szAux);
+							return -1;
+						}
+						removeNaoNumericos(snrlinha);
+						if ( validaTelefone(snrlinha) == false )
+						{
+							sprintf(szAux,"Erro. Telefone[%s] nao valido.",snrlinha); oLog.logDebug(szAux);							
+							return -2;
+						}
+						removeEspacosETABs(sDtCadastro);
+						removeEspacosETABs(sDtStatus);
+						removeEspacosETABs(sStatus);
+						if ( 0 > AtualizarRegistro(snrlinha,sDtCadastro,sStatus,sDtStatus,qtdiasProcon,qtdiasOutros,s_idUsuarioAlteracao) )
+						{
+							sprintf(szAux,"Ocorreu um erro ao atualizar o registro."); oLog.logDebug(szAux);
+							return -2;
+						}
+					}
+				}
+				else 
+				{
+					return 1;
+				}
+				break;
+			}
+			case ORIGEM_RS:
+			{
+			sprintf(szAux,"Processando registro de arquivo ORIGEM_RS."); oLog.logDebug(szAux);
+				if(bFinalArquivo == false)
+				{
+					oLog.logDebug("nao é fim de arquivo ORIGEM_RS");
+					if(qtlinhas>=qtRegistros )
+					{
+						if ( 0 > obtemRegistro(szBuffer,snrlinha,snrlinha2,snrlinha3,sDtCadastro,sStatus,sDtStatus,origem))
+						{
+							sprintf(szAux,"Ocorreu um erro no processamento de uma linha do arquivo de carga."); oLog.logDebug(szAux);
+							return -1;
+						}
+						removeNaoNumericos(snrlinha);
+						if ( validaTelefone(snrlinha) == false )
+						{
+							sprintf(szAux,"Erro. Telefone[%s] nao valido.",snrlinha); oLog.logDebug(szAux);	
+							return -2;
+						}
+						removeEspacosETABs(sDtCadastro);
+						removeEspacosETABs(sDtStatus);
+						removeEspacosETABs(sStatus);
+						if ( 0 > AtualizarRegistro(snrlinha,sDtCadastro,sStatus,sDtStatus,qtdiasProcon,qtdiasOutros,s_idUsuarioAlteracao) )
+						{
+							sprintf(szAux,"Ocorreu um erro ao atualizar o registro."); oLog.logDebug(szAux);
+							return -2;
+						}
+					}
+				}
+				else 
+				{
+					return 1;
+				}
+				break;
+			}
+			default:
+			{
+				break;
+			}
+		}
+	}
+	catch(...)
+	{
+		sprintf(szAux, "*** ERRO: Ocorreu um erro no processamento de um registro "); oLog.logDebug(szAux);
+	}
+	return 0;
+}
+
+
+int AtualizarRegistro(char *pLinha, char* pdtCadastro,char *pstatus,char *dtstatus,int &qtdiasProcon,int &qtdiasOutros,char* s_idUsuarioAlteracao )
+{
+	char szAux[1024];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		 VARCHAR idUsuarioAlteracao[40];
+		 //estrutura do arquivo
+		 VARCHAR sznrlinha[128];
+		 VARCHAR szDtCadastro[128];
+		 VARCHAR szStatus[128];
+		 VARCHAR szDtStatus[128];
+
+    EXEC SQL END DECLARE SECTION;
+
+	memset(&szAux,0,sizeof(szAux));
+	memset(&sznrlinha,0,sizeof(sznrlinha));
+	memset(&szDtCadastro,0,sizeof(szDtCadastro));
+	memset(&szStatus,0,sizeof(szStatus));
+	memset(&szDtStatus,0,sizeof(szDtStatus));
+	
+	sprintf(szAux, "AtualizarRegistro: Parametros de entrada pLinha[%s], pdtCadastro[%s],pstatus[%s],dtstatus[%s],qtdiasProcon[%d],qtdiasOutros[%d],s_idUsuarioAlteracao[%s],",pLinha, pdtCadastro,pstatus,dtstatus,qtdiasProcon,qtdiasOutros,s_idUsuarioAlteracao); oLog.logDebug(szAux);
+	
+	
+	strToOra(sznrlinha,pLinha);
+	strToOra(szDtCadastro,pdtCadastro);
+	strToOra(szStatus,pstatus);
+	strToOra(szDtStatus,dtstatus);
+	
+	strToOra(idUsuarioAlteracao,s_idUsuarioAlteracao);
+
+	oLog.logDebug((char*)idUsuarioAlteracao.arr );
+	oLog.logDebug((char*)sznrlinha.arr );
+	oLog.logDebug((char*)szDtCadastro.arr );
+	oLog.logDebug((char*)szStatus.arr );
+	oLog.logDebug((char*)szDtStatus.arr );
+
+	
+	try
+	{
+	
+		EXEC SQL
+		UPDATE LINHA.LINHAPUP
+		SET NRLINHA=substr(:sznrlinha,3,length(:sznrlinha))
+		WHERE CDAREAREGISTRO=substr(:sznrlinha,1,2)
+		AND NRLINHA=substr(:sznrlinha,3,length(:sznrlinha));
+
+
+		oLog.logDebug("Vai validar Linhapup sqlca.sqlerrd[2]");
+			if(sqlca.sqlerrd[2] == 0)
+			{
+					oLog.logDebug("sqlca.sqlerrd[2] ==0");
+					oLog.logDebug("Inserindo em LINHA.LINHAPUP");
+					sprintf(szAux,"linha:%s :idusuarioalteracao:%d ",(char*)sznrlinha.arr,idUsuarioAlteracao);
+					oLog.logDebug(szAux);
+					//Atualizações de Banco
+					EXEC SQL
+					INSERT INTO LINHA.LINHAPUP (CDAREAREGISTRO,
+												NRLINHA,
+												DTCADASTROPUP,
+												IDUSUARIOCADASTROPUP)
+					VALUES(substr(:sznrlinha,1,2),
+						   substr(:sznrlinha,3,length(:sznrlinha)),
+						   sysdate,
+						   :idUsuarioAlteracao);
+
+					oLog.logDebug("Inserindo em LINHA.PERMISSAOLINHAPUP");
+					try{
+					EXEC SQL
+							insert into linha.PERMISSAOLINHAPUP              
+							SELECT substr(:sznrlinha,1,2),
+								   substr(:sznrlinha,3,length(:sznrlinha)),
+								   P.SGPERMISSAOPUP,
+								   DECODE(:szStatus,'desbloqueado',1,0),
+								   decode(:szStatus,'desbloqueado',null, SYSDATE+:qtdiasOutros),
+								   :idUsuarioAlteracao,
+								   SYSDATE ,
+								   NULL AS idLinhaTelefonica
+							FROM LINHA.PERMISSAOPUP P
+							WHERE SGPERMISSAOPUP IN ('SMSPROM','SMSPROD','SMSPARC');
+							}catch(...)
+							{
+							
+							}
+
+					EXEC SQL
+							insert into linha.PERMISSAOLINHAPUP              
+							SELECT substr(:sznrlinha,1,2),
+								   substr(:sznrlinha,3,length(:sznrlinha)),
+								   P.SGPERMISSAOPUP,
+								   DECODE(:szStatus,'desbloqueado',1,0),
+								   decode(:szStatus,'desbloqueado',null, SYSDATE+:qtdiasProcon),
+								   :idUsuarioAlteracao,
+								   SYSDATE ,
+								   NULL AS idLinhaTelefonica
+							FROM LINHA.PERMISSAOPUP P
+							WHERE SGPERMISSAOPUP IN ('BLKTEAT');
+				EXEC SQL COMMIT;
+			}//sqlca.sqlerrd[2] == 0)
+		else
+			{
+				//----------------------SMSPARC
+				oLog.logDebug("sqlca.sqlerrd[2] !=0" );
+							EXEC SQL
+							update linha.permissaolinhapup
+							set    inativo=DECODE(:szStatus,'desbloqueado',1,0),
+								   dtexpiracao=decode(:szStatus,'desbloqueado',null, SYSDATE+:qtdiasOutros),
+								   idusuarioalteracao=:idUsuarioAlteracao,
+								   dtultimaalteracao=sysdate
+							where SGPERMISSAOPUP='SMSPARC'
+							AND CDAREAREGISTRO=substr(:sznrlinha,1,2)
+							AND   NRLINHA=substr(:sznrlinha,3,length(:sznrlinha));
+
+							if(sqlca.sqlerrd[2] == 0)
+								{
+									oLog.logDebug("sqlca.sqlerrd[2] ==0 para SMSPARC"  );
+									EXEC SQL
+									Insert into LINHA.PERMISSAOLINHAPUP (CDAREAREGISTRO, 
+																		NRLINHA, 
+																		SGPERMISSAOPUP, 
+																		INATIVO, 
+																		DTEXPIRACAO,
+																		IDUSUARIOALTERACAO, 
+																		DTULTIMAALTERACAO)
+											 Values
+														(substr(:sznrlinha,1,2), 
+														substr(:sznrlinha,3,length(:sznrlinha)), 
+														'SMSPARC', 
+														DECODE(:szStatus,'desbloqueado',1,0), 
+														decode(:szStatus,'desbloqueado',null, SYSDATE+:qtdiasOutros),
+														:idUsuarioAlteracao,
+														sysdate);
+									
+								}// if SMSPARC
+
+							EXEC SQL COMMIT;
+
+				//----------------------SMSPROD
+							EXEC SQL
+							update linha.permissaolinhapup
+							set    inativo=DECODE(:szStatus,'desbloqueado',1,0),
+								   dtexpiracao=decode(:szStatus,'desbloqueado',null, SYSDATE+:qtdiasOutros),
+								   idusuarioalteracao=:idUsuarioAlteracao,
+								   dtultimaalteracao=sysdate
+							where SGPERMISSAOPUP='SMSPROD'
+							AND CDAREAREGISTRO=substr(:sznrlinha,1,2)
+							AND   NRLINHA=substr(:sznrlinha,3,length(:sznrlinha));
+
+							if(sqlca.sqlerrd[2] == 0)
+								{
+									oLog.logDebug("sqlca.sqlerrd[2] ==0 para SMSPROD"  );
+									EXEC SQL
+									Insert into LINHA.PERMISSAOLINHAPUP (CDAREAREGISTRO, 
+																		NRLINHA, 
+																		SGPERMISSAOPUP, 
+																		INATIVO, 
+																		DTEXPIRACAO,
+																		IDUSUARIOALTERACAO, 
+																		DTULTIMAALTERACAO)
+											 Values
+														(substr(:sznrlinha,1,2), 
+														substr(:sznrlinha,3,length(:sznrlinha)), 
+														'SMSPROD', 
+														DECODE(:szStatus,'desbloqueado',1,0), 
+														decode(:szStatus,'desbloqueado',null, SYSDATE+:qtdiasOutros),
+														:idUsuarioAlteracao,
+														sysdate);
+									
+								}// if SMSPROD
+							EXEC SQL COMMIT;
+
+				//----------------------SMSPROM
+							EXEC SQL
+							update linha.permissaolinhapup
+							set    inativo=DECODE(:szStatus,'desbloqueado',1,0),
+								   dtexpiracao=decode(:szStatus,'desbloqueado',null, SYSDATE+:qtdiasOutros),
+								   idusuarioalteracao=:idUsuarioAlteracao,
+								   dtultimaalteracao=sysdate
+							where SGPERMISSAOPUP='SMSPROM'
+							AND CDAREAREGISTRO=substr(:sznrlinha,1,2)
+							AND   NRLINHA=substr(:sznrlinha,3,length(:sznrlinha));
+
+							if(sqlca.sqlerrd[2] == 0)
+								{
+									oLog.logDebug("sqlca.sqlerrd[2] ==0 para SMSPROM"  );
+									EXEC SQL
+									Insert into LINHA.PERMISSAOLINHAPUP (CDAREAREGISTRO, 
+																		NRLINHA, 
+																		SGPERMISSAOPUP, 
+																		INATIVO, 
+																		DTEXPIRACAO,
+																		IDUSUARIOALTERACAO, 
+																		DTULTIMAALTERACAO)
+											 Values
+														(substr(:sznrlinha,1,2), 
+														substr(:sznrlinha,3,length(:sznrlinha)), 
+														'SMSPROM', 
+														DECODE(:szStatus,'desbloqueado',1,0), 
+														decode(:szStatus,'desbloqueado',null, SYSDATE+:qtdiasOutros),
+														:idUsuarioAlteracao,
+														sysdate);
+									
+								}// if SMSPROM
+						EXEC SQL COMMIT;
+				//----------------------BLKTEAT
+							EXEC SQL
+							update linha.permissaolinhapup
+							set    inativo=DECODE(:szStatus,'desbloqueado',1,0),
+								   dtexpiracao=decode(:szStatus,'desbloqueado',null, SYSDATE+:qtdiasProcon),
+								   idusuarioalteracao=:idUsuarioAlteracao,
+								   dtultimaalteracao=sysdate
+							where SGPERMISSAOPUP='BLKTEAT'
+							AND CDAREAREGISTRO=substr(:sznrlinha,1,2)
+							AND   NRLINHA=substr(:sznrlinha,3,length(:sznrlinha));
+							
+							if(sqlca.sqlerrd[2] == 0)
+								{
+									oLog.logDebug("sqlca.sqlerrd[2] ==0 para BLKTEAT"  );
+									EXEC SQL
+									Insert into LINHA.PERMISSAOLINHAPUP (CDAREAREGISTRO, 
+																		NRLINHA, 
+																		SGPERMISSAOPUP, 
+																		INATIVO, 
+																		DTEXPIRACAO,
+																		IDUSUARIOALTERACAO, 
+																		DTULTIMAALTERACAO)
+											 Values
+														(substr(:sznrlinha,1,2), 
+														substr(:sznrlinha,3,length(:sznrlinha)), 
+														'BLKTEAT', 
+														DECODE(:szStatus,'desbloqueado',1,0), 
+														decode(:szStatus,'desbloqueado',null, SYSDATE+:qtdiasProcon),
+														:idUsuarioAlteracao,
+														sysdate);
+									
+								}// if BLKTEAT
+
+					EXEC SQL COMMIT;
+			}//ELSE sqlca.sqlerrd[2] == 0)
+		
+		EXEC SQL COMMIT;
+		
+	sprintf(szAux, "OPERACAO REALIZADA COM SUCESSO."); oLog.logDebug(szAux);
+
+	return 0;
+	}
+	catch(...)
+	{
+		sprintf(szAux, "*** ERRO: Ocorreu um erro no processamento de um registro (%s)", sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+		return -1;
+	}
+    sqlError:
+        sprintf(szAux, "*** ERRO: Processo FINALIZADO com erro ORACLE (%s)", sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+        return -1;
+
+}
+*/
+
+int AtualizarRegistroV2(char *pLinha, char* pdtCadastro,char *pstatus,char *dtstatus,int &qtdiasProcon,int &qtdiasOutros,char* s_idUsuarioAlteracao )
+{
+	char szAux[1024];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+		 VARCHAR idUsuarioAlteracao[40];
+		 //estrutura do arquivo
+		 VARCHAR sznrlinha[128];
+		 VARCHAR szDtCadastro[128];
+		 VARCHAR szStatus[128];
+		 VARCHAR szDtStatus[128];
+
+    EXEC SQL END DECLARE SECTION;
+
+	memset(&szAux,0,sizeof(szAux));
+	memset(&sznrlinha,0,sizeof(sznrlinha));
+	memset(&szDtCadastro,0,sizeof(szDtCadastro));
+	memset(&szStatus,0,sizeof(szStatus));
+	memset(&szDtStatus,0,sizeof(szDtStatus));
+	
+	sprintf(szAux, "AtualizarRegistro: Parametros de entrada pLinha[%s], pdtCadastro[%s],pstatus[%s],dtstatus[%s],qtdiasProcon[%d],qtdiasOutros[%d],s_idUsuarioAlteracao[%s],",pLinha, pdtCadastro,pstatus,dtstatus,qtdiasProcon,qtdiasOutros,s_idUsuarioAlteracao); oLog.logDebug(szAux);
+	
+	
+	strToOra(sznrlinha,pLinha);
+	strToOra(szDtCadastro,pdtCadastro);
+	strToOra(szDtStatus,dtstatus);
+
+	strToOra(szStatus,pstatus);
+/*	if( strcmp(pstatus, "1") == 0)
+	{
+		strToOra(szStatus,"0");
+	}
+	else
+	{
+		strToOra(szStatus,"1");
+	}
+	*/
+
+	
+	strToOra(idUsuarioAlteracao,s_idUsuarioAlteracao);
+
+	oLog.logDebug((char*)idUsuarioAlteracao.arr );
+	oLog.logDebug((char*)sznrlinha.arr );
+	oLog.logDebug((char*)szDtCadastro.arr );
+	oLog.logDebug((char*)szStatus.arr );
+	oLog.logDebug((char*)szDtStatus.arr );
+
+	
+	try
+	{
+	
+		oLog.logDebug("Atualizando (UPDATE) LINHA.LINHAPUP");
+		EXEC SQL
+		UPDATE LINHA.LINHAPUP
+		SET NRLINHA=substr(:sznrlinha,3,length(:sznrlinha))
+		WHERE CDAREAREGISTRO=substr(:sznrlinha,1,2)
+		AND NRLINHA=substr(:sznrlinha,3,length(:sznrlinha));
+
+		if(sqlca.sqlerrd[2] == 0)
+		{
+				oLog.logDebug("UPDATE nao executado em LINHA.LINHAPUP");
+				oLog.logDebug("Inserindo em LINHA.LINHAPUP");
+				sprintf(szAux,"linha:%s :idusuarioalteracao:%d ",(char*)sznrlinha.arr,idUsuarioAlteracao);
+				oLog.logDebug(szAux);
+				//Atualizações de Banco
+				
+				EXEC SQL
+				INSERT INTO LINHA.LINHAPUP (CDAREAREGISTRO,
+											NRLINHA,
+											DTCADASTROPUP,
+											IDUSUARIOCADASTROPUP)
+				VALUES(substr(:sznrlinha,1,2),
+					   substr(:sznrlinha,3,length(:sznrlinha)),
+					   sysdate,
+					   :idUsuarioAlteracao);
+		}
+				
+			EXEC SQL COMMIT;		
+		//----------------------SMSPARC
+			oLog.logDebug("Atualizando (UPDATE) LINHA.PERMISSAOLINHAPUP - [SMSPARC]");
+			EXEC SQL
+			update linha.permissaolinhapup
+			set    inativo=:szStatus,
+				   dtexpiracao=decode(:szStatus,'0',null, SYSDATE+:qtdiasOutros),
+				   idusuarioalteracao=:idUsuarioAlteracao,
+				   dtultimaalteracao=sysdate
+			where SGPERMISSAOPUP='SMSPARC'
+			AND CDAREAREGISTRO=substr(:sznrlinha,1,2)
+			AND   NRLINHA=substr(:sznrlinha,3,length(:sznrlinha));
+
+			if(sqlca.sqlerrd[2] == 0)
+			{
+				oLog.logDebug("UPDATE nao executado em LINHA.PERMISSAOLINHAPUP - [SMSPARC]");
+				oLog.logDebug("Inserindo em LINHA.PERMISSAOLINHAPUP - [SMSPARC]");
+				EXEC SQL
+				Insert into LINHA.PERMISSAOLINHAPUP (CDAREAREGISTRO, 
+													NRLINHA, 
+													SGPERMISSAOPUP, 
+													INATIVO, 
+													DTEXPIRACAO,
+													IDUSUARIOALTERACAO, 
+													DTULTIMAALTERACAO)
+						 Values
+									(substr(:sznrlinha,1,2), 
+									substr(:sznrlinha,3,length(:sznrlinha)), 
+									'SMSPARC', 
+									:szStatus, 
+									decode(:szStatus,'0',null, SYSDATE+:qtdiasOutros),
+									:idUsuarioAlteracao,
+									sysdate);
+				
+			}// if SMSPARC
+
+			EXEC SQL COMMIT;
+
+		//----------------------SMSPROD
+			oLog.logDebug("Atualizando (UPDATE) LINHA.PERMISSAOLINHAPUP - [SMSPROD]");
+			EXEC SQL
+			update linha.permissaolinhapup
+			set    inativo=:szStatus,
+				   dtexpiracao=decode(:szStatus,'0',null, SYSDATE+:qtdiasOutros),
+				   idusuarioalteracao=:idUsuarioAlteracao,
+				   dtultimaalteracao=sysdate
+			where SGPERMISSAOPUP='SMSPROD'
+			AND CDAREAREGISTRO=substr(:sznrlinha,1,2)
+			AND   NRLINHA=substr(:sznrlinha,3,length(:sznrlinha));
+			oLog.logDebug("passou 3" );
+			
+			if(sqlca.sqlerrd[2] == 0)
+			{
+				oLog.logDebug("UPDATE nao executado em LINHA.PERMISSAOLINHAPUP - [SMSPROD]");
+				oLog.logDebug("Inserindo em LINHA.PERMISSAOLINHAPUP - [SMSPROD]");
+				EXEC SQL
+				Insert into LINHA.PERMISSAOLINHAPUP (CDAREAREGISTRO, 
+													NRLINHA, 
+													SGPERMISSAOPUP, 
+													INATIVO, 
+													DTEXPIRACAO,
+													IDUSUARIOALTERACAO, 
+													DTULTIMAALTERACAO)
+						 Values
+									(substr(:sznrlinha,1,2), 
+									substr(:sznrlinha,3,length(:sznrlinha)), 
+									'SMSPROD', 
+									:szStatus, 
+									decode(:szStatus,'0',null, SYSDATE+:qtdiasOutros),
+									:idUsuarioAlteracao,
+									sysdate);
+				
+			}// if SMSPROD
+			
+			EXEC SQL COMMIT;
+		//----------------------SMSPROM
+		oLog.logDebug("Atualizando (UPDATE) LINHA.PERMISSAOLINHAPUP - [SMSPROM]");
+		EXEC SQL
+		update linha.permissaolinhapup
+		set    inativo=:szStatus,
+			   dtexpiracao=decode(:szStatus,'0',null, SYSDATE+:qtdiasOutros),
+			   idusuarioalteracao=:idUsuarioAlteracao,
+			   dtultimaalteracao=sysdate
+		where SGPERMISSAOPUP='SMSPROM'
+		AND CDAREAREGISTRO=substr(:sznrlinha,1,2)
+		AND   NRLINHA=substr(:sznrlinha,3,length(:sznrlinha));
+
+		if(sqlca.sqlerrd[2] == 0)
+		{
+			oLog.logDebug("UPDATE nao executado em LINHA.PERMISSAOLINHAPUP - [SMSPROM]");
+			oLog.logDebug("Inserindo em LINHA.PERMISSAOLINHAPUP - [SMSPROM]");
+			EXEC SQL
+			Insert into LINHA.PERMISSAOLINHAPUP (CDAREAREGISTRO, 
+												NRLINHA, 
+												SGPERMISSAOPUP, 
+												INATIVO, 
+												DTEXPIRACAO,
+												IDUSUARIOALTERACAO, 
+												DTULTIMAALTERACAO)
+					 Values
+								(substr(:sznrlinha,1,2), 
+								substr(:sznrlinha,3,length(:sznrlinha)), 
+								'SMSPROM', 
+								:szStatus, 
+								decode(:szStatus,'0',null, SYSDATE+:qtdiasOutros),
+								:idUsuarioAlteracao,
+								sysdate);
+			
+		}// if SMSPROM
+		
+		EXEC SQL COMMIT;
+		//----------------------BLKTEAT
+		oLog.logDebug("Atualizando (UPDATE) LINHA.PERMISSAOLINHAPUP - [BLKTEAT]");
+		EXEC SQL
+		update linha.permissaolinhapup
+		set    inativo=:szStatus,
+			   dtexpiracao=decode(:szStatus,'0',null, SYSDATE+:qtdiasProcon),
+			   idusuarioalteracao=:idUsuarioAlteracao,
+			   dtultimaalteracao=sysdate
+		where SGPERMISSAOPUP='BLKTEAT'
+		AND CDAREAREGISTRO=substr(:sznrlinha,1,2)
+		AND   NRLINHA=substr(:sznrlinha,3,length(:sznrlinha));
+		
+		if(sqlca.sqlerrd[2] == 0)
+		{
+			oLog.logDebug("UPDATE nao executado em LINHA.PERMISSAOLINHAPUP - [BLKTEAT]");
+			oLog.logDebug("Inserindo em LINHA.PERMISSAOLINHAPUP - [BLKTEAT]");
+			EXEC SQL
+			Insert into LINHA.PERMISSAOLINHAPUP (CDAREAREGISTRO, 
+												NRLINHA, 
+												SGPERMISSAOPUP, 
+												INATIVO, 
+												DTEXPIRACAO,
+												IDUSUARIOALTERACAO, 
+												DTULTIMAALTERACAO)
+					 Values
+								(substr(:sznrlinha,1,2), 
+								substr(:sznrlinha,3,length(:sznrlinha)), 
+								'BLKTEAT', 
+								:szStatus, 
+								decode(:szStatus,'0',null, SYSDATE+:qtdiasProcon),
+								:idUsuarioAlteracao,
+								sysdate);
+			
+		}// if BLKTEAT
+
+		EXEC SQL COMMIT;
+
+	sprintf(szAux, "OPERACAO REALIZADA COM SUCESSO."); oLog.logDebug(szAux);
+
+	return 0;
+	}
+	catch(...)
+	{
+		sprintf(szAux, "*** ERRO: Ocorreu um erro no processamento de um registro (%s)", sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+		return -1;
+	}
+    sqlError:
+        sprintf(szAux, "*** ERRO: Processo FINALIZADO com erro ORACLE (%s)", sqlca.sqlerrm.sqlerrmc); oLog.logDebug(szAux);
+        return -1;
+
+}
+
+
+void limparCaracteres(char *cTelefone, string &strCaracteres)
+{
+
+	if ( cTelefone == NULL ) return;
+
+	string strTemp = cTelefone;
+	size_t found;
+
+  found=strTemp.find_first_of(strCaracteres.c_str());
+  while (found!=string::npos)
+  {
+	strTemp.erase(found,1);
+    //str[found]='*';
+    found=strTemp.find_first_of(strCaracteres,found+1);
+  }
+
+  //trim(strTemp);
+
+  sprintf(cTelefone,"%s",(char *)strTemp.c_str());  
+}
+
+void removeEspacosETABs(char *cValor)
+{
+	//char szAux[1024];
+	//oLog.logDebug(">>>removeEspacosETABs");
+    //sprintf(szAux,"Valor antes [%s]", cValor); oLog.logDebug(szAux);
+ 
+   if ( cValor == NULL ) return;
+
+  string strValue = cValor;
+
+  string::size_type found = strValue.find_first_of(' ');
+  while (found!=string::npos)
+  {
+	strValue.erase(found,1);
+    //str[found]='*';
+    found=strValue.find_first_of(' ');
+  }
+
+  found = strValue.find_first_of('\t');
+  while (found!=string::npos)
+  {
+	strValue.erase(found,1);
+    //str[found]='*';
+    found=strValue.find_first_of('\t');
+  }
+  
+  found = strValue.find_first_of('\n');
+  while (found!=string::npos)
+  {
+	strValue.erase(found,1);
+    //str[found]='*';
+    found=strValue.find_first_of('\n');
+  }
+  
+
+  sprintf(cValor,"%s",(char *)strValue.c_str());
+   
+  //sprintf(szAux,"Valor depois [%s]", cValor); oLog.logDebug(szAux);
+  
+  //oLog.logDebug("<<<removeEspacosETABs");
+}
+
+void removeNaoNumericos(char *cValor)
+{
+
+  if ( cValor == NULL ) return;
+
+  string strValue = cValor;
+
+  string::size_type found = strValue.find_first_not_of("0123456789");
+  
+  while (found!=string::npos)
+  {
+	strValue.erase(found,1);
+    found=strValue.find_first_not_of("0123456789");
+  }
+
+  sprintf(cValor,"%s",(char *)strValue.c_str());
+}
+
+bool validaTelefone(char *cTelefone)
+{
+    if( cTelefone == NULL)  
+        return false;
+
+    if ( strlen(cTelefone) < 10 || strlen(cTelefone) > 11 ) 
+        return false;
+
+    return true;
+}
+
+void enviarEmail(char *pszNomeArquivo, const char *listaEnderecos)
+{
+    oLog.logDebug("enviando e-mail ...");
+
+    char comando[12000];
+    char subject[] = "Relatorio de erro pupProcon - DIARIO";
+    char texto[2048];
+    char dataHoraProcessamento[64];
+
+    // compacta o arquivo antes de enviar
+    //compactarArquivo(pszNomeArquivo);
+
+	strcpy(texto,"Srs,\n\n\tPrezados, segue o relatório referente aos registros com problema no processo de carga de gestores.");
+
+	sprintf(comando,"(echo \"%s\";uuencode %s \"%s\")|mailx -s \"%s\" %.11800s "
+				,texto,pszNomeArquivo,pszNomeArquivo,subject,listaEnderecos);
+
+    oLog.logDebug(comando);
+    system(comando);
+
+}
+
+bool ObterListaEmail(char *pszListaEnderecos,int sizeofszListaEnderecos)
+{
+    oLog.logDebug("Obtendo lista de endereços...");
+
+    FILE *file = fopen(".//ListaEnderecos.txt","r");
+
+    if( 0==file )
+	{
+        oLog.logError("Erro abrindo arquivo de endereços");
+        return false;
+    }
+
+    fgets(pszListaEnderecos,sizeofszListaEnderecos-1,file);
+
+    fclose(file);
+
+    oLog.logDebug("lista de endereços obtida com sucesso...");
+
+    return true;
+}
+
+void compactarArquivo(const char *pszNomeArquivo)
+{
+    char sComando[512];
+	char szAux[1024];
+	memset(&szAux,0,sizeof(szAux));	
+	
+    strcpy(sComando,"gzip -f ");
+    strcat(sComando,pszNomeArquivo);
+
+    sprintf(szAux,"Comando [%s]", sComando); oLog.logDebug(szAux);
+	
+    system(sComando);
+
+	sprintf(sComando,"mv %s.gz %s.zip", pszNomeArquivo, pszNomeArquivo );
+
+	system(sComando);
+}
+
+int abrirArquivo(FILE **pFile,const char *pszNomeArquivo)
+{
+	char szAux[1024];
+	memset(&szAux,0,sizeof(szAux));	
+	
+    sprintf(szAux, "Vai criar e abrir o arquivo [%s]", pszNomeArquivo); oLog.logDebug(szAux);
+
+    *pFile = fopen(pszNomeArquivo, "w");
+
+    if( pFile == NULL )
+    {
+        sprintf(szAux, "Erro criando arquivo[%s]", pszNomeArquivo); oLog.logDebug(szAux);
+        return -1;
+    }
+
+    sprintf(szAux, "Arquivo [%s] disponível", pszNomeArquivo); oLog.logDebug(szAux);
+
+    return 0;
+}
+
+/************************************************************************************************************/
+int gravarRegistro(FILE *pFile,char *pszRegistro)
+{
+  char szPog[1000];
+ 
+  //sprintf (szPog,"%s\n",pszRegistro);
+	if( pszRegistro )
+    {
+        if(fprintf(pFile, pszRegistro) <= 0)
+        {
+            oLog.logDebug("Erro na gravação de um registro em arquivo.");
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+void fecharArquivo(FILE *pFile)
+{
+    fclose(pFile);
+    oLog.logDebug("Fechou o arquivo. ");
+}

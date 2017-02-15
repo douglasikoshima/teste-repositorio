@@ -1,0 +1,1024 @@
+/**
+ * @modulo  ADM
+ * @usecase ADM
+ * @author  
+ * @version $Revision: 1.1.2.5 $
+ * @CVS     $Author: a5110705 $ - $Date: 2010/12/09 21:07:20 $
+ **/
+
+extern errno;
+
+EXEC SQL INCLUDE SQLCA;
+
+#include "../include/CCtt.h"
+
+#define CONVIND(O,I) \
+{ \
+	if (I == -1) { \
+		##O.arr[0]=0; \
+	} else { \
+		##O.arr[##O.len]=0; \
+	} \
+}
+
+CContato::CContato()
+{
+	memset( pzcPath, 0, sizeof( pzcPath ) );
+	log.setNivel(2);
+}
+
+CContato::~CContato()
+{
+}
+
+void CContato::strDateToYYYYMMDD( char* pzcDestino, char* pzcDate )
+{
+	//Esperamos que em pzcDestino haja espaco para isto
+	if( strlennull( pzcDate ) >= 10 ) //DD/MM/YYYY
+	{
+		strncpy( pzcDestino, &pzcDate[6], 4 );
+		strncat( pzcDestino, &pzcDate[3], 2 );
+		strncat( pzcDestino, &pzcDate[0], 2 );
+	}
+}	
+
+int CContato::InsertContatoFolha( 
+					          char* cidContato
+					         ,char* cidPagina
+					         ,char* cidTipoRetorno
+					         ,char* cidTipoFechamento
+					         ,char* cidTipoProcesso
+					         ,char* cqtHorasPrazo
+					         ,char* cinFechamentoImediato
+					         ,char* cvlPeso
+					         ,char* cinProcessoTecnico
+			                 ,char* cidUsuarioAlteracao
+                             ,char* cqtHorasPrazoAnatel
+                             ,char* cInSmsPrm
+                             ,char* cDsSmsPrm
+                             ,char* cInRelacionamentoPrm
+                             ,char* cInProtocoloPrm
+                             ,char* cInexibeProtocoloPrm
+                             ,char* cDsContatoCanaisPrm
+                             ,char* cDsMsgExcecaoPrm
+							 ,char* cInCancelamentoPrm
+							 ,char* cIdClassificacaoSmsPrm
+                             ,char* cInAberturaContato
+                             ,char* cSgRegraEncaminhamentoPrm
+                             ,char* cSgFluxoAtendimentoPrm
+			             )
+{
+    log.logDebug("CContatoFolha::Insert()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* paramOraIdContato = cidContato;
+		char* paramOraIdPagina = cidPagina;
+		char* paramOraIdTipoRetorno = cidTipoRetorno;
+		char* paramOraIdTipoFechamento = cidTipoFechamento;
+		char* paramOraIdTipoProcesso = cidTipoProcesso;
+		char* paramOraQtHorasPrazo = cqtHorasPrazo;
+		char* paramOraInFechamentoImediato = cinFechamentoImediato;
+		char* paramOraVlPeso = cvlPeso;
+		char* paramOraInProcessoTecnico = cinProcessoTecnico;
+		char* paramOraIdUsuarioAlteracao = cidUsuarioAlteracao;
+		char* paramOraQtHorasPrazoAnatel = cqtHorasPrazoAnatel;
+		char* paramOraCInSms = cInSmsPrm;
+		char* paramOraCDsSms = cDsSmsPrm;
+		char* paramOraCInRelacionamento = cInRelacionamentoPrm;
+		char* paramOraCInProtocolo = cInProtocoloPrm;
+        char* paramOraCInexibeProtocoloPrm = cInexibeProtocoloPrm==0?"0":*cInexibeProtocoloPrm==0?"0":cInexibeProtocoloPrm;
+		char* paramOraCDsContatoCanais = cDsContatoCanaisPrm;
+		char* paramOraCDsMsgExcecao = cDsMsgExcecaoPrm;
+    	char* paramOraCInCancelamento = cInCancelamentoPrm;
+    	char* paramOraCIdClassificacaoSms = cIdClassificacaoSmsPrm;
+        char* paramOraCInAberturaContato = cInAberturaContato;
+        char* paramOraCSgRegraEncaminhamento = cSgRegraEncaminhamentoPrm;
+        char* paramOraCSgFluxoAtendimento = cSgFluxoAtendimentoPrm;
+
+        short statOraSgRegraEncaminhamento = -1;
+        short statOraSgFluxoAtendimento = -1;
+
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+				
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		
+        if ( paramOraCSgRegraEncaminhamento )
+        {
+            if ( strcmp(paramOraCSgRegraEncaminhamento,"MC")==0 )
+            {
+                if ( paramOraCSgFluxoAtendimento==0 && *paramOraCSgFluxoAtendimento==0 )
+                {
+                    paramOraCSgFluxoAtendimento = "MC3";
+                }
+
+                statOraSgRegraEncaminhamento=1;
+                statOraSgFluxoAtendimento=1;
+            }
+            else
+            {// se a regra não for de MeuCliente então o fluxo não pode ser também.
+                paramOraCSgFluxoAtendimento = 0;
+                statOraSgFluxoAtendimento = -1;
+            }
+        }
+
+        log.log("==>             paramOraIdContato='%s'",paramOraIdContato?paramOraIdContato:"(null)");
+		log.log("==>              paramOraIdPagina='%s'",paramOraIdPagina?paramOraIdPagina:"(null)");
+		log.log("==>         paramOraIdTipoRetorno='%s'",paramOraIdTipoRetorno?paramOraIdTipoRetorno:"(null)");
+		log.log("==>      paramOraIdTipoFechamento='%s'",paramOraIdTipoFechamento?paramOraIdTipoFechamento:"(null)");
+		log.log("==>        paramOraIdTipoProcesso='%s'",paramOraIdTipoProcesso?paramOraIdTipoProcesso:"(null)");
+		log.log("==>          paramOraQtHorasPrazo='%s'",paramOraQtHorasPrazo?paramOraQtHorasPrazo:"(null)");
+		log.log("==>  paramOraInFechamentoImediato='%s'",paramOraInFechamentoImediato?paramOraInFechamentoImediato:"(null)");
+		log.log("==>                paramOraVlPeso='%s'",paramOraVlPeso?paramOraVlPeso:"(null)");
+		log.log("==>     paramOraInProcessoTecnico='%s'",paramOraInProcessoTecnico?paramOraInProcessoTecnico:"(null)");
+		log.log("==>    paramOraIdUsuarioAlteracao='%s'",paramOraIdUsuarioAlteracao?paramOraIdUsuarioAlteracao:"(null)");
+		log.log("==>    paramOraQtHorasPrazoAnatel='%s'",paramOraQtHorasPrazoAnatel?paramOraQtHorasPrazoAnatel:"(null)");
+		log.log("==>                paramOraCInSms='%s'",paramOraCInSms?paramOraCInSms:"(null)");
+		log.log("==>                paramOraCDsSms='%s'",paramOraCDsSms?paramOraCDsSms:"(null)");
+		log.log("==>     paramOraCInRelacionamento='%s'",paramOraCInRelacionamento?paramOraCInRelacionamento:"(null)");
+		log.log("==>          paramOraCInProtocolo='%s'",paramOraCInProtocolo?paramOraCInProtocolo:"(null)");
+		log.log("==>  paramOraCInexibeProtocoloPrm='%s'",paramOraCInexibeProtocoloPrm?paramOraCInexibeProtocoloPrm:"(null)");
+		log.log("==>      paramOraCDsContatoCanais='%s'",paramOraCDsContatoCanais?paramOraCDsContatoCanais:"(null)");
+		log.log("==>         paramOraCDsMsgExcecao='%s'",paramOraCDsMsgExcecao?paramOraCDsMsgExcecao:"(null)");
+    	log.log("==>       paramOraCInCancelamento='%s'",paramOraCInCancelamento?paramOraCInCancelamento:"(null)");
+    	log.log("==>   paramOraCIdClassificacaoSms='%s'",paramOraCIdClassificacaoSms?paramOraCIdClassificacaoSms:"(null)");
+    	log.log("==>    paramOraCInAberturaContato='%s'",paramOraCInAberturaContato?paramOraCInAberturaContato:"(null)");
+    	log.log("==>paramOraCSgRegraEncaminhamento='%s'",paramOraCSgRegraEncaminhamento?paramOraCSgRegraEncaminhamento:"(null)");
+    	log.log("==>   paramOraCSgFluxoAtendimento='%s'",paramOraCSgFluxoAtendimento?paramOraCSgFluxoAtendimento:"(null)");
+
+		//Realiza o insert
+		EXEC SQL 
+			INSERT INTO 
+				CONTATOADM.CONTATOFOLHA
+			(
+				 IDUNIDADE
+				,IDCONTATO
+				,QTHORASPRAZOCONTATO
+				,INFECHAMENTOIMEDIATO
+				,VLPESOCONTATO
+				,IDTIPORETORNOCONTATO
+				,INPROCESSOTECNICO
+				,IDTIPOFECHAMENTOCONTATO
+				,IDTIPOPROCESSO
+				,IDUSUARIOALTERACAO
+				,DTULTIMAALTERACAO
+                ,QTHORASPRAZOANATEL
+                ,INSMS
+                ,DSSMS
+                ,DTSTATUSSMS
+                ,IDUSUARIOSTATUSSMS
+                ,INRELACIONAMENTO
+                ,INPROTOCOLO
+                ,DSCONTATOCANAIS
+                ,DSMSGEXCECAO
+				,INCANCELAMENTO
+				,IDCLASSIFICACAOSMS
+                ,INEXIBEPROTOCOLO
+                ,INABERTURACONTATO
+                ,SGREGRAENCAMINHAMENTO
+                ,SGFLUXOATENDIMENTO
+			)
+			VALUES
+			(
+				 :paramOraIdPagina
+				,:paramOraIdContato
+				,:paramOraQtHorasPrazo
+				,:paramOraInFechamentoImediato
+				,:paramOraVlPeso
+				,:paramOraIdTipoRetorno
+				,:paramOraInProcessoTecnico
+				,:paramOraIdTipoFechamento
+				,:paramOraIdTipoProcesso
+				,:paramOraIdUsuarioAlteracao
+				, SYSDATE
+                ,:paramOraQtHorasPrazoAnatel
+                ,:paramOraCInSms
+                ,:paramOraCDsSms
+                , SYSDATE
+                ,:paramOraIdUsuarioAlteracao
+                ,:paramOraCInRelacionamento
+                ,:paramOraCInProtocolo
+                ,:paramOraCDsContatoCanais
+                ,:paramOraCDsMsgExcecao
+				,:paramOraCInCancelamento
+				,:paramOraCIdClassificacaoSms
+                ,:paramOraCInexibeProtocoloPrm
+                ,:paramOraCInAberturaContato
+                ,:paramOraCSgRegraEncaminhamento:statOraSgRegraEncaminhamento
+                ,:paramOraCSgFluxoAtendimento:statOraSgFluxoAtendimento
+			);
+			
+        log.logDebug("CContatoFolha::Insert()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) {
+			return 0;//Erro
+		}
+		else {
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoInsert:
+    log.log( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CContato::Insert( char* cidContatoPai,
+			          char* cidNomeContato,
+					  char* cnmContato,
+			          char* cinDisponibilidade,
+					  char* cinFolha,
+					  char* cidUser,
+                      char* cidTipoArvore,
+					  char* idContato)
+{
+
+	log.logDebug("CContato::Insert()");
+
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stidNomeContato[21+1];
+		VARCHAR stidContato[21+1];
+		VARCHAR stinDisponibilidade[21+1];
+		VARCHAR stidTipoArvore[2+1];
+		char* cAuxnmContato = cnmContato;
+		char* cAuxidContatoPai = cidContatoPai;
+		char* cAuxinDisponibilidade = cinDisponibilidade;
+		char* cAuxinFolha = cinFolha;
+		char* cAuxidUser = cidUser;
+        char* cAuxidTipoArvore = cidTipoArvore;
+		int   iCont=0;
+		char* cDisponivel = "1";
+		char* cNaoDisponivel = "0";
+		char* cStringVazia = "";
+        short i_stidTipoArvore;
+	EXEC SQL END DECLARE SECTION;
+	
+	ZeraContato();
+	
+	log.log("idContatoPai = %s", cidContatoPai);
+	
+	memset( &stidContato, 0, sizeof( stidContato ) );
+	memset( &stidNomeContato, 0, sizeof( stidNomeContato ) );
+	memset( &stinDisponibilidade, 0, sizeof( stinDisponibilidade ) );
+	memset( &stidTipoArvore, 0, sizeof( stidTipoArvore ) );
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+	sqlca.sqlcode = 0;
+	
+	//Para evitar problemas na comparacao
+	if( strlennull( cinFolha ) <= 0 )
+		cinFolha = cStringVazia;
+	
+	if( strlennull( cidNomeContato ) <= 0 )
+	{
+		if( strlennull( cAuxnmContato ) <= 0 )
+		{
+			log.logDebug( "Nome de contato e idNomeContato estão nulos" );
+			log.logDebug("CContato::Insert() return 1");
+			return 1;//Erro
+		}
+		//Procura por um nome
+		EXEC SQL
+			SELECT
+				IDNOMECONTATO
+			INTO
+				:stidNomeContato
+			FROM
+				CONTATOADM.NOMECONTATO
+			WHERE
+				UPPER(NMCONTATO) = TRIM(UPPER(:cAuxnmContato))
+			AND
+				ROWNUM <= 1;
+
+		//Se nao achou o nome, entao insere
+		if( stidNomeContato.len <= 0 )
+		{
+			//Recupera um ID unica e sequencial
+			EXEC SQL 
+				SELECT 
+					CONTATOADM.NOMECONTATOSQ.NEXTVAL
+				INTO 
+					:stidNomeContato
+				FROM 
+					DUAL;
+
+			if(sqlca.sqlcode)
+			{
+				log.logDebug( "Erro ao tentar recuperar a seqüência CONTATOADM.NOMECONTATOSQ.NEXTVAL" );
+				log.logDebug("CContato::Insert() return 1");
+				return 1;//Erro
+			}
+			
+			//Insere um nome de contato
+			EXEC SQL 
+				INSERT INTO CONTATOADM.NOMECONTATO
+					( IDNOMECONTATO
+					 ,NMCONTATO
+					 ,IDUSUARIOALTERACAO
+					 ,DTULTIMAALTERACAO )
+					VALUES 
+					( :stidNomeContato
+					 ,TRIM(SUBSTR(:cAuxnmContato,1,255))
+					 ,:cAuxidUser
+					 ,SYSDATE );
+
+			if(sqlca.sqlcode)
+			{
+				log.logDebug( "Erro na inserção em CONTATOADM.NOMECONTATO" );
+				log.logDebug("CContato::Insert() return 1");
+				return 1;
+			}
+		}//if( stidNomeContato <= 0 )
+		else
+		{
+			cidNomeContato = (char*)stidNomeContato.arr;
+		}//if( stidNomeContato.len <= 0 )
+	}//if( strlennull( cidNomeContato ) <= 0 )
+	else
+	{
+		strcpy( (char*)stidNomeContato.arr, cidNomeContato );
+		stidNomeContato.len = strlen( cidNomeContato );
+	}
+
+	//Verifica se existe algum nome neste nivel da arvore 
+	//(uma pasta pode ser igual a uma folha, mas nao igual a outra pasta, o mesmo vale para folha)
+	if( TemNomeIgualNoMesmoNivel( cAuxidContatoPai, (char*)stidNomeContato.arr, cAuxinFolha ) > 0 )
+	{
+		log.logDebug( "Não pode haver dois nomes iguais no mesmo nível com o mesmo pai" );
+		log.logDebug("CContato::Insert() return 2");
+		return 2;//Warning
+	}
+
+    // Obtém o id do tipo da árvore de contatos
+    EXEC SQL
+        SELECT
+            IDTIPOARVORE
+        INTO
+            :stidTipoArvore 
+        FROM
+            APOIO.TIPOARVORE
+        WHERE
+            DSTIPOARVORE = 'ÁRVORE DE CONTATOS';
+
+    // Se o tipo da árvore não for informado, assume árvore de contatos.
+
+    if ( cidTipoArvore == 0 || *cidTipoArvore == 0 )
+    {
+        cAuxidTipoArvore = (char*)stidTipoArvore.arr;
+    }
+
+	//Soh recupera a inDisponibilidade do pai se for pasta, folha eh sempre desabilitada
+    if ( strcmp(cAuxidTipoArvore,(char*)stidTipoArvore.arr) == 0 )
+    { // aplica regra de disponibilidade se o tipo da árvore é de contato
+	    if( strcmp( cinFolha, "1" ) != 0 )
+	    {
+		    EXEC SQL
+			    SELECT
+				    INDISPONIBILIDADE
+			    INTO
+				    :stinDisponibilidade
+			    FROM
+				    CONTATOADM.CONTATO
+	            WHERE
+	                IDCONTATO = :cAuxidContatoPai;
+	    }
+	    else
+        {
+		    cAuxinDisponibilidade = cNaoDisponivel;//Se eh folha, desabilita
+        }
+
+	    //Soh verifica se retornou algo ou se eh folha ( no caso de folha o select acima nao eh executado, 
+	    //fica sempre zerado, e a disponibilidade desativada)
+	    if( stinDisponibilidade.len > 0 )
+	    {
+		    //Se o pai estiver indisponivel, tambem cria a folha indisponivel
+		    if( strcmp( (char*)stinDisponibilidade.arr, "1" ) != 0 )
+			    cAuxinDisponibilidade = cNaoDisponivel;
+	    }
+    }
+	else
+    {
+		cAuxinDisponibilidade = cDisponivel;  // Nós nascem disponíveis para outras árvores...
+    }
+
+	//Recupera um ID unico
+	EXEC SQL 
+		SELECT CONTATOADM.CONTATOSQ.NEXTVAL
+		  INTO :stidContato
+		  FROM DUAL;
+
+	if(sqlca.sqlcode)
+	{
+		log.logDebug( "Erro ao tentar recuperar a seqüência CONTATOADM.CONTATOSQ.NEXTVAL" );
+		log.logDebug("CContato::Insert() return 1");
+		return 1;
+	}
+	
+	// copiar o idContato
+	strcpy(idContato, (char*)stidContato.arr);
+
+	//Insere um item na arvore
+	EXEC SQL 
+		INSERT INTO CONTATOADM.CONTATO
+			( IDCONTATO
+			 ,IDNOMECONTATO
+			 ,INDISPONIBILIDADE
+             ,IDTIPOARVORE
+			 ,IDUSUARIOALTERACAO
+			 ,DTULTIMAALTERACAO )
+			VALUES 
+			( :stidContato
+			 ,:stidNomeContato
+			 ,:cAuxinDisponibilidade
+             ,:cAuxidTipoArvore
+			 ,:cAuxidUser
+			 ,SYSDATE );
+			 
+	log.log("idContato = %s", (char*) stidContato.arr);
+	log.log("idNomeContato = %s", (char*) stidNomeContato.arr);
+	log.log("cAuxinDisponibilidade = %s", cAuxinDisponibilidade);
+	log.log("cAuxidTipoArvore = %s", cAuxidTipoArvore);
+	log.log("cAuxidUser = %s", cAuxidUser);
+		
+	//Insere primeiro, depois atualiza o path
+	atualizaPath( (char*)stidContato.arr );
+
+	if(sqlca.sqlcode)
+	{
+		log.logDebug( "Falha na inserção em CONTATOADM.CONTATO" );
+		log.logDebug("CContato::Insert() return 1");
+		return 1;
+	}
+	//Insere a hierarquia		  
+	EXEC SQL
+		INSERT INTO CONTATOADM.CONTATOHIERARQUIA
+			( IDCONTATO
+			 ,IDCONTATOPAI
+			 ,IDUSUARIOALTERACAO
+			 ,DTULTIMAALTERACAO )
+		VALUES
+			( :stidContato
+			 ,:cAuxidContatoPai
+			 ,:cAuxidUser
+			 ,SYSDATE );
+
+	Add((char*)stidContato.arr,
+		cAuxidContatoPai,
+		"",
+		"",
+		"",
+		getPath(),
+		0,
+		0,
+        "");
+		
+	//Insere primeiro, depois atualiza o path
+	atualizaPath( (char*)stidContato.arr );
+		
+	log.logDebug("CContato::Insert()");
+			
+	if(sqlca.sqlcode)
+	{
+		log.logDebug( "Falha na inserção em CONTATOADM.CONTATOHIERARQUIA" );
+		return 0; //Erro
+	}
+	else
+		return 1;//Sucesso
+	
+GotoInsert:
+    log.log( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+char* CContato::getPath( char* cidContato, char* cidContatoPai )
+{
+    log.logDebug("CContato::getPath()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		char* cAuxidContatoPai = cidContatoPai; 
+		VARCHAR stPath[2048+1];
+		VARCHAR stRaiz[255+1];
+		short iPath;
+		short iRaiz;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotogetPath;
+	sqlca.sqlcode=0;
+
+	memset( &stRaiz, 0, sizeof(stRaiz) );
+
+	EXEC SQL
+		SELECT
+			NOMECONTATO.NMCONTATO
+		INTO
+			:stRaiz:iRaiz
+		FROM
+			CONTATOADM.CONTATO CONTATO,
+			CONTATOADM.NOMECONTATO NOMECONTATO
+		WHERE
+			CONTATO.IDNOMECONTATO = NOMECONTATO.IDNOMECONTATO  
+		AND CONTATO.IDCONTATO = :cAuxidContatoPai
+		AND ROWNUM < 2;
+
+    memset( &stPath, 0, sizeof(stPath) );
+
+	//Recupera a raiz em questao, nao necessariamente a raiz do sistema
+   	EXEC SQL 
+		SELECT 
+		    PATH
+		INTO
+			:stPath:iPath
+		FROM (
+		         SELECT 
+		              IDCONTATO
+		             ,SYS_CONNECT_BY_PATH(REPLACE(NMCONTATO, '/', '\' ), '/') PATH
+		         FROM 
+		         (
+		              SELECT DISTINCT 
+		                  IDCONTATO,
+		                  IDCONTATOPAI,
+		                  NMCONTATO
+		              FROM 
+		              (    
+		                SELECT 
+		                  IDCONTATO,
+		                  IDCONTATOPAI,
+		                  NMCONTATO
+		               FROM 
+		                  CONTATOADM.CONTATOHIERARQUIAV01 HIERARQUIA
+		               START WITH 
+		                  HIERARQUIA.IDCONTATO = :cAuxidContato
+		               CONNECT BY PRIOR 
+		                  HIERARQUIA.IDCONTATOPAI = HIERARQUIA.IDCONTATO
+		              )
+		         )
+		         START WITH 
+		             IDCONTATOPAI = :cAuxidContatoPai
+		         CONNECT BY 
+		             IDCONTATOPAI = PRIOR IDCONTATO
+		) 
+		WHERE 
+		    IDCONTATO = :cAuxidContato
+		AND
+			ROWNUM <= 1;
+		    
+	memset( pzcPath, 0, sizeof( pzcPath ) );
+	if( stRaiz.len > 0 )
+		sprintf( pzcPath, "%s%s", (char*)stRaiz.arr, (char*)stPath.arr );
+	else if( stPath.len > 0 )
+		sprintf( pzcPath, "%s", (char*)stPath.arr );
+		
+	log.logDebug("CContato::getPath()");
+	
+	return pzcPath;
+
+GotogetPath:
+    log.log( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+char* CContato::getPath( char* cidContato )
+{
+   log.logDebug("CContato::getPath() 1");
+    
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		VARCHAR stidContatoPai[21+1];
+		VARCHAR stPath[2048+1];
+		VARCHAR stRaiz[255+1];
+		short iPath;
+		short iRaiz;
+		short iidContatoPai;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotogetPath2;
+	sqlca.sqlcode=0;
+
+	memset( &stRaiz, 0, sizeof(stRaiz) );
+	memset( &stidContatoPai, 0, sizeof(stidContatoPai) );
+
+	EXEC SQL
+		SELECT
+			CONTATO.IDCONTATO,
+			NOMECONTATO.NMCONTATO
+		INTO
+			:stidContatoPai:iidContatoPai,
+			:stRaiz:iRaiz
+		FROM
+			CONTATOADM.CONTATO CONTATO,
+			CONTATOADM.CONTATOHIERARQUIA CONTATOHIERARQUIA,
+			CONTATOADM.NOMECONTATO NOMECONTATO
+		WHERE
+			CONTATO.IDCONTATO = CONTATOHIERARQUIA.IDCONTATO (+)
+		AND
+			CONTATO.IDNOMECONTATO = NOMECONTATO.IDNOMECONTATO
+		AND
+			CONTATOHIERARQUIA.IDCONTATO IS NULL
+		AND
+			ROWNUM <= 1;
+			
+	log.log("stidContatoPai = %s", (char*) stidContatoPai.arr);
+	log.log("cAuxidContato = %s", cAuxidContato);
+	log.log("stRaiz = %s", (char*) stRaiz.arr);
+
+	memset( &stPath, 0, sizeof(stPath) );
+	//Recupera a raiz em questao, nao necessariamente a raiz do sistema
+   	EXEC SQL 
+		SELECT 
+		    PATH
+		INTO
+			:stPath:iPath
+		FROM (
+		         SELECT 
+		              IDCONTATO
+		             ,SYS_CONNECT_BY_PATH(REPLACE(NMCONTATO, '/', '\' ), '/') PATH
+		         FROM 
+		         (
+		              SELECT DISTINCT 
+		                  IDCONTATO,
+		                  IDCONTATOPAI,
+		                  NMCONTATO
+		              FROM 
+		              (    
+		                SELECT 
+		                  IDCONTATO,
+		                  IDCONTATOPAI,
+		                  NMCONTATO
+		               FROM 
+		                  CONTATOADM.CONTATOHIERARQUIAV01 HIERARQUIA
+		               START WITH 
+		                  HIERARQUIA.IDCONTATO = :cAuxidContato
+		               CONNECT BY PRIOR 
+		                  HIERARQUIA.IDCONTATOPAI = HIERARQUIA.IDCONTATO
+		              )
+		         )
+		         START WITH 
+		             IDCONTATOPAI = :stidContatoPai
+		         CONNECT BY 
+		             IDCONTATOPAI = PRIOR IDCONTATO
+		) 
+		WHERE 
+		    IDCONTATO = :cAuxidContato
+		AND
+			ROWNUM <= 1;
+			
+	log.log("stPath = %s", (char*) stPath.arr);
+		    
+	memset( pzcPath, 0, sizeof( pzcPath ) );
+	if( stRaiz.len > 0 )
+		sprintf( pzcPath, "%s%s", (char*)stRaiz.arr, (char*)stPath.arr );
+	else if( stPath.len > 0 )
+		sprintf( pzcPath, "%s", (char*)stPath.arr );
+	
+	log.log("path = %s", pzcPath);
+	log.logDebug("CContato::getPath()");
+	return pzcPath;
+
+GotogetPath2:
+    log.log( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CContato::atualizaPath( char* cidContato )
+{
+    log.logDebug("CContato::atualizaPath()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		char* cnmPath;
+		VARCHAR stnmPathOld[2048];
+		short   inmPathOld;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoatualizaPath;
+	sqlca.sqlcode=0;
+
+	memset( &stnmPathOld, 0, sizeof( stnmPathOld ) );
+
+	//Recupera o path atual, antes de atualizar
+	EXEC SQL
+	SELECT
+		NMPATH
+	INTO
+		:stnmPathOld:inmPathOld
+	FROM
+		CONTATOADM.CONTATO
+	WHERE
+		IDCONTATO = :cAuxidContato;
+
+	//Monta o novo path
+	cnmPath = getPath( cidContato );
+	
+	log.log("path = %s", cnmPath);
+	log.log("cAuxidContato = %s", cAuxidContato);
+
+	//Atualiza o path, nao da pra inserir direto, porque soh da pra fazer o path depois
+	//que o campo for inserido (não precisa alterar a data+usuário pois esta chamada ocorre
+    //logo a seguir a um insert na mesma tabela)
+	EXEC SQL 
+	    UPDATE 
+		    CONTATOADM.CONTATO
+	    SET 
+		    NMPATH = :cnmPath
+	    WHERE 
+		    IDCONTATO = :cAuxidContato;
+
+	//Atualiza o path de todos os filhos
+	EXEC SQL
+	UPDATE 
+		CONTATOADM.CONTATO
+	SET 
+		NMPATH = :cnmPath || SUBSTR( NMPATH, LENGTH( :stnmPathOld )+1, LENGTH( NMPATH ) ),
+        DTULTIMAALTERACAO = SYSDATE
+	WHERE
+		IDCONTATO IN 
+		( 
+			SELECT 
+				CONTATOOLD.IDCONTATO 
+			FROM 
+				CONTATOADM.CONTATO CONTATOOLD,
+				CONTATOADM.CONTATOHIERARQUIA CONTATOHIERARQUIA
+			WHERE
+				CONTATOOLD.IDCONTATO = CONTATOHIERARQUIA.IDCONTATO
+			START WITH 
+				CONTATOHIERARQUIA.IDCONTATOPAI = :cAuxidContato
+			CONNECT BY
+				CONTATOHIERARQUIA.IDCONTATOPAI = PRIOR CONTATOOLD.IDCONTATO
+		);
+
+    log.logDebug("CContato::atualizaPath()");
+	return;
+
+GotoatualizaPath:
+    log.log( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);   
+}
+
+int CContato::TemNomeIgualNoMesmoNivel( char* cidContatoPai, char* cidNomeContato, char* cinFolha )
+{
+    log.logDebug("CContato::TemNomeIgualNoMesmoNivel)");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char*   cAuxidContatoPai = cidContatoPai;
+		char*   cAuxidNomeContato = cidNomeContato;
+		char*   cAuxinFolha = cinFolha;
+		int     iCont = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	sqlca.sqlcode=0;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoTemNomeIgualNoMesmoNivel;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+	//Verifica se existe algum nome neste nivel da arvore
+	EXEC SQL
+		SELECT
+			COUNT( IDCONTATO )
+		INTO
+			:iCont
+		FROM
+		(
+			SELECT 
+				 CONTATO.IDCONTATO,
+				 DECODE(CONTATOFOLHA.IDCONTATO, NULL, '0', '1' ) INFOLHA
+			FROM 
+				CONTATOADM.CONTATOHIERARQUIA HIERARQUIA,
+				CONTATOADM.CONTATO CONTATO,
+				CONTATOADM.NOMECONTATO NOMECONTATO,
+				CONTATOADM.CONTATOFOLHA CONTATOFOLHA
+			WHERE
+				CONTATO.IDCONTATO = CONTATOFOLHA.IDCONTATO (+)
+			AND
+				CONTATO.IDCONTATO = HIERARQUIA.IDCONTATO
+			AND
+				CONTATO.IDNOMECONTATO = NOMECONTATO.IDNOMECONTATO
+			AND
+				HIERARQUIA.IDCONTATOPAI = :cAuxidContatoPai
+    		AND
+    			NOMECONTATO.IDNOMECONTATO = :cAuxidNomeContato
+		)
+		WHERE INFOLHA = :cAuxinFolha;
+
+    log.logDebug("CContato::TemNomeIgualNoMesmoNivel)");
+	return iCont;
+
+GotoTemNomeIgualNoMesmoNivel:
+    log.log( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContato::TemNomeIgualNoMesmoNivel( char* cidContatoPai, char* cidContato, char* cidNomeContato, char* cinFolha )
+{
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char*   cAuxidContato = cidContato;
+		char*   cAuxidContatoPai = cidContatoPai;
+		char*   cAuxidNomeContato = cidNomeContato;
+		char*   cAuxinFolha = cinFolha;
+		int     iCont = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	sqlca.sqlcode=0;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoTemNomeIgualNoMesmoNivel2;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+	//Verifica se existe algum nome neste nivel da arvore e nao eh ele mesmo
+	EXEC SQL
+		SELECT
+			COUNT( IDCONTATO )
+		INTO
+			:iCont
+		FROM
+		(
+			SELECT 
+				 CONTATO.IDCONTATO,
+				 DECODE(CONTATOFOLHA.IDCONTATO, NULL, '0', '1' ) INFOLHA
+			FROM 
+				CONTATOADM.CONTATOHIERARQUIA HIERARQUIA,
+				CONTATOADM.CONTATO CONTATO,
+				CONTATOADM.NOMECONTATO NOMECONTATO,
+				CONTATOADM.CONTATOFOLHA CONTATOFOLHA
+			WHERE
+				CONTATO.IDCONTATO = CONTATOFOLHA.IDCONTATO (+)
+			AND
+				CONTATO.IDCONTATO = HIERARQUIA.IDCONTATO
+			AND
+				CONTATO.IDNOMECONTATO = NOMECONTATO.IDNOMECONTATO
+			AND
+				HIERARQUIA.IDCONTATOPAI = :cAuxidContatoPai
+    		AND
+    			NOMECONTATO.IDNOMECONTATO = :cAuxidNomeContato
+			AND
+				CONTATO.IDCONTATO <> :cAuxidContato
+		)
+		WHERE INFOLHA = :cAuxinFolha;
+
+	return iCont;
+
+GotoTemNomeIgualNoMesmoNivel2:
+    log.log( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContato::ProcuraNome( char* cnmContato )
+{
+	//Variavel de controle para a quantidade de registros retornada
+	int iRet = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char*   cAuxnmContato = cnmContato;
+		VARCHAR stidNomeContato[21+1];
+		short   iidNomeContato;
+		VARCHAR stnmContato[25+1];
+		short   inmContato;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoProcuraNome;
+	memset( &stidNomeContato, 0, sizeof( stidNomeContato ) );
+	memset( &stnmContato, 0, sizeof( stnmContato ) );
+    //Verifica se o nome ja existe, se existe recupera o id
+	EXEC SQL
+		SELECT
+			IDNOMECONTATO
+		   ,NMCONTATO
+		INTO
+			:stidNomeContato:iidNomeContato,
+			:stnmContato:inmContato
+		FROM
+			CONTATOADM.NOMECONTATO
+		WHERE
+			UPPER(NMCONTATO) = UPPER(TRIM(:cAuxnmContato))
+		AND
+			ROWNUM <= 1;
+
+	setIdNome( (char*)stidNomeContato.arr );
+
+	//0 - Nao achou  1 - Achou o nome
+	if( ( iRet = ( stidNomeContato.len <= 0 ? 0 : 1 ) ) == 1 )
+	{
+		if( strcmp( (char*)stidNomeContato.arr, cAuxnmContato ) == 0 )
+			iRet = 2; //Achou o nome e eh igual ao de entrada (maiusculas e minusculas)
+	}
+	return iRet;
+GotoProcuraNome:
+    log.log( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+char* CContato::getIdNome( void )
+{
+	return pzcidNome;
+}
+
+void CContato::setIdNome( char* cidNome )
+{
+	memset( pzcidNome, 0, sizeof( pzcidNome ) );
+	if( strlennull( cidNome ) > 0 )
+	{
+		if( strlennull( cidNome ) <= 21  )
+			strcpy( pzcidNome, cidNome );
+		else
+			strncpy( pzcidNome, &cidNome[0], 21 );
+	}
+}
+
+int CContato::getContatoByPath( char *pPath, char *pIdContato )
+{
+    log.logDebug("inicio: CContato::getContatoByPath()");
+ 
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		
+		VARCHAR idContato[53];
+		
+		short i_idContato = 0;
+		
+		char *path = pPath;
+		
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotogetPath;
+	sqlca.sqlcode=0;
+
+	memset( &idContato, 0, sizeof(idContato) );
+
+	EXEC SQL
+		SELECT idcontato
+		  INTO :idContato:i_idContato
+		  FROM contatoadm.contato
+		 WHERE nmpath = :path
+		   AND indisponibilidade = 1;
+		    
+	log.logDebug("fim: CContato::getContatoByPath()");
+	
+	if( idContato.len > 0 ) {
+		sprintf( pIdContato, "%s", (char*)idContato.arr );
+		return 1;
+	} else {
+		return 0;
+	}
+
+GotogetPath:
+    log.log( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CContato::commit() {
+	log.logDebug("inicio: CCContato::commit()");
+	
+	EXEC SQL WHENEVER SQLERROR GOTO GotogetPath;
+	struct sqlca sqlca;
+	sqlca.sqlcode=0;
+	
+	EXEC SQL COMMIT;
+	
+	log.logDebug("fim: CCContato::commit()");
+	
+	return;
+	
+GotogetPath:
+    log.log( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);	
+}
+
+void CContato::rollback() {
+	log.logDebug("inicio: CCContato::rollback()");
+	
+	EXEC SQL WHENEVER SQLERROR GOTO GotogetPath;
+	struct sqlca sqlca;
+	sqlca.sqlcode=0;
+	
+	EXEC SQL ROLLBACK;
+	
+	log.logDebug("fim: CCContato::rollback()");
+	
+	return;
+	
+GotogetPath:
+    log.log( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);	
+}
