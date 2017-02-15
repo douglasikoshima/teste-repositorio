@@ -1,0 +1,97 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <tuxfw.h>
+
+int ConsultaSegmentacao( const char *idContatoParam , const char *idRetorno, XMLGen *Saida )
+{
+   ULOG_START("ConsultaSegmentacao()");
+   
+	struct sqlca sqlca;
+    sqlca.sqlcode=0 ;
+	
+    EXEC SQL BEGIN DECLARE SECTION;
+
+	    VARCHAR ORA_dsSegmentacao[256];
+	    VARCHAR ORA_sgSegmentacao[256];
+	    unsigned long ORA_idSegmentacao;
+	    unsigned long ORA_vlPeso;
+	    unsigned long ORA_idContato = atol( idContatoParam );
+	    unsigned long ORA_idRetorno = atol( idRetorno );
+	    
+	    short   ORA_i_dsSegmentacao;
+	    short   ORA_i_sgSegmentacao;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL DECLARE ReadSegmentacao CURSOR FOR 
+      SELECT 
+         idSegmentacao, 
+		 sgSegmentacao, 
+		 dsSegmentacao, 
+		 vlPeso
+      FROM 
+         Apoio.Segmentacao
+      WHERE 
+         idSegmentacao 
+      NOT IN
+      (
+         SELECT 
+            b.idSegmentacao 
+         FROM 
+            ContatoAdm.TipoRetornoSegmentacao   b ,
+            ContatoAdm.ContatoTipoRetorno       c
+         WHERE 
+            b.idContatoTipoRetorno = c.idContatoTipoRetorno
+         AND
+            c.idContato = :ORA_idContato
+         AND 
+           c.idTipoRetornoContato = :ORA_idRetorno
+      )
+	  ORDER BY dsSegmentacao;
+
+    EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    EXEC SQL OPEN ReadSegmentacao;
+
+    for( ;; )
+    {
+        EXEC SQL FETCH ReadSegmentacao INTO :ORA_idSegmentacao, 
+                                            :ORA_sgSegmentacao:ORA_i_sgSegmentacao,
+		                                    :ORA_dsSegmentacao:ORA_i_dsSegmentacao, 
+                                            :ORA_vlPeso;
+
+        if ( ORA_i_sgSegmentacao == -1 )
+            ORA_sgSegmentacao.arr[0] = 0x0;
+        else
+            ORA_sgSegmentacao.arr[ ORA_sgSegmentacao.len ] = 0x0;
+
+        if ( ORA_i_dsSegmentacao == -1 )
+            ORA_dsSegmentacao.arr[0] = 0x0;
+        else
+            ORA_dsSegmentacao.arr[ ORA_dsSegmentacao.len ] = 0x0;
+
+        Saida->createTag( "AdmSegmentacaoVO" );
+            Saida->addItem( "idSegmentacao",ORA_idSegmentacao );
+            Saida->addItem( "dsSegmentacao",(char*)ORA_dsSegmentacao.arr );
+            Saida->addItem( "sgSegmentacao",(char*)ORA_sgSegmentacao.arr );
+            Saida->addItem( "vlPeso",ORA_vlPeso );
+        Saida->closeTag();
+
+        memset( (char *)ORA_dsSegmentacao.arr , 0x0 , sizeof(ORA_dsSegmentacao.arr) );
+        memset( (char *)ORA_sgSegmentacao.arr , 0x0 , sizeof(ORA_sgSegmentacao.arr) );
+    }
+
+    EXEC SQL CLOSE ReadSegmentacao;
+    ULOG_END("ConsultaSegmentacao()");
+    return 1;
+
+UndefinedError:
+        throw new TuxBasicOraException( sqlca.sqlcode,
+                                        sqlca.sqlerrm.sqlerrmc,
+                                        sqlca.sqlerrm.sqlerrml );
+
+}
+

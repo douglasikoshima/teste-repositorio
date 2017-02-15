@@ -1,0 +1,88 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <tuxfw.h>
+
+int ConsultaRelacionamento( const char *idContatoParam , const char *idRetorno, XMLGen *Saida )
+{
+   
+   ULOG_START("ConsultaRelacionamento()");
+   
+	struct sqlca sqlca;
+    sqlca.sqlcode=0 ;
+	
+    EXEC SQL BEGIN DECLARE SECTION;
+
+		VARCHAR ORA_nmTipoRelac[256];
+		unsigned long ORA_idTipoRelac;
+		unsigned long ORA_idContato = atol( idContatoParam );
+		unsigned long ORA_idRetorno = atol( idRetorno );
+		
+		short   ORA_i_nmTipoRelac;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL DECLARE ReadTipoRelac CURSOR FOR 
+      SELECT 
+         idTipoRelacionamento, 
+		 nmTipoRelacionamento
+      FROM 
+         Customer.TipoRelacionamento
+      WHERE 
+         idTipoRelacionamento > 0
+      AND
+         idTipoRelacionamento
+      NOT IN
+      	(
+            SELECT 
+               b.idTipoRelacionamento
+            FROM 
+               ContatoAdm.TipoPessoaTpRelacionamento   b,
+               ContatoAdm.ContatoTipoRetorno           c
+            WHERE 
+               b.idContatoTipoRetorno = c.idContatoTipoRetorno
+            AND
+               c.idContato = :ORA_idContato
+            AND 
+              c.idTipoRetornoContato = :ORA_idRetorno
+      	)
+		ORDER BY nmTipoRelacionamento;
+      	
+    EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+   
+    EXEC SQL OPEN ReadTipoRelac;
+
+    for( ;; )
+    {
+        EXEC SQL FETCH ReadTipoRelac INTO :ORA_idTipoRelac,
+                                          :ORA_nmTipoRelac:ORA_i_nmTipoRelac;
+
+        if ( ORA_i_nmTipoRelac < 0 )
+            ORA_nmTipoRelac.arr[0] = 0x0;
+        else
+            ORA_nmTipoRelac.arr[ ORA_nmTipoRelac.len ] = 0x0;
+
+        Saida->createTag( "AdmTipoClienteVO" );
+            Saida->addItem( "idTipoCliente",ORA_idTipoRelac );
+            Saida->addItem( "nmTipoCliente",(char*)ORA_nmTipoRelac.arr );
+        Saida->closeTag();
+
+        memset( (char *)ORA_nmTipoRelac.arr , 0x0 , sizeof(ORA_nmTipoRelac.arr) );
+    }
+
+    EXEC SQL CLOSE ReadTipoRelac;
+
+   ULOG_END("ConsultaRelacionamento()");
+   
+	return 1;
+
+UndefinedError:
+        throw new TuxBasicOraException( sqlca.sqlcode,
+                                        sqlca.sqlerrm.sqlerrmc,
+                                        sqlca.sqlerrm.sqlerrml );
+
+}
+

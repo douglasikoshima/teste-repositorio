@@ -1,0 +1,415 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CPcd.h"
+
+CProcedencia::CProcedencia()
+{
+}
+
+CProcedencia::~CProcedencia()
+{
+}
+
+int CProcedencia::RelacaoFlhPrz( char* cidContato )
+{
+    ULOG_END("CProcedencia::RelacaoFlhPrz()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		struct
+		{
+			VARCHAR stidProcedencia[21+1];
+			VARCHAR stsgProcedencia[255+1];
+			VARCHAR stdsProcedencia[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stProcedenciaRegistro;
+		struct
+		{
+			short iidProcedencia;
+			short isgProcedencia;
+			short idsProcedencia;
+			short ivlPeso;
+		} stProcedenciaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraProcedencia();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Declara um cursor para listar os Registros
+
+/*   	SELECT apoio.Procedencia.idProcedencia, apoio.Procedencia.idProcedencia, apoio.Procedencia.idProcedencia, apoio.Procedencia.idProcedencia 
+		FROM apoio.Procedencia, contatoadm.PrazoAtendimentoBZEROUM
+		WHERE apoio.Procedencia.idProcedencia = contatoadm.PrazoAtendimentoBZEROUM.idContato AND contatoadm.PrazoAtendimentoBZEROUM.idContato = :cAuxidContato ;*/
+
+	/*REMOVENDO BZEROUM
+	 TCOSTA 18/06/2007 MPOG
+	*/
+		EXEC SQL DECLARE CursorProcedenciaRelacao_00 CURSOR FOR
+		SELECT procedencia.idprocedencia, 
+			   procedencia.idprocedencia,
+			   procedencia.idprocedencia, 
+			   procedencia.idprocedencia
+	    FROM apoio.procedencia procedencia, 
+  			 contatoadm.prazoatendimento prazoatendimento
+	    WHERE procedencia.idprocedencia =prazoatendimento.IDPROCEDENCIA
+		AND contatoadm.prazoatendimento.idcontato = :cAuxidContato;
+
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacao;
+
+		EXEC SQL OPEN CursorProcedenciaRelacao_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CProcedencia::RelacaoFlhPrz()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stProcedenciaRegistro, 0, sizeof(stProcedenciaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorProcedenciaRelacao_00 INTO :stProcedenciaRegistro:stProcedenciaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stProcedenciaRegistro.stidProcedencia.arr,
+				(char*)stProcedenciaRegistro.stsgProcedencia.arr,
+				(char*)stProcedenciaRegistro.stdsProcedencia.arr,
+				(char*)stProcedenciaRegistro.stvlPeso.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorProcedenciaRelacao_00;
+		}
+		ULOG_END("CProcedencia::RelacaoFlhPrz()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoRelacao:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CProcedencia::ExistemFlhPrz( char* cidContato )
+{
+    ULOG_START("CProcedencia::ExistemFlhPrz()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		struct
+		{
+			VARCHAR stidProcedencia[21+1];
+			VARCHAR stsgProcedencia[255+1];
+			VARCHAR stdsProcedencia[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stProcedenciaRegistro;
+		struct
+		{
+			short iidProcedencia;
+			short isgProcedencia;
+			short idsProcedencia;
+			short ivlPeso;
+		} stProcedenciaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraProcedencia();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Declara um cursor para listar os Registros
+
+/*   		SELECT apoio.Procedencia.idProcedencia, apoio.Procedencia.idProcedencia, apoio.Procedencia.idProcedencia, apoio.Procedencia.idProcedencia 
+		FROM apoio.Procedencia
+		WHERE apoio.Procedencia.idProcedencia NOT IN ( SELECT apoio.Procedencia.idProcedencia FROM apoio.Procedencia, contatoadm.PrazoAtendimentoBZEROUM WHERE apoio.Procedencia.idProcedencia = contatoadm.PrazoAtendimentoBZEROUM.idContato AND contatoadm.PrazoAtendimentoBZEROUM.idContato = :cAuxidContato  ); */
+
+	/*REMOVENDO BZEROUM
+	 TCOSTA 18/06/2007 MPOG
+	*/
+   		EXEC SQL DECLARE CursorProcedenciaExistem_00 CURSOR FOR 
+		SELECT procedencia.idprocedencia, 
+			   procedencia.idprocedencia,
+			   procedencia.idprocedencia, 
+			   procedencia.idprocedencia
+		  FROM apoio.procedencia
+		 WHERE procedencia.idprocedencia NOT IN (SELECT idprocedencia FROM contatoadm.prazoatendimento
+													WHERE idcontato = :cAuxidContato);
+	
+		EXEC SQL WHENEVER SQLERROR GOTO GotoExistem;
+
+		EXEC SQL OPEN CursorProcedenciaExistem_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CProcedencia::ExistemFlhPrz()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stProcedenciaRegistro, 0, sizeof(stProcedenciaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorProcedenciaExistem_00 INTO :stProcedenciaRegistro:stProcedenciaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stProcedenciaRegistro.stidProcedencia.arr,
+				(char*)stProcedenciaRegistro.stsgProcedencia.arr,
+				(char*)stProcedenciaRegistro.stdsProcedencia.arr,
+				(char*)stProcedenciaRegistro.stvlPeso.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorProcedenciaExistem_00;
+		}
+		ULOG_END("CProcedencia::ExistemFlhPrz()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoExistem:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CProcedencia::ListId( char* cidProcedencia ) 
+{
+    ULOG_START("CProcedencia::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidProcedencia = cidProcedencia; 
+		struct
+		{
+			VARCHAR stidProcedencia[21+1];
+			VARCHAR stsgProcedencia[255+1];
+			VARCHAR stdsProcedencia[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stProcedenciaRegistro;
+		struct
+		{
+			short iidProcedencia;
+			short isgProcedencia;
+			short idsProcedencia;
+			short ivlPeso;
+		} stProcedenciaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraProcedencia();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorProcedenciaId CURSOR FOR 
+   		SELECT 	idProcedencia,
+	            sgProcedencia,
+	            dsProcedencia,
+	            vlPeso
+		FROM apoio.Procedencia
+		WHERE idProcedencia = :cAuxidProcedencia;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorProcedenciaId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CProcedencia::ListId()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stProcedenciaRegistro, 0, sizeof(stProcedenciaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorProcedenciaId INTO :stProcedenciaRegistro:stProcedenciaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stProcedenciaRegistro.stidProcedencia.arr,
+				(char*)stProcedenciaRegistro.stsgProcedencia.arr,
+				(char*)stProcedenciaRegistro.stdsProcedencia.arr,
+				(char*)stProcedenciaRegistro.stvlPeso.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorProcedenciaId;
+		}
+		ULOG_END("CProcedencia::ListId()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CProcedencia::ListAll( void )
+{
+    ULOG_START("CProcedencia::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidProcedencia[21+1];
+			VARCHAR stsgProcedencia[255+1];
+			VARCHAR stdsProcedencia[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stProcedenciaRegistro;
+		struct
+		{
+			short iidProcedencia;
+			short isgProcedencia;
+			short idsProcedencia;
+			short ivlPeso;
+		} stProcedenciaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraProcedencia();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorProcedenciaAll CURSOR FOR
+   		SELECT 	idProcedencia,
+		sgProcedencia,
+		dsProcedencia,
+		vlPeso
+		FROM apoio.Procedencia; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorProcedenciaAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CProcedencia::ListAll()");
+			return 0;//Erro`
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stProcedenciaRegistro, 0, sizeof(stProcedenciaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorProcedenciaAll INTO :stProcedenciaRegistro:stProcedenciaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stProcedenciaRegistro.stidProcedencia.arr,
+				(char*)stProcedenciaRegistro.stsgProcedencia.arr,
+				(char*)stProcedenciaRegistro.stdsProcedencia.arr,
+				(char*)stProcedenciaRegistro.stvlPeso.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorProcedenciaAll;
+		}
+		ULOG_END("CProcedencia::ListAll()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CProcedencia::GetXml( char* cNomeTag, XMLGen*xml )
+{
+    
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			xml->createTag(cNomeTag);
+			//Adiciona a proprieda necessaria para o Weblogic
+			xml->addProp( "xmlns", "admsistemas.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idProcedencia", Registro(x)->cidProcedencia );
+				xml->addItem("sgProcedencia", Registro(x)->csgProcedencia );
+				xml->addItem("dsProcedencia", Registro(x)->cdsProcedencia );
+				xml->addItem("vlPeso", Registro(x)->cvlPeso ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			xml->closeTag();
+		}
+	}
+}

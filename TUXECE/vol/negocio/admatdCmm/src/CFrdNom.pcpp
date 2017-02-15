@@ -1,0 +1,357 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CFrdNom.h"
+
+CNomeFeriado::CNomeFeriado()
+{
+}
+
+CNomeFeriado::~CNomeFeriado()
+{
+}
+
+int CNomeFeriado::Insert( 
+			char* cdsFeriado,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CNomeFeriado::Insert()");        
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidNomeFeriado[255+1];
+		char* cAuxdsFeriado = cdsFeriado;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNomeFeriado();
+		
+		memset( &cAuxidNomeFeriado, 0, sizeof(cAuxidNomeFeriado) ); 
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		
+		//Pega um id unico e sequencia para a insercao
+		EXEC SQL SELECT calendario.NomeFeriadoSQ.NEXTVAL INTO :cAuxidNomeFeriado FROM DUAL;
+
+		//Realiza o insert
+		EXEC SQL INSERT INTO calendario.NomeFeriado
+		(	idNomeFeriado,
+			dsFeriado,
+			idUsuarioAlteracao,
+			dtUltimaAlteracao) 
+		VALUES 
+		(	:cAuxidNomeFeriado,
+			:cAuxdsFeriado,
+			:cAuxidUsuarioAlteracao,
+			SYSDATE);
+			
+        ULOG_END("CNomeFeriado::Insert()");        
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) {
+			return 0;//Erro
+		}
+		else {
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CNomeFeriado::Update( 
+			char* cidNomeFeriado,
+			char* cdsFeriado,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CNomeFeriado::Update()");        
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		
+			char* cAuxidNomeFeriado = cidNomeFeriado;
+			char* cAuxdsFeriado = cdsFeriado;
+			char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNomeFeriado();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+		UPDATE calendario.NomeFeriado
+		SET 	dsFeriado = :cAuxdsFeriado,
+		idUsuarioAlteracao = :cAuxidUsuarioAlteracao,
+		dtUltimaAlteracao = SYSDATE
+		WHERE 	idNomeFeriado = :cAuxidNomeFeriado;  
+		 
+		ULOG_END("CNomeFeriado::Update()");        
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoUpdate:
+	throw new TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CNomeFeriado::Delete( char* cidNomeFeriado )
+{
+    ULOG_START("CNomeFeriado::Delete()");        
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidNomeFeriado = cidNomeFeriado; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNomeFeriado();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM calendario.NomeFeriado
+		WHERE (idNomeFeriado = :cAuxidNomeFeriado);
+		
+		ULOG_END("CNomeFeriado::Delete()");        
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CNomeFeriado::ListId( char* cidNomeFeriado ) 
+{
+    ULOG_START("CNomeFeriado::ListId()");        
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidNomeFeriado = cidNomeFeriado; 
+		struct
+		{
+			VARCHAR stidNomeFeriado[21+1];
+			VARCHAR stdsFeriado[255+1];
+		} stNomeFeriadoRegistro;
+		struct
+		{
+			short iidNomeFeriado;
+			short idsFeriado;
+		} stNomeFeriadoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNomeFeriado();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorNomeFeriadoId CURSOR FOR 
+   		SELECT 	idNomeFeriado,
+	            dsFeriado
+		FROM calendario.NomeFeriado
+		WHERE idNomeFeriado = :cAuxidNomeFeriado;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorNomeFeriadoId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CNomeFeriado::ListId()");        
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stNomeFeriadoRegistro, 0, sizeof(stNomeFeriadoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorNomeFeriadoId INTO :stNomeFeriadoRegistro:stNomeFeriadoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stNomeFeriadoRegistro.stidNomeFeriado.arr,
+				(char*)stNomeFeriadoRegistro.stdsFeriado.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorNomeFeriadoId;
+		}
+		ULOG_END("CNomeFeriado::ListId()");        
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CNomeFeriado::ListAll( void )
+{
+    ULOG_START("CNomeFeriado::ListAll()");        
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidNomeFeriado[21+1];
+			VARCHAR stdsFeriado[255+1];
+		} stNomeFeriadoRegistro;
+		struct
+		{
+			short iidNomeFeriado;
+			short idsFeriado;
+		} stNomeFeriadoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNomeFeriado();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorNomeFeriadoAll CURSOR FOR
+   		SELECT 	idNomeFeriado,
+		dsFeriado
+		FROM calendario.NomeFeriado
+		ORDER BY dsFeriado; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorNomeFeriadoAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CNomeFeriado::ListAll()");        
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stNomeFeriadoRegistro, 0, sizeof(stNomeFeriadoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorNomeFeriadoAll INTO :stNomeFeriadoRegistro:stNomeFeriadoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stNomeFeriadoRegistro.stidNomeFeriado.arr,
+				(char*)stNomeFeriadoRegistro.stdsFeriado.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorNomeFeriadoAll;
+		}
+		ULOG_END("CNomeFeriado::ListAll()");        
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CNomeFeriado::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			xml->createTag(cNomeTag);
+			//Adiciona a proprieda necessaria para o Weblogic
+			xml->addProp( "xmlns", "admsistemas.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idNomeFeriado", Registro(x)->cidNomeFeriado );
+				xml->addItem("dsFeriado", Registro(x)->cdsFeriado ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			xml->closeTag();
+		}
+	}
+}

@@ -1,0 +1,478 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CContatoTipoRetorno.h"
+
+CContatoTipoRetorno::CContatoTipoRetorno()
+{
+}
+
+CContatoTipoRetorno::~CContatoTipoRetorno()
+{
+}
+
+int CContatoTipoRetorno::Insert( 
+								char* cidContato,
+								char* cidTipoRetornoContato,
+								char* cidUsuarioAlteracao
+							 )
+{
+    ULOG_START("CContatoTipoRetorno::Insert()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+		char* cAuxidTipoRetornoContato = cidTipoRetornoContato;
+		VARCHAR stidContatoTipoRetorno[21+1];
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		memset( &stidContatoTipoRetorno, 0, sizeof( stidContatoTipoRetorno ) );
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+
+		EXEC SQL
+			SELECT
+				CONTATOADM.CONTATOTIPORETORNOSQ.NEXTVAL
+			INTO
+				:stidContatoTipoRetorno
+			FROM DUAL;
+		
+		//Realiza o insert
+		EXEC SQL 
+			INSERT INTO CONTATOADM.CONTATOTIPORETORNO
+			(	IDCONTATOTIPORETORNO,
+				IDCONTATO,
+				IDTIPORETORNOCONTATO,
+				IDUSUARIOALTERACAO,
+				DTULTIMAALTERACAO
+			)
+			VALUES 
+			(	:stidContatoTipoRetorno,
+				:cAuxidContato,
+				:cAuxidTipoRetornoContato,
+				:cAuxidUsuarioAlteracao,
+				SYSDATE
+			);
+		//Adiciona a classe
+		Add( 	
+			(char*)stidContatoTipoRetorno.arr,
+			cAuxidContato, 
+			cAuxidTipoRetornoContato
+		);
+
+        ULOG_END("CContatoTipoRetorno::Insert()");
+		return 0;//Sucesso
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CContatoTipoRetorno::Update( 
+								char* cidContatoTipoRetorno,
+								char* cidContato,
+								char* cidTipoRetornoContato,
+								char* cidUsuarioAlteracao 
+							 )
+{
+    ULOG_START("CContatoTipoRetorno::Update()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContatoTipoRetorno = cidContatoTipoRetorno;
+		char* cAuxidContato = cidContato;
+		char* cAuxidTipoRetornoContato = cidTipoRetornoContato;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoTipoRetorno();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+			UPDATE CONTATOADM.CONTATOTIPORETORNO
+			SET
+				IDCONTATO = :cAuxidContato,
+				IDTIPORETORNOCONTATO = :cAuxidTipoRetornoContato,
+				IDUSUARIOALTERACAO = :cAuxidUsuarioAlteracao,
+				DTULTIMAALTERACAO = SYSDATE
+			WHERE
+				IDCONTATOTIPORETORNO = :cAuxidContatoTipoRetorno;
+		
+		ULOG_END("CContatoTipoRetorno::Update()");
+		return 0;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoUpdate:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CContatoTipoRetorno::Delete( char* cidContatoTipoRetorno )
+{
+    ULOG_START("CContatoTipoRetorno::Delete()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidContatoTipoRetorno = cidContatoTipoRetorno; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoTipoRetorno();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL 
+			DELETE FROM 
+				CONTATOADM.CONTATOTIPORETORNO
+			WHERE 
+				IDCONTATOTIPORETORNO = :cAuxidContatoTipoRetorno;
+				
+		ULOG_END("CContatoTipoRetorno::Delete()");
+		
+		return 0;//Sucesso
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if( sqlca.sqlcode == -2292 )
+		return 1;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoTipoRetorno::ListId( char* cidContatoTipoRetorno ) 
+{
+    ULOG_START("CContatoTipoRetorno::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContatoTipoRetorno = cidContatoTipoRetorno; 
+		struct
+		{
+			VARCHAR stidContatoTipoRetorno[21+1];
+			VARCHAR stidContato[21+1];
+			VARCHAR stidTipoRetornoContato[21+1];
+		} stContatoTipoRetornoRegistro;
+		struct
+		{
+			short iidContatoTipoRetorno;
+			short iidContato;
+			short iidTipoRetornoContato;
+		} stContatoTipoRetornoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoTipoRetorno();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL 
+   			DECLARE 
+   				CursorContatoTipoRetornoId CURSOR FOR 
+   			SELECT 	
+   				IDCONTATOTIPORETORNO,
+				IDCONTATO,
+				IDTIPORETORNOCONTATO
+			FROM 
+				CONTATOADM.CONTATOTIPORETORNO
+			WHERE 
+				IDCONTATOTIPORETORNO = :cAuxidContatoTipoRetorno;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorContatoTipoRetornoId;
+
+		//Caso inexista registros sair do loop
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			//Zera a estrutura de restorno
+			memset( &stContatoTipoRetornoRegistro, 0, sizeof(stContatoTipoRetornoRegistro) );
+			//Pega um registro no CURSOR
+			EXEC SQL FETCH CursorContatoTipoRetornoId INTO :stContatoTipoRetornoRegistro:stContatoTipoRetornoIndicator;
+			//Adiciona a classe
+			Add( 	
+				(char*)stContatoTipoRetornoRegistro.stidContatoTipoRetorno.arr,
+				(char*)stContatoTipoRetornoRegistro.stidContato.arr, 
+				(char*)stContatoTipoRetornoRegistro.stidTipoRetornoContato.arr
+			);
+			//conta quantos existem
+			iCont++;
+		}
+		//Fecha o CURSOR
+		EXEC SQL CLOSE CursorContatoTipoRetornoId;
+		
+		ULOG_END("CContatoTipoRetorno::ListId()");
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+	//Retorna a quantidade de registros
+	return iCont;
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CContatoTipoRetorno::ListAll( void )
+{
+    ULOG_START("CContatoTipoRetorno::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidContatoTipoRetorno[21+1];
+			VARCHAR stidContato[21+1];
+			VARCHAR stidTipoRetornoContato[21+1];
+		} stContatoTipoRetornoRegistro;
+		struct
+		{
+			short iidContatoTipoRetorno;
+			short iidContato;
+			short iidTipoRetornoContato;
+		} stContatoTipoRetornoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoTipoRetorno();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorContatoTipoRetornoAll CURSOR FOR
+   			SELECT 	
+   				IDCONTATOTIPORETORNO,
+				IDCONTATO,
+				IDTIPORETORNOCONTATO
+			FROM 
+				CONTATOADM.CONTATOTIPORETORNO
+			WHERE
+				IDCONTATOTIPORETORNO > 0; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorContatoTipoRetornoAll;
+
+		//Caso inexista registros sair do loop
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			//Zera a estrutura de restorno
+			memset( &stContatoTipoRetornoRegistro, 0, sizeof(stContatoTipoRetornoRegistro) );
+			//Pega um registro no CURSOR
+			EXEC SQL FETCH CursorContatoTipoRetornoAll INTO :stContatoTipoRetornoRegistro:stContatoTipoRetornoIndicator;
+			//Adiciona a classe
+			Add( 	
+				(char*)stContatoTipoRetornoRegistro.stidContatoTipoRetorno.arr,
+				(char*)stContatoTipoRetornoRegistro.stidContato.arr, 
+				(char*)stContatoTipoRetornoRegistro.stidTipoRetornoContato.arr
+			);
+			//conta quantos existem
+			iCont++;
+		}
+		//Fecha o cursor
+		EXEC SQL CLOSE CursorContatoTipoRetornoAll;
+		
+		ULOG_END("CContatoTipoRetorno::ListAll()");
+	}
+	catch(...)
+	{
+		throw;
+	}
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CContatoTipoRetorno::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idContatoTipoRetorno", Registro(x)->cidContatoTipoRetorno );
+				xml->addItem("idContato", Registro(x)->cidContato ); 
+				xml->addItem("idTipoRetornoContato", Registro(x)->cidTipoRetornoContato ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+
+int CContatoTipoRetorno::RelacaoPorIdContato( char* cidContato ) 
+{
+    ULOG_START("CContatoTipoRetorno::RelacaoPorIdContato()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		struct
+		{
+			VARCHAR stidContatoTipoRetorno[21+1];
+			VARCHAR stidContato[21+1];
+			VARCHAR stidTipoRetornoContato[21+1];
+		} stContatoTipoRetornoRegistro;
+		struct
+		{
+			short iidContatoTipoRetorno;
+			short iidContato;
+			short iidTipoRetornoContato;
+		} stContatoTipoRetornoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoTipoRetorno();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacaoPorIdContato;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL 
+   			DECLARE 
+   				CursorRelacaoPorIdContato CURSOR FOR 
+   			SELECT 	
+   				IDCONTATOTIPORETORNO,
+				IDCONTATO,
+				IDTIPORETORNOCONTATO
+			FROM 
+				CONTATOADM.CONTATOTIPORETORNO
+			WHERE 
+				IDCONTATO = :cAuxidContato;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorRelacaoPorIdContato;
+
+		//Caso inexista registros sair do loop
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		for(;;)
+		{
+			//Zera a estrutura de restorno
+			memset( &stContatoTipoRetornoRegistro, 0, sizeof(stContatoTipoRetornoRegistro) );
+			//Pega um registro no CURSOR
+			EXEC SQL FETCH CursorRelacaoPorIdContato INTO :stContatoTipoRetornoRegistro:stContatoTipoRetornoIndicator;
+			//Adiciona a classe
+			Add( 	
+				(char*)stContatoTipoRetornoRegistro.stidContatoTipoRetorno.arr,
+				(char*)stContatoTipoRetornoRegistro.stidContato.arr, 
+				(char*)stContatoTipoRetornoRegistro.stidTipoRetornoContato.arr
+			);
+			//conta quantos existem
+			iCont++;
+		}
+		//Fecha o CURSOR
+		EXEC SQL CLOSE CursorRelacaoPorIdContato;
+
+        ULOG_END("CContatoTipoRetorno::RelacaoPorIdContato()");
+        
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+	//Retorna a quantidade de registros
+	return iCont;
+GotoRelacaoPorIdContato:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CContatoTipoRetorno::Find( char* cidContato, char* cidTipoRetornoContato )
+{
+	int iRet = -1;
+	for( int x = 0; x < Quantidade(); x++ )
+	{
+		if( ( strcmp( Registro(x)->cidContato, cidContato ) == 0 )
+		  &&( strcmp( Registro(x)->cidTipoRetornoContato, cidTipoRetornoContato ) == 0 ) )
+		{
+			iRet = x;
+		}
+	}
+	return iRet;
+}

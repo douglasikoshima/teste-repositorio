@@ -1,0 +1,185 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Miguel Benaventes
+ * @version $Revision: 1.1.6.3 $
+ * @CVS     $Author: a5114878 $ - $Date: 2012/08/27 19:27:30 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/selectData.h"
+
+EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+
+int NiveisRequest::QueryLevels()
+{
+    ULOG_START("NiveisRequest::QueryLevels()");
+
+	long reqLevelID;
+    int           retCode;
+
+    INITIALIZE_SQL;
+	EXEC SQL BEGIN DECLARE SECTION;
+	
+        long LevelNbr;
+		short ind_LevelNbr;
+		VARCHAR whereClause[255];
+
+	EXEC SQL END DECLARE SECTION;
+
+	TO_VARCHAR( whereClause,pnode );
+
+	EXEC SQL 
+        SELECT 
+            MAX(nrNivel) 
+        INTO 
+            :LevelNbr:ind_LevelNbr 
+        FROM 
+            Contatoadm.NivelSequencia
+		WHERE 
+            IDSequenciaMandatoria = :whereClause;
+
+	if ( ind_LevelNbr == -1 )
+        return 0;
+
+	for ( reqLevelID=1;reqLevelID<=LevelNbr;reqLevelID++ )
+	{
+		retCode = QuerySpecificLevel(reqLevelID);
+		if ( retCode < 0 )
+		{
+			sqlca.sqlcode=retCode;
+			goto UndefinedError;
+		}
+	}
+	
+	ULOG_END("NiveisRequest::QueryLevels()"); 
+   
+	return 1;
+
+UndefinedError:
+	throw new 
+        TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}
+
+int NiveisRequest::QuerySpecificLevel( long levelID )
+{
+    ULOG_START("NiveisRequest::QuerySpecificLevel()"); 
+   
+	INITIALIZE_SQL;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			char Type;
+			long idSequencia;
+			VARCHAR nmGrupo[255];
+			VARCHAR status[2];
+			long Ordem;
+		}oraNvlA;
+		long wc_IDSequenciaMandatoria;
+		long wc_Nivel;
+	EXEC SQL END DECLARE SECTION;
+	char lstType;
+
+	wc_IDSequenciaMandatoria = atol(pnode);
+	wc_Nivel = levelID;
+	lstType = 0;
+
+	EXEC SQL DECLARE vw_GetNivel CURSOR FOR
+		SELECT type,idSequencia,nmGrupo,Status,sqOrdem FROM
+			(
+				SELECT 'B' Type,a.idSequencia,b.nmGrupo,'0' Status,a.sqOrdem
+				FROM	contatoadm.nivelsequencia a, 
+						acesso.Grupo b,
+						contatoadm.ContatoGrupo c,
+						contatoadm.sequencia d
+				WHERE	a.idsequencia=d.idsequencia
+				AND		d.idcontatogrupo=c.idcontatogrupo
+				AND		c.idgrupo=b.idgrupo
+				AND     b.dtexclusao is null
+				AND		a.idsequenciamandatoria=:wc_IDSequenciaMandatoria
+				AND		d.idSequencia!=:wc_IDSequenciaMandatoria
+				AND		a.nrNivel=:wc_Nivel
+				AND		idtiposequencia=(
+							SELECT	idtiposequencia 
+							FROM	contatoadm.tiposequencia
+							WHERE	nmtiposequencia='TRATAMENTO')
+				UNION ALL
+				SELECT 'A' Type, d.idSequencia,b.nmGrupo,'0' Status,d.sqOrdem
+				FROM		acesso.Grupo b,
+						contatoadm.ContatoGrupo c,
+						contatoadm.sequencia d
+				WHERE		d.idcontatogrupo=c.idcontatogrupo
+				AND		c.idgrupo=b.idgrupo
+				AND     b.dtexclusao is null
+				AND 	d.dtExclusao IS NULL
+				AND		d.idSequencia!=:wc_IDSequenciaMandatoria
+				AND		d.idSequencia NOT IN (SELECT idSequencia
+									  	        FROM CONTATOADM.NIVELSEQUENCIA 
+									  	       WHERE IDSEQUENCIAMANDATORIA = :wc_IDSequenciaMandatoria
+									   AND nrNivel=:wc_Nivel)
+				AND		c.idContato = (SELECT cg.idContato
+									   FROM contatoadm.contatogrupo cg, contatoadm.sequencia s
+									   WHERE cg.idcontatogrupo = s.idcontatogrupo
+									   AND s.idsequencia = :wc_IDSequenciaMandatoria)
+				AND		d.idtiposequencia=(
+							SELECT	idtiposequencia 
+							FROM	contatoadm.tiposequencia
+							WHERE	nmtiposequencia='TRATAMENTO')
+				
+			)tbAux01
+		ORDER BY Type,sqOrdem,nmGrupo;
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL OPEN vw_GetNivel;
+
+	pxml->createTag("GrupoTratamento");
+	pxml->addItem("nivel",levelID);
+	lstType='A';
+	pxml->createTag("Disponiveis");
+
+	for(;;)
+	{
+		EXEC SQL FETCH vw_GetNivel INTO :oraNvlA;
+		CL_FETCH(oraNvlA.nmGrupo);
+		CL_FETCH(oraNvlA.status);
+		if(lstType!=oraNvlA.Type)
+		{
+			if ( lstType )
+                pxml->closeTag();
+		
+            if ( oraNvlA.Type=='B' )
+				pxml->createTag("Sequencia");
+			else
+				pxml->createTag("Unknown");
+			
+            lstType=oraNvlA.Type;
+		}
+		pxml->createTag("GrupoVO");
+		pxml->addItem("codigo",oraNvlA.idSequencia);
+		pxml->addItem("descricao",(char*)oraNvlA.nmGrupo.arr);
+		pxml->addItem("status",(char*)oraNvlA.status.arr);
+		pxml->addItem("ordem",oraNvlA.Ordem);
+		pxml->closeTag();
+	}
+
+	EXEC SQL CLOSE vw_GetNivel;
+
+	pxml->closeTag();
+	pxml->closeTag();
+	
+	ULOG_END("NiveisRequest::QuerySpecificLevel()"); 
+
+	return 1;
+
+UndefinedError:
+	if( sqlca.sqlcode == 1403 )
+		return 0;
+	
+    throw new TuxBasicOraException(sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc,sqlca.sqlerrm.sqlerrml);
+}

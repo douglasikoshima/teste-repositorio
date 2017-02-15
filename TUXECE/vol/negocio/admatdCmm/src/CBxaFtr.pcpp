@@ -1,0 +1,2090 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include<tuxfw.h>
+#include "../include/CBxaFtr.h"
+
+CBaixaFiltro::CBaixaFiltro()
+{
+}
+
+CBaixaFiltro::~CBaixaFiltro()
+{
+}
+
+int CBaixaFiltro::Relacao(char* cidBaixa,XMLGen*xml_g)
+{
+    ULOG_START("CBaixaFiltro::Relacao()");
+	if( strlennull( cidBaixa ) > 0 )
+	{
+		xml_g->createTag( "AdmFiltrosVO" );
+		xml_g->addProp( "xmlns", "admsistemas.fo.vivo.com.br/vo" );
+		xml_g->addItem("idBaixa", cidBaixa );
+
+		xml_g->createTag( "tipoPessoaExistente" );
+		ExistentesTipoRelacionamento( cidBaixa );
+		GetXmlTipoRelacionamento( "AdmTipoPessoaVO", xml_g );
+		xml_g->closeTag();//tipoPessoaExistente
+
+		xml_g->createTag( "tipoPessoaAssociada" );
+		RelacaoTipoRelacionamento( cidBaixa );
+		GetXmlTipoRelacionamento( "AdmTipoPessoaVO", xml_g );
+		xml_g->closeTag();//tipoPessoaAssociada
+
+		xml_g->createTag( "tipoLinhaExistente" );
+		ExistentesTipoLinha( cidBaixa );
+		GetXmlTipoLinha( "AdmTipoLinhaVO", xml_g );
+		xml_g->closeTag();//tipoLinhaExistente
+
+		xml_g->createTag( "tipoLinhaAssociada" );
+		RelacaoTipoLinha( cidBaixa );
+		GetXmlTipoLinha( "AdmTipoLinhaVO", xml_g );
+		xml_g->closeTag();//tipoLinhaAssociada
+
+		xml_g->createTag( "segmentacaoExistente" );
+		ExistentesSegmentacao( cidBaixa );
+		GetXmlSegmentacao( "AdmSegmentacaoVO", xml_g );
+		xml_g->closeTag();//segmentacaoExistente
+
+		xml_g->createTag( "segmentacaoAssociada" );
+		RelacaoSegmentacao( cidBaixa );
+		GetXmlSegmentacao( "AdmSegmentacaoVO", xml_g );
+		xml_g->closeTag();//segmentacaoAssociada
+
+		xml_g->createTag( "tipoCarteiraExistente" );
+		ExistentesTipoCarteira( cidBaixa );
+		GetXmlTipoCarteira( "AdmTipoCarteiraVO", xml_g );
+		xml_g->closeTag();//tipoCarteiraExistente
+
+		xml_g->createTag( "tipoCarteiraAssociada" );
+		RelacaoTipoCarteira( cidBaixa );
+		GetXmlTipoCarteira( "AdmTipoCarteiraVO", xml_g );
+		xml_g->closeTag();//tipoCarteiraAssociada
+
+		xml_g->closeTag();//AdmFiltrosVO
+	}//if( strlennull( cidBaixa ) > 0 )
+	else
+	{
+	    ULOG_END("CBaixaFiltro::Relacao() return 0");
+		return 0;
+	}
+		
+    ULOG_END("CBaixaFiltro::Relacao() return 1");
+	return 1;
+}
+
+int CBaixaFiltro::DeleteTipoLinhaIdBaixa( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::DeleteTipoLinhaIdBaixa()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidBaixa = cidBaixa;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+
+		//Executa a instrucao de delecao
+		EXEC SQL 
+			DELETE CONTATOADM.BAIXATIPOLINHA
+			WHERE 
+				IDBAIXA = :cAuxidBaixa;
+				
+		ULOG_END("CBaixaFiltro::DeleteTipoLinhaIdBaixa()");
+
+		return 1;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CBaixaFiltro::RelacionaTipoLinha( char* cidBaixa
+                                     ,char* cidTipoLinha
+							         ,char* cidUsuarioAlteracao )
+{
+    ULOG_START("CBaixaFiltro::RelacionaTipoLinha()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		char* cAuxidTipoLinha = cidTipoLinha;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		ZeraBaixaFiltro();
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacionaTipoLinha;
+		sqlca.sqlcode=0;
+		
+		//Realiza o insert
+		EXEC SQL 
+			INSERT INTO CONTATOADM.BAIXATIPOLINHA
+			(	IDBAIXATIPOLINHA,
+				IDBAIXA,
+				IDTIPOLINHA,
+				IDUSUARIOALTERACAO,
+				DTULTIMAALTERACAO )
+			VALUES 
+			(	CONTATOADM.BAIXATIPOLINHASQ.NEXTVAL,
+				:cAuxidBaixa,
+				:cAuxidTipoLinha,
+				:cAuxidUsuarioAlteracao,
+				SYSDATE);
+
+        ULOG_END("CBaixaFiltro::RelacionaTipoLinha()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return 1;//Sucesso
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoRelacionaTipoLinha:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::RelacaoTipoLinha( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::RelacaoTipoLinha()");
+    
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		struct
+		{
+			VARCHAR stidBaixaFiltro[21+1];
+			VARCHAR stidBaixa[21+1];
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinha;
+		struct
+		{
+			short iidBaixaFiltro;
+			short iidBaixa;
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacaoTipoLinha;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		/*
+		EXEC SQL 
+			DECLARE
+				CursorRelacaoTipoLinha CURSOR FOR
+			SELECT 
+				IDBAIXATIPOLINHA
+			   ,IDBAIXA
+			   ,IDTIPOLINHA
+			   ,SGTIPOLINHA
+			   ,DSTIPOLINHA
+			   ,VLPESO
+			FROM
+				CONTATOADM.BAIXATIPOLINHABZEROUM
+			WHERE
+				IDBAIXA = :cAuxidBaixa
+			AND
+				IDTIPOLINHA > 0
+			ORDER BY 
+				UPPER(DSTIPOLINHA);
+		*/
+				
+		//Executa a instrucao de update
+		EXEC SQL 
+			DECLARE
+				CursorRelacaoTipoLinha CURSOR FOR
+			SELECT 
+				BAIXATIPOLINHA.IDBAIXATIPOLINHA
+			   ,BAIXA.IDBAIXA
+			   ,TIPOLINHA.IDTIPOLINHA
+			   ,TIPOLINHA.SGTIPOLINHA
+			   ,TIPOLINHA.DSTIPOLINHA
+			   ,TIPOLINHA.VLPESO
+			FROM 
+			   CONTATOADM.BAIXA BAIXA,
+			   APOIO.TIPOLINHA TIPOLINHA,
+			   CONTATOADM.BAIXATIPOLINHA BAIXATIPOLINHA
+			WHERE 
+			   BAIXATIPOLINHA.IDTIPOLINHA = TIPOLINHA.IDTIPOLINHA
+			AND 
+			   BAIXATIPOLINHA.IDBAIXA = BAIXA.IDBAIXA
+			AND
+			   BAIXA.IDBAIXA = :cAuxidBaixa
+			AND
+			   TIPOLINHA.IDTIPOLINHA > 0
+			ORDER BY 
+			   UPPER(TIPOLINHA.DSTIPOLINHA);
+
+		EXEC SQL OPEN CursorRelacaoTipoLinha;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		   ULOG_END("CBaixaFiltro::RelacaoTipoLinha()");
+		   return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stTipoLinha, 0, sizeof( stTipoLinha ) );
+				EXEC SQL FETCH CursorRelacaoTipoLinha INTO :stTipoLinha:stTipoLinhaIndicator;
+				
+				Add( (char*)stTipoLinha.stidBaixaFiltro.arr
+				    ,(char*)stTipoLinha.stidBaixa.arr
+				    ,(char*)stTipoLinha.stidFiltro.arr
+				    ,(char*)stTipoLinha.stsgFiltro.arr
+				    ,(char*)stTipoLinha.stdsFiltro.arr
+				    ,(char*)stTipoLinha.stvlPeso.arr );
+			}
+		}
+		EXEC SQL CLOSE CursorRelacaoTipoLinha;
+		
+		ULOG_END("CBaixaFiltro::RelacaoTipoLinha()");
+		
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+	return iCont;
+GotoRelacaoTipoLinha:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::ExistentesTipoLinha( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::ExistentesTipoLinha()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		struct
+		{
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinha;
+		struct
+		{
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+				
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoExistentesTipoLinha;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+			DECLARE
+				CursorExistentesTipoLinha CURSOR FOR
+			SELECT
+				IDTIPOLINHA
+			   ,SGTIPOLINHA
+			   ,DSTIPOLINHA
+			   ,VLPESO
+			FROM 
+			     APOIO.TIPOLINHA
+			WHERE
+			     IDTIPOLINHA NOT IN 
+			     (
+						SELECT 
+						  IDTIPOLINHA
+						FROM
+							CONTATOADM.BAIXATIPOLINHA
+						WHERE
+							IDBAIXA = :cAuxidBaixa
+			      )
+			AND 
+				IDTIPOLINHA > 0
+			ORDER BY 
+				UPPER(DSTIPOLINHA);
+				
+		EXEC SQL OPEN CursorExistentesTipoLinha;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CBaixaFiltro::ExistentesTipoLinha()");
+			return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stTipoLinha, 0, sizeof( stTipoLinha ) );
+				EXEC SQL FETCH CursorExistentesTipoLinha INTO :stTipoLinha:stTipoLinhaIndicator;
+				
+				Add( ""
+				    ,""
+				    ,(char*)stTipoLinha.stidFiltro.arr
+				    ,(char*)stTipoLinha.stsgFiltro.arr
+				    ,(char*)stTipoLinha.stdsFiltro.arr
+				    ,(char*)stTipoLinha.stvlPeso.arr );
+			}
+		}
+		EXEC SQL CLOSE CursorExistentesTipoLinha;
+		ULOG_END("CBaixaFiltro::ExistentesTipoLinha()");
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+	return iCont;
+GotoExistentesTipoLinha:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::DeleteTipoRelacionamentoIdBaixa( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::DeleteTipoRelacionamentoIdBaixa()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidBaixa = cidBaixa;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL 
+			DELETE CONTATOADM.BAIXATIPORELACIONAMENTO
+			WHERE 
+				IDBAIXA = :cAuxidBaixa;
+		ULOG_END("CBaixaFiltro::DeleteTipoRelacionamentoIdBaixa()");
+		return 1;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CBaixaFiltro::RelacionaTipoRelacionamento( char* cidBaixa
+                                       ,char* cidTipoRelacionamento
+							           ,char* cidUsuarioAlteracao )
+{
+    ULOG_START("CBaixaFiltro::RelacionaTipoRelacionamento()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		char* cAuxidTipoRelacionamento = cidTipoRelacionamento;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		ZeraBaixaFiltro();
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacionaTipoRelacionamento;
+		sqlca.sqlcode=0;
+		
+		//Realiza o insert
+		EXEC SQL 
+			INSERT INTO CONTATOADM.BAIXATIPORELACIONAMENTO
+			(	IDBAIXATIPORELACIONAMENTO,
+				IDBAIXA,
+				IDTIPORELACIONAMENTO,
+                DTULTIMAALTERACAO,
+                IDUSUARIOALTERACAO)
+			VALUES 
+			(	CONTATOADM.BAIXATIPORELACIONAMENTOSQ.NEXTVAL,
+				:cAuxidBaixa,
+				:cAuxidTipoRelacionamento,
+                SYSDATE,
+                :cAuxidUsuarioAlteracao);
+				
+		ULOG_END("CBaixaFiltro::RelacionaTipoRelacionamento()");
+
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return 1;//Sucesso
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoRelacionaTipoRelacionamento:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::RelacaoTipoRelacionamento( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::RelacaoTipoRelacionamento()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		struct
+		{
+			VARCHAR stidBaixaFiltro[21+1];
+			VARCHAR stidBaixa[21+1];
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoRelacionamento;
+		struct
+		{
+			short iidBaixaFiltro;
+			short iidBaixa;
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+			short ivlPeso;
+		} stTipoRelacionamentoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacaoTipoRelacionamento;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		/*
+		EXEC SQL 
+			DECLARE
+				CursorRelacaoTipoRelacionamento CURSOR FOR
+			SELECT 
+				IDBAIXATIPORELACIONAMENTO
+			   ,IDBAIXA
+			   ,IDTIPORELACIONAMENTO
+			   ,SGTIPORELACIONAMENTO
+			   ,NMTIPORELACIONAMENTO
+			   ,0 VLPESO
+			FROM
+				CONTATOADM.BAIXATIPORELACIONAMENTOBZEROUM
+			WHERE
+				IDBAIXA = :cAuxidBaixa
+			AND
+				IDTIPORELACIONAMENTO > 0
+			ORDER BY 
+				UPPER(NMTIPORELACIONAMENTO);
+		*/
+				
+		EXEC SQL 
+			DECLARE
+				CursorRelacaoTipoRelacionamento CURSOR FOR
+			SELECT 
+				BAIXATIPORELACIONAMENTO.IDBAIXATIPORELACIONAMENTO
+			   ,BAIXA.IDBAIXA
+			   ,TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+			   ,TIPORELACIONAMENTO.SGTIPORELACIONAMENTO
+			   ,TIPORELACIONAMENTO.NMTIPORELACIONAMENTO
+			   ,0 VLPESO
+			FROM CONTATOADM.BAIXA BAIXA,
+			     CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+			     CONTATOADM.BAIXATIPORELACIONAMENTO BAIXATIPORELACIONAMENTO
+			WHERE 
+				BAIXATIPORELACIONAMENTO.IDBAIXA = BAIXA.IDBAIXA
+			AND 
+			    BAIXATIPORELACIONAMENTO.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+			AND
+				BAIXA.IDBAIXA = :cAuxidBaixa
+			AND
+				TIPORELACIONAMENTO.IDTIPORELACIONAMENTO > 0
+			ORDER BY 
+				UPPER(TIPORELACIONAMENTO.NMTIPORELACIONAMENTO);
+
+		EXEC SQL OPEN CursorRelacaoTipoRelacionamento;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CBaixaFiltro::RelacaoTipoRelacionamento()");
+			return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stTipoRelacionamento, 0, sizeof( stTipoRelacionamento ) );
+				EXEC SQL FETCH CursorRelacaoTipoRelacionamento INTO :stTipoRelacionamento:stTipoRelacionamentoIndicator;
+				
+				Add( (char*)stTipoRelacionamento.stidBaixaFiltro.arr
+				    ,(char*)stTipoRelacionamento.stidBaixa.arr
+				    ,(char*)stTipoRelacionamento.stidFiltro.arr
+				    ,(char*)stTipoRelacionamento.stsgFiltro.arr
+				    ,(char*)stTipoRelacionamento.stdsFiltro.arr
+				    ,(char*)stTipoRelacionamento.stvlPeso.arr );
+			}
+		}
+		EXEC SQL CLOSE CursorRelacaoTipoRelacionamento;
+		
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CBaixaFiltro::RelacaoTipoRelacionamento()");
+	return iCont;
+GotoRelacaoTipoRelacionamento:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::ExistentesTipoRelacionamento( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::ExistentesTipoRelacionamento()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		struct
+		{
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+		} stTipoRelacionamento;
+		struct
+		{
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+		} stTipoRelacionamentoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoExistentesTipoRelacionamento;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+/*
+		EXEC SQL 
+			DECLARE
+				CursorExistentesTipoRelacionamento CURSOR FOR
+			SELECT
+			    IDTIPORELACIONAMENTO
+			   ,SGTIPORELACIONAMENTO
+			   ,NMTIPORELACIONAMENTO
+			FROM 
+				CUSTOMER.TIPORELACIONAMENTO
+			WHERE
+				 IDTIPORELACIONAMENTO NOT IN 
+				 (
+					SELECT 
+						IDTIPORELACIONAMENTO
+					FROM
+						CONTATOADM.BAIXATIPORELACIONAMENTOBZEROUM
+					WHERE
+						IDBAIXA = :cAuxidBaixa
+				 )
+			AND 
+				IDTIPORELACIONAMENTO > 0
+			ORDER BY 
+				UPPER(NMTIPORELACIONAMENTO);
+*/
+		EXEC SQL 
+			DECLARE
+				CursorExistentesTipoRelacionamento CURSOR FOR
+			SELECT
+			    IDTIPORELACIONAMENTO
+			   ,SGTIPORELACIONAMENTO
+			   ,NMTIPORELACIONAMENTO
+			FROM 
+				CUSTOMER.TIPORELACIONAMENTO
+			WHERE
+				 IDTIPORELACIONAMENTO NOT IN 
+				 (
+					SELECT 
+						BAIXATIPORELACIONAMENTO.IDTIPORELACIONAMENTO
+					FROM
+						CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO,
+						CONTATOADM.BAIXATIPORELACIONAMENTO BAIXATIPORELACIONAMENTO
+		  			WHERE
+						BAIXATIPORELACIONAMENTO.IDBAIXA = :cAuxidBaixa
+				    AND 
+					    BAIXATIPORELACIONAMENTO.IDTIPORELACIONAMENTO = TIPORELACIONAMENTO.IDTIPORELACIONAMENTO					
+				 )
+			AND 
+				IDTIPORELACIONAMENTO > 0
+			ORDER BY 
+				UPPER(NMTIPORELACIONAMENTO);
+				
+		EXEC SQL OPEN CursorExistentesTipoRelacionamento;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CBaixaFiltro::ExistentesTipoRelacionamento()");
+			return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stTipoRelacionamento, 0, sizeof( stTipoRelacionamento ) );
+				EXEC SQL FETCH CursorExistentesTipoRelacionamento INTO :stTipoRelacionamento:stTipoRelacionamentoIndicator;
+				
+				Add( ""
+				    ,""
+				    ,(char*)stTipoRelacionamento.stidFiltro.arr
+				    ,(char*)stTipoRelacionamento.stsgFiltro.arr
+				    ,(char*)stTipoRelacionamento.stdsFiltro.arr
+				    ,"" );
+			}
+		}
+		EXEC SQL CLOSE CursorExistentesTipoRelacionamento;
+		
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+    ULOG_END("CBaixaFiltro::ExistentesTipoRelacionamento()");
+	return iCont;
+GotoExistentesTipoRelacionamento:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::DeleteSegmentacaoIdBaixa( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::DeleteSegmentacaoIdBaixa()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidBaixa = cidBaixa;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL 
+			DELETE CONTATOADM.BAIXASEGMENTACAO
+			WHERE 
+				IDBAIXA = :cAuxidBaixa;
+		
+		ULOG_END("CBaixaFiltro::DeleteSegmentacaoIdBaixa()");
+		return 1;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CBaixaFiltro::RelacionaSegmentacao( char* cidBaixa
+                                       ,char* cidSegmentacao
+							           ,char* cidUsuarioAlteracao )
+{
+    ULOG_START("CBaixaFiltro::RelacionaSegmentacao()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		char* cAuxidSegmentacao = cidSegmentacao;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		ZeraBaixaFiltro();
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacionaSegmentacao;
+		sqlca.sqlcode=0;
+		
+		//Realiza o insert
+		EXEC SQL 
+			INSERT INTO CONTATOADM.BAIXASEGMENTACAO
+			(	IDBAIXASEGMENTACAO,
+				IDBAIXA,
+				IDSEGMENTACAO,
+                DTULTIMAALTERACAO,
+                IDUSUARIOALTERACAO)
+			VALUES 
+			(	CONTATOADM.BAIXASEGMENTACAOSQ.NEXTVAL,
+				:cAuxidBaixa,
+				:cAuxidSegmentacao,
+                SYSDATE,
+                :cAuxidUsuarioAlteracao);
+
+        ULOG_END("CBaixaFiltro::RelacionaSegmentacao()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return 1;//Sucesso
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoRelacionaSegmentacao:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::RelacaoSegmentacao( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::RelacaoSegmentacao()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		struct
+		{
+			VARCHAR stidBaixaFiltro[21+1];
+			VARCHAR stidBaixa[21+1];
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stSegmentacao;
+		struct
+		{
+			short iidBaixaFiltro;
+			short iidBaixa;
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+			short ivlPeso;
+		} stSegmentacaoIndicator;		
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacaoSegmentacao;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		/*
+		EXEC SQL 
+			DECLARE
+				CursorRelacaoSegmentacao CURSOR FOR
+			SELECT 
+				IDBAIXASEGMENTACAO
+			   ,IDBAIXA
+			   ,IDSEGMENTACAO
+			   ,SGSEGMENTACAO
+			   ,DSSEGMENTACAO
+			   ,VLPESO
+			FROM
+				CONTATOADM.BAIXASEGMENTACAOBZEROUM
+			WHERE
+				IDBAIXA = :cAuxidBaixa
+			AND
+				IDSEGMENTACAO > 0
+			ORDER BY 
+				UPPER(DSSEGMENTACAO);
+		*/
+				
+		EXEC SQL 
+			DECLARE
+				CursorRelacaoSegmentacao CURSOR FOR
+			SELECT 
+				BAIXASEGMENTACAO.IDBAIXASEGMENTACAO
+			   ,BAIXA.IDBAIXA
+			   ,SEGMENTACAO.IDSEGMENTACAO
+			   ,SEGMENTACAO.SGSEGMENTACAO
+			   ,SEGMENTACAO.DSSEGMENTACAO
+			   ,SEGMENTACAO.VLPESO
+			FROM 
+			   CONTATOADM.BAIXA BAIXA,
+			   APOIO.SEGMENTACAO SEGMENTACAO,
+			   CONTATOADM.BAIXASEGMENTACAO BAIXASEGMENTACAO
+			WHERE 
+			   BAIXASEGMENTACAO.IDSEGMENTACAO = SEGMENTACAO.IDSEGMENTACAO
+			AND 
+			   BAIXASEGMENTACAO.IDBAIXA = BAIXA.IDBAIXA
+			AND
+			   BAIXA.IDBAIXA = :cAuxidBaixa
+			AND
+			   SEGMENTACAO.IDSEGMENTACAO > 0
+			ORDER BY 
+			   UPPER(SEGMENTACAO.DSSEGMENTACAO);
+
+		EXEC SQL OPEN CursorRelacaoSegmentacao;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CBaixaFiltro::RelacaoSegmentacao()");
+			return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stSegmentacao, 0, sizeof( stSegmentacao ) );
+				EXEC SQL FETCH CursorRelacaoSegmentacao INTO :stSegmentacao:stSegmentacaoIndicator;
+				
+				Add( (char*)stSegmentacao.stidBaixaFiltro.arr
+				    ,(char*)stSegmentacao.stidBaixa.arr
+				    ,(char*)stSegmentacao.stidFiltro.arr
+				    ,(char*)stSegmentacao.stsgFiltro.arr
+				    ,(char*)stSegmentacao.stdsFiltro.arr
+				    ,(char*)stSegmentacao.stvlPeso.arr );
+			}
+		}
+		EXEC SQL CLOSE CursorRelacaoSegmentacao;
+		
+	}
+	catch(...)
+	{
+		throw;
+	}
+    ULOG_END("CBaixaFiltro::RelacaoSegmentacao()");
+	return iCont;
+GotoRelacaoSegmentacao:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::ExistentesSegmentacao( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::ExistentesSegmentacao()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		struct
+		{
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stSegmentacao;
+		struct
+		{
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+			short ivlPeso;
+		} stSegmentacaoIndicator;		
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoExistentesSegmentacao;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		/*
+		EXEC SQL 
+			DECLARE
+				CursorExistentesSegmentacao CURSOR FOR
+			SELECT
+				 IDSEGMENTACAO
+				,SGSEGMENTACAO
+				,DSSEGMENTACAO
+				,VLPESO
+			FROM 
+				APOIO.SEGMENTACAO
+			WHERE
+				IDSEGMENTACAO NOT IN 
+				(
+					SELECT 
+						IDSEGMENTACAO
+					FROM
+						CONTATOADM.BAIXASEGMENTACAOBZEROUM
+					WHERE
+						IDBAIXA = :cAuxidBaixa
+				)
+			ORDER BY 
+				UPPER(DSSEGMENTACAO);
+	    */
+				
+		EXEC SQL 
+			DECLARE
+				CursorExistentesSegmentacao CURSOR FOR
+			SELECT
+				 IDSEGMENTACAO
+				,SGSEGMENTACAO
+				,DSSEGMENTACAO
+				,VLPESO
+			FROM 
+				APOIO.SEGMENTACAO
+			WHERE
+				IDSEGMENTACAO NOT IN 
+				(
+					SELECT 
+						SEGMENTACAO.IDSEGMENTACAO
+					FROM 
+					    CONTATOADM.BAIXA BAIXA,
+					    APOIO.SEGMENTACAO SEGMENTACAO,
+					    CONTATOADM.BAIXASEGMENTACAO BAIXASEGMENTACAO
+					WHERE 
+					    BAIXASEGMENTACAO.IDSEGMENTACAO = SEGMENTACAO.IDSEGMENTACAO
+					AND 
+					    BAIXASEGMENTACAO.IDBAIXA = BAIXA.IDBAIXA
+					AND
+						BAIXA.IDBAIXA = :cAuxidBaixa
+				)
+			ORDER BY 
+				UPPER(DSSEGMENTACAO);
+
+		EXEC SQL OPEN CursorExistentesSegmentacao;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CBaixaFiltro::ExistentesSegmentacao()");
+			return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stSegmentacao, 0, sizeof( stSegmentacao ) );
+				EXEC SQL FETCH CursorExistentesSegmentacao INTO :stSegmentacao:stSegmentacaoIndicator;
+				
+				Add( ""
+				    ,""
+				    ,(char*)stSegmentacao.stidFiltro.arr
+				    ,(char*)stSegmentacao.stsgFiltro.arr
+				    ,(char*)stSegmentacao.stdsFiltro.arr
+				    ,(char*)stSegmentacao.stvlPeso.arr );
+			}
+		}
+		EXEC SQL CLOSE CursorExistentesSegmentacao;
+		
+	}
+	catch(...)
+	{
+		throw;
+	}
+    ULOG_END("CBaixaFiltro::ExistentesSegmentacao()");
+	return iCont;
+GotoExistentesSegmentacao:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::DeleteTipoCarteiraIdBaixa( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::DeleteTipoCarteiraIdBaixa()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidBaixa = cidBaixa;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL 
+			DELETE CONTATOADM.BAIXATIPOCARTEIRA
+			WHERE 
+				IDBAIXA = :cAuxidBaixa;
+				
+		ULOG_END("CBaixaFiltro::DeleteTipoCarteiraIdBaixa()");
+		return 1;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CBaixaFiltro::RelacionaTipoCarteira( char* cidBaixa
+                                       ,char* cidTipoCarteira
+							           ,char* cidUsuarioAlteracao )
+{
+    ULOG_START("CBaixaFiltro::RelacionaTipoCarteira()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		char* cAuxidTipoCarteira = cidTipoCarteira;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		ZeraBaixaFiltro();
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacionaTipoCarteira;
+		sqlca.sqlcode=0;
+		
+		//Realiza o insert
+		EXEC SQL 
+			INSERT INTO CONTATOADM.BAIXATIPOCARTEIRA
+			(	IDBAIXATIPOCARTEIRA,
+				IDBAIXA,
+				IDTIPOCARTEIRA,
+                DTULTIMAALTERACAO,
+                IDUSUARIOALTERACAO)
+			VALUES 
+			(	CONTATOADM.BAIXATIPOCARTEIRASQ.NEXTVAL,
+				:cAuxidBaixa,
+				:cAuxidTipoCarteira,
+                SYSDATE,
+                :cAuxidUsuarioAlteracao);
+				
+        ULOG_END("CBaixaFiltro::RelacionaTipoCarteira()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return 1;//Sucesso
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoRelacionaTipoCarteira:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::RelacaoTipoCarteira( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::RelacaoTipoCarteira()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		struct
+		{
+			VARCHAR stidBaixaFiltro[21+1];
+			VARCHAR stidBaixa[21+1];
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoCarteira;
+		struct
+		{
+			short iidBaixaFiltro;
+			short iidBaixa;
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+			short ivlPeso;
+		} stTipoCarteiraIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacaoTipoCarteira;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		/*
+		EXEC SQL 
+			DECLARE
+				CursorRelacaoTipoCarteira CURSOR FOR
+			SELECT 
+				IDBAIXATIPOCARTEIRA
+			   ,IDBAIXA
+			   ,IDTIPOCARTEIRA
+			   ,SGTIPOCARTEIRA
+			   ,DSTIPOCARTEIRA
+			   ,VLPESO
+			FROM
+				CONTATOADM.BAIXATIPOCARTEIRABZEROUM
+			WHERE
+				IDBAIXA = :cAuxidBaixa
+			AND
+				IDTIPOCARTEIRA > 0
+			ORDER BY 
+				UPPER(DSTIPOCARTEIRA);
+				
+        */
+
+		EXEC SQL 
+			DECLARE
+				CursorRelacaoTipoCarteira CURSOR FOR
+			SELECT 
+				BAIXATIPOCARTEIRA.IDBAIXATIPOCARTEIRA
+			   ,BAIXA.IDBAIXA
+			   ,TIPOCARTEIRA.IDTIPOCARTEIRA
+			   ,TIPOCARTEIRA.SGTIPOCARTEIRA
+			   ,TIPOCARTEIRA.DSTIPOCARTEIRA
+			   ,VLPESO
+			FROM 
+			   CONTATOADM.BAIXA             BAIXA,
+			   APOIO.TIPOCARTEIRA           TIPOCARTEIRA,
+			   CONTATOADM.BAIXATIPOCARTEIRA BAIXATIPOCARTEIRA
+			WHERE 
+			   BAIXATIPOCARTEIRA.IDTIPOCARTEIRA = TIPOCARTEIRA.IDTIPOCARTEIRA
+			AND 
+			   BAIXATIPOCARTEIRA.IDBAIXA = BAIXA.IDBAIXA
+			AND
+			   BAIXA.IDBAIXA = :cAuxidBaixa
+			AND
+			   TIPOCARTEIRA.IDTIPOCARTEIRA > 0
+			ORDER BY 
+			   UPPER(TIPOCARTEIRA.DSTIPOCARTEIRA);
+
+		EXEC SQL OPEN CursorRelacaoTipoCarteira;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CBaixaFiltro::RelacaoTipoCarteira()");
+			return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stTipoCarteira, 0, sizeof( stTipoCarteira ) );
+				EXEC SQL FETCH CursorRelacaoTipoCarteira INTO :stTipoCarteira:stTipoCarteiraIndicator;
+				
+				Add( (char*)stTipoCarteira.stidBaixaFiltro.arr
+				    ,(char*)stTipoCarteira.stidBaixa.arr
+				    ,(char*)stTipoCarteira.stidFiltro.arr
+				    ,(char*)stTipoCarteira.stsgFiltro.arr
+				    ,(char*)stTipoCarteira.stdsFiltro.arr
+				    ,(char*)stTipoCarteira.stvlPeso.arr );
+			}
+		}
+		EXEC SQL CLOSE CursorRelacaoTipoCarteira;
+		
+	}
+	catch(...)
+	{
+		throw;
+	}
+    ULOG_END("CBaixaFiltro::RelacaoTipoCarteira()");
+	return iCont;
+GotoRelacaoTipoCarteira:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::ExistentesTipoCarteira( char* cidBaixa )
+{
+    ULOG_START("CBaixaFiltro::ExistentesTipoCarteira()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa;
+		struct
+		{
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoCarteira;
+		struct
+		{
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+			short ivlPeso;
+		} stTipoCarteiraIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoExistentesTipoCarteira;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		/*
+		EXEC SQL 
+			DECLARE
+				CursorExistentesTipoCarteira CURSOR FOR
+			SELECT
+				 IDTIPOCARTEIRA
+				,SGTIPOCARTEIRA
+				,DSTIPOCARTEIRA
+				,VLPESO
+			FROM 
+			     APOIO.TIPOCARTEIRA
+			WHERE
+				IDTIPOCARTEIRA NOT IN 
+				(
+					SELECT 
+						IDTIPOCARTEIRA
+					FROM
+						CONTATOADM.BAIXATIPOCARTEIRABZEROUM
+					WHERE
+						IDBAIXA = :cAuxidBaixa
+			    )
+			AND 
+				IDTIPOCARTEIRA > 0
+			ORDER BY 
+				UPPER(DSTIPOCARTEIRA);
+		*/
+		
+				
+		EXEC SQL 
+			DECLARE
+				CursorExistentesTipoCarteira CURSOR FOR
+			SELECT
+				 IDTIPOCARTEIRA
+				,SGTIPOCARTEIRA
+				,DSTIPOCARTEIRA
+				,VLPESO
+			FROM 
+			     APOIO.TIPOCARTEIRA
+			WHERE
+				IDTIPOCARTEIRA NOT IN 
+				(
+					SELECT 
+						TIPOCARTEIRA.IDTIPOCARTEIRA
+					FROM 
+					    CONTATOADM.BAIXA             BAIXA,
+					    APOIO.TIPOCARTEIRA           TIPOCARTEIRA,
+					    CONTATOADM.BAIXATIPOCARTEIRA BAIXATIPOCARTEIRA
+					WHERE 
+					    BAIXATIPOCARTEIRA.IDTIPOCARTEIRA = TIPOCARTEIRA.IDTIPOCARTEIRA
+					AND 
+					    BAIXATIPOCARTEIRA.IDBAIXA = BAIXA.IDBAIXA
+					AND
+						BAIXA.IDBAIXA = :cAuxidBaixa
+			    )
+			AND 
+				IDTIPOCARTEIRA > 0
+			ORDER BY 
+				UPPER(DSTIPOCARTEIRA);
+
+
+		EXEC SQL OPEN CursorExistentesTipoCarteira;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CBaixaFiltro::ExistentesTipoCarteira()");
+			return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stTipoCarteira, 0, sizeof( stTipoCarteira ) );
+				EXEC SQL FETCH CursorExistentesTipoCarteira INTO :stTipoCarteira:stTipoCarteiraIndicator;
+				
+				Add( ""
+				    ,""
+				    ,(char*)stTipoCarteira.stidFiltro.arr
+				    ,(char*)stTipoCarteira.stsgFiltro.arr
+				    ,(char*)stTipoCarteira.stdsFiltro.arr
+				    ,(char*)stTipoCarteira.stvlPeso.arr );
+			}
+		}
+		EXEC SQL CLOSE CursorExistentesTipoCarteira;
+		
+	}
+	catch(...)
+	{
+		throw;
+	}
+    ULOG_END("CBaixaFiltro::ExistentesTipoCarteira()");
+	return iCont;
+GotoExistentesTipoCarteira:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+void CBaixaFiltro::GetXmlTipoLinha( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idTipoLinha", Registro(x)->cidFiltro );
+				xml->addItem("sgTipoLinha", Registro(x)->csgFiltro ); 
+				xml->addItem("dsTipoLinha", Registro(x)->cdsFiltro ); 
+				xml->addItem("vlPeso", Registro(x)->cvlPeso ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+void CBaixaFiltro::GetXmlTipoRelacionamento( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idTipoPessoa", Registro(x)->cidFiltro );
+				xml->addItem("sgTipoPessoa", Registro(x)->csgFiltro ); 
+				xml->addItem("dsTipoPessoa", Registro(x)->cdsFiltro ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+void CBaixaFiltro::GetXmlTipoRelacionamento2( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idTipoRelacionamento", Registro(x)->cidFiltro );
+				xml->addItem("sgTipoRelacionamento", Registro(x)->csgFiltro ); 
+				xml->addItem("nmTipoRelacionamento", Registro(x)->cdsFiltro ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+void CBaixaFiltro::GetXmlSegmentacao( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idSegmentacao", Registro(x)->cidFiltro );
+				xml->addItem("sgSegmentacao", Registro(x)->csgFiltro ); 
+				xml->addItem("dsSegmentacao", Registro(x)->cdsFiltro ); 
+				xml->addItem("vlPeso", Registro(x)->cvlPeso ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+void CBaixaFiltro::GetXmlTipoCarteira( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idTipoCarteira", Registro(x)->cidFiltro );
+				xml->addItem("sgTipoCarteira", Registro(x)->csgFiltro ); 
+				xml->addItem("dsTipoCarteira", Registro(x)->cdsFiltro ); 
+				xml->addItem("vlPeso", Registro(x)->cvlPeso ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+
+int CBaixaFiltro::ListAllTipoLinha( void )
+{
+    ULOG_START("CBaixaFiltro::ListAllTipoLinha()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinha;
+		struct
+		{
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+				
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAllTipoLinha;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+			DECLARE
+				CursorListAllTipoLinha CURSOR FOR
+			SELECT
+				IDTIPOLINHA
+			   ,SGTIPOLINHA
+			   ,DSTIPOLINHA
+			   ,VLPESO
+			FROM 
+				APOIO.TIPOLINHA
+			WHERE
+				IDTIPOLINHA > 0
+			ORDER BY
+				UPPER(DSTIPOLINHA);
+				
+		EXEC SQL OPEN CursorListAllTipoLinha;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CBaixaFiltro::ListAllTipoLinha()");
+			return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stTipoLinha, 0, sizeof( stTipoLinha ) );
+				EXEC SQL FETCH CursorListAllTipoLinha INTO :stTipoLinha:stTipoLinhaIndicator;
+				
+				Add( ""
+				    ,""
+				    ,(char*)stTipoLinha.stidFiltro.arr
+				    ,(char*)stTipoLinha.stsgFiltro.arr
+				    ,(char*)stTipoLinha.stdsFiltro.arr
+				    ,(char*)stTipoLinha.stvlPeso.arr );
+			}
+		}
+		EXEC SQL CLOSE CursorListAllTipoLinha;
+	}
+	catch(...)
+	{
+		throw;
+	}
+    ULOG_END("CBaixaFiltro::ListAllTipoLinha()");
+	return iCont;
+GotoListAllTipoLinha:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::ListIdTipoLinha( char* cidTipoLinha )
+{
+    ULOG_START("CBaixaFiltro::ListIdTipoLinha()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidTipoLinha = cidTipoLinha;
+		struct
+		{
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinha;
+		struct
+		{
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		memset( &stTipoLinha, 0, sizeof( stTipoLinha ) );
+				
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListIdTipoLinha;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+			SELECT
+				IDTIPOLINHA
+			   ,SGTIPOLINHA
+			   ,DSTIPOLINHA
+			   ,VLPESO
+			INTO 
+				:stTipoLinha:stTipoLinhaIndicator
+			FROM 
+				APOIO.TIPOLINHA
+			WHERE
+				IDTIPOLINHA > 0
+			AND
+				IDTIPOLINHA = :cAuxidTipoLinha
+			AND
+				ROWNUM <= 1;
+				
+	Add( ""
+		,""
+		,(char*)stTipoLinha.stidFiltro.arr
+		,(char*)stTipoLinha.stsgFiltro.arr
+		,(char*)stTipoLinha.stdsFiltro.arr
+		,(char*)stTipoLinha.stvlPeso.arr );
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+    ULOG_END("CBaixaFiltro::ListIdTipoLinha()");
+	return Quantidade();
+
+GotoListIdTipoLinha:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::ListAllTipoRelacionamento( void )
+{
+    ULOG_START("CBaixaFiltro::ListAllTipoRelacionamento()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+		} stTipoRelacionamento;
+		struct
+		{
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+		} stTipoRelacionamentoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAllTipoRelacionamento;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+			DECLARE
+				CursorListAllTipoRelacionamento CURSOR FOR
+			SELECT
+			    IDTIPORELACIONAMENTO
+			   ,SGTIPORELACIONAMENTO
+			   ,NMTIPORELACIONAMENTO
+			FROM 
+				CUSTOMER.TIPORELACIONAMENTO
+			WHERE
+				IDTIPORELACIONAMENTO > 0
+			ORDER BY
+				UPPER(NMTIPORELACIONAMENTO);
+				
+		EXEC SQL OPEN CursorListAllTipoRelacionamento;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CBaixaFiltro::ListAllTipoRelacionamento()");
+			return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stTipoRelacionamento, 0, sizeof( stTipoRelacionamento ) );
+				EXEC SQL FETCH CursorListAllTipoRelacionamento INTO :stTipoRelacionamento:stTipoRelacionamentoIndicator;
+				
+				Add( ""
+				    ,""
+				    ,(char*)stTipoRelacionamento.stidFiltro.arr
+				    ,(char*)stTipoRelacionamento.stsgFiltro.arr
+				    ,(char*)stTipoRelacionamento.stdsFiltro.arr
+				    ,"" );
+			}
+		}
+		EXEC SQL CLOSE CursorListAllTipoRelacionamento;
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+    ULOG_END("CBaixaFiltro::ListAllTipoRelacionamento()");
+	return iCont;
+GotoListAllTipoRelacionamento:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::ListIdTipoRelacionamento( char* cidTipoRelacionamento )
+{
+    ULOG_START("CBaixaFiltro::ListIdTipoRelacionamento()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidTipoRelacionamento = cidTipoRelacionamento;
+		struct
+		{
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+		} stTipoRelacionamento;
+		struct
+		{
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+		} stTipoRelacionamentoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		memset( &stTipoRelacionamento, 0, sizeof( stTipoRelacionamento ) );
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListIdTipoRelacionamento;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+			SELECT
+			    IDTIPORELACIONAMENTO
+			   ,SGTIPORELACIONAMENTO
+			   ,NMTIPORELACIONAMENTO
+			INTO
+				:stTipoRelacionamento:stTipoRelacionamentoIndicator
+			FROM 
+				CUSTOMER.TIPORELACIONAMENTO
+			WHERE
+				IDTIPORELACIONAMENTO > 0
+			AND
+				IDTIPORELACIONAMENTO = :cAuxidTipoRelacionamento
+			AND
+				ROWNUM <= 1;
+				
+	Add( ""
+		,""
+		,(char*)stTipoRelacionamento.stidFiltro.arr
+		,(char*)stTipoRelacionamento.stsgFiltro.arr
+		,(char*)stTipoRelacionamento.stdsFiltro.arr
+		,"" );
+
+	}
+	catch(...)
+	{
+		throw;
+	}
+    ULOG_END("CBaixaFiltro::ListIdTipoRelacionamento()");
+	return Quantidade();
+GotoListIdTipoRelacionamento:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::ListAllSegmentacao( void )
+{
+    ULOG_START("CBaixaFiltro::ListAllSegmentacao()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stSegmentacao;
+		struct
+		{
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+			short ivlPeso;
+		} stSegmentacaoIndicator;		
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAllSegmentacao;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+			DECLARE
+				CursorListAllSegmentacao CURSOR FOR
+			SELECT
+				 IDSEGMENTACAO
+				,SGSEGMENTACAO
+				,DSSEGMENTACAO
+				,VLPESO
+			FROM 
+				APOIO.SEGMENTACAO
+			ORDER BY
+				UPPER(DSSEGMENTACAO);
+				
+		EXEC SQL OPEN CursorListAllSegmentacao;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CBaixaFiltro::ListAllSegmentacao()");
+			return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stSegmentacao, 0, sizeof( stSegmentacao ) );
+				EXEC SQL FETCH CursorListAllSegmentacao INTO :stSegmentacao:stSegmentacaoIndicator;
+				
+				Add( ""
+				    ,""
+				    ,(char*)stSegmentacao.stidFiltro.arr
+				    ,(char*)stSegmentacao.stsgFiltro.arr
+				    ,(char*)stSegmentacao.stdsFiltro.arr
+				    ,(char*)stSegmentacao.stvlPeso.arr );
+			}
+		}
+		EXEC SQL CLOSE CursorListAllSegmentacao;
+		
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+    ULOG_END("CBaixaFiltro::ListAllSegmentacao()");
+	return iCont;
+GotoListAllSegmentacao:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaFiltro::ListAllTipoCarteira( void )
+{
+    ULOG_START("CBaixaFiltro::ListAllTipoCarteira()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	int iCont;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidFiltro[21+1];
+			VARCHAR stsgFiltro[255+1];
+			VARCHAR stdsFiltro[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoCarteira;
+		struct
+		{
+			short iidFiltro;
+			short isgFiltro;
+			short idsFiltro;
+			short ivlPeso;
+		} stTipoCarteiraIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaFiltro();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAllTipoCarteira;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+			DECLARE
+				CursorListAllTipoCarteira CURSOR FOR
+			SELECT
+				 IDTIPOCARTEIRA
+				,SGTIPOCARTEIRA
+				,DSTIPOCARTEIRA
+				,VLPESO
+			FROM 
+			     APOIO.TIPOCARTEIRA
+			WHERE
+				IDTIPOCARTEIRA > 0
+			ORDER BY
+				UPPER(DSTIPOCARTEIRA);
+				
+		EXEC SQL OPEN CursorListAllTipoCarteira;
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CBaixaFiltro::ListAllTipoCarteira()");
+			return 0;//Erro
+		}
+		else
+		{
+			for( iCont = 0;; iCont++ )
+			{
+				memset( &stTipoCarteira, 0, sizeof( stTipoCarteira ) );
+				EXEC SQL FETCH CursorListAllTipoCarteira INTO :stTipoCarteira:stTipoCarteiraIndicator;
+				
+				Add( ""
+				    ,""
+				    ,(char*)stTipoCarteira.stidFiltro.arr
+				    ,(char*)stTipoCarteira.stsgFiltro.arr
+				    ,(char*)stTipoCarteira.stdsFiltro.arr
+				    ,(char*)stTipoCarteira.stvlPeso.arr );
+			}
+		}
+		EXEC SQL CLOSE CursorListAllTipoCarteira;
+		
+	}
+	catch(...)
+	{
+		throw;
+	}
+    ULOG_END("CBaixaFiltro::ListAllTipoCarteira()");
+	return iCont;
+	
+GotoListAllTipoCarteira:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+

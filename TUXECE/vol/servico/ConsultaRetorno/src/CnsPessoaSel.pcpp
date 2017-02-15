@@ -1,0 +1,79 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <tuxfw.h>
+
+int ConsultaPessoaSel( const char *idContatoParam , const char *idRetorno, XMLGen *Saida )
+{
+   ULOG_START("ConsultaPessoaSel()"); 
+   
+   struct sqlca sqlca;
+   sqlca.sqlcode=0 ;
+
+   EXEC SQL BEGIN DECLARE SECTION;
+      VARCHAR dsTipoPessoa[256];
+      
+      unsigned long idTipoPessoa;
+      unsigned long idContato = atol( idContatoParam );
+      unsigned long ORA_idRetorno = atol( idRetorno );
+      
+      short   i_dsTipoPessoa;
+   EXEC SQL END DECLARE SECTION;
+
+   EXEC SQL DECLARE ReadTipoPessoa CURSOR FOR 
+      SELECT 
+           b.idTipoPessoa, 
+		   b.dsTipoPessoa
+      FROM 
+           ContatoAdm.TipoRetornoTipoPessoa   a,
+           Apoio.TipoPessoa                   b,
+           ContatoAdm.ContatoTipoRetorno      c
+      WHERE
+        a.idTipoPessoa > 0
+      AND 
+        a.idTipoPessoa = b.idTipoPessoa 
+      AND 
+        a.idContatoTipoRetorno = c.idContatoTipoRetorno
+      AND
+        c.idContato = :idContato
+      AND 
+        c.idTipoRetornoContato = :ORA_idRetorno
+	  ORDER BY b.dsTipoPessoa;
+
+
+   EXEC SQL OPEN ReadTipoPessoa;
+
+   EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+   EXEC SQL WHENEVER NOT FOUND DO break;
+   
+    for( ;; )
+    {
+        EXEC SQL FETCH ReadTipoPessoa INTO :idTipoPessoa,
+                                           :dsTipoPessoa:i_dsTipoPessoa;
+
+        if ( i_dsTipoPessoa == -1 )
+            dsTipoPessoa.arr[0] = 0x0;
+        else
+            dsTipoPessoa.arr[ dsTipoPessoa.len ] = 0x0;
+
+        Saida->createTag( "AdmPessoaVO" );
+            Saida->addItem( "idPessoa",idTipoPessoa );
+            Saida->addItem( "nmPessoa",(char*)dsTipoPessoa.arr );
+        Saida->closeTag();
+
+        memset( (char *)dsTipoPessoa.arr , 0x0 , sizeof(dsTipoPessoa.arr) );
+    }
+    EXEC SQL CLOSE ReadTipoPessoa;
+
+   ULOG_END("ConsultaPessoaSel()"); 
+   return 1;
+
+UndefinedError:
+        throw new TuxBasicOraException( sqlca.sqlcode,
+                                        sqlca.sqlerrm.sqlerrmc,
+                                        sqlca.sqlerrm.sqlerrml );
+
+}
+

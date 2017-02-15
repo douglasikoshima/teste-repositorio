@@ -1,0 +1,681 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CNC.h"
+#include "../include/CPss.h"
+#include "../include/CHUP.h"
+#include "../include/CCrg.h"
+
+CNivelCargo::CNivelCargo()
+{
+}
+
+CNivelCargo::~CNivelCargo()
+{
+}
+
+int CNivelCargo::Insert( 
+			char* cidNivel,
+			char* cidCargo,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CNivelCargo::Insert()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidNivelCargo[21+1];
+		char* cAuxidNivel = cidNivel;
+		char* cAuxidCargo = cidCargo;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNivelCargo();
+		
+		memset( &cAuxidNivelCargo, 0, sizeof(cAuxidNivelCargo) ); 
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		
+		//Pega um id unico e sequencia para a insercao
+		EXEC SQL SELECT organograma.NivelCargoSQ.NEXTVAL INTO :cAuxidNivelCargo FROM DUAL;
+
+		//Realiza o insert
+		EXEC SQL INSERT INTO organograma.NivelCargo
+		(	idNivelCargo,
+			idNivel,
+			idCargo,
+			idUsuarioAlteracao,
+			dtUltimaAlteracao) 
+		VALUES 
+		(	:cAuxidNivelCargo,
+			:cAuxidNivel,
+			:cAuxidCargo,
+			:cAuxidUsuarioAlteracao,
+			SYSDATE);
+			
+        ULOG_END("CNivelCargo::Insert()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) {
+			return 0;//Erro
+		}
+		else {
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CNivelCargo::Delete( char* cidNivelCargo )
+{
+    ULOG_START("CNivelCargo::Delete()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidNivelCargo = cidNivelCargo; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNivelCargo();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND GOTO GotoDeleteNotFound;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+
+		EXEC SQL SELECT idNivelCargo FROM organograma.NivelCargo 		
+		WHERE (idNivelCargo = :cAuxidNivelCargo);
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM organograma.NivelCargo
+		WHERE (idNivelCargo = :cAuxidNivelCargo);
+		
+		ULOG_END("CNivelCargo::Delete()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) {
+			return 0;//Erro
+		}
+		else {
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if(sqlca.sqlcode == -2292)
+		return 2;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+GotoDeleteNotFound:
+	return 1;
+}
+
+int CNivelCargo::RelacionaNvl( char*cidNivel, char*cNomeIdTag, char*cidUsuarioAlteracao, DOMNode*dnode )
+{
+    ULOG_START("CNivelCargo::RelacionaNvl()");
+	//Auxiliares
+	int iCont = 0;
+	int iRet = 0;
+	TuxHelper tuxHelper;
+	
+	//Consistencia
+	if ( strlennull( cidNivel ) <=0 )
+	{
+	    ULOG_END("CNivelCargo::RelacionaNvl()");
+		return -1;
+	}
+
+	CCargo oCargo;	
+	CPessoa oPessoa;
+	CHierarquiaDeptoPessoa oHierarquiaDeptoPessoa;
+
+	//Gera lista dos cargos relacionados ao nivel
+	oCargo.RelacaoNC( cidNivel );
+
+	//Procurar dentre todos os cargos relacionados ao nivel os todos os idNivelCargo
+	for( int y = 0; y < oCargo.Quantidade(); y++ ) {
+		if (List( "", cidNivel, oCargo.Registro(y)->cidCargo, cidUsuarioAlteracao )>0)
+			if (oHierarquiaDeptoPessoa.List( "", Registro(0)->cidNivelCargo, "", "", cidUsuarioAlteracao )==0)
+			{
+				// Varrer no por no e apagar apenas os desrelacionados
+				char cAux[22]; 
+				strcpy(cAux,Registro(0)->cidNivelCargo);
+				Delete(cAux);
+			} else {
+				// No caso de haver dependencia dos Relacionados em outra tabela
+				iRet = -2292;
+			}
+	}
+
+	//Adiciona as novas relacoes
+	for(iCont = 0;;iCont++)
+	{		
+		char* cidCargo = tuxHelper.walkTree(dnode,"idCargo",iCont);
+
+		if ((strlennull(cidNivel)<=0)||(strlennull(cidCargo)<=0))
+			break;
+
+		if (List( "", cidNivel, cidCargo, cidUsuarioAlteracao )==0)
+			Insert(  cidNivel, cidCargo, cidUsuarioAlteracao );
+		else
+			if (oHierarquiaDeptoPessoa.List( "", Registro(0)->cidNivelCargo, "", "", cidUsuarioAlteracao )==0)
+				Insert(  cidNivel, cidCargo, cidUsuarioAlteracao );
+	}
+	ULOG_END("CNivelCargo::RelacionaNvl()");
+	return iRet;
+}
+
+int CNivelCargo::EraseNvl( char* cidNivel ) 
+{
+    ULOG_START("CNivelCargo::EraseNvl()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidNivel = cidNivel; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNivelCargo();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDeleteMM0;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM organograma.NivelCargo
+		WHERE (idNivel = :cAuxidNivel);
+		
+		ULOG_END("CNivelCargo::EraseNvl()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) {
+			return -1;//Erro
+		}
+		else {
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDeleteMM0:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if(sqlca.sqlcode == -2292)
+		return -2292;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CNivelCargo::List( 
+			char* cidNivelCargo,
+			char* cidNivel,
+			char* cidCargo,
+			char* cidUsuarioAlteracao )
+{
+    
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		
+			char cAuxidNivelCargo[255+1];
+			char cAuxidNivel[255+1];
+			char cAuxidCargo[255+1];
+			char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+		struct
+		{
+			VARCHAR stidNivelCargo[21+1];
+			VARCHAR stidNivel[21+1];
+			VARCHAR stidCargo[21+1];
+		} stNivelCargoRegistro;
+		struct
+		{
+			short iidNivelCargo;
+			short iidNivel;
+			short iidCargo;
+		} stNivelCargoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+
+	if ( strlennull( cidNivelCargo ) <= 0 )
+		strcpy(cAuxidNivelCargo,"-1");
+		else
+		strcpy(cAuxidNivelCargo,cidNivelCargo);
+	
+	if ( strlennull( cidNivel ) <= 0 )
+		strcpy(cAuxidNivel,"-1");
+		else
+		strcpy(cAuxidNivel,cidNivel);
+	
+	if ( strlennull( cidCargo ) <= 0 )
+		strcpy(cAuxidCargo,"-1");
+		else
+		strcpy(cAuxidCargo,cidCargo);
+	
+
+	//Processamento Principal
+	try
+	{
+
+		//Zera a estrutura da classe
+		ZeraNivelCargo();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os Registros
+   		EXEC SQL DECLARE CursorNivelCargo CURSOR FOR 
+   		SELECT 	idNivelCargo,
+	            idNivel,
+	            idCargo
+		FROM organograma.NivelCargo
+		WHERE ( ((idNivelCargo = :cAuxidNivelCargo) OR ('-1' = :cAuxidNivelCargo))
+	        AND ((idNivel = :cAuxidNivel) OR ('-1' = :cAuxidNivel))
+	        AND ((idCargo = :cAuxidCargo) OR ('-1' = :cAuxidCargo)) );
+
+		// Abre o cursor
+		EXEC SQL OPEN CursorNivelCargo;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+			return -1;//Erro
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stNivelCargoRegistro, 0, sizeof(stNivelCargoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorNivelCargo INTO :stNivelCargoRegistro:stNivelCargoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stNivelCargoRegistro.stidNivelCargo.arr,
+				(char*)stNivelCargoRegistro.stidNivel.arr,
+				(char*)stNivelCargoRegistro.stidCargo.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorNivelCargo;
+		}
+		
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+int CNivelCargo::RelacionaCrg( char*cidCargo, char*cNomeIdTag, char*cidUsuarioAlteracao, DOMNode*dnode )
+{
+    ULOG_START("CNivelCargo::RelacionaCrg()");
+	//Auxiliares
+	int iCont;
+	TuxHelper tuxHelper;
+	
+	//Consistencia
+	if ( strlennull( cidCargo ) <=0 )
+		return -1;
+	
+	//Apaga todas as relacionadas ao id recebido
+	int iRet = EraseCrg( cidCargo );
+	
+	// No caso de haver dependencia dos Relacionados em outra tabela, consultar metodo Existem
+	// Varrer no por no e apagar apenas os desrelacionados
+	if (iRet==-2292)
+	{
+	/*
+		CPessoa oPessoa;
+		CHierarquiaDeptoPessoa oHierarquiaDeptoPessoa;
+
+		List("","",cidCargo,cidUsuarioAlteracao);
+		for( int x = 0; x < Quantidade(); x++ ) 
+			if (oHierarquiaDeptoPessoa.List("",Registro(x)->cidNivelCargo,"","",cidUsuarioAlteracao)==0)
+				if (strlennull(oHierarquiaDeptoPessoa.Registro(0)->cidNivelCargo)>0)
+					Delete( Registro(x)->cidNivelCargo );
+	*/
+	} else
+
+	//Adiciona as novas relacoes
+	for(iCont = 0;;iCont++)
+	{
+		
+		char* cidNivel = tuxHelper.walkTree(dnode,"idNivel",0);
+		char* cidCargo = tuxHelper.walkTree(dnode,"idCargo",0);
+
+		if ((strlennull(cidNivel)<=0)||(strlennull(cidCargo)<=0))
+			break;
+
+		Insert(  cidNivel, cidCargo, cidUsuarioAlteracao );
+	}
+	
+	ULOG_END("CNivelCargo::RelacionaCrg()");
+	
+	return iRet;
+}
+int CNivelCargo::EraseCrg( char* cidCargo ) 
+{
+    ULOG_START("CNivelCargo::EraseCrg()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidCargo = cidCargo; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNivelCargo();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDeleteMM1;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM organograma.NivelCargo
+		WHERE (idCargo = :cAuxidCargo);
+		
+		ULOG_END("CNivelCargo::EraseCrg()");
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) {
+			return 0;//Erro
+		}
+		else {
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDeleteMM1:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if(sqlca.sqlcode == -2292)
+		return -2292;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CNivelCargo::ListId( char* cidNivelCargo ) 
+{
+    ULOG_START("CNivelCargo::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidNivelCargo = cidNivelCargo; 
+		struct
+		{
+			VARCHAR stidNivelCargo[21+1];
+			VARCHAR stidNivel[21+1];
+			VARCHAR stidCargo[21+1];
+		} stNivelCargoRegistro;
+		struct
+		{
+			short iidNivelCargo;
+			short iidNivel;
+			short iidCargo;
+		} stNivelCargoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNivelCargo();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorNivelCargoId CURSOR FOR 
+   		SELECT 	idNivelCargo,
+	            idNivel,
+	            idCargo
+		FROM organograma.NivelCargo
+		WHERE idNivelCargo = :cAuxidNivelCargo;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorNivelCargoId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CNivelCargo::ListId()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stNivelCargoRegistro, 0, sizeof(stNivelCargoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorNivelCargoId INTO :stNivelCargoRegistro:stNivelCargoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stNivelCargoRegistro.stidNivelCargo.arr,
+				(char*)stNivelCargoRegistro.stidNivel.arr,
+				(char*)stNivelCargoRegistro.stidCargo.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorNivelCargoId;
+		}
+		ULOG_END("CNivelCargo::ListId()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CNivelCargo::ListAll( void )
+{
+    ULOG_START("CNivelCargo::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidNivelCargo[21+1];
+			VARCHAR stidNivel[21+1];
+			VARCHAR stidCargo[21+1];
+		} stNivelCargoRegistro;
+		struct
+		{
+			short iidNivelCargo;
+			short iidNivel;
+			short iidCargo;
+		} stNivelCargoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNivelCargo();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorNivelCargoAll CURSOR FOR
+   		SELECT 	idNivelCargo,
+		idNivel,
+		idCargo
+		FROM organograma.NivelCargo; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorNivelCargoAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CNivelCargo::ListAll()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stNivelCargoRegistro, 0, sizeof(stNivelCargoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorNivelCargoAll INTO :stNivelCargoRegistro:stNivelCargoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stNivelCargoRegistro.stidNivelCargo.arr,
+				(char*)stNivelCargoRegistro.stidNivel.arr,
+				(char*)stNivelCargoRegistro.stidCargo.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorNivelCargoAll;
+		}
+		ULOG_END("CNivelCargo::ListAll()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CNivelCargo::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idNivelCargo", Registro(x)->cidNivelCargo );
+				xml->addItem("idNivel", Registro(x)->cidNivel );
+				xml->addItem("idCargo", Registro(x)->cidCargo ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+
+void CNivelCargo::GetXml( char* cNomeTagArray, char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() >= 0 )
+	{
+		//Caso nao tenha recebido uma tag padrao, deixa sem
+		if( strlennull( cNomeTagArray ) > 0 ) {
+			xml->createTag(cNomeTagArray);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+		}
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 ) {
+				xml->createTag(cNomeTag);
+				//Adiciona a propriedade necessaria para o xml
+				xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			}
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idNivelCargo", Registro(x)->cidNivelCargo );
+				xml->addItem("idNivel", Registro(x)->cidNivel );
+				xml->addItem("idCargo", Registro(x)->cidCargo ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+		//So fecha um tag se abriu anteriormente
+		if( strlennull( cNomeTagArray ) > 0 )
+			xml->closeTag();
+	}
+}

@@ -1,0 +1,315 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CBxaHie.h"
+
+CBaixaHierarquia::CBaixaHierarquia()
+{
+}
+
+CBaixaHierarquia::~CBaixaHierarquia()
+{
+}
+
+int CBaixaHierarquia::Insert( 
+			char* cidBaixa,
+			char* cidBaixaHierarquia,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CBaixaHierarquia::Insert()");
+    
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		
+		char* cAuxidBaixa = cidBaixa;
+		char* cAuxidBaixaHierarquia = cidBaixaHierarquia;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaHierarquia();
+		
+		 
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		
+		//Pega um id unico e sequencia para a insercao
+		
+
+		//Realiza o insert
+		EXEC SQL INSERT INTO CONTATOADM.BAIXAHIERARQUIA
+		(	IDBAIXA,
+			IDBAIXAHIERARQUIA,
+			IDUSUARIOALTERACAO,
+			DTULTIMAALTERACAO) 
+		VALUES 
+		(	:cAuxidBaixa,
+			:cAuxidBaixaHierarquia,
+			:cAuxidUsuarioAlteracao,
+			SYSDATE);
+
+        ULOG_END("CBaixaHierarquia::Insert()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) {
+			return 0;//Erro
+		}
+		else {
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CBaixaHierarquia::Delete( char* cidBaixa )
+{
+    ULOG_START("CBaixaHierarquia::Delete()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidBaixa = cidBaixa; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaHierarquia();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM CONTATOADM.BAIXAHIERARQUIA
+		WHERE IDBAIXA = :cAuxidBaixa;
+		
+		ULOG_END("CBaixaHierarquia::Delete()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CBaixaHierarquia::ListId( char* cidBaixa ) 
+{
+    ULOG_START("CBaixaHierarquia::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidBaixa = cidBaixa; 
+		struct
+		{
+			VARCHAR stidBaixa[21+1];
+			VARCHAR stidBaixaHierarquia[21+1];
+		} stBaixaHierarquiaRegistro;
+		struct
+		{
+			short iidBaixa;
+			short iidBaixaHierarquia;
+		} stBaixaHierarquiaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaHierarquia();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorBaixaHierarquiaId CURSOR FOR 
+   		SELECT 	
+   		   idBaixa,
+	       idBaixaHierarquia
+		FROM 
+		   contatoadm.BaixaHierarquia
+		WHERE 
+		   idBaixa = :cAuxidBaixa;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorBaixaHierarquiaId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		   ULOG_END("CBaixaHierarquia::ListId()");
+		   return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stBaixaHierarquiaRegistro, 0, sizeof(stBaixaHierarquiaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorBaixaHierarquiaId INTO :stBaixaHierarquiaRegistro:stBaixaHierarquiaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stBaixaHierarquiaRegistro.stidBaixa.arr,
+				(char*)stBaixaHierarquiaRegistro.stidBaixaHierarquia.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorBaixaHierarquiaId;
+		}
+		
+		ULOG_END("CBaixaHierarquia::ListId()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CBaixaHierarquia::ListAll( void )
+{
+    ULOG_START("CBaixaHierarquia::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidBaixa[21+1];
+			VARCHAR stidBaixaHierarquia[21+1];
+		} stBaixaHierarquiaRegistro;
+		struct
+		{
+			short iidBaixa;
+			short iidBaixaHierarquia;
+		} stBaixaHierarquiaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraBaixaHierarquia();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorBaixaHierarquiaAll CURSOR FOR
+   		SELECT 	
+   		   idBaixa,
+		   idBaixaHierarquia
+		FROM 
+		   contatoadm.BaixaHierarquia; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorBaixaHierarquiaAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+			return 0;//Erro
+			ULOG_END("CBaixaHierarquia::ListAll()");
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stBaixaHierarquiaRegistro, 0, sizeof(stBaixaHierarquiaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorBaixaHierarquiaAll INTO :stBaixaHierarquiaRegistro:stBaixaHierarquiaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stBaixaHierarquiaRegistro.stidBaixa.arr,
+				(char*)stBaixaHierarquiaRegistro.stidBaixaHierarquia.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorBaixaHierarquiaAll;
+		}
+		
+		ULOG_END("CBaixaHierarquia::ListAll()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CBaixaHierarquia::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			xml->createTag(cNomeTag);
+			//Adiciona a proprieda necessaria para o Weblogic
+			xml->addProp( "xmlns", "admsistemas.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idBaixa", Registro(x)->cidBaixa );
+				xml->addItem("idBaixaHierarquia", Registro(x)->cidBaixaHierarquia ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			xml->closeTag();
+		}
+	}
+}

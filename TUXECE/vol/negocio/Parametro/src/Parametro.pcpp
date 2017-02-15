@@ -1,0 +1,228 @@
+//---------------------------------------------------------------------------
+//                         (c) Consórcio Indra/PT-SI.
+//                            xxxxxxxxxxxxxxxxxxxxxxx
+//                                xxxxxxxxxxxxxx
+//-----------------------------------------------------------------------------
+// Los contenidos de este fichero son propiedad de Telefónica Consórcio Indra/PT-SI. 
+// titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado, 
+// en su totalidad o en parte, con el permiso escrito de Consórcio Indra/PT-SI 
+// o de acuerdo con los terminos y condiciones establecidas en el acuerdo/contrato bajo 
+// el que se suministra.
+//---------------------------------------------------------------------------
+//*  Modulo                   : 
+//*  Fichero                  : Parametro
+//*  Tipo                     : .cpp
+//*  Autor                    : Jones Randis Dalberto
+//*  Fecha primera version    : 
+//*  Version actual           : 
+//*//---------------------------------------------------------------------------
+//*  Proposito:
+//*
+//*  Controle de parametros no VOL
+//*//---------------------------------------------------------------------------
+//*  Dependencias:
+//*
+//*  
+//*//---------------------------------------------------------------------------
+//*  Consideraciones de portabilidad:
+//*
+//*  
+////---------------------------------------------------------------------------
+
+#include <Parametro/Parametro.hpp>
+#include <Util/Util.hpp>
+#include <tuxfw/tuxfw.h>
+#include <sqlca.h>
+#include <cstring>
+
+CParametro::CParametro(void)
+{
+	strcpy(this->mvc_chave, "");
+	strcpy(this->mvc_valor, "");
+	strcpy(this->mvc_consulta, "");
+}
+
+CParametro::~CParametro(void)
+{
+
+}
+
+void CParametro::setChave(char* chave)
+{
+	strcpy(this->mvc_chave, chave);
+}
+
+void CParametro::setValor(char* valor)
+{
+	strcpy(this->mvc_valor, valor);
+}
+
+void CParametro::setConsulta(char* valor)
+{
+	strcpy(this->mvc_consulta, valor);
+}
+
+char* CParametro::getChave(void)
+{
+	return this->mvc_chave;
+}
+
+char* CParametro::getValor(void)
+{
+	return this->mvc_valor;
+}
+
+char* CParametro::getConsulta(void)
+{
+	return this->mvc_consulta;
+}
+
+void CParametro::consultar(void)
+{
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+	char* pc_chave;
+	char  pc_valor[256];
+	EXEC SQL END DECLARE SECTION;
+
+	pc_chave = this->getChave();
+
+	memset(pc_valor, '\0', sizeof(pc_valor));
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraException;
+
+	EXEC SQL SELECT TO_CHAR(IDCONTATO) INTO :pc_valor FROM CONTATOADM.CONTATOFUNCIONALIDADE WHERE CDFUNCIONALIDADE =  :pc_chave;
+
+	this->setConsulta(CUtil::trim(pc_valor));
+
+	return;
+
+	OraException:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+void CParametro::consultarParametrosCanais(void)
+{
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+	char* pc_chave;
+	char  pc_valor[256];
+	EXEC SQL END DECLARE SECTION;
+
+	pc_chave = this->getChave();
+
+	memset(pc_valor, '\0', sizeof(pc_valor));
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraException;
+
+	EXEC SQL SELECT NVL(dsValorParametro,'') INTO :pc_valor FROM apoio.Parametro WHERE cdParametro = :pc_chave;
+
+	this->setConsulta(CUtil::trim(pc_valor));
+
+	return;
+
+	OraException:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+void CParametro::incluir(void)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char* pc_chave;
+	char* pc_valor;
+	EXEC SQL END DECLARE SECTION;
+
+	pc_chave = this->getChave();
+	pc_valor = this->getValor();
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL INSERT INTO apoio.Parametro (cdParametro, dsParametro, dsValorParametro, dtUltimaAlteracao) VALUES (:pc_chave, :pc_chave, :pc_valor, sysdate);
+
+	return;
+
+	OraException:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CParametro::alterar(void)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char* pc_chave;
+	char* pc_valor;
+	EXEC SQL END DECLARE SECTION;
+
+	pc_chave = this->getChave();
+	pc_valor = this->getValor();
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraException;
+	
+	EXEC SQL UPDATE apoio.Parametro SET dsValorParametro = :pc_valor WHERE cdParametro = :pc_chave;
+
+	return;
+
+	OraException:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CParametro::excluir(void)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char* pc_chave;
+	EXEC SQL END DECLARE SECTION;
+
+	pc_chave = this->getChave();
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraException;
+	
+	EXEC SQL DELETE FROM apoio.Parametro WHERE cdParametro = :pc_chave;
+
+	return;
+
+	OraException:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+char* CParametro::GetIdGrupoEstorno()
+{
+    struct sqlca sqlca;
+    static char szAux[256 + 1];
+
+	EXEC SQL BEGIN DECLARE SECTION;
+    	char chrIdGrupoEstorno[256];
+	EXEC SQL END DECLARE SECTION;
+
+	strcpy(chrIdGrupoEstorno,"");
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	
+	EXEC SQL SELECT dsvalorparametro 
+			 INTO :chrIdGrupoEstorno
+			 FROM  apoio.parametro
+			 WHERE cdparametro = 'idgrupoestorno';
+
+	strcpy(chrIdGrupoEstorno, CUtil::trim(chrIdGrupoEstorno));
+    strcpy(szAux, chrIdGrupoEstorno);
+	return szAux;
+
+	OraException:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}

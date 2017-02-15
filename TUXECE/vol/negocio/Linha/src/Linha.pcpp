@@ -1,0 +1,3906 @@
+//---------------------------------------------------------------------------
+//                         (c) Consórcio Indra/PT-SI.
+//                            xxxxxxxxxxxxxxxxxxxxxxx
+//                                xxxxxxxxxxxxxx
+//-----------------------------------------------------------------------------
+// Los contenidos de este fichero son propiedad de Telefónica Consórcio Indra/PT-SI. 
+// titular del copyright. Este fichero solo podra ser copiado, distribuido y utilizado, 
+// en su totalidad o en parte, con el permiso escrito de Consórcio Indra/PT-SI 
+// o de acuerdo con los terminos y condiciones establecidas en el acuerdo/contrato bajo 
+// el que se suministra.
+//---------------------------------------------------------------------------
+//*  Modulo                   : LSTDADOSINI, LSTVIGSERV
+//*  Fichero                  : Linha
+//*  Tipo                     : .cpp
+//*  Autor                    : Aldebaran
+//*  Fecha primera version    : 
+//*  Version actual           : 
+//*//---------------------------------------------------------------------------
+//*  Proposito:
+//*
+//*  Implementar os negocios referentes as linhas telefonicas 
+//*//---------------------------------------------------------------------------
+//*  Dependencias:
+//*
+//*  Servico.hpp
+//*//---------------------------------------------------------------------------
+//*  Consideraciones de portabilidad:
+//*
+//*  
+////---------------------------------------------------------------------------
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw/tuxfw.h>
+#include <Defines/Defines.h>
+#include <Linha/Linha.hpp>
+#include <Util/Util.hpp>
+#include <DOMTreeReporter/DOMTreeReporter.hpp>
+#include <Get/Get.hpp>
+#include <Parametro/Parametro.hpp>
+  
+EXEC SQL INCLUDE SQLCA;
+
+
+static char *SERVICE_ROUTER_PRE = "COMPSERV_M";
+static char *SERVICE_ROUTER_POS = "EXTRATO_M";
+
+static char *xmlCadastroEmail = \
+	"<?xml version=\'1.0\' encoding=\'ISO-8859-1\'?>" \
+	"<ARG>" \
+		"<CONTROLE>" \
+			"<BYPASS>false</BYPASS>" \
+		"</CONTROLE>" \
+		"<REG>" \
+			"<COD_AREA>%00d</COD_AREA>" \
+			"<NUM_LINE>%00000000d</NUM_LINE>" \
+			"<PLATAFORMA>O</PLATAFORMA>" \
+			"<SERVICO>INFCLIENTE</SERVICO>" \
+			"<OPERACAO>CADSRVMAIL</OPERACAO>" \
+			"<CANAL>VOL</CANAL>" \
+			"<USUARIO>VOL</USUARIO>" \
+			"<SENHA>123456</SENHA>" \
+			"<ORIGEM>VOL</ORIGEM>" \
+			"<CON_NUMBER>1456</CON_NUMBER>" \
+			"<TRANS_NUMBER>0</TRANS_NUMBER>" \
+		"</REG>" \
+		"<DADOS>" \
+			"<OPCAO>CONSULTAR</OPCAO>" \
+			"<TAREFA>%s</TAREFA>" \
+		"</DADOS>" \
+	"</ARG>\n";
+
+static char *xmlAtivaEmail = \
+	"<?xml version=\'1.0\' encoding=\'ISO-8859-1\'?>" \
+	"<ARG>" \
+		"<CONTROLE>" \
+			"<BYPASS>false</BYPASS>" \
+		"</CONTROLE>" \
+		"<REG>" \
+			"<COD_AREA>%00d</COD_AREA>" \
+			"<NUM_LINE>%00000000d</NUM_LINE>" \
+			"<PLATAFORMA>O</PLATAFORMA>" \
+			"<SERVICO>INFCLIENTE</SERVICO>" \
+			"<OPERACAO>CADSRVMAIL</OPERACAO>" \
+			"<CANAL>VOL</CANAL>" \
+			"<USUARIO>VOL</USUARIO>" \
+			"<SENHA>123456</SENHA>" \
+			"<ORIGEM>VOL</ORIGEM>" \
+			"<CON_NUMBER>1456</CON_NUMBER>" \
+			"<TRANS_NUMBER>1</TRANS_NUMBER>" \
+		"</REG>" \
+		"<DADOS>" \
+			"<DATA_TAREFA>%s</DATA_TAREFA>" \
+			"<EMAIL>%s</EMAIL>" \
+			"<TAREFA>%s</TAREFA>" \
+			"<TELEFONE_CONTATO>12345567</TELEFONE_CONTATO>" \
+		"</DADOS>" \
+	"</ARG>";
+
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+CLinha::CLinha()
+{
+
+    m_oPessoa = NULL; 
+	m_oPonto = NULL;
+
+	m_iCdAreaRegistro    = -1;
+	m_iNrLinha           = -1;
+	m_iIdTipoLinha       = -1;
+	m_iIdProcencia       = -1;
+	m_iIdSegmentacao     = -1;
+	m_iDigitoVerificador = -1;
+	m_iPlanoControle     = 0;
+
+	strcpy(this->m_cObservacaoRegContato, "");
+	strcpy(this->m_cdSenhaPreAtiva, "");
+
+	strcpy( this->m_cDsTipoLinha, "" );
+
+	memset(&this->m_planoPrincipal,0,sizeof(m_planoPrincipal));
+
+	memset(&this->m_nrProtocolo,0,sizeof(m_nrProtocolo));
+}
+
+CLinha::~CLinha() 
+{
+
+	if(NULL != this->m_oPonto)
+       delete this->m_oPonto; 
+
+	if(NULL != this->m_oPessoa)
+	   delete this->m_oPessoa;
+}
+
+
+
+//Interface da Classe CLinha:
+
+// Operações da classe
+
+//---------------------------------------------------------------------------
+void CLinha::consultarTipoLinha() 
+{
+	 this->consultarTipoLinhaDB();
+}
+
+void CLinha::consultarSubTipoLinha() 
+{
+	 this->consultarSubTipoLinhaDB();
+}
+
+void CLinha::consultarDadosLinhaSessao()
+{
+
+	this->consultarDadosLinhaSessaoDB();
+
+}
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  consultarVigServicosLinha
+//*
+//*  <-  CServico - retorno de lista com todos os servicos de uma linha 
+//*                 telefonica com suas respectivas vigencias
+//*  
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  Consultar a vigencia dos servicos da linha em questao
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+void CLinha::consultarVigServicosLinha(list< CServico > & listaServico) 
+{
+    CServico::consultarVigServicosLinha(this->getCdAreaRegistro(),
+										this->getNrLinha(),
+                                        listaServico);
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  validarLinha
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  Validar existencia de uma determinada linha telefonica
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+int CLinha::validarLinha(void)
+{
+	return this->validarLinhaDB();
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  consultarLinhasDisp
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  Consulta linhas atreladas a uma pessoa
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+void CLinha::consultarLinhasDisp(long iIdPessoa, list< CLinha > & listaLinha)
+{
+	CLinha::consultarLinhasDispDB(iIdPessoa, listaLinha);
+}
+
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  consultarServicos
+//*
+//*  <-  CServico - retorno de lista com todos os servicos e quais estão habilitados
+//*  
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  Consultar a vigencia dos servicos da linha em questao
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+void CLinha::consultarServicos(list< CServico > & listaServico) 
+{
+    CServico::consultarServicosLinha(this->getCdAreaRegistro(),
+									 this->getNrLinha(),
+                                     listaServico);
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  consultarIdConta
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  Consultar o IdConta referente a Linha
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+void CLinha::consultarIdConta() 
+{
+	CLinha::consultarIdContaDB();
+}
+
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  registrarContato
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+void CLinha::registrarContato(int iIdTerminal, char *cUsuario, char *nrProtocolo, char*idSistemaOrigem, char*idTipoAberturaProtocolo, char* codigoFuncionalidade)
+{
+	tuxfw_getlogger()->information("REGISTRANDO CONTATO POR NÚMERO DE PROTOCOLO");
+	XMLGen xmlInput;
+	// adicionar a tag com o número de protocolo
+	xmlInput.createTag("AtendimentoVO");
+	xmlInput.addProp("xmlns", "workflow.fo.vivo.com.br/vo");				
+	xmlInput.addItem("nrProtocolo",nrProtocolo);
+	xmlInput.addItem("idSistema",idSistemaOrigem);
+	xmlInput.addItem("idGrupoAbertura",ID_GRUPO_ABERTURA);
+	xmlInput.addItem("cdServico",codigoFuncionalidade);
+	xmlInput.addItem("dsComentario",codigoFuncionalidade);
+	xmlInput.addItem("idCanal",this->getPessoa()->getRel()->getIdCanal());
+	xmlInput.addItem("idUsuario",cUsuario);
+	if(iIdTerminal >= 0)
+		xmlInput.addItem("idTerminal", iIdTerminal);
+	else
+		xmlInput.addItem("idTerminal", "");
+	xmlInput.closeTag();
+
+	int	  iXMLLen;
+	int	  iRet = TUXFWRET_OK;
+	
+	char* pcStatusCode = NULL;
+	char* pcStatusText = NULL;
+
+	// Faz a solicitação ao serviço de consulta
+	TuxRemoteService remoteService;
+	TuxMessage inputMessage;
+	
+	inputMessage.setUser(cUsuario);
+	inputMessage.setService("REGPALITAGEFO");
+	inputMessage.setMessageBody(&xmlInput);
+
+	tuxfw_getlogger()->information("\r\nREGPALITAGEFO\r\n"); 
+
+	try
+	{
+		// Repassa configuracoes ao manipulador do serviço remoto e invoca o servico.
+		remoteService.setServiceName("REGPALITAGEFO");
+		remoteService.setInputMessage(&inputMessage);
+
+		if(remoteService.remoteCall() != TUXFWRET_OK)
+		{
+			tuxfw_getlogger()->debug("Erro na comunicação com o serviço REGPALITAGEFO");
+		}
+
+		pcStatusCode = remoteService.getOutputMessage()->getStatusCode();
+		pcStatusText = remoteService.getOutputMessage()->getStatusText();
+		char* pc_textMessage = remoteService.getOutputMessage()->getMessageBody();
+		char* outputFull = (char*) malloc(strlen(pc_textMessage) + 100);
+		sprintf(outputFull, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>%s", pc_textMessage);
+		tuxfw_getlogger()->debug("getMessageBody() nova chamada XML = %s",outputFull);		
+		// fazer parse da resposta do serviço
+		const char pMemBufId[] = "inputInfo";
+		XercesDOMParser domParser;
+		MemBufInputSource memBuffer((const XMLByte*)outputFull, strlen(outputFull), pMemBufId);	
+		domParser.parse(memBuffer);
+		free(outputFull);
+		DOMNode* po_textMessage = domParser.getDocument();
+		// tratar a resposta e procurar a tag nrProtocolo
+		TuxHelper o_tuxhp;			
+		DOMNode*dnode =  o_tuxhp.walkDOM(po_textMessage, "msgBody", 0);
+		char*nrProtocolo = o_tuxhp.walkTree(dnode, "nrProtocolo", 0);			
+		tuxfw_getlogger()->debug("nrProtocolo = %s",nrProtocolo);
+		this->setNrProtocolo(nrProtocolo);
+		// liberar espaço em memória
+		XMLString::release(&nrProtocolo);
+		free(pc_textMessage);	
+		free(po_textMessage);
+	}
+	catch(...)
+	{
+		// vamos asseguar que iRet esteja realmente com erro
+		tuxfw_getlogger()->debug("CLinha::erro ao chamar REGPALITAGEFO");
+		iRet = TUXFWRET_ERROR;
+	}
+}
+
+void CLinha::registrarContato(int iIdTerminal, char *cUsuario)
+{
+	XMLGen		xmlInput;
+
+	int			iRet;
+	char		c_TagUtil[128];
+
+	int			iIdTipoRelacionamento;
+	long		iIdPessoaDeParaCliente;
+	long		iIdPessoaDeParaUsuario;
+	
+	tuxfw_getlogger()->information("REGISTRANDO CONTATO");
+
+	iIdTipoRelacionamento = this->getPessoa()->getIdTipoRelacionamento();
+
+	try
+	{
+		// Obtendo IdPessoaDePara do Cliente
+		this->getPessoa()->setIdTipoRelacionamento(PESSOA_CLIENTE);
+
+		this->getPessoa()->obterIdPessoa(this->getCdAreaRegistro(),
+										 this->getNrLinha());
+
+		iIdPessoaDeParaCliente = this->getPessoa()->getIdPessoaDePara();
+
+		// Obtendo IdPessoaDePara do Usuario
+		this->getPessoa()->setIdTipoRelacionamento(PESSOA_USUARIO);
+
+		this->getPessoa()->obterIdPessoa(this->getCdAreaRegistro(),
+										 this->getNrLinha());
+
+		iIdPessoaDeParaUsuario = this->getPessoa()->getIdPessoaDePara();
+
+		// Devolvendo idTipoRelacionamento original		
+		this->getPessoa()->setIdTipoRelacionamento(iIdTipoRelacionamento);
+
+	}
+	catch (...)
+	{
+		throw TuxBasicSvcException("11E0001","OBTER ID PESSOA");
+	}
+
+	try
+	{
+		iRet = this->obterDadosLinhaPessoaSessao();
+	}
+	catch (...)
+	{
+		throw TuxBasicSvcException("11E0001","OBTER SESSAO");
+	}
+
+	if(iRet)
+		throw TuxBasicSvcException("11E0001","OBTER SESSAO");
+
+
+	// criando XML para chamada de acesso remoto
+
+	xmlInput.createTag("script");
+	xmlInput.addProp("type", "D");
+	xmlInput.addProp("dbid", "3");
+	xmlInput.closeTag();		
+
+	xmlInput.createTag("rsBody");
+
+	xmlInput.createTag("xml-fragment");
+
+		xmlInput.createTag("AtendimentoVO");
+
+			xmlInput.addProp("xmlns:vo", "workflow.fo.vivo.com.br/vo");
+
+			if(iIdTerminal >= 0)
+				xmlInput.addItem("idTerminal", iIdTerminal);
+			else
+				xmlInput.addItem("idTerminal", "");
+
+			xmlInput.addItem("idChamadaTelefonica", 0);
+			xmlInput.addItem("idGrupoAbertura", ID_GRUPO_ABERTURA);
+			xmlInput.addItem("inResponsavelAbertura", this->getPessoa()->getIdTipoRelacionamento());
+			xmlInput.addItem("nmContato", this->getPessoa()->getNomeCliente());
+			xmlInput.addItem("observacao", this->getObservacaoRegContato());
+
+			// adicionar a tag com o número de protocolo
+			this->getNumeroProtocolo();			
+			xmlInput.addItem("nrProtocolo",this->getNrProtocolo());
+
+			sprintf(c_TagUtil, "%2d%d", this->getCdAreaRegistro(), this->getNrLinha());
+			xmlInput.addItem("nrTelefone", c_TagUtil);
+
+			xmlInput.addItem("tpOperacao", 1);
+
+			xmlInput.createTag("ProcedenciaVO");
+				
+				xmlInput.addProp("xmlns:vo1", "admsistemas.fo.vivo.com.br/vo");
+				xmlInput.addItem("idProcedencia", this->getIdProcedencia());
+		
+			xmlInput.closeTag();
+
+			xmlInput.createTag("CanalVO");
+				
+				xmlInput.addItem("idCanal", this->getPessoa()->getRel()->getIdCanal());
+		
+			xmlInput.closeTag();
+
+			xmlInput.createTag("Contas");
+				
+				xmlInput.createTag("ContaVO");
+					
+					xmlInput.addItem("idConta", this->getPessoa()->getIdConta());
+
+					xmlInput.createTag("LinhaVO");
+
+						xmlInput.addItem("idPessoaLinhaHistorico", this->getIdLinhaTelefonica());
+
+					xmlInput.closeTag();
+
+				xmlInput.closeTag();
+		
+			xmlInput.closeTag();
+
+			xmlInput.createTag("PessoaVO");
+				
+				xmlInput.addItem("idPessoa", iIdPessoaDeParaCliente);
+
+				xmlInput.createTag("AtendimentoTipoComunicacaoVO");
+
+				xmlInput.closeTag();
+
+			xmlInput.closeTag();
+
+			xmlInput.createTag("UsuarioLinhaVO");
+
+				xmlInput.addProp("xmlns:vo1", "cliente.fo.vivo.com.br/vo");
+				xmlInput.addItem("idPessoa", iIdPessoaDeParaUsuario);
+
+			xmlInput.closeTag();
+
+			xmlInput.createTag("ArvoreAtendimentoVO");
+
+				xmlInput.addProp("xmlns", "admsistemas.fo.vivo.com.br/vo");
+				xmlInput.addItem("idContato", this->getPessoa()->getRel()->getIdContato());
+
+				xmlInput.createTag("CarterizacaoVO");
+
+					xmlInput.addItem("idTipoCarteira", this->getPessoa()->getIdTipoCarteira());
+
+				xmlInput.closeTag();
+
+				xmlInput.createTag("SegmentacaoVO");
+
+					xmlInput.addItem("idSegmentacao", this->getIdSegmentacao());
+
+				xmlInput.closeTag();
+
+			xmlInput.closeTag();
+
+		xmlInput.closeTag();
+
+	xmlInput.closeTag();
+
+	tuxfw_getlogger()->information("XML REGISTRO CONTATO CRIADO COM SUCESSO");
+
+	try
+	{
+		this->getPessoa()->getRel()->registraContato(xmlInput, cUsuario);
+	}
+	catch(...)
+	{
+		throw TuxBasicSvcException("11E0002","REGISTRANDO CONTATO");;
+	}
+
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  alteraEmailServiceRouter
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+int CLinha::alteraEmailServiceRouter()
+{	
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char        data[11];
+	EXEC SQL END DECLARE SECTION;
+
+	bool		blCadAtivo = false;
+	bool        blIsOk     = false;
+	char		*xml       = NULL;
+	char		*pcCad     = NULL;
+	char        *pcMail    = NULL;
+
+	char        cTarefa[32];
+	XMLCh		tempStr[STR_SIZE + 1];
+	CGet		get;
+	CXmlHelper	xmlH;
+	CParametro  oParametro;
+
+	try
+	{
+		if(this->getIdTipoLinha() == TP_POS)
+			strcpy(cTarefa, SERVICE_ROUTER_POS);
+		else
+			strcpy(cTarefa, SERVICE_ROUTER_PRE);
+
+		xml = new char[strlen(xmlCadastroEmail) + 32];
+		
+		//pegando IP e URL do service router
+		oParametro.setChave("URL_SERVICE_ROUTER");
+		oParametro.consultar();
+
+		sprintf(xml, xmlCadastroEmail, this->getCdAreaRegistro(), this->getNrLinha(), cTarefa);
+
+		get.setURL(oParametro.getConsulta());
+		get.addParameter("ARG", xml);
+
+		if(!get.Execute())
+		{
+			// verificando se o cadastro está ativo	
+			XMLString::transcode("cadastroAtivo", tempStr, STR_SIZE);
+
+			xmlH.setXml(get.bodyReceived());
+			
+			int iParsedError = xmlH.parse();
+
+			if(!iParsedError)
+			{
+				DOMNodeList* cadList = xmlH.getParser().getDocument()->getElementsByTagName(tempStr);
+
+				if(cadList->getLength() > 0)
+				{
+					pcCad = XMLString::transcode(cadList->item(0)->getTextContent());
+					
+					if(!strcmp(pcCad, "true"))
+						blCadAtivo = true;
+					else
+						blIsOk = true;
+				}
+			}
+		}
+
+		if(blCadAtivo)
+		{
+			delete xml;
+			
+			xml = new char[strlen(xmlAtivaEmail) + 256 + 256];
+		
+			EXEC SQL SELECT TO_CHAR(SYSDATE, 'dd/mm/yyyy') INTO :data FROM DUAL;
+
+			sprintf(xml, xmlAtivaEmail, this->getCdAreaRegistro(), 
+										this->getNrLinha(), 
+										data,
+										this->getPessoa()->getDsContato(),
+										cTarefa);
+			get.deleteParameter();
+			get.setURL(oParametro.getConsulta());
+			get.addParameter("ARG", xml);
+
+			if(!get.Execute())
+			{
+				//verificando se a alteracao foi executada
+				XMLString::transcode("email", tempStr, STR_SIZE);
+
+				xmlH.setXml(get.bodyReceived());
+
+				int iParsedError = xmlH.parse();
+
+				if(!iParsedError)
+				{
+					DOMNodeList* email = xmlH.getParser().getDocument()->getElementsByTagName(tempStr);
+
+					if(email->getLength() > 0)
+					{
+						pcMail = XMLString::transcode(email->item(0)->getTextContent());
+						
+						if(!strcmp(pcMail, this->getPessoa()->getDsContato()))
+							blIsOk = true;
+					}
+				}				
+			}
+		}
+	}
+	catch(...)
+	{
+
+	}
+
+	if(pcCad)
+		XMLString::release(&pcCad);
+
+	if(pcMail)
+		XMLString::release(&pcMail);
+
+	if(xml)
+		delete xml;
+
+	if(blIsOk)
+		return 0;
+	else
+		return 1;
+
+}
+
+/*
+
+  GETs
+
+*/
+
+//---------------------------------------------------------------------------
+int CLinha::getCdAreaRegistro() 
+{
+	return this->m_iCdAreaRegistro;
+}
+
+//---------------------------------------------------------------------------
+int CLinha::getNrLinha() 
+{
+	return this->m_iNrLinha;
+}
+
+//---------------------------------------------------------------------------
+char * CLinha::getIdTipoLinhaSistemaOrigem() 
+{
+    return this->m_sIdTpLinhaSistemaOrigem;
+}
+
+//---------------------------------------------------------------------------
+int CLinha::getIdTipoLinha() 
+{
+	return this->m_iIdTipoLinha;
+}
+
+//---------------------------------------------------------------------------
+char * CLinha::getDsTipoLinha() 
+{
+	return this->m_cDsTipoLinha;
+}
+
+//---------------------------------------------------------------------------
+int CLinha::getIdSubTipoLinha() 
+{
+	return this->m_iIdSubTipoLinha;
+}
+
+//---------------------------------------------------------------------------
+char * CLinha::getCdSubTipoLinha() 
+{
+	return this->m_cCdSubTipoLinha;
+}
+
+//---------------------------------------------------------------------------
+char * CLinha::getDsSubTipoLinha() 
+{
+	return this->m_cDsSubTipoLinha;
+}
+
+//---------------------------------------------------------------------------
+int CLinha::getIdSistemaOrigem(void)
+{
+	return m_iIdSistemaOrigem;
+}
+
+//---------------------------------------------------------------------------
+char * CLinha::getSgSistOrig()
+{
+	return this->m_cSgSistOrig;
+}
+
+
+//---------------------------------------------------------------------------
+int CLinha::getIdUFOperadora(void)
+{
+	return m_iIdUFOperadora;
+}
+
+//---------------------------------------------------------------------------
+int CLinha::getIdLinhaTelefonica(void)
+{
+	return m_iIdLinhaTelefonica;
+}
+
+//---------------------------------------------------------------------------
+int CLinha::getIdProcedencia(void)
+{
+	return m_iIdProcencia;
+}
+
+int CLinha:: getIdGrupoOperadora (void)
+{
+
+	return m_idGrupoOperadora;
+
+}
+	
+void CLinha::setIdTipoAberturaProtocolo(int value)
+{
+	this->m_idTipoAberturaProtocolo = value;
+}
+int CLinha::getIdTipoAberturaProtocolo()
+{
+	return this->m_idTipoAberturaProtocolo;
+}
+
+int CLinha::getNrRestrito()
+{
+
+	return m_iNrRestrito;
+}
+//---------------------------------------------------------------------------
+CPonto * CLinha::getPonto() 
+{
+
+	if(this->m_oPonto == NULL)
+		this->m_oPonto = new CPonto();
+
+	return this->m_oPonto;
+}
+
+
+//---------------------------------------------------------------------------
+int CLinha::getQtFavoritos() {
+	return this->m_iQtFavoritos;
+}
+
+//---------------------------------------------------------------------------
+int CLinha::getIdUF() 
+{
+	return this->m_iIdUF;
+}
+
+bool CLinha::getLinhaPremium()
+{
+
+	return blinhaPremium;
+}
+
+CPessoa *CLinha::getPessoa() 
+{
+
+	if(this->m_oPessoa == NULL)
+		this->m_oPessoa = new CPessoa();
+	
+	return this->m_oPessoa;
+}
+
+char * CLinha::getSgEstadoLinha() 
+{
+	return this->m_cSgEstadoLinha;
+}
+
+char * CLinha::getDsEstadoLinha() 
+{
+	return this->m_cDsEstadoLinha;
+}
+
+char * CLinha::getSgEstadoLinhaOriginal()
+{
+	return this->m_cSgEstadoLinhaOriginal;
+
+}
+
+int CLinha::getIdSegmentacao()
+{
+	return this->m_iIdSegmentacao;
+}
+
+int CLinha::getDigitoVerificador()
+{
+	return this->m_iDigitoVerificador;
+}
+
+int CLinha::getIdConta()
+{
+	return this->m_iIdConta;
+}
+
+char * CLinha::getSgUF()
+{
+	return this->m_cSgUF;
+}
+
+int CLinha::getIdEstadoLinha()
+{
+	return  m_idEstadoLinha;
+
+}
+	
+int CLinha::getPlanoControle()
+{
+	return	m_iPlanoControle;
+}
+
+char* CLinha::getObservacaoRegContato()
+{
+
+	return m_cObservacaoRegContato;
+}
+
+
+
+char* CLinha::getCdSenhaPreAtiva()
+{
+	
+	return this->m_cdSenhaPreAtiva;
+
+}
+
+
+
+bool CLinha::getVivoZAP()
+{
+	
+	return this->bVivoZAP;
+
+}
+
+
+int CLinha::getInLinhaCancelada()
+{
+	return this->m_inLinhaCancelada;
+}
+
+/*
+ 
+   SETs
+
+*/
+
+//---------------------------------------------------------------------------
+void CLinha::setCdAreaRegistro(int value) 
+{
+	this->m_iCdAreaRegistro = value;
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setNrLinha(int value) 
+{
+	this->m_iNrLinha = value;
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setIdTipoLinhaSistemaOrigem( char * value ) 
+{
+    strcpy( this->m_sIdTpLinhaSistemaOrigem, value ); 
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setIdTipoLinha(int value) 
+{
+	this->m_iIdTipoLinha = value;
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setDsTipoLinha(char *value) 
+{
+	strcpy(this->m_cDsTipoLinha,value); 
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setIdSubTipoLinha(int value) 
+{
+	this->m_iIdSubTipoLinha = value;
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setCdSubTipoLinha(char *value) 
+{
+	strcpy(this->m_cCdSubTipoLinha,value); 
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setDsSubTipoLinha(char *value) 
+{
+	strcpy(this->m_cDsSubTipoLinha,value); 
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setQtFavoritos(int value) 
+{
+	this->m_iQtFavoritos = value;
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setIdUF(int value) 
+{
+	this->m_iIdUF = value;
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setIdSistemaOrigem(int value)
+{
+	 m_iIdSistemaOrigem = value;
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setSgSistOrig(char *value)
+{
+	strcpy(this->m_cSgSistOrig, value);
+}
+
+
+//---------------------------------------------------------------------------
+void CLinha::setIdUFOperadora(int value)
+{
+	m_iIdUFOperadora = value;
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setIdLinhaTelefonica(int value)
+{
+	m_iIdLinhaTelefonica = value;
+}
+
+//---------------------------------------------------------------------------
+void CLinha::setIdProcedencia(int value)
+{
+	m_iIdProcencia = value;
+}
+
+void CLinha::setSgEstadoLinha(char *value) 
+{
+	strcpy(this->m_cSgEstadoLinha,value); 
+}
+
+void CLinha::setDsEstadoLinha(char *value) 
+{
+	strcpy(this->m_cDsEstadoLinha,value); 
+}
+
+void CLinha::setIdSegmentacao(int value)
+{
+	this->m_iIdSegmentacao = value;
+}
+
+void CLinha::setDigitoVerificador(int value)
+{
+	this->m_iDigitoVerificador = value;
+}
+
+void CLinha::setIdConta(int value)
+{
+	this->m_iIdConta = value;
+}
+
+void CLinha::setSgUF(char *value)
+{
+	strcpy(this->m_cSgUF, value);
+}
+
+void CLinha::setSgEstadoLinhaOriginal(char *value)
+{
+
+	strcpy(this->m_cSgEstadoLinhaOriginal, value);
+}
+
+void CLinha::setIdGrupoOperadora(int value)
+{
+	m_idGrupoOperadora = value;
+}
+
+void CLinha::setIdEstadoLinha(int value)
+{
+	m_idEstadoLinha = value;
+}
+
+
+void CLinha::setPlanoControle(int value)
+{
+	m_iPlanoControle = value;
+}
+
+
+void CLinha::setNrRestrito(int iNrRestrito)
+{
+
+	m_iNrRestrito = iNrRestrito;
+}
+
+void CLinha::setObservacaoRegContato(char* value)
+{
+	
+	strcpy(m_cObservacaoRegContato, value);
+
+}
+
+void CLinha::setCdSenhaPreAtiva(char* value)
+{
+	
+	strcpy(this->m_cdSenhaPreAtiva, value);
+
+}
+
+void CLinha::setLinhaPremium(bool value)
+{
+
+	blinhaPremium = value;
+
+}
+
+void CLinha::setVivoZAP(bool value)
+{
+	
+	this->bVivoZAP = value;
+
+}
+
+
+void CLinha::setInLinhaCancelada(int value)
+{
+
+	m_inLinhaCancelada = value;
+
+}
+
+char* CLinha::getPlanoPrincipal()
+{
+	return this->m_planoPrincipal;
+}
+
+void CLinha::setPlanoPrincipal(char* value)
+{
+	if(value != NULL)
+		strcpy(this->m_planoPrincipal,value);
+}
+
+// FUNCOES
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  obterFraseSecreta
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+char* CLinha::obterFraseSecreta(int iIdCanal, int idPessoaUsuario, int iIdTerminal)
+{
+    // Delega para CSenha a Execução da Consulta.
+	this->getPessoa()->obterIdPessoa(this->getCdAreaRegistro(), this->getNrLinha());
+	
+	this->getPessoa()->getSenha().consultarLembreteFraseSecreta(this->getPessoa()->getIdPessoa(),
+															    this->getPessoa()->getIdPessoaLinha(),
+																this->getPessoa()->getIdTipoRelacionamento());
+
+	this->getPessoa()->getSenha().registrarPrimeiroAcesso(iIdCanal, idPessoaUsuario, this->getPessoa()->getIdPessoaLinha(), iIdTerminal);
+
+	return this->getPessoa()->getSenha().getDsFraseSecreta();
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  excluirFraseSecreta
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+void CLinha::excluirFraseSecreta(int idCanal, int idPessoaUsuario)
+{
+
+	this->getPessoa()->obterIdPessoa(this->getCdAreaRegistro(), this->getNrLinha());
+
+	this->getPessoa()->getSenha().excluirFraseSecreta(this->getPessoa()->getIdPessoa(),
+													  this->getPessoa()->getIdPessoaLinha(),
+													  this->getPessoa()->getIdTipoRelacionamento(),
+													  idCanal,
+													  idPessoaUsuario);
+
+
+/*	if(this->getPessoa()->getIdTipoRelacionamento() == PESSOA_CLIENTE)
+	{
+		//vamos alterar para usuário
+		this->getPessoa()->setIdTipoRelacionamento(PESSOA_USUARIO);
+		this->getPessoa()->obterIdPessoa(this->getCdAreaRegistro(), this->getNrLinha());
+		this->getPessoa()->getSenha().excluirFraseSecreta(this->getPessoa()->getIdPessoa(),
+													      this->getPessoa()->getIdPessoaLinha(),
+													      this->getPessoa()->getIdTipoRelacionamento(),
+													      idCanal,
+													      idPessoaUsuario);
+
+		//voltando para cliente
+		this->getPessoa()->setIdTipoRelacionamento(PESSOA_CLIENTE);
+	}
+*/
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  consultarExtratoPontos
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+void CLinha::consultarExtratoPontos() 
+{
+	this->getPonto()->consultarExtrato(this->getCdAreaRegistro(), 
+                                       this->getNrLinha());
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  consultarQtdFavoritos
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+void CLinha::consultarQtdFavoritos() 
+{
+	this->consultarQtdFavoritosDB();
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  obterDadosLinhaPessoaSessao
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+int CLinha::obterDadosLinhaPessoaSessao(char * cSenha, int iIdCanal)
+{
+	
+
+
+	try
+	{
+
+		this->getPessoa()->obterDadosPessoaSessao(this->getCdAreaRegistro(), this->getNrLinha(), cSenha);
+	}
+	catch (...)
+	{
+		return -1;
+	}
+
+	try
+	{
+		this->getPessoa()->consultarNomeCliente(this->getCdAreaRegistro(), this->getNrLinha());
+	}
+	catch(...)
+	{
+		this->getPessoa()->setNomeCliente("");
+	}
+
+	try
+	{
+		this->getPessoa()->consultarNomeUsuario(this->getCdAreaRegistro(), this->getNrLinha());
+	}
+	catch(...)
+	{
+		this->getPessoa()->setNomeUsuario(this->getPessoa()->getNomeCliente());
+	}
+
+	if ( strlen(this->getPessoa()->getNomeCliente()) == 0  )
+	{
+		this->getPessoa()->setNomeCliente(this->getPessoa()->getNomeUsuario());
+
+	}
+
+	try
+	{
+		this->getPessoa()->consultarEMail();
+	}
+	catch(...)
+	{
+		this->getPessoa()->setDsContato("Sem Email Cadastrado");
+	}
+
+	// Getting objects related to CLinha
+	try
+	{
+		this->consultarTipoLinha();
+	}
+	catch(...)
+	{
+		return -1;
+	}
+
+
+	try
+	{
+
+		if ( this->getIdTipoLinha () == 2 || this->getIdTipoLinha () == 6 )
+			this->consultarPlanoControle();
+	}
+	catch(...){   }
+
+	try
+	{
+		this->consultarProcedenciaLinha();
+	}
+	catch(...){}
+
+	try
+	{
+		this->consultarPlanoPrincipal();
+	}
+	catch(...){}
+
+	try{
+		if (iIdCanal > 0){
+			this->getPessoa()->getRel()->setIdCanal(iIdCanal);
+			this->getPessoa()->getRel()->registrarLoginSessao(this->getCdAreaRegistro(), this->getNrLinha(), this->getPessoa()->getIdTipoRelacionamento());
+		}
+	}
+	catch(...){}
+
+
+
+	
+	return this->consultarDadosLinhaSessaoDB();		
+}
+
+
+
+int CLinha::obterDadosLinhaPessoaSessaoSemSenha( int iIdCanal )
+{
+	try
+	{
+	   tuxfw_getlogger()->debug( ">>> Vai chamar obterDadosPessoaSessaoSemSenha" );
+	   this->getPessoa()->obterDadosPessoaSessaoSemSenha( this->getCdAreaRegistro(), this->getNrLinha() );
+	}
+	catch (...)
+	{
+	   return -1;
+	}
+
+	try
+	{
+	   this->getPessoa()->consultarNomeCliente(this->getCdAreaRegistro(), this->getNrLinha());
+	}
+	catch(...)
+	{
+	   this->getPessoa()->setNomeCliente("");
+	}
+
+	try
+	{
+	   this->getPessoa()->consultarNomeUsuario(this->getCdAreaRegistro(), this->getNrLinha());
+	}
+	catch(...)
+	{
+	   this->getPessoa()->setNomeUsuario(this->getPessoa()->getNomeCliente());
+	}
+
+	if ( strlen(this->getPessoa()->getNomeCliente()) == 0  )
+	{
+	   this->getPessoa()->setNomeCliente(this->getPessoa()->getNomeUsuario());
+	}
+
+	try
+	{
+	   this->getPessoa()->consultarEMail();
+	}
+	catch(...)
+	{
+	   this->getPessoa()->setDsContato("Sem Email Cadastrado");
+	}
+
+	// Getting objects related to CLinha
+	try
+	{
+	   this->consultarTipoLinha();
+	}
+	catch(...)
+	{
+	   return -1;
+	}
+
+	try
+	{
+	   this->consultarSubTipoLinha();
+	}
+	catch(...){ }
+
+
+	try
+	{
+	   if ( this->getIdTipoLinha () == 2 || this->getIdTipoLinha () == 6 )
+	      this->consultarPlanoControle();
+	}
+	catch(...){   }
+
+	try
+	{
+	   this->consultarProcedenciaLinha();
+	}
+	catch(...){}
+
+	try
+	{
+	   this->consultarPlanoPrincipal();
+	}
+	catch(...){}
+
+	try
+	{
+	   if ( iIdCanal > 0 )
+	   {
+	      this->getPessoa()->getRel()->setIdCanal(iIdCanal);
+	      this->getPessoa()->getRel()->registrarLoginSessao(this->getCdAreaRegistro(), this->getNrLinha(), this->getPessoa()->getIdTipoRelacionamento());
+	   }
+	}
+	catch(...){}
+
+	return this->consultarDadosLinhaSessaoDB();		
+}
+
+
+
+/*
+int CLinha::obterDadosLinhaPessoaSessao(char * cSenha, int iIdCanal){
+	int iRet=-1;
+
+	try{
+		iRet = this->obterDadosLinhaPessoaSessao(cSenha);
+
+		this->getPessoa()->getRel()->setIdCanal(iIdCanal);
+		this->getPessoa()->getRel()->registrarLoginSessao(this->getCdAreaRegistro(), this->getNrLinha(), this->getPessoa()->getIdTipoRelacionamento());
+
+	}catch(...){}
+
+	return iRet;
+}
+*/
+void CLinha::remoteMensagem(XMLGen &xmlInput, char *cServico, char *cUsuario)
+{
+	int	  iXMLLen;
+	int	  iRet = TUXFWRET_ERROR;
+	
+	char* pcStatusCode = NULL;
+	char* pcStatusText = NULL;
+
+
+	// Faz a solicitação ao serviço de consulta
+	TuxRemoteService* remoteService;
+	TuxMessage* inputMessage;
+
+	remoteService = new TuxRemoteService();
+	inputMessage = new TuxMessage();
+	
+	inputMessage->setUser(cUsuario);
+	inputMessage->setService(cServico);
+	inputMessage->setMessageBody(&xmlInput);
+
+	tuxfw_getlogger()->information("\r\nENVMSG::XML_ENTRADA:\r\n%s\r\n", xmlInput.retrieveXML(&iXMLLen)); 
+
+	try
+	{
+		// Repassa configuracoes ao manipulador do serviço remoto e invoca o servico.
+		remoteService->setServiceName(cServico);
+		remoteService->setInputMessage(inputMessage);
+
+		iRet = remoteService->remoteCall();
+	}
+	catch(...)
+	{
+		// vamos asseguar que iRet esteja realmente com erro
+		iRet = TUXFWRET_ERROR;
+	}
+
+	char  c_statusCode[10]  = "";
+	char  c_statusText[256] = "";
+
+	pcStatusCode = remoteService->getOutputMessage()->getStatusCode();
+	pcStatusText = remoteService->getOutputMessage()->getStatusText();
+
+	if(pcStatusCode)
+		strcpy(c_statusCode, pcStatusCode);
+
+	if(pcStatusText)
+	{
+		if(strlen(pcStatusText) >= sizeof(c_statusText))
+			strncpy(c_statusText, pcStatusText, sizeof(c_statusText) - 1);
+		else
+			strcpy(c_statusText, pcStatusText);
+	}
+
+	free(pcStatusCode);
+	free(pcStatusText);
+
+	delete inputMessage;
+	delete remoteService;
+
+	if(iRet != TUXFWRET_OK)
+	{
+		// temporário para montagem do XML
+		tuxfw_getlogger()->information("ENVMSG::ERRO %d:", iRet);
+		throw TuxBasicSvcException("11E0001","ENVMSG::ERRO EM TUXFWRET_OK");
+	}
+	else
+	{
+		if(c_statusCode[2] != 'I')
+			throw TuxBasicSvcException(c_statusCode, c_statusText);
+	}
+
+}
+
+void CLinha::enviarMensagem(char *cdMsg, char *cUsuario)
+{
+	CParametro oParametro;
+
+	XMLGen		xmlInput;
+
+	int         iTipoComunicacao;
+	char        cDestinatario[16];
+	char        cMensagem[256 + 32];
+
+	char        cEmailAnterior[256];
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+    char                       cDtCriacaoEmail[12];
+    char                       cHrCriacaoEmail[9];
+
+    EXEC SQL END DECLARE SECTION;
+	
+    memset(cDtCriacaoEmail, 0, sizeof(cDtCriacaoEmail));
+    memset(cHrCriacaoEmail, 0, sizeof(cHrCriacaoEmail));
+
+    ///
+	tuxfw_getlogger()->information("ENVMSG::INICIANDO MONTAGEM");
+
+	this->getPessoa()->obterIdPessoa(this->getCdAreaRegistro(), 
+								 this->getNrLinha());
+
+	tuxfw_getlogger()->information("ENVMSG:: cdMsg = %s", cdMsg);	
+	
+	oParametro.setChave(cdMsg);		
+
+	oParametro.consultarParametrosCanais();
+	
+	
+
+	tuxfw_getlogger()->information("ENVMSG::CMSG ENCONTRADA");
+
+	try
+	{
+		iTipoComunicacao = ID_TP_COM_SMS;
+		this->getPessoa()->setTipoComunicacao(iTipoComunicacao);
+		this->getPessoa()->consultarDispComunicacao();
+
+		///
+		tuxfw_getlogger()->information("ENVMSG::ENVIANDO POR SMS");
+
+	}
+	catch(...)
+	{
+
+		iTipoComunicacao = ID_TP_COM_EMAIL;
+		this->getPessoa()->setTipoComunicacao(iTipoComunicacao);
+		this->getPessoa()->consultarDispComunicacao();
+
+		///
+		tuxfw_getlogger()->information("ENVMSG::ENVIANDO POR EMAIL");
+	}
+
+	if(iTipoComunicacao == ID_TP_COM_SMS)
+	{
+		sprintf(cDestinatario, "%d%d", this->getCdAreaRegistro(), 
+									   this->getNrLinha());
+
+		sprintf(cMensagem, "VIVO Informa: %s", oParametro.getConsulta());
+
+		// montando XML
+		xmlInput.addItem("message", cMensagem);		
+		xmlInput.addItem("recipient", cDestinatario);
+
+		// fazendo acesso remoto
+		this->remoteMensagem(xmlInput, "SMSSend", cUsuario);
+	}
+	else if(iTipoComunicacao == ID_TP_COM_EMAIL)
+	{
+		// enviando para e-mail antigo
+		// getPessoa()->getDsContato tem de ter e-mail antigo
+		// atualmente isso acontece devido funcionalidade de AlterarEmail
+
+		if(strlen(this->getPessoa()->getDsContato()) > 0)
+		{
+			///
+			tuxfw_getlogger()->information("ENVMSG::ENVIANDO EMAIL ANTIGO");
+
+			// montando XML
+			xmlInput.addItem("to", this->getPessoa()->getDsContato());
+			xmlInput.addItem("subject", "VIVO Informa");
+			xmlInput.addItem("data", oParametro.getConsulta());
+
+			// fazendo acesso remoto
+			this->remoteMensagem(xmlInput, "SMTPSEND", cUsuario);
+
+			///
+			tuxfw_getlogger()->information("ENVMSG::EMAIL ANTIGO ENVIADO COM SUCESSO");
+
+		}
+
+		strcpy(cEmailAnterior, this->getPessoa()->getDsContato());
+
+		// enviando para e-mail novo
+		this->getPessoa()->consultarEMail();
+
+		if(!strcmp(cEmailAnterior, this->getPessoa()->getDsContato()))
+			return;
+
+		///
+		tuxfw_getlogger()->information("ENVMSG::ENVIANDO EMAIL NOVO");
+
+		if(strlen(this->getPessoa()->getDsContato()) <= 0)
+		{
+			// e-mail nao cadastrado
+			tuxfw_getlogger()->information("ENVMSG::ERRO SEM EMAIL CADASTRADO");
+			throw TuxBasicSvcException("11E0001","SEM EMAIL CADASTRADO");
+		}
+
+		// montando XML
+		xmlInput.clearAndDestroy();
+		xmlInput.addItem("to", this->getPessoa()->getDsContato());
+		xmlInput.addItem("subject", "VIVO Informa");
+        
+        EXEC SQL
+        SELECT
+            TO_CHAR(SYSDATE, 'dd/mm/yyyy') AS DIA,
+            TO_CHAR(SYSDATE, 'hh24:mi:ss') AS HORA
+        INTO
+           :cDtCriacaoEmail,
+           :cHrCriacaoEmail
+        FROM
+            DUAL;
+
+        char buffer[4096];
+        if ( !strcmp(oParametro.getChave(), "ComunicarAlteracaoSenha") )
+        {
+            sprintf (buffer, "Sua senha foi alterada com sucesso pela internet em %s às %s.\n\nO Meu Vivo é o seu canal de auto-atendimento na internet.\nNavegue com "
+                           "segurança e realize a qualquer momento operações que antes só estavam disponíveis por telefone ou em uma das lojas próprias da Vivo.\n\nImportante: esta é uma mensagem "
+                           "automática e não deve ser respondida. Para enviar a sua sugestão ou solicitação para  VIVO, por favor, acesse vivo.com.br/faleconosco."
+                           "\nPara alterar o e-mail de recebimento, utilize o VIVO Online a partir do site vivo.com.br/vivoonline."
+                           "\n\nPolítica de Segurança\n"
+                           "A Vivo nunca envia e-mails com links ativos, arquivos executáveis ou solicitação de dados pessoais. "
+                           "Para sua segurança, ao receber uma comunicação digital da Vivo, acesse nosso portal e confirme a autenticidade do comunicado. "
+                           "Além disso, mantenha atualizado o antivírus do seu computador.", cDtCriacaoEmail, cHrCriacaoEmail);
+
+            xmlInput.addItem("data", buffer);
+        }
+        else
+        {
+            xmlInput.addItem("data", oParametro.getConsulta());
+        }
+        
+
+		// fazendo acesso remoto
+		this->remoteMensagem(xmlInput, "SMTPSEND", cUsuario);
+
+		///
+		tuxfw_getlogger()->information("ENVMSG::EMAIL NOVO ENVIADO COM SUCESSO");
+
+	}
+
+}
+
+bool CLinha::verificarClienteUsuarioIguais(void)
+{
+	return verificarClienteUsuarioIguaisDB();
+
+}
+
+// PRIVATE
+
+// Métodos de acesso a banco de dados
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  consultarQtdFavoritosDB
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  Consulta a quantidade de linhas favoritas permitida para a UF
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+bool CLinha::verificarClienteUsuarioIguaisDB(void)
+{
+	//Verifica se o idPessoa do cliente e do usuário são iguais
+	//true  - idPessoa cliente e usuário são iguais
+	//false - idPessoa distinto.
+
+	struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+	  int	iCdAreaRegistro=0;
+	  int	iNrLinha=0;
+
+	  int	iIdTipoRelacionamentoCliente=0;
+	  int	iIdTipoRelacionamentoUsuario=0;
+
+	  long   iIdPessoaCliente=0;
+	  long   iIdPessoaUsuario=0;
+    EXEC SQL END DECLARE SECTION;
+
+	iCdAreaRegistro = this->getCdAreaRegistro();
+	iNrLinha = this->getNrLinha();
+
+	iIdTipoRelacionamentoCliente = PESSOA_CLIENTE;
+	iIdTipoRelacionamentoUsuario = PESSOA_USUARIO;
+
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	//Busca idPessoa de Cliente.
+	EXEC SQL
+		SELECT
+			pdp.idPessoa
+		INTO
+			:iIdPessoaCliente
+		FROM
+			apoio.AreaRegistro 	     ar,
+			linha.LinhaBase	   	  	 lb,
+			linha.LinhaTelefonica 	 lt,
+			customer.PessoaLinha		 pl,
+			customer.PessoaDePara	 pdp
+		WHERE
+			ar.idAreaRegistro			 = lb.idAreaRegistro
+		AND	lb.idLinhaBase				 = lt.idLinhaBase
+		AND lt.idLinhaTelefonica		 = pl.idLinhaTelefonica
+		AND	pl.idPessoaDePara			 = pdp.idPessoaDePara
+      AND   lt.dtexpiracao is null
+		AND	ar.cdAreaRegistro			 = :iCdAreaRegistro
+		AND	lb.nrLinha					 = :iNrLinha
+		AND pl.idTipoRelacionamento		 = :iIdTipoRelacionamentoCliente;
+			
+	//Busca idPessoa de Usuario.
+	EXEC SQL
+		SELECT
+			pdp.idPessoa
+		INTO
+			:iIdPessoaUsuario
+		FROM
+			apoio.AreaRegistro 	     ar,
+			linha.LinhaBase	   	  	 lb,
+			linha.LinhaTelefonica 	 lt,
+			customer.PessoaLinha		 pl,
+			customer.PessoaDePara	 pdp
+		WHERE
+			ar.idAreaRegistro			 = lb.idAreaRegistro
+		AND	lb.idLinhaBase				 = lt.idLinhaBase
+		AND lt.idLinhaTelefonica		 = pl.idLinhaTelefonica
+		AND	pl.idPessoaDePara			 = pdp.idPessoaDePara
+      AND   lt.dtexpiracao is null
+		AND	ar.cdAreaRegistro			 = :iCdAreaRegistro
+		AND	lb.nrLinha					 = :iNrLinha
+		AND pl.idTipoRelacionamento		 = :iIdTipoRelacionamentoUsuario;
+
+	if (sqlca.sqlcode == NO_DATA_FOUND)
+		return false;
+	else
+		if (iIdPessoaCliente == iIdPessoaUsuario)
+			return true;
+		else
+			return false;
+
+sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CLinha::consultarQtdFavoritosDB(void)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iCdArea;
+	int iQtFavoritos;
+	EXEC SQL END DECLARE SECTION;
+
+	iCdArea = this->getCdAreaRegistro();
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL
+		SELECT
+		   qtFavoritos
+	   		INTO :iQtFavoritos
+		FROM
+		   apoio.AreaRegistro 		a,
+		   customer.UFOperadora		b,
+		   vol.FavoritoUF		c
+		WHERE
+			a.idUFOperadora			= b.idUFOperadora
+			and	   b.idUF				= c.idUF	  			
+			and	   a.cdAreaRegistro		= :iCdArea;
+
+	
+	if (sqlca.sqlcode == NO_DATA_FOUND)
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+	this->setQtFavoritos(iQtFavoritos);
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  consultarProcedenciaLinha
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+int CLinha::consultarProcedenciaLinha()
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdProcedencia;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL SELECT 
+			idProcedencia 
+		INTO
+			:iIdProcedencia
+		FROM 
+			apoio.procedencia 
+		WHERE
+			UPPER(dsProcedencia) = 'VOL';
+	
+	if (sqlca.sqlcode)
+		return -1;
+
+	this->setIdProcedencia(iIdProcedencia);
+
+	return 0;
+
+	sqlErrorConstrutor:
+		//Ver o que vai retornar
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  consultarDadosLinhaSessaoDB
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+void CLinha::consultarPlanoControle()
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iCdArea;
+	int iNrCel;
+	char cDsPlanoLegado[255]="";
+	EXEC SQL END DECLARE SECTION;
+
+	iCdArea = this->getCdAreaRegistro();
+	iNrCel  = this->getNrLinha();
+
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;	
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+	
+	
+	
+   EXEC SQL
+
+   SELECT
+      pc.DSPLANOLEGADO
+   INTO
+      :cDsPlanoLegado
+   FROM
+      apoio.AreaRegistro				ar,
+      linha.LinhaBase					lb,
+      linha.LinhaTelefonica			lt,		
+      linha.PlanoControle		    		pc,
+      linha.PlanoServicoLinha             pl
+   WHERE
+           ar.idAreaRegistro			= lb.idAreaRegistro
+      AND  lb.idLinhaBase			= lt.idLinhaBase
+      AND  ar.cdAreaRegistro		= :iCdArea
+      AND  lb.nrLinha				= :iNrCel
+      AND  lt.idLinhaTelefonica	= pl.IDLINHATELEFONICA
+      AND  lt.dtexpiracao is null
+      AND  pl.IDSERVICO 			= pc.IDSERVICO;
+	
+	
+	if (sqlca.sqlcode == NO_DATA_FOUND)
+	
+		this->setPlanoControle(0);
+	else
+		this->setPlanoControle(1);
+		
+		
+	return;
+
+
+	sqlErrorConstrutor:	
+		throw TuxBasicOraException(sqlca.sqlcode);		
+		
+		
+}
+
+void CLinha::consultarPlanoPrincipal()
+{
+	tuxfw_getlogger()->debug("CLinha::consultarPlanoPrincipal()");
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iCdArea;
+	int iNrCel;
+	VARCHAR cDsPlanoLegado[256];
+	short iDsPlanoLegado;
+	EXEC SQL END DECLARE SECTION;
+
+	iCdArea = this->getCdAreaRegistro();
+	iNrCel  = this->getNrLinha();
+	
+	memset(&cDsPlanoLegado,0,sizeof(cDsPlanoLegado));
+	iDsPlanoLegado = 0;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;	
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+			
+	EXEC SQL
+	SELECT
+	    PLANOSERVICO.NMSERVICO
+	INTO  :cDsPlanoLegado:iDsPlanoLegado
+	FROM
+	    LINHA.LINHATELEFONICA LINHATELEFONICA,
+	    LINHA.PLANOSERVICOLINHA PLANOSERVICOLINHA,
+	    LINHA.PLANOSERVICO PLANOSERVICO,
+		APOIO.AREAREGISTRO,
+		LINHA.LINHABASE
+	WHERE PLANOSERVICOLINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA
+	AND   PLANOSERVICOLINHA.IDSERVICO = PLANOSERVICO.IDSERVICO
+	AND   PLANOSERVICOLINHA.DTEXPIRACAO IS NULL
+	AND ( PLANOSERVICOLINHA.DTVIGENCIAFINAL >= SYSDATE OR PLANOSERVICOLINHA.DTVIGENCIAFINAL IS NULL )
+	AND   PLANOSERVICOLINHA.INPLANO = 1
+	AND LINHABASE.NRLINHA = :iNrCel
+	AND AREAREGISTRO.CDAREAREGISTRO = :iCdArea
+	AND LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO
+	AND LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE
+   AND LINHATELEFONICA.dtexpiracao is null
+	AND ROWNUM < 2;
+		
+	
+	if (sqlca.sqlcode == NO_DATA_FOUND)
+	
+		this->setPlanoPrincipal("");
+	else
+		this->setPlanoPrincipal((char*)cDsPlanoLegado.arr);
+		
+		
+	return;
+
+
+	sqlErrorConstrutor:	
+		throw TuxBasicOraException(sqlca.sqlcode);		
+		
+		
+}
+
+
+int CLinha::consultarDadosLinhaSessaoDB()
+{
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iCdArea;
+	int iNrCel;
+	int iIdSistOr;
+	int iIdUfOp;
+	int iIdLinhaTel;
+	int iIdSegmentacao=0;
+	int iDigitoVerificador;
+	int cIdTipoAberturaProtocolo;
+	char cSgUF[256];
+	char cSgSistOrigem[256]="";
+	EXEC SQL END DECLARE SECTION;
+
+
+	iCdArea = this->getCdAreaRegistro();
+	iNrCel = this->getNrLinha();
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL SELECT
+		c.idSistemaOrigem, a.idUFOperadora, c.idLinhaTelefonica, NVL(d.idSegmentacao, '0'), NVL(b.nrDigitoLinha, -1), NVL(f.sgUF, ' ')
+	INTO
+		:iIdSistOr, :iIdUfOp, :iIdLinhaTel, :iIdSegmentacao, :iDigitoVerificador, :cSgUF
+	FROM
+		apoio.AreaRegistro		a,
+		linha.LinhaBase			b,
+		linha.LinhaTelefonica   c,		
+		linha.LinhaSegmentacao  d,
+		customer.UFOPeradora	   e,
+		apoio.UF				   f	
+	WHERE
+		a.idAreaRegistro		= b.idAreaRegistro
+		AND  b.idLinhaBase		= c.idLinhaBase
+		AND  a.idUFoperadora	= e.idUFOperadora
+		AND  e.idUF				= f.idUF
+		AND  a.cdAreaRegistro	= :iCdArea
+		AND  b.nrLinha			= :iNrCel
+      AND  c.dtexpiracao is null
+		AND  d.idLinhaTelefonica (+) = c.idLinhaTelefonica;
+
+
+	if (sqlca.sqlcode == NO_DATA_FOUND)
+	{
+		this->setIdSistemaOrigem(0);
+		this->setIdUFOperadora(0);
+		this->setIdLinhaTelefonica(0);
+		this->setIdSegmentacao(0);
+		this->setSgUF(" ");
+		this->setSgSistOrig(" ");
+	}
+	else
+	{
+		//Caso a segmentacao seja NULA, considerar a segmentacao (nao classficado/nao segmentado) sgSegmentacao = '-1'
+		if (iIdSegmentacao == 0){
+			EXEC SQL SELECT
+				idSegmentacao
+			INTO
+				:iIdSegmentacao
+			FROM
+				Apoio.Segmentacao
+			WHERE
+				sgSegmentacao = '-1';
+		}
+
+
+		EXEC SQL Select 
+			SGSISTEMAORIGEM
+		into
+			:cSgSistOrigem
+		From
+			apoio.sistemaorigem
+		Where idsistemaorigem = :iIdSistOr;
+
+		this->setIdSistemaOrigem(iIdSistOr);
+		this->setSgSistOrig(CUtil::trim(cSgSistOrigem));
+		this->setIdUFOperadora(iIdUfOp);
+		this->setIdLinhaTelefonica(iIdLinhaTel);
+		this->setIdSegmentacao(iIdSegmentacao);
+		this->setDigitoVerificador(iDigitoVerificador);
+		this->setSgUF(cSgUF);
+	}
+	return 0;
+
+	sqlErrorConstrutor:
+		//Ver o que vai retornar
+		tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  consultarTipoLinhaDB
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  Consultar informacoes do tipo da linha
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+void CLinha::consultarTipoLinhaDB(void) 
+{
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+    
+        int  iCdAreaRegistro;
+        int  iNrLinha;
+        char sTpLinhaSistemaOrigem[256];
+        int  iIdTipoLinha;
+        char cDsTipoLinha[256];
+        char cSgEstadoLinha[256];
+        char cDsEstadoLinha[256];
+        char cSgEstadoLinhaOriginal[256];
+        int  iEstadoLinha = 0;
+        int  iLinhaCancelada = 0;
+    
+        short i_sTpLinhaSistemaOrigem = -1;
+        short i_iIdTipoLinha = -1;
+        short i_cDsTipoLinha = -1;
+        short i_cSgEstadoLinha = -1;
+        short i_cDsEstadoLinha = -1;
+        short i_cSgEstadoLinhaOriginal = -1;
+        short i_iEstadoLinha = -1;
+        short i_iLinhaCancelada = -1;
+        
+    EXEC SQL END DECLARE SECTION;
+    
+    memset( sTpLinhaSistemaOrigem , 0x0, sizeof(sTpLinhaSistemaOrigem) );
+    memset( cDsTipoLinha          , 0x0, sizeof(cDsTipoLinha) );
+    memset( cSgEstadoLinha        , 0x0, sizeof(cSgEstadoLinha) );
+    memset( cDsEstadoLinha        , 0x0, sizeof(cDsEstadoLinha) );
+    memset( cSgEstadoLinhaOriginal, 0x0, sizeof(cSgEstadoLinhaOriginal) );
+
+    iCdAreaRegistro = this->getCdAreaRegistro();
+    iNrLinha = this->getNrLinha();
+
+
+    // Marca ponto de controle de erro
+    EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+    EXEC SQL
+    SELECT
+        b.idTipoLinhaSistemaOrigem,
+        b.idTipoLinha, 
+        d.dstipolinha, 
+        c.SGCLASSIFICACAO, 
+        c.DsEstadoLinha, 
+        c.SGESTADOLINHA, 
+        c.idEstadoLinha, 
+        c.inLinhaCancelada
+    INTO
+        :sTpLinhaSistemaOrigem:i_sTpLinhaSistemaOrigem ,
+        :iIdTipoLinha:i_iIdTipoLinha , 
+        :cDsTipoLinha:i_cDsTipoLinha , 
+        :cSgEstadoLinha:i_cSgEstadoLinha , 
+        :cDsEstadoLinha:i_cDsEstadoLinha , 
+        :cSgEstadoLinhaOriginal:i_cSgEstadoLinhaOriginal , 
+        :iEstadoLinha:i_iEstadoLinha , 
+        :iLinhaCancelada:i_iLinhaCancelada
+    FROM
+        linha.linhabase 			a,
+        linha.LinhaTelefonica		b,
+        apoio.EstadoLinha			c,
+        apoio.tipolinha 			d
+    WHERE
+         a.nrlinha 		  = :iNrLinha 	AND		 
+         a.idarearegistro = (SELECT IDAREAREGISTRO FROM APOIO.AREAREGISTRO WHERE CDAREAREGISTRO = :iCdAreaRegistro) AND
+         a.idlinhabase    = b.idlinhabase AND
+         a.idestadolinha  = c.idestadolinha AND
+         b.idtipolinha    = d.idtipolinha AND
+         rownum <= 1;
+		 
+
+    // ID não existe
+    if (sqlca.sqlcode == NO_DATA_FOUND) 
+        throw TuxBasicOraException(sqlca.sqlcode);
+
+	this->setIdTipoLinhaSistemaOrigem(CUtil::trim(sTpLinhaSistemaOrigem));
+    this->setIdTipoLinha(iIdTipoLinha);
+    this->setDsTipoLinha(CUtil::trim(cDsTipoLinha));
+    this->setSgEstadoLinha(CUtil::trim(cSgEstadoLinha));
+    this->setDsEstadoLinha(CUtil::trim(cDsEstadoLinha));
+    this->setSgEstadoLinhaOriginal(CUtil::trim(cSgEstadoLinhaOriginal));
+    this->setInLinhaCancelada(iLinhaCancelada);
+
+    this->setIdEstadoLinha (iEstadoLinha);
+
+    return;
+ 
+    sqlErrorConstrutor:
+        throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+/**/
+void CLinha::consultarSubTipoLinhaDB(void) 
+{
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+    
+ 	int  iCdAreaRegistro;
+ 	int  iNrLinha;
+	
+ 	int  iIdSubTipoLinha;
+	char cCdSubTipoLinha[256];
+	char cDsSubTipoLinha[256];
+
+	short i_iIdSubTipoLinha = -1;
+	short i_cCdSubTipoLinha = -1;
+	short i_cDsSubTipoLinha = -1;
+
+        
+ 	EXEC SQL END DECLARE SECTION;
+	
+    memset(cCdSubTipoLinha, 0x0, sizeof(cCdSubTipoLinha));
+    memset(cDsSubTipoLinha, 0x0, sizeof(cDsSubTipoLinha));
+
+
+	iCdAreaRegistro = this->getCdAreaRegistro();
+	iNrLinha = this->getNrLinha();
+	
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL
+	SELECT
+        b.idSubTipoLinha,
+		c.cdsubtipolinha,
+        c.dssubtipolinha 
+	INTO
+        :iIdSubTipoLinha:i_iIdSubTipoLinha,
+		:cCdSubTipoLinha:i_cCdSubTipoLinha,
+        :cDsSubTipoLinha:i_cDsSubTipoLinha
+	FROM
+		linha.linhabase 			a,
+		linha.LinhaTelefonica		b,
+		apoio.subtipolinha			c
+	WHERE
+		 a.nrlinha 		  = :iNrLinha 	AND		 
+		 a.idarearegistro = (SELECT IDAREAREGISTRO FROM APOIO.AREAREGISTRO WHERE CDAREAREGISTRO = :iCdAreaRegistro) AND
+		 a.idlinhabase    = b.idlinhabase AND
+         b.idsubtipolinha    = c.idsubtipolinha AND
+         rownum <= 1;
+		 
+
+	// ID não existe
+	if (sqlca.sqlcode == NO_DATA_FOUND) 
+	{
+		this->setIdSubTipoLinha(-1);
+		this->setCdSubTipoLinha("");
+		this->setDsSubTipoLinha("");
+		return;
+	}
+
+	this->setIdSubTipoLinha(iIdSubTipoLinha);
+	this->setCdSubTipoLinha(CUtil::trim(cCdSubTipoLinha));
+	this->setDsSubTipoLinha(CUtil::trim(cDsSubTipoLinha));
+
+	return;
+ 
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  validarLinhaDB
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  Validar existencia de uma determinada linha telefonica
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+int CLinha::validarLinhaDB(void)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+ 	int  iCdAreaRegistro;
+ 	int  iNrLinha;
+	int iIdLinhaTelefonica = 0;
+	int iLinhaExpirada = 0;
+	char cSenhaPreAtiva[255]="";
+	EXEC SQL END DECLARE SECTION;
+
+	iCdAreaRegistro = this->getCdAreaRegistro();
+	iNrLinha = this->getNrLinha();
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+	
+
+	
+    tuxfw_getlogger()->debug( "iCdAreaRegistro [%d] - iNrLinha [%d]\n", iCdAreaRegistro, iNrLinha );
+	EXEC SQL 
+	SELECT
+		cdAreaRegistro, nrLinha, idLinhaTelefonica, NVL(cdSenhaPreAtiva, ' ')
+	INTO
+		:iCdAreaRegistro, :iNrLinha, :iIdLinhaTelefonica, :cSenhaPreAtiva
+	FROM
+		linha.LinhaTelefonica LinhaTelefonica,
+		linha.LinhaBase LinhaBase,
+		apoio.AreaRegistro AreaRegistro
+	WHERE
+		LinhaBase.nrLinha = :iNrLinha
+		AND LinhaBase.idAreaRegistro = AreaRegistro.idAreaRegistro
+		AND AreaRegistro.cdAreaRegistro = :iCdAreaRegistro
+		AND LinhaBase.idLinhaBase = LinhaTelefonica.idLinhaBase;
+
+
+	if (sqlca.sqlcode == NO_DATA_FOUND) 
+    {
+        tuxfw_getlogger()->debug( ">>> SAINDO AQUI\n" );
+		throw TuxBasicOraException(sqlca.sqlcode);
+    }
+     
+    tuxfw_getlogger()->debug( ">>> Passando 1\n" );
+	this->setIdLinhaTelefonica(iIdLinhaTelefonica);
+    tuxfw_getlogger()->debug( ">>> Passando 2\n" );
+
+	tuxfw_getlogger()->debug("CUtil::trim(cSenhaPreAtiva) = %s\r\n", CUtil::trim(cSenhaPreAtiva));
+    tuxfw_getlogger()->debug( ">>> Passando 3\n" );
+	this->setCdSenhaPreAtiva(CUtil::trim(cSenhaPreAtiva));
+    tuxfw_getlogger()->debug( ">>> Passando 4\n" );
+
+
+	if (iIdLinhaTelefonica)
+	{
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+    tuxfw_getlogger()->debug( ">>> Passando 5\n" );
+		EXEC SQL
+		SELECT
+			idLinhaTelefonica
+		INTO
+			:iLinhaExpirada
+		FROM
+			Linha.LinhaTelefonica LinhaTelefonica
+		WHERE
+			LinhaTelefonica.idLinhaTelefonica = :iIdLinhaTelefonica AND
+			LinhaTelefonica.DTEXPIRACAO < SYSDATE - 30; // se a linha está vencida há mais de 30 dias
+    tuxfw_getlogger()->debug( ">>> Passando 6\n" );
+
+	}
+
+	if (iLinhaExpirada)
+		return ERR_LINHA_EXPIRADA;
+	
+						
+	return NO_ERROR;
+ 
+	sqlErrorConstrutor:
+
+		throw TuxBasicOraException(sqlca.sqlcode);	
+}
+
+void CLinha::consultarIdContaDB(void)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+ 	int  iCdAreaRegistro;
+ 	int  iNrLinha;
+	int	 iIdConta;
+ 	EXEC SQL END DECLARE SECTION;
+	
+ 	iCdAreaRegistro = this->getCdAreaRegistro(); 
+ 	iNrLinha = this->getNrLinha();
+
+	// marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+	EXEC SQL SELECT
+		d.idConta
+	INTO
+		:iIdConta
+	FROM
+		apoio.AreaRegistro	 a,
+		linha.LinhaBase  	 b,
+		linha.LinhaTelefonica c,
+		customer.LinhaConta	 d
+	WHERE
+		a.idAreaRegistro		= b.idAreaRegistro
+	AND	b.idLinhaBase			= c.idLinhaBase
+	AND c.idLinhaTelefonica		= d.idLinhaTelefonica
+	AND	d.idTipoRelacionamento	= 2
+	AND	a.cdAreaRegistro		= :iCdAreaRegistro
+	AND	b.nrLinha				= :iNrLinha;
+
+
+	if (sqlca.sqlcode != NO_DATA_FOUND) 
+		this->setIdConta(iIdConta);
+
+
+	return;
+ 
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+}
+
+//---------------------------------------------------------------------------
+//*  Especificacion
+//*  
+//*  consultarLinhasDispDB
+//*
+//*
+//---------------------------------------------------------------------------
+//*  Proposito
+//*
+//*  Consulta linhas atreladas a uma pessoa
+//*
+//---------------------------------------------------------------------------
+//*  Proceso
+//*
+//*  
+//*
+//---------------------------------------------------------------------------
+
+void CLinha::consultarLinhasDispDB( long iIdPessoa, list< CLinha > & listaLinha )
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+ 	long  iIdPessoaDB;
+ 	int  iCdAreaRegistro;
+ 	int  iNrLinha;
+	int  iIdTipoLinha;
+ 	EXEC SQL END DECLARE SECTION;
+	
+	CLinha	oLinha;
+	
+	// valores das chaves da consulta SQL
+    iIdPessoaDB = iIdPessoa;
+
+	// garante que a lista esta vazia
+	listaLinha.clear();
+
+	// marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+	EXEC SQL DECLARE LSTARVORECLI CURSOR FOR
+
+		SELECT Distinct
+			f.cdAreaRegistro, e.nrLinha, d.idTipoLinha
+		FROM
+			customer.Pessoa       a,
+			customer.PessoaDePara b,
+			customer.PessoaLinha  c,
+			linha.LinhaTelefonica d,
+			linha.LinhaBase       e,
+			apoio.AreaRegistro    f
+		WHERE
+			a.idPessoa = :iIdPessoaDB AND
+			a.idPessoa = b.idPessoa AND 
+			b.idPessoaDePara = c.idPessoaDePara AND
+			c.idLinhaTelefonica = d.idLinhaTelefonica AND
+			d.idLinhaBase = e.idLinhaBase AND
+			e.idAreaRegistro = f.idAreaRegistro;
+			
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	
+	EXEC SQL OPEN LSTARVORECLI;
+
+	for( ;; ) 
+	{
+		// varre todos os registros para criar a lista com as linhas		
+		EXEC SQL FETCH LSTARVORECLI INTO
+			:iCdAreaRegistro, 
+			:iNrLinha,
+			:iIdTipoLinha;
+
+		oLinha.setCdAreaRegistro( iCdAreaRegistro );
+		oLinha.setNrLinha( iNrLinha ); 
+		oLinha.setIdTipoLinha( iIdTipoLinha );
+		
+		listaLinha.push_back( oLinha );
+	}
+
+
+	EXEC SQL CLOSE LSTARVORECLI;
+
+	return;
+ 
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+}
+
+int CLinha::consultarIdUF()
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iIdUFOperadoraSQL;
+	int iIdUFSQL;
+	EXEC SQL END DECLARE SECTION;
+
+	iIdUFOperadoraSQL = this->getIdUFOperadora();
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL
+	SELECT 
+		idUF
+	INTO
+		:iIdUFSQL
+	FROM 
+		customer.UFOperadora 
+	WHERE
+		idUFOperadora = :iIdUFOperadoraSQL;
+	
+	
+	return iIdUFSQL;
+
+	OraNoDataFound:
+	OraException:		
+		throw TuxBasicOraException(sqlca.sqlcode);	
+}
+
+char* CLinha::consultarObsRecarga( )
+{
+	struct sqlca sqlca;
+    static char szAux[256 + 1];
+
+	EXEC SQL BEGIN DECLARE SECTION;
+    	char chrObsRecarga[256];
+    	int iIdUFSQL;
+	EXEC SQL END DECLARE SECTION;
+
+	strcpy(chrObsRecarga,"");
+	iIdUFSQL = this->getIdUF();	
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL 
+	SELECT 
+		DSOBSERVACAORECARGA
+	INTO
+		:chrObsRecarga
+	FROM 
+		vol.OBSERVACAORECARGA 
+	WHERE
+		idUF = :iIdUFSQL;	
+	
+    strcpy(szAux, chrObsRecarga);
+	return szAux;
+
+	OraNoDataFound:
+	OraException:	
+		throw TuxBasicOraException(sqlca.sqlcode);	
+
+}
+
+void CLinha::VerificaTabelaRolloutTipoLinha()
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int	iIdTipo;
+	int iIdTipoLinhaSQL;
+	int iCdAreaRegistro;
+	int CdAreaRegistro;
+	EXEC SQL END DECLARE SECTION;
+
+	iIdTipoLinhaSQL = this->getIdTipoLinha();
+	iCdAreaRegistro = this->getCdAreaRegistro();
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL 
+	SELECT
+		a.cdarearegistro
+	INTO
+		:CdAreaRegistro				
+	FROM 
+		apoio.arearegistro a,
+		vol.AREAREGISTROMIGRADA b
+	WHERE 
+		a.cdarearegistro = :iCdAreaRegistro AND
+		b.IDAREAREGISTRO = a.idarearegistro AND
+		b.idtipolinha = :iIdTipoLinhaSQL;
+	
+	return;
+
+	OraNoDataFound:
+	OraException:	
+		throw TuxBasicOraException(sqlca.sqlcode);	
+
+}
+
+void CLinha::VerificaTabelaRolloutDDD()
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int	iIdTipo;
+	int iIdTipoLinhaSQL;
+	int iCdAreaRegistro;
+	int CdAreaRegistro;
+	EXEC SQL END DECLARE SECTION;
+
+	iCdAreaRegistro = this->getCdAreaRegistro();
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL 
+	SELECT
+		a.cdarearegistro			
+	INTO
+		:CdAreaRegistro
+	FROM 
+		apoio.arearegistro a,
+		vol.AREAREGISTROMIGRADA b
+	WHERE 
+		a.cdarearegistro = :iCdAreaRegistro AND
+		b.IDAREAREGISTRO = a.idarearegistro
+		AND ROWNUM = 1;
+	
+	return;
+
+	OraNoDataFound:
+	OraException:	
+		throw TuxBasicOraException(sqlca.sqlcode);	
+}
+	
+void CLinha::getMsgParametrizada(char *chrDestino ,char *chrCdParametro)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrMsgParametrizadaSQL[256]="";
+	char chrCdParametroSQL[256] = "";
+	EXEC SQL END DECLARE SECTION;
+
+	strcpy (chrCdParametroSQL, chrCdParametro);
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL 
+	SELECT
+		 DSPARAMETRO
+	INTO
+		:chrMsgParametrizadaSQL				
+	FROM 
+		apoio.parametro 
+	WHERE 
+		cdparametro = :chrCdParametroSQL;
+
+	CUtil::trim(chrMsgParametrizadaSQL);
+
+	strcpy(chrDestino, chrMsgParametrizadaSQL);
+
+	return;
+
+	OraNoDataFound:
+	OraException:		
+		throw TuxBasicOraException(sqlca.sqlcode);	
+
+}
+
+void CLinha::consultarDadosHibrido(char *cIdLinhaSistemaOrigem, char *cSgSistemaOrigem)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+ 	int  iCdAreaRegistro;
+ 	int  iNrLinha;
+	int	 iIdConta;
+	char cIdLinhaSistemaOrigemSql[255+1]="";
+	char cSgSistemaOrigemSql[255+1]="";
+ 	EXEC SQL END DECLARE SECTION;
+	
+ 	iCdAreaRegistro = this->getCdAreaRegistro(); 
+ 	iNrLinha = this->getNrLinha();
+
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL
+	SELECT
+		SO.SGSISTEMAORIGEM, LH.IDLINHASISTEMAORIGEM
+	INTO 
+		:cSgSistemaOrigemSql, :cIdLinhaSistemaOrigemSql
+	FROM
+		LINHA.LINHABASE LB,	
+		LINHA.LINHABASEHIBRIDA LH,
+		APOIO.SISTEMAORIGEM    SO
+	WHERE 
+		LB.NRLINHA = :iNrLinha AND
+		LB.IDAREAREGISTRO = (SELECT IDAREAREGISTRO FROM APOIO.AREAREGISTRO WHERE CDAREAREGISTRO = :iCdAreaRegistro) AND
+		LB.IDLINHABASE = LH.IDLINHABASE AND
+		LH.IDSISTEMAORIGEM = SO.IDSISTEMAORIGEM;
+
+	
+	strcpy(cIdLinhaSistemaOrigem, cIdLinhaSistemaOrigemSql);
+	strcpy(cSgSistemaOrigem, cSgSistemaOrigemSql);
+
+	OraNoDataFound:
+		
+		return;
+	OraException:		
+		throw TuxBasicOraException(sqlca.sqlcode);	
+
+}
+	
+void CLinha::consultarIdGrupoOperadora(int iCdAreaRegistro)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	
+	int iCdAreaRegistroSQL = iCdAreaRegistro;
+	int iIdGrupoOperadora = 0;
+
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL
+	SELECT 
+		op.idgrupooperadora
+	INTO
+		:iIdGrupoOperadora
+	FROM 
+		apoio.arearegistro ar,
+	 	customer.ufoperadora uf,
+ 		customer.operadora op
+	WHERE
+ 		 ar.cdarearegistro = :iCdAreaRegistroSQL  AND
+		 ar.idufoperadora = uf.idufoperadora AND
+ 		 uf.IDPESSOADEPARAOPERADORA = op.IDPESSOADEPARAOPERADORA;
+
+
+	this->setIdGrupoOperadora(iIdGrupoOperadora);
+	return;
+	
+	OraNoDataFound:		
+		this->setIdGrupoOperadora(0);
+		return;
+
+	OraException:
+		throw TuxBasicOraException(sqlca.sqlcode);	
+
+		
+
+}	
+
+void CLinha::consultarDadosLinhaIntermed(char*ddd,char*linha,stLinhaIntermed *dadosLinha)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	
+	char* iddd = ddd;
+	char* ilinha = linha;
+
+	struct dados{
+		VARCHAR idLinhaSistemaOrigem[255+1];
+		VARCHAR sgSistemaOrigem[255+1];
+		VARCHAR idSistemaOrigem[21+1];
+		VARCHAR sgTipoLinha[255+1];
+		VARCHAR idTipoLinha[21+1];
+	}m_dados;
+
+	struct idados{
+		short idLinhaSistemaOrigem;
+		short sgSistemaOrigem;
+		short idSistemaOrigem;
+		short sgTipoLinha;
+		short idTipoLinha;
+	}m_idados;
+	EXEC SQL END DECLARE SECTION;
+
+	memset(&m_dados,0,sizeof(m_dados));
+	memset(&m_idados,0,sizeof(m_idados));
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL
+	SELECT
+		LINHATELEFONICA.IDLINHASISTEMAORIGEM,
+		DECODE(SISTEMAORIGEM.SGSISTEMAORIGEM,'NGI','01','NSP','01','NGN','01','ATY','02','SGS','03','SIX','04','PPN','05','ARJ','06','AES','06','ALIANZA_BA','07',SISTEMAORIGEM.SGSISTEMAORIGEM) AS SGSISTEMAORIGEM,
+		SISTEMAORIGEM.IDSISTEMAORIGEM,
+		DECODE(TIPOLINHA.SGTIPOLINHA,'PRÉ','1','POS','2','PRÉCHIP','3','POSCHIP','4',TIPOLINHA.SGTIPOLINHA) AS SGTIPOLINHA,
+		TIPOLINHA.IDTIPOLINHA
+	INTO
+		:m_dados:m_idados
+	FROM	LINHA.LINHABASE LINHABASE,
+		 APOIO.AREAREGISTRO AREAREGISTRO,
+		 APOIO.SISTEMAORIGEM SISTEMAORIGEM,
+		 LINHA.LINHATELEFONICA LINHATELEFONICA,
+		 APOIO.TIPOLINHA TIPOLINHA
+	WHERE
+		 LINHABASE.NRLINHA = TO_NUMBER(:ilinha) AND
+		 LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+		 AREAREGISTRO.CDAREAREGISTRO = TO_NUMBER(:iddd) AND
+		 LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE AND
+		 LINHATELEFONICA.IDSISTEMAORIGEM = SISTEMAORIGEM.IDSISTEMAORIGEM AND
+		 LINHATELEFONICA.IDTIPOLINHA = TIPOLINHA.IDTIPOLINHA;
+	
+	strcpy(dadosLinha->idLinhaSistemaOrigem,(char*)m_dados.idLinhaSistemaOrigem.arr);
+	strcpy(dadosLinha->sgSistemaOrigem,(char*)m_dados.sgSistemaOrigem.arr);
+	strcpy(dadosLinha->idSistemaOrigem,(char*)m_dados.idSistemaOrigem.arr);
+	strcpy(dadosLinha->sgTipoLinha,(char*)m_dados.sgTipoLinha.arr);
+	strcpy(dadosLinha->idTipoLinha,(char*)m_dados.idTipoLinha.arr);
+
+
+	tuxfw_getlogger()->debug("sucesso na execução");
+	return;
+	
+	OraNoDataFound:		
+		tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+	OraException:
+		tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CLinha::consultarBannersLinha(char*ddd,char*linha,char*tipoRelacionamento,XMLGen*xml)
+{
+	tuxfw_getlogger()->debug("CLinha::consultarBannersLinha");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	
+	char* iddd = ddd;
+	char* ilinha = linha;
+	char* itipoRelacionamento = tipoRelacionamento;
+	VARCHAR param[256];
+	short iparam=0;
+
+	struct dados{
+		VARCHAR idUF[256];
+		VARCHAR idBanner[256];
+		VARCHAR nmBanner[256];
+		VARCHAR dsBanner[256];
+		VARCHAR urlBanner[256];
+		VARCHAR idAreaBanner[256];
+		VARCHAR idTipoBanner[256];
+		VARCHAR dsAreaBanner[256];
+		VARCHAR dsTipoBanner[256];
+		VARCHAR idTipoPessoa[256];
+		VARCHAR idTipoRelacionamento[256];
+		VARCHAR idCampanha[256];
+	}m_dados;
+
+	struct idados{
+		short idUF;
+		short idBanner;
+		short nmBanner;
+		short dsBanner;
+		short urlBanner;
+		short idAreaBanner;
+		short idTipoBanner;
+		short dsAreaBanner;
+		short dsTipoBanner;
+		short idTipoPessoa;
+		short idTipoRelacionamento;
+		short idCampanha;
+	}m_idados;
+	EXEC SQL END DECLARE SECTION;
+
+	memset(&param,0,sizeof(param));
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	EXEC SQL
+	SELECT DSVALORPARAMETRO INTO :param:iparam FROM APOIO.PARAMETRO 
+	WHERE CDPARAMETRO='VOL_EXIBE_BANNER';
+
+	tuxfw_getlogger()->debug("exibeBanner=%s",(char*)param.arr);
+	xml->addItem("exibeBanner",(char*)param.arr);
+
+	sqlca.sqlcode = 0;
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraNoDataFound;
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	EXEC SQL DECLARE BANNERS CURSOR FOR
+	SELECT 
+		RELACIONAMENTOBANNER.IDUF,
+		BANNER.IDBANNER,
+		BANNER.NMBANNER,
+		BANNER.DSBANNER,
+		BANNER.URLBANNER,
+		BANNER.IDAREABANNER,
+		BANNER.IDTIPOBANNER,
+		AREABANNER.DSAREABANNER,
+		TIPOBANNER.DSTIPOBANNER,
+		TIPORELACIONAMENTOPESSOA.IDTIPOPESSOA,
+		TIPORELACIONAMENTOPESSOA.IDTIPORELACIONAMENTO,
+		BANNER.IDCAMPANHA
+	FROM
+		LINHA.LINHABASE LINHABASE,
+		LINHA.LINHATELEFONICA LINHATELEFONICA,
+		APOIO.AREAREGISTRO AREAREGISTRO,
+		CUSTOMER.PESSOALINHA PESSOALINHA,
+		CUSTOMER.PESSOADEPARA PESSOADEPARA,
+		APOIO.TIPORELACIONAMENTOPESSOA,
+		ACESSO.RELACIONAMENTOBANNER RELACIONAMENTOBANNER,
+		ACESSO.BANNER BANNER,
+		APOIO.AREABANNER,
+		APOIO.TIPOBANNER,
+		CUSTOMER.UFOPERADORA UFOPERADORA,
+		CUSTOMER.PESSOA
+	WHERE
+		LINHABASE.NRLINHA = TO_NUMBER(:ilinha) AND
+		AREAREGISTRO.CDAREAREGISTRO = :iddd AND
+		LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+		LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE AND
+		PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA AND
+		PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA AND
+		PESSOALINHA.IDTIPORELACIONAMENTO = 2 AND /*pra saber se o cliente é PJ ou PF, pois não existe a opção de usuário PJ*/
+		AREAREGISTRO.IDUFOPERADORA =UFOPERADORA.IDUFOPERADORA AND
+		UFOPERADORA.IDUF = RELACIONAMENTOBANNER.IDUF AND
+		RELACIONAMENTOBANNER.IDTIPOLINHA = LINHATELEFONICA.IDTIPOLINHA AND
+		RELACIONAMENTOBANNER.IDBANNER = BANNER.IDBANNER AND
+		BANNER.IDAREABANNER = AREABANNER.IDAREABANNER AND
+		BANNER.IDTIPOBANNER = TIPOBANNER.IDTIPOBANNER AND
+		RELACIONAMENTOBANNER.IDTIPORELACIONAMENTOPESSOA = TIPORELACIONAMENTOPESSOA.IDTIPORELACIONAMENTOPESSOA AND
+		TIPORELACIONAMENTOPESSOA.IDTIPOPESSOA = PESSOA.IDTIPOPESSOA AND
+		PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA AND
+		TIPORELACIONAMENTOPESSOA.IDTIPORELACIONAMENTO = :itipoRelacionamento AND
+		AREABANNER.IDAREABANNER IN (1, 2, 3)				
+	UNION ALL
+	SELECT 
+		RELACIONAMENTOBANNER.IDUF,
+		BANNER.IDBANNER,
+		BANNER.NMBANNER,
+		BANNER.DSBANNER,
+		BANNER.URLBANNER,
+		BANNER.IDAREABANNER,
+		BANNER.IDTIPOBANNER,
+		AREABANNER.DSAREABANNER,
+		TIPOBANNER.DSTIPOBANNER,
+		TIPORELACIONAMENTOPESSOA.IDTIPOPESSOA,
+		TIPORELACIONAMENTOPESSOA.IDTIPORELACIONAMENTO,
+		BANNER.IDCAMPANHA
+	FROM
+		LINHA.LINHABASE LINHABASE,
+		LINHA.LINHATELEFONICA LINHATELEFONICA,
+		APOIO.AREAREGISTRO AREAREGISTRO,
+		CUSTOMER.PESSOALINHA PESSOALINHA,
+		CUSTOMER.PESSOADEPARA PESSOADEPARA,
+		APOIO.TIPORELACIONAMENTOPESSOA,
+		ACESSO.RELACIONAMENTOBANNER RELACIONAMENTOBANNER,
+		ACESSO.BANNER BANNER,
+		APOIO.AREABANNER,
+		APOIO.TIPOBANNER,
+		CUSTOMER.UFOPERADORA UFOPERADORA,
+		CUSTOMER.PESSOA,
+		VOL.MAILINGIPHONE MAILINGIPHONE
+	WHERE
+		LINHABASE.NRLINHA = TO_NUMBER(:ilinha) AND
+		AREAREGISTRO.CDAREAREGISTRO = :iddd AND
+		LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+		LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE AND
+		PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA AND
+		PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA AND
+		PESSOALINHA.IDTIPORELACIONAMENTO = 2 AND /*pra saber se o cliente é PJ ou PF, pois não existe a opção de usuário PJ*/
+		AREAREGISTRO.IDUFOPERADORA =UFOPERADORA.IDUFOPERADORA AND
+		UFOPERADORA.IDUF = RELACIONAMENTOBANNER.IDUF AND
+		RELACIONAMENTOBANNER.IDTIPOLINHA = LINHATELEFONICA.IDTIPOLINHA AND
+		RELACIONAMENTOBANNER.IDBANNER = BANNER.IDBANNER AND
+		BANNER.IDAREABANNER = AREABANNER.IDAREABANNER AND
+		BANNER.IDTIPOBANNER = TIPOBANNER.IDTIPOBANNER AND
+		RELACIONAMENTOBANNER.IDTIPORELACIONAMENTOPESSOA = TIPORELACIONAMENTOPESSOA.IDTIPORELACIONAMENTOPESSOA AND
+		TIPORELACIONAMENTOPESSOA.IDTIPOPESSOA = PESSOA.IDTIPOPESSOA AND
+		PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA AND
+		TIPORELACIONAMENTOPESSOA.IDTIPORELACIONAMENTO = :itipoRelacionamento AND
+		AREABANNER.IDAREABANNER  = 4 AND
+		MAILINGIPHONE.NRLINHA =  TO_NUMBER(:ilinha) AND
+		MAILINGIPHONE.CDAREAREGISTRO = :iddd AND
+		LINHABASE.IDLINHABASE NOT IN (SELECT IDLINHABASE FROM VOL.CAMPANHAVIP)
+	UNION ALL
+	SELECT 
+		RELACIONAMENTOBANNER.IDUF,
+		BANNER.IDBANNER,
+		BANNER.NMBANNER,
+		BANNER.DSBANNER,
+		BANNER.URLBANNER,
+		BANNER.IDAREABANNER,
+		BANNER.IDTIPOBANNER,
+		AREABANNER.DSAREABANNER,
+		TIPOBANNER.DSTIPOBANNER,
+		TIPORELACIONAMENTOPESSOA.IDTIPOPESSOA,
+		TIPORELACIONAMENTOPESSOA.IDTIPORELACIONAMENTO,
+		BANNER.IDCAMPANHA
+	FROM
+		LINHA.LINHABASE LINHABASE,
+		LINHA.LINHATELEFONICA LINHATELEFONICA,
+		APOIO.AREAREGISTRO AREAREGISTRO,
+		CUSTOMER.PESSOALINHA PESSOALINHA,
+		CUSTOMER.PESSOADEPARA PESSOADEPARA,
+		APOIO.TIPORELACIONAMENTOPESSOA,
+		ACESSO.RELACIONAMENTOBANNER RELACIONAMENTOBANNER,
+		ACESSO.BANNER BANNER,
+		APOIO.AREABANNER,
+		APOIO.TIPOBANNER,
+		CUSTOMER.UFOPERADORA UFOPERADORA,
+		CUSTOMER.PESSOA,
+		VOL.MAILINGLINHA MAILINGLINHA,
+		VOL.MAILINGBANNER MAILINGBANNER	
+	WHERE
+		LINHABASE.NRLINHA = TO_NUMBER(:ilinha) AND
+		AREAREGISTRO.CDAREAREGISTRO = :iddd AND
+		LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+		LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE AND
+		PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA AND
+		PESSOADEPARA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA AND
+		PESSOALINHA.IDTIPORELACIONAMENTO = 2 AND /*pra saber se o cliente é PJ ou PF, pois não existe a opção de usuário PJ*/
+		AREAREGISTRO.IDUFOPERADORA =UFOPERADORA.IDUFOPERADORA AND
+		UFOPERADORA.IDUF = RELACIONAMENTOBANNER.IDUF AND
+		RELACIONAMENTOBANNER.IDTIPOLINHA = LINHATELEFONICA.IDTIPOLINHA AND
+		RELACIONAMENTOBANNER.IDBANNER = BANNER.IDBANNER AND
+		BANNER.IDAREABANNER = AREABANNER.IDAREABANNER AND
+		BANNER.IDTIPOBANNER = TIPOBANNER.IDTIPOBANNER AND
+		AREABANNER.IDAREABANNER = RELACIONAMENTOBANNER.IDAREABANNER AND
+		RELACIONAMENTOBANNER.IDTIPORELACIONAMENTOPESSOA = TIPORELACIONAMENTOPESSOA.IDTIPORELACIONAMENTOPESSOA AND
+		TIPORELACIONAMENTOPESSOA.IDTIPOPESSOA = PESSOA.IDTIPOPESSOA AND
+		PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA AND
+		TIPORELACIONAMENTOPESSOA.IDTIPORELACIONAMENTO = :itipoRelacionamento AND
+		AREABANNER.IDAREABANNER >= 10 AND
+		AREABANNER.IDAREABANNER <= 19 AND
+		MAILINGLINHA.NRLINHA =  TO_NUMBER(:ilinha) AND
+		MAILINGLINHA.CDAREAREGISTRO = :iddd AND
+		MAILINGLINHA.IDMAILINGBANNER = MAILINGBANNER.IDMAILINGBANNER AND
+		MAILINGBANNER.IDAREABANNER = AREABANNER.IDAREABANNER AND
+		SYSDATE >= MAILINGBANNER.DTVIGENCIAINICIO AND
+		SYSDATE <= MAILINGBANNER.DTVIGENCIAFIM;
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	
+	EXEC SQL OPEN BANNERS;	
+	for( ;; ) 
+	{
+		// varre todos os registros para criar a lista com os banners cadastrados	
+		memset(&m_dados,0,sizeof(m_dados));
+		memset(&m_idados,0,sizeof(m_idados));
+		EXEC SQL FETCH BANNERS INTO :m_dados:m_idados;
+		xml->createTag("BannerVO");
+		xml->addItem("nmBanner",(char*)m_dados.nmBanner.arr);
+		xml->addItem("dsBanner",(char*)m_dados.dsBanner.arr);
+		xml->addItem("urlBanner",(char*)m_dados.urlBanner.arr);
+		xml->addItem("dsAreaBanner",(char*)m_dados.dsAreaBanner.arr);
+		xml->addItem("dsTipoBanner",(char*)m_dados.dsTipoBanner.arr);
+		xml->addItem("idAreaBanner",(char*)m_dados.idAreaBanner.arr);
+		xml->addItem("idCampanha",(char*)m_dados.idCampanha.arr);
+		xml->closeTag();
+		tuxfw_getlogger()->debug("idTipoPessoa = %s",(char*)m_dados.idTipoPessoa.arr);
+		tuxfw_getlogger()->debug("idTipoRelacionamento = %s",(char*)m_dados.idTipoRelacionamento.arr);
+	}	
+
+
+	EXEC SQL CLOSE BANNERS;
+
+	return;
+
+	OraNoDataFound:		
+		tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+	OraException:
+		tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CLinha::consultarProcessoCancelamento(char*ddd,char*linha,XMLGen*xml)
+{
+	tuxfw_getlogger()->debug("CLinha::consultarProcessoCancelamento");
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	
+	char* iddd = ddd;
+	char* ilinha = linha;
+	struct dados{
+		VARCHAR idAtendimento[256];
+	}m_dados;
+
+	struct idados{
+		short idAtendimento;
+	}m_idados;
+	EXEC SQL END DECLARE SECTION;	
+
+	memset(&m_dados,0,sizeof(m_dados));
+	memset(&m_idados,0,sizeof(m_idados));
+
+	EXEC SQL WHENEVER NOT FOUND GOTO OraException;
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	EXEC SQL
+		SELECT
+		  MAX(ATENDIMENTO.IDATENDIMENTO) AS IDATENDIMENTO,
+		  MAX(ATENDIMENTO.DTABERTURA) AS DTABERTURA 
+		  INTO :m_dados:m_idados
+		 FROM
+		  ATENDIMENTO.ATENDIMENTO ATENDIMENTO,
+		  ATENDIMENTO.ATENDIMENTOPESSOA ATENDIMENTOPESSOA,
+		  CONTATOADM.CONTATO CONTATO,
+		  CUSTOMER.PESSOALINHA PESSOALINHA,
+		  LINHA.LINHATELEFONICA LINHATELEFONICA,
+		  LINHA.LINHABASE LINHABASE,
+		  APOIO.AREAREGISTRO AREAREGISTRO
+		 WHERE
+		      ATENDIMENTO.IDATENDIMENTO = ATENDIMENTOPESSOA.IDATENDIMENTO
+		 AND  ATENDIMENTOPESSOA.IDTIPORELACIONAMENTO > 1
+		 AND  ATENDIMENTO.IDCONTATO = CONTATO.IDCONTATO
+		 AND  CONTATO.NMPATH = ( SELECT DSVALORPARAMETRO FROM APOIO.PARAMETRO WHERE CDPARAMETRO = 'PALITAGEM_CANCELAMENTO_LINHA')
+		 AND  ATENDIMENTOPESSOA.IDPESSOADEPARA = PESSOALINHA.IDPESSOADEPARA
+		 AND  ATENDIMENTOPESSOA.IDTIPORELACIONAMENTO = PESSOALINHA.IDTIPORELACIONAMENTO
+		 AND  PESSOALINHA.IDLINHATELEFONICA = LINHATELEFONICA.IDLINHATELEFONICA
+		 AND  LINHATELEFONICA.IDLINHABASE = LINHABASE.IDLINHABASE
+		 AND  AREAREGISTRO.IDAREAREGISTRO = LINHABASE.IDAREAREGISTRO
+		 AND  LINHABASE.NRLINHA = :ilinha 
+		 AND  AREAREGISTRO.CDAREAREGISTRO = :iddd;
+
+
+	xml->addItem("nrProtocolo",(char*)m_dados.idAtendimento.arr);
+
+	return;
+
+	OraNoDataFound:		
+		tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+	OraException:
+		tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CLinha::consultarListaRestritiva()
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	
+	int iCdAreaRegistro  = 0;
+	int iNrLinha		= 0;
+	int iNrRestrito = 0;
+
+	EXEC SQL END DECLARE SECTION;
+
+	iCdAreaRegistro = this->getCdAreaRegistro(); 
+ 	iNrLinha = this->getNrLinha();
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+
+	EXEC SQL
+	SELECT 
+		COUNT(1)
+	INTO
+		:iNrRestrito
+	FROM
+		LINHA.LINHABASE LINHABASE,
+		APOIO.AREAREGISTRO AREAREGISTRO,
+		VOL.LISTARESTRITA  LISTARESTRITA
+	WHERE
+		LINHABASE.NRLINHA = :iNrLinha AND
+		LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+		AREAREGISTRO.CDAREAREGISTRO = :iCdAreaRegistro AND
+		LINHABASE.IDLINHABASE = LISTARESTRITA.IDLINHABASE;
+
+
+	this->setNrRestrito(iNrRestrito);
+
+	return;
+	
+
+	OraException:
+		throw TuxBasicOraException(sqlca.sqlcode);	
+
+}	
+
+void CLinha::setNrProtocolo(char*value)
+{
+	// limpeza de variavel antes da consulta
+	memset(&this->m_nrProtocolo,0,sizeof(m_nrProtocolo));
+
+	if(value != NULL)	
+		strcpy(this->m_nrProtocolo,value);	
+}
+
+void CLinha::setInProtocolo(char*value)
+{
+	if(value != NULL)	
+		strcpy(this->m_inProtocolo,value);	
+}
+
+void CLinha::setInRelacionamento(char*value)
+{
+	if(value != NULL)	
+		strcpy(this->m_inRelacionamento,value);	
+}
+
+void CLinha::setExibeProtocolo(char*value)
+{
+	if(value != NULL)	
+		strcpy(this->m_exibeProtocolo,value);	
+}
+
+char* CLinha::getNrProtocolo()
+{
+	return this->m_nrProtocolo;
+}
+
+char* CLinha::getInProtocolo()
+{
+	return this->m_inProtocolo;
+}
+
+char* CLinha::getInRelacionamento()
+{
+	return this->m_inRelacionamento;
+}
+
+char* CLinha::getExibeProtocolo()
+{
+	return this->m_exibeProtocolo;
+}
+
+void CLinha::setIdSistemaOrigemVOL(char*value)
+{
+	if(value!=NULL)
+		strcpy(this->m_idSistemaOrigemVOL,value);
+}
+void CLinha::setIdSistemaOrigemTAV(char*value)
+{
+	if(value!=NULL)
+		strcpy(this->m_idSistemaOrigemTAV,value);
+}
+char* CLinha::getIdSistemaOrigemVOL()
+{
+	return this->m_idSistemaOrigemVOL;
+}
+char* CLinha::getIdSistemaOrigemTAV()
+{
+	return this->m_idSistemaOrigemTAV;
+}
+
+void CLinha::getNumeroProtocolo()
+{
+	tuxfw_getlogger()->debug("CLinha::getNumeroProtocolo() :");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct param{
+			VARCHAR nrProtocolo[256];
+		}m_param;
+		struct iparam{
+			short nrProtocolo;
+		}m_iparam;
+	EXEC SQL END DECLARE SECTION;
+	sqlca.sqlcode=0;
+	memset(&m_param,0,sizeof(m_param));
+	memset(&m_iparam,0,sizeof(m_iparam));
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	EXEC SQL 		
+	SELECT ATENDIMENTO.FN_PROTOCOLO INTO :m_param:m_iparam FROM DUAL;
+
+	tuxfw_getlogger()->debug("nrprotocolo = %s",(char*)m_param.nrProtocolo.arr);
+
+	this->setNrProtocolo((char*)m_param.nrProtocolo.arr);
+
+	return;
+
+OraException:
+	tuxfw_getlogger()->debug("(1) ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);	
+}
+
+void CLinha::getTipoProtocolo(char*cdFuncionalidade)
+{
+	tuxfw_getlogger()->debug("CLinha::getTipoProtocolo()");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct param{
+			VARCHAR inProtocolo[2];
+			VARCHAR inRelacionamento[2];
+			VARCHAR exibeProtocolo[2];
+		}m_param;
+		struct iparam{
+			short inProtocolo;
+			short inRelacionamento;
+			short exibeProtocolo;
+		}m_iparam;
+		char *ccdFuncionalidade = cdFuncionalidade;
+	EXEC SQL END DECLARE SECTION;
+	sqlca.sqlcode=0;
+	memset(&m_param,0,sizeof(m_param));
+	memset(&m_iparam,0,sizeof(m_iparam));
+
+	tuxfw_getlogger()->debug("ccdFuncionalidade %s ",ccdFuncionalidade);
+
+	EXEC SQL WHENEVER SQLERROR GOTO OraException;
+	EXEC SQL 
+	SELECT  
+		CONTATOFOLHA.INPROTOCOLO,
+		CONTATOFOLHA.INRELACIONAMENTO,
+		CONTATOFOLHA.INEXIBEPROTOCOLO
+	INTO    :m_param:m_iparam
+	FROM
+		CONTATOADM.CONTATOFOLHA CONTATOFOLHA,
+		CONTATOADM.CONTATOFUNCIONALIDADE CONTATOFUNCIONALIDADE
+	WHERE
+		CONTATOFOLHA.IDCONTATO = CONTATOFUNCIONALIDADE.IDCONTATO
+		AND CONTATOFUNCIONALIDADE.CDFUNCIONALIDADE = :ccdFuncionalidade;
+
+	this->setInProtocolo((char*)m_param.inProtocolo.arr);
+	this->setInRelacionamento((char*)m_param.inRelacionamento.arr);
+	this->setExibeProtocolo((char*)m_param.exibeProtocolo.arr);
+
+	return;
+
+OraException:
+	tuxfw_getlogger()->debug("(2) ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);	
+
+}
+
+void CLinha::incluirAlerta(  char* cSgClassificacao, char* cDsLoja,  char*  cDtEnvioComunicacao, char* cDsContato, char* cDtVisitaLoja )
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iNrLinhaSQL = 0;
+	int iCdAreaRegistroSQL = 0;
+	int iIdLinhaBase = 0;
+	char cDtEnvioComunicacaoSQL[256];
+	char cDsLojaSQL[256];
+	char cDsContatoSQL[256];
+	char cSgClassificacaoSQL[256];
+	char cDtVisitaLojaSQL[256];
+	int iIdAtendimentoLoja = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	memset(cDtEnvioComunicacaoSQL, 0, sizeof(cDtEnvioComunicacaoSQL));
+	memset(cDsLojaSQL, 0, sizeof(cDsLojaSQL));
+	memset(cSgClassificacaoSQL, 0, sizeof(cSgClassificacaoSQL));
+	memset(cDtVisitaLojaSQL, 0, sizeof(cDtVisitaLojaSQL));
+
+	iNrLinhaSQL = this->getNrLinha();
+	iCdAreaRegistroSQL = this->getCdAreaRegistro();
+	strcpy (cDtEnvioComunicacaoSQL, cDtEnvioComunicacao);
+	strcpy (cDsLojaSQL, cDsLoja);
+	strcpy (cDsContatoSQL, cDsContato);
+	strcpy (cSgClassificacaoSQL, cSgClassificacao);
+	strcpy (cDtVisitaLojaSQL, cDtVisitaLoja);
+
+
+	EXEC SQL WHENEVER SQLERROR  GOTO OraException;
+
+	EXEC SQL SELECT vol.atendimentolojasq.NEXTVAL INTO :iIdAtendimentoLoja FROM dual;
+
+
+	EXEC SQL
+	INSERT INTO
+		VOL.ATENDIMENTOLOJA (IDATENDIMENTOLOJA, NRLINHA, CDAREAREGISTRO, SGCLASSIFICACAO, DSLOJA, DSCONTATO, DTENVIOCOMUNICACAO, DTVISITALOJA, QTTENTATIVAERRO, INENVIADO, IDUSUARIOALTERACAO, DTULTIMAALTERACAO)
+		VALUES	(:iIdAtendimentoLoja, :iNrLinhaSQL, :iCdAreaRegistroSQL, :cSgClassificacaoSQL, :cDsLojaSQL, :cDsContatoSQL, TO_DATE(:cDtEnvioComunicacaoSQL, 'dd/mm/yyyy hh24:mi:ss'), TO_DATE(:cDtVisitaLojaSQL, 'dd/mm/yyyy hh24:mi:ss'), 0, 0, 1, SYSDATE);
+
+	return;
+
+OraException:
+	tuxfw_getlogger()->debug("(2) ERRO: sqlca.sqlcode = %d\r\n",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);	
+}
+
+void CLinha::excluirAlerta( )
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+	int iNrLinhaSQL = 0;
+	int iCdAreaRegistroSQL = 0;	
+
+	EXEC SQL END DECLARE SECTION;
+	
+	iNrLinhaSQL = this->getNrLinha();
+	iCdAreaRegistroSQL = this->getCdAreaRegistro();	
+
+	tuxfw_getlogger()->debug("Excluindo \r\n");
+	
+	EXEC SQL WHENEVER SQLERROR  GOTO OraException;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;	
+
+	EXEC SQL	
+	DELETE FROM	
+		VOL.ATENDIMENTOLOJA 	
+	WHERE
+		NRLINHA			= :iNrLinhaSQL		AND
+		CDAREAREGISTRO		= :iCdAreaRegistroSQL	AND
+		DTVISITALOJA		> SYSDATE;
+
+	return;
+
+OraException:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d\r\n",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);	
+
+}
+
+void CLinha::consultarAlerta(XMLGen* xml_g)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+	int iNrLinhaSQL		= 0;
+	int iCdAreaRegistroSQL	= 0;
+	char cDsLoja[256];
+	char cDtAlerta[30];	
+	char cDsContato[256];
+	char cSgClassificacao[20];
+	char cDtVisitaLoja[256];
+	EXEC SQL END DECLARE SECTION;
+	
+	iNrLinhaSQL = this->getNrLinha();
+	iCdAreaRegistroSQL = this->getCdAreaRegistro();	
+	
+	EXEC SQL WHENEVER SQLERROR  GOTO OraException;
+
+	EXEC SQL DECLARE LSTALERTA CURSOR FOR	
+	SELECT 
+		DSLOJA, 
+		TO_CHAR(DTENVIOCOMUNICACAO, 'dd/mm/yyyy hh24:mi:ss'),
+		TO_CHAR(DTVISITALOJA, 'dd/mm/yyyy hh24:mi:ss'),
+		SGCLASSIFICACAO,
+		NVL(DSCONTATO, ' ')
+	FROM
+		VOL.ATENDIMENTOLOJA 
+	WHERE
+		NRLINHA		= :iNrLinhaSQL AND
+		CDAREAREGISTRO  = :iCdAreaRegistroSQL AND
+		DTVISITALOJA  > SYSDATE;
+
+
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	
+	EXEC SQL OPEN LSTALERTA;
+
+	xml_g->createTag("listaAlertaAgendamentoVIP");
+	xml_g->addProp("xmlns", "dados.vol.vivo.com.br/vo");
+
+
+	for( ;; ) 
+	{
+		// varre todos os registros para criar a lista com as linhas		
+		EXEC SQL FETCH LSTALERTA INTO
+		:cDsLoja,
+		:cDtAlerta,
+		:cDtVisitaLoja,
+		:cSgClassificacao,
+		:cDsContato;
+		
+		xml_g->createTag("listaAlerta");
+			xml_g->addItem("dsLoja",	    CUtil::trim(cDsLoja));
+			xml_g->addItem("dtAlerta",	    CUtil::trim(cDtAlerta));
+			xml_g->addItem("dtVisitaLoja",	    CUtil::trim(cDtVisitaLoja));
+			xml_g->addItem("sgTipoComunicacao", CUtil::trim(cSgClassificacao));
+			xml_g->addItem("dsContato",	    CUtil::trim(cDsContato));
+		xml_g->closeTag();
+	}
+
+	EXEC SQL CLOSE LSTALERTA;
+
+	xml_g->closeTag();
+
+	return;
+
+OraException:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d\r\n",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+void CLinha::consultarLinhaPremium()
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+	int iNrLinhaSQL		= 0;
+	int iCdAreaRegistroSQL	= 0;
+	int iLinhaPremium = 0;
+	
+	EXEC SQL END DECLARE SECTION;
+	
+	iNrLinhaSQL = this->getNrLinha();
+	iCdAreaRegistroSQL = this->getCdAreaRegistro();	
+	
+	EXEC SQL WHENEVER SQLERROR  GOTO OraException;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;	
+
+	EXEC SQL
+	SELECT 
+		COUNT(1)
+	INTO
+		:iLinhaPremium
+	FROM
+		VOL.LINHAPREMIUM 
+	WHERE
+		NRLINHA		= :iNrLinhaSQL AND
+		CDAREAREGISTRO  = :iCdAreaRegistroSQL;
+
+
+	if (iLinhaPremium)
+		this->setLinhaPremium(true);
+	else
+		this->setLinhaPremium(false);
+
+
+	return;
+
+OraException:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d\r\n",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+void CLinha::enviaAlertaVIP(char* cDsLoja, char* operacao, char* cDtVisitaLoja, char* cUsuario)
+{
+	XMLGen		xmlInput;
+	char		cDtVisita[12];
+	char		cHrVisita[6];
+	char            cDestinatario[12];
+	char		cMensagem[256];
+
+	memset(cDtVisita, 0, sizeof(cDtVisita));
+	memset(cHrVisita, 0, sizeof(cHrVisita));
+	memset(cDestinatario, 0, sizeof(cDestinatario));
+	memset(cMensagem, 0, sizeof(cMensagem));
+
+	strncpy(cDtVisita,  cDtVisitaLoja, 10);
+	cDtVisita[10] = '\0';
+
+	strncpy(cHrVisita,  cDtVisitaLoja + 11, 5);
+	cHrVisita[5] = '\0';
+
+	sprintf(cDestinatario, "%d%d", this->getCdAreaRegistro(), this->getNrLinha());							   
+
+	if (!strcmp (operacao, "excluir"))
+		sprintf(cMensagem, "Vivo Informa: Prezado cliente, o cancelamento da sua visita na loja %s foi realizado com sucesso. Vivo conexao como nenhuma outra.", cDsLoja);
+	else if (!strcmp(operacao, "alterar"))
+		sprintf(cMensagem, "Prezado cliente, o seu agendamento foi alterado para %s às %s, na loja %s. Vivo conexao como nenhuma outra.", cDtVisita, cHrVisita, cDsLoja);
+	else		
+		sprintf(cMensagem, "Caro cliente, seu atendimento na loja %s está CONFIRMADO para %s às %s.", cDsLoja, cDtVisita, cHrVisita);
+
+	// montando XML
+	xmlInput.addItem("message", cMensagem);		
+	xmlInput.addItem("recipient", cDestinatario);
+
+	// fazendo acesso remoto
+	this->remoteMensagem(xmlInput, "SMSSend", cUsuario);
+
+}
+
+
+void CLinha::consultarVivoZAP()
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iNrLinhaSQL		= 0;
+	int iCdAreaRegistroSQL	= 0;
+	int iLinhaVivoZAP = 0;	
+	EXEC SQL END DECLARE SECTION;
+	
+	iNrLinhaSQL = this->getNrLinha();
+	iCdAreaRegistroSQL = this->getCdAreaRegistro();	
+	
+	EXEC SQL WHENEVER SQLERROR  GOTO OraException;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;	
+
+	EXEC SQL	
+	SELECT 
+		COUNT(1)
+	INTO
+		:iLinhaVivoZAP
+	FROM
+		LINHA.LINHABASE LINHABASE,
+		LINHA.LINHATELEFONICA LINHATELEFONICA,
+		APOIO.AREAREGISTRO AREAREGISTRO,	
+		LINHA.PLANOSERVICOLINHA PLANOSERVICOLINHA,
+		LINHA.PLANOSERVICO PLANOSERVICO
+	WHERE
+		LINHABASE.NRLINHA = :iNrLinhaSQL AND 
+		LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+		AREAREGISTRO.CDAREAREGISTRO = :iCdAreaRegistroSQL AND
+		LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE AND		
+		LINHATELEFONICA.IDLINHATELEFONICA = PLANOSERVICOLINHA.IDLINHATELEFONICA AND 
+		PLANOSERVICOLINHA.IDSERVICO = PLANOSERVICO.IDSERVICO AND
+		PLANOSERVICO.NMSERVICO LIKE '%BASICO CARTAO%'		AND
+		(PLANOSERVICOLINHA.DTEXPIRACAO IS NULL OR PLANOSERVICOLINHA.DTEXPIRACAO  >= SYSDATE ) AND
+		( PLANOSERVICOLINHA.DTVIGENCIAFINAL IS NULL OR PLANOSERVICOLINHA.DTVIGENCIAFINAL >= SYSDATE );
+
+	if ( iLinhaVivoZAP )
+		this->setVivoZAP(true);
+	else
+		this->setVivoZAP(false);
+
+
+	return;
+
+OraException:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d\r\n",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CLinha::consultarLinhaVoz(int iCdAreaRegistro, int iNrLinha, int iIdTipoRelacionamento)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iNrLinhaSQL		= 0;
+	int iCdAreaRegistroSQL	= 0;
+	int iLinhaVivoZAP = 0;	
+	long iIdPessoa     = 0;
+	int iIdTipoRelacionamentoSQL = 0;
+	EXEC SQL END DECLARE SECTION;
+	
+	iNrLinhaSQL	   = iNrLinha;
+	iCdAreaRegistroSQL = iCdAreaRegistro;	
+	iIdTipoRelacionamentoSQL = iIdTipoRelacionamento;
+	
+	EXEC SQL WHENEVER SQLERROR  GOTO OraException;
+
+	EXEC SQL	
+	SELECT 
+		PESSOADEPARA.IDPESSOA
+	INTO
+		:iIdPessoa
+	FROM
+		LINHA.LINHABASE LINHABASE,
+		LINHA.LINHATELEFONICA LINHATELEFONICA,
+		APOIO.AREAREGISTRO AREAREGISTRO,
+		CUSTOMER.PESSOALINHA PESSOALINHA,
+		CUSTOMER.PESSOADEPARA PESSOADEPARA
+	WHERE
+		LINHABASE.NRLINHA = :iNrLinhaSQL AND 
+		LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+		AREAREGISTRO.CDAREAREGISTRO = :iCdAreaRegistroSQL AND
+		LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE AND
+		LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA AND
+		PESSOALINHA.IDPESSOADEPARA = PESSOADEPARA.IDPESSOADEPARA AND
+		PESSOALINHA.IDTIPORELACIONAMENTO = :iIdTipoRelacionamentoSQL;
+	
+	iCdAreaRegistroSQL = 0;
+	iNrLinhaSQL = 0;
+
+
+	EXEC SQL WHENEVER SQLERROR  GOTO OraException;
+	EXEC SQL
+	SELECT
+		CDAREAREGISTRO,
+		NRLINHA 
+	INTO
+		:iCdAreaRegistroSQL,
+		:iNrLinhaSQL
+	FROM(				
+		SELECT		
+			COUNT(1),	
+			NRLINHA, 
+			CDAREAREGISTRO,
+			PESSOADEPARA.IDPESSOA
+		FROM 
+			LINHA.LINHABASE LINHABASE,
+			LINHA.LINHATELEFONICA LINHATELEFONICA,
+			APOIO.AREAREGISTRO AREAREGISTRO,
+			CUSTOMER.PESSOALINHA PESSOALINHA,
+			CUSTOMER.PESSOADEPARA PESSOADEPARA,
+			APOIO.ESTADOLINHA ESTADOLINHA
+		WHERE
+			LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+			LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE AND
+			LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA AND
+			PESSOALINHA.IDPESSOADEPARA = PESSOADEPARA.IDPESSOADEPARA AND
+			PESSOADEPARA.IDPESSOA = :iIdPessoa AND
+			LINHABASE.IDESTADOLINHA = ESTADOLINHA.IDESTADOLINHA AND
+			ESTADOLINHA.DSESTADOLINHA  IN ('ATIVO', 'BARRADO', 'ATIVADO') AND
+			LINHABASE.IDLINHABASE NOT IN 
+			(		
+				SELECT		 
+					LINHABASE.IDLINHABASE
+				FROM
+					LINHA.LINHABASE LINHABASE,
+					LINHA.LINHATELEFONICA LINHATELEFONICA,
+					APOIO.AREAREGISTRO AREAREGISTRO,
+					CUSTOMER.PESSOALINHA PESSOALINHA,
+					CUSTOMER.PESSOADEPARA PESSOADEPARA,
+					LINHA.PLANOSERVICOLINHA PLANOSERVICOLINHA,
+					LINHA.PLANOSERVICO PLANOSERVICO
+				WHERE		
+					LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+					LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE AND
+					LINHATELEFONICA.IDLINHATELEFONICA = PESSOALINHA.IDLINHATELEFONICA AND
+					LINHATELEFONICA.IDLINHATELEFONICA = PLANOSERVICOLINHA.IDLINHATELEFONICA AND 
+					PLANOSERVICOLINHA.IDSERVICO = PLANOSERVICO.IDSERVICO AND
+					PLANOSERVICO.NMSERVICO  LIKE '%BASICO CARTAO%' AND			
+					PESSOALINHA.IDPESSOADEPARA = PESSOADEPARA.IDPESSOADEPARA AND
+					PESSOADEPARA.IDPESSOA = :iIdPessoa
+			)
+		GROUP BY 
+			IDPESSOA,
+			NRLINHA,
+			CDAREAREGISTRO
+		HAVING COUNT(1) > 1 )
+		WHERE 
+			ROWNUM = 1;		 
+		
+
+	
+	this->setNrLinha(iNrLinhaSQL);
+	this->setCdAreaRegistro(iCdAreaRegistroSQL);
+
+
+	return;
+
+OraException:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d\r\n",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+void CLinha::enviaEmailCriacaoSenha(char* cDsEmail, char *cUsuario, char* operacao)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+	char		cDtCriacaoEmail[12];
+	char		cHrCriacaoEmail[9];
+
+	EXEC SQL END DECLARE SECTION;
+
+
+	XMLGen		xmlInput;
+	char            cDestinatario[100];
+	char		cMensagem[2000];
+
+
+	
+	memset(cDtCriacaoEmail, 0, sizeof(cDtCriacaoEmail));
+	memset(cHrCriacaoEmail, 0, sizeof(cHrCriacaoEmail));
+	memset(cDestinatario, 0, sizeof(cDestinatario));
+	memset(cMensagem, 0, sizeof(cMensagem));
+
+	strcpy (cDestinatario, cDsEmail);
+
+
+
+	EXEC SQL WHENEVER SQLERROR  GOTO OraException;
+	EXEC SQL
+	SELECT
+
+		TO_CHAR(SYSDATE, 'dd/mm/yyyy') AS DIA,
+		TO_CHAR(SYSDATE, 'hh24:mi:ss') AS HORA
+	INTO
+		:cDtCriacaoEmail,
+		:cHrCriacaoEmail
+	FROM
+		DUAL;
+
+	
+	// montando XML
+	xmlInput.addItem("to", cDestinatario);
+	xmlInput.addItem("from", "boletim.autoatendimento@vivo.com.br");
+	
+	
+	if (!strcmp(operacao, "criacao"))
+	{
+
+		sprintf (cMensagem, "Sua senha foi criada com sucesso pela internet em %s às %s.\n\nO Meu Vivo é o seu canal de auto-atendimento na internet.\nNavegue com "
+			"segurança e realize a qualquer momento operações que antes só estavam disponíveis por telefone ou em uma das lojas próprias da Vivo.\n\nImportante: esta é uma mensagem "
+			"automática e não deve ser respondida. Para enviar a sua sugestão ou solicitação para  VIVO, por favor, acesse vivo.com.br/faleconosco."
+			"\nPara alterar o e-mail de recebimento, utilize o VIVO Online a partir do site vivo.com.br/vivoonline."
+			"\n\nPolítica de Segurança\n"
+			"A Vivo nunca envia e-mails com links ativos, arquivos executáveis ou solicitação de dados pessoais. "
+			"Para sua segurança, ao receber uma comunicação digital da Vivo, acesse nosso portal e confirme a autenticidade do comunicado. "
+			"Além disso, mantenha atualizado o antivírus do seu computador.", cDtCriacaoEmail, cHrCriacaoEmail);
+	
+
+		xmlInput.addItem("subject", "Auto-Atendimento - Criação de Senha");
+	}else
+	{
+		sprintf (cMensagem, "Sua senha foi alterada com sucesso pela internet em %s às %s.\n\nO Meu Vivo é o seu canal de auto-atendimento na internet.\nNavegue com "
+			"segurança e realize a qualquer momento operações que antes só estavam disponíveis por telefone ou em uma das lojas próprias da Vivo.\n\nImportante: esta é uma mensagem "
+			"automática e não deve ser respondida. Para enviar a sua sugestão ou solicitação para  VIVO, por favor, acesse vivo.com.br/faleconosco."
+			"\nPara alterar o e-mail de recebimento, utilize o VIVO Online a partir do site vivo.com.br/vivoonline."
+			"\n\nPolítica de Segurança\n"
+			"A Vivo nunca envia e-mails com links ativos, arquivos executáveis ou solicitação de dados pessoais. "
+			"Para sua segurança, ao receber uma comunicação digital da Vivo, acesse nosso portal e confirme a autenticidade do comunicado. "
+			"Além disso, mantenha atualizado o antivírus do seu computador.", cDtCriacaoEmail, cHrCriacaoEmail);
+
+
+		xmlInput.addItem("subject", "Auto-Atendimento - Alteração de Senha");
+	}
+
+
+	xmlInput.addItem("data", cMensagem);
+
+	// fazendo acesso remoto
+	this->remoteMensagem(xmlInput, "SMTPSEND", cUsuario);
+
+
+	return;
+
+OraException:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d\r\n",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+

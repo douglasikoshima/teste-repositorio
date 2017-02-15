@@ -1,0 +1,669 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CSat.h"
+
+CPesquisaSatisfacao::CPesquisaSatisfacao()
+{
+}
+
+CPesquisaSatisfacao::~CPesquisaSatisfacao()
+{
+}
+
+int CPesquisaSatisfacao::Insert( 
+			char* cnmPesquisaSatisfacao,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CPesquisaSatisfacao::Insert()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidPesquisaSatisfacao[255+1];
+		char* cAuxnmPesquisaSatisfacao = cnmPesquisaSatisfacao;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraPesquisaSatisfacao();
+		
+		memset( &cAuxidPesquisaSatisfacao, 0, sizeof(cAuxidPesquisaSatisfacao) ); 
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+
+		EXEC SQL
+			SELECT
+				IDPESQUISASATISFACAO
+			INTO
+				:cAuxidPesquisaSatisfacao
+			FROM
+				CONTATOADM.PESQUISASATISFACAO
+			WHERE
+				TRIM(UPPER(NMPESQUISASATISFACAO)) = TRIM(UPPER(:cAuxnmPesquisaSatisfacao))
+			AND
+				ROWNUM <= 1;
+
+		if( cAuxidPesquisaSatisfacao.len > 0 )
+		{
+		    ULOG_END("CPesquisaSatisfacao::Insert()");
+			return 0;
+		}
+
+		memset( &cAuxidPesquisaSatisfacao, 0, sizeof(cAuxidPesquisaSatisfacao) ); 
+		//Pega um id unico e sequencia para a insercao
+		EXEC SQL
+			SELECT 
+				contatoadm.PesquisaSatisfacaoSQ.NEXTVAL 
+			INTO 
+				:cAuxidPesquisaSatisfacao 
+			FROM 
+				DUAL;
+
+		//Realiza o insert
+		EXEC SQL INSERT INTO CONTATOADM.PESQUISASATISFACAO 
+		(	IDPESQUISASATISFACAO,
+			NMPESQUISASATISFACAO,
+			IDUSUARIOALTERACAO,
+			DTULTIMAALTERACAO) 
+		VALUES 
+		(	:cAuxidPesquisaSatisfacao,
+			:cAuxnmPesquisaSatisfacao,
+			:cAuxidUsuarioAlteracao,
+			SYSDATE);
+        ULOG_END("CPesquisaSatisfacao::Insert()");
+		return 1;//Sucesso
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if(sqlca.sqlcode==-2292)
+		return 2;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPesquisaSatisfacao::RelacaoSatPer( char* cidPergunta )
+{
+    ULOG_START("CPesquisaSatisfacao::RelacaoSatPer()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidPergunta = cidPergunta; 
+		struct
+		{
+			VARCHAR stidPesquisaSatisfacao[21+1];
+			VARCHAR stnmPesquisaSatisfacao[255+1];
+		} stPesquisaSatisfacaoRegistro;
+		struct
+		{
+			short iidPesquisaSatisfacao;
+			short inmPesquisaSatisfacao;
+		} stPesquisaSatisfacaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraPesquisaSatisfacao();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacao;
+		
+		//Declara um cursor para listar os Registros
+
+   		/*SELECT contatoadm.PesquisaSatisfacao.idPesquisaSatisfacao, contatoadm.PesquisaSatisfacao.idPesquisaSatisfacao 
+		FROM contatoadm.PesquisaSatisfacao, contatoadm.PesquisaSatisfacaoPerguntaBZEROUM
+		WHERE contatoadm.PesquisaSatisfacao.idPesquisaSatisfacao = contatoadm.PesquisaSatisfacaoPerguntaBZEROUM.idPergunta 
+		AND contatoadm.PesquisaSatisfacaoPerguntaBZEROUM.idPergunta = :cAuxidPergunta ;*/
+
+		/*REMOVENDO BZEROUM
+		 TCOSTA 18/06/2007 MPOG
+		*/
+
+		EXEC SQL DECLARE crspesquisasatrel CURSOR FOR
+		SELECT pesquisasatisfacao.idpesquisasatisfacao,
+			   pesquisasatisfacao.nmpesquisasatisfacao
+		FROM   contatoadm.pesquisasatisfacao pesquisasatisfacao,
+			   contatoadm.pesquisasatisfacaopergunta psqpergunta
+		WHERE  pesquisasatisfacao.idpesquisasatisfacao = psqpergunta.IDPESQUISASATISFACAO
+		AND	   psqpergunta.idpergunta = :cAuxidPergunta;
+
+
+		EXEC SQL OPEN crspesquisasatrel;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+        {
+		   ULOG_START("CPesquisaSatisfacao::RelacaoSatPer()");
+		   return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stPesquisaSatisfacaoRegistro, 0, sizeof(stPesquisaSatisfacaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH crspesquisasatrel INTO :stPesquisaSatisfacaoRegistro:stPesquisaSatisfacaoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stPesquisaSatisfacaoRegistro.stidPesquisaSatisfacao.arr,
+				(char*)stPesquisaSatisfacaoRegistro.stnmPesquisaSatisfacao.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE crspesquisasatrel;
+		}
+		ULOG_END("CPesquisaSatisfacao::RelacaoSatPer()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoRelacao:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPesquisaSatisfacao::ExistemSatPer( char* cidPergunta )
+{
+    ULOG_START("CPesquisaSatisfacao::ExistemSatPer()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidPergunta = cidPergunta; 
+		struct
+		{
+			VARCHAR stidPesquisaSatisfacao[21+1];
+			VARCHAR stnmPesquisaSatisfacao[255+1];
+		} stPesquisaSatisfacaoRegistro;
+		struct
+		{
+			short iidPesquisaSatisfacao;
+			short inmPesquisaSatisfacao;
+		} stPesquisaSatisfacaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraPesquisaSatisfacao();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Declara um cursor para listar os Registros
+
+   		/*SELECT contatoadm.PesquisaSatisfacao.idPesquisaSatisfacao, contatoadm.PesquisaSatisfacao.idPesquisaSatisfacao 
+		FROM contatoadm.PesquisaSatisfacao 
+		WHERE contatoadm.PesquisaSatisfacao.idPesquisaSatisfacao NOT IN ( SELECT contatoadm.PesquisaSatisfacao.idPesquisaSatisfacao 
+																			 FROM contatoadm.PesquisaSatisfacao, 
+																			 contatoadm.PesquisaSatisfacaoPerguntaBZEROUM 
+																			 WHERE contatoadm.PesquisaSatisfacao.idPesquisaSatisfacao = contatoadm.PesquisaSatisfacaoPerguntaBZEROUM.idPergunta 
+																			 AND contatoadm.PesquisaSatisfacaoPerguntaBZEROUM.idPergunta = :cAuxidPergunta  ); */
+
+		/*REMOVENDO BZEROUM
+		 TCOSTA 18/06/2007 MPOG
+		*/
+   		EXEC SQL DECLARE CursorPesquisaSatisfacaoExistem_00 CURSOR FOR 
+		SELECT contatoadm.pesquisasatisfacao.idpesquisasatisfacao,
+			   contatoadm.pesquisasatisfacao.NMPESQUISASATISFACAO
+		FROM contatoadm.pesquisasatisfacao
+		WHERE contatoadm.pesquisasatisfacao.idpesquisasatisfacao NOT IN (SELECT pesquisasatisfacaopergunta.idpesquisasatisfacao      														 	 	  		 
+ 	   																 	 	FROM  contatoadm.pesquisasatisfacaopergunta pesquisasatisfacaopergunta
+																			WHERE pesquisasatisfacaopergunta.idpergunta = :cAuxidPergunta);			
+
+
+		EXEC SQL WHENEVER SQLERROR GOTO GotoExistem;
+
+		EXEC SQL OPEN CursorPesquisaSatisfacaoExistem_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CPesquisaSatisfacao::ExistemSatPer()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stPesquisaSatisfacaoRegistro, 0, sizeof(stPesquisaSatisfacaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorPesquisaSatisfacaoExistem_00 INTO :stPesquisaSatisfacaoRegistro:stPesquisaSatisfacaoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stPesquisaSatisfacaoRegistro.stidPesquisaSatisfacao.arr,
+				(char*)stPesquisaSatisfacaoRegistro.stnmPesquisaSatisfacao.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorPesquisaSatisfacaoExistem_00;
+		}
+		ULOG_END("CPesquisaSatisfacao::ExistemSatPer()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoExistem:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPesquisaSatisfacao::Update( 
+								char* cidPesquisaSatisfacao,
+								char* cnmPesquisaSatisfacao,
+								char* cidUsuarioAlteracao 
+			                   )
+{
+    ULOG_START("CPesquisaSatisfacao::Update()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stAuxidPesquisaSatisfacao[21+1];
+		char* cAuxidPesquisaSatisfacao = cidPesquisaSatisfacao;
+		char* cAuxnmPesquisaSatisfacao = cnmPesquisaSatisfacao;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraPesquisaSatisfacao();
+		memset( &stAuxidPesquisaSatisfacao, 0, sizeof(stAuxidPesquisaSatisfacao) ); 
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+		
+		EXEC SQL
+			SELECT
+				IDPESQUISASATISFACAO
+			INTO
+				:stAuxidPesquisaSatisfacao
+			FROM
+				CONTATOADM.PESQUISASATISFACAO
+			WHERE
+				TRIM(UPPER(NMPESQUISASATISFACAO)) = TRIM(UPPER(:cAuxnmPesquisaSatisfacao))
+			AND
+				IDPESQUISASATISFACAO <> :cAuxidPesquisaSatisfacao
+			AND
+				ROWNUM <= 1;
+
+		if( stAuxidPesquisaSatisfacao.len > 0 )
+		{
+		    ULOG_END("CPesquisaSatisfacao::Update()");
+			return 0;
+		}
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+			UPDATE 
+				CONTATOADM.PESQUISASATISFACAO
+			SET 	
+				NMPESQUISASATISFACAO = :cAuxnmPesquisaSatisfacao,
+				IDUSUARIOALTERACAO = :cAuxidUsuarioAlteracao,
+				DTULTIMAALTERACAO = SYSDATE
+			WHERE 	
+				IDPESQUISASATISFACAO = :cAuxidPesquisaSatisfacao;   
+		
+		ULOG_END("CPesquisaSatisfacao::Update()");
+		//Verifica se houve ou nao erro ORACLE
+		return 1;//Sucesso
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoUpdate:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if(sqlca.sqlcode == -2292)
+		return 2;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPesquisaSatisfacao::Delete( char* cidPesquisaSatisfacao )
+{
+    ULOG_START("CPesquisaSatisfacao::Delete()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidPesquisaSatisfacao = cidPesquisaSatisfacao; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Zera a estrutura da classe
+	ZeraPesquisaSatisfacao();
+	
+	//Ativa as acoes decorrentes de erros ORACLE
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+	sqlca.sqlcode=0;
+	
+	//Executa a instrucao de delecao
+	EXEC SQL 
+		DELETE FROM 
+			CONTATOADM.PESQUISASATISFACAO 		
+		WHERE 
+			IDPESQUISASATISFACAO = :cAuxidPesquisaSatisfacao;
+			
+	ULOG_END("CPesquisaSatisfacao::Delete()");
+	return 1;
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if(sqlca.sqlcode == -2292)
+		return 0;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPesquisaSatisfacao::ListId( char* cidPesquisaSatisfacao ) 
+{
+    ULOG_START("CPesquisaSatisfacao::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidPesquisaSatisfacao = cidPesquisaSatisfacao; 
+		struct
+		{
+			VARCHAR stidPesquisaSatisfacao[21+1];
+			VARCHAR stnmPesquisaSatisfacao[255+1];
+		} stPesquisaSatisfacaoRegistro;
+		struct
+		{
+			short iidPesquisaSatisfacao;
+			short inmPesquisaSatisfacao;
+		} stPesquisaSatisfacaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraPesquisaSatisfacao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorPesquisaSatisfacaoId CURSOR FOR 
+   		SELECT 	idPesquisaSatisfacao,
+	            nmPesquisaSatisfacao
+		FROM contatoadm.PesquisaSatisfacao
+		WHERE idPesquisaSatisfacao = :cAuxidPesquisaSatisfacao;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorPesquisaSatisfacaoId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		   ULOG_END("CPesquisaSatisfacao::ListId()");
+		   return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stPesquisaSatisfacaoRegistro, 0, sizeof(stPesquisaSatisfacaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorPesquisaSatisfacaoId INTO :stPesquisaSatisfacaoRegistro:stPesquisaSatisfacaoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stPesquisaSatisfacaoRegistro.stidPesquisaSatisfacao.arr,
+				(char*)stPesquisaSatisfacaoRegistro.stnmPesquisaSatisfacao.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorPesquisaSatisfacaoId;
+		}
+		ULOG_END("CPesquisaSatisfacao::ListId()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPesquisaSatisfacao::ListAll( void )
+{
+    ULOG_START("CPesquisaSatisfacao::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidPesquisaSatisfacao[21+1];
+			VARCHAR stnmPesquisaSatisfacao[255+1];
+		} stPesquisaSatisfacaoRegistro;
+		struct
+		{
+			short iidPesquisaSatisfacao;
+			short inmPesquisaSatisfacao;
+		} stPesquisaSatisfacaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraPesquisaSatisfacao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorPesquisaSatisfacaoAll CURSOR FOR
+   		SELECT 	idPesquisaSatisfacao,
+		nmPesquisaSatisfacao
+		FROM contatoadm.PesquisaSatisfacao; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorPesquisaSatisfacaoAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CPesquisaSatisfacao::ListAll()");
+			return 0;//Erro
+		}	
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stPesquisaSatisfacaoRegistro, 0, sizeof(stPesquisaSatisfacaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorPesquisaSatisfacaoAll INTO :stPesquisaSatisfacaoRegistro:stPesquisaSatisfacaoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stPesquisaSatisfacaoRegistro.stidPesquisaSatisfacao.arr,
+				(char*)stPesquisaSatisfacaoRegistro.stnmPesquisaSatisfacao.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorPesquisaSatisfacaoAll;
+		}
+		ULOG_END("CPesquisaSatisfacao::ListAll()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CPesquisaSatisfacao::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			xml->createTag(cNomeTag);
+			//Adiciona a proprieda necessaria para o Weblogic
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idQuestionario", Registro(x)->cidPesquisaSatisfacao );
+				xml->addItem("dsQuestionario", Registro(x)->cnmPesquisaSatisfacao ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			xml->closeTag();
+		}
+	}
+}
+
+
+int CPesquisaSatisfacao::ListPar( char* cdsQuestionario )
+{
+    ULOG_START("CPesquisaSatisfacao::ListPar()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char cAuxdsQuestionario[255+1];
+		struct
+		{
+			VARCHAR stidPesquisaSatisfacao[21+1];
+			VARCHAR stnmPesquisaSatisfacao[255+1];
+		} stPesquisaSatisfacaoRegistro;
+		struct
+		{
+			short iidPesquisaSatisfacao;
+			short inmPesquisaSatisfacao;
+		} stPesquisaSatisfacaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraPesquisaSatisfacao();
+		memset( &cAuxdsQuestionario, 0, sizeof( cAuxdsQuestionario ) );
+
+		sprintf( cAuxdsQuestionario, "%s%%", cdsQuestionario );
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAllPar;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL 
+			DECLARE 
+				CursorPesquisaSatisfacaoListAllPar CURSOR FOR
+   			SELECT 
+				IDPESQUISASATISFACAO,
+				NMPESQUISASATISFACAO
+			FROM
+				CONTATOADM.PESQUISASATISFACAO
+			WHERE
+				UPPER( NMPESQUISASATISFACAO ) LIKE UPPER( :cAuxdsQuestionario );
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorPesquisaSatisfacaoListAllPar;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CPesquisaSatisfacao::ListPar()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stPesquisaSatisfacaoRegistro, 0, sizeof(stPesquisaSatisfacaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorPesquisaSatisfacaoListAllPar INTO :stPesquisaSatisfacaoRegistro:stPesquisaSatisfacaoIndicator;
+				//Adiciona a classe
+				Add( (char*)stPesquisaSatisfacaoRegistro.stidPesquisaSatisfacao.arr,
+				     (char*)stPesquisaSatisfacaoRegistro.stnmPesquisaSatisfacao.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorPesquisaSatisfacaoListAllPar;
+		}
+		ULOG_END("CPesquisaSatisfacao::ListPar()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAllPar:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}

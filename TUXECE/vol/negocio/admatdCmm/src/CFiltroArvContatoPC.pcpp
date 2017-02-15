@@ -1,0 +1,1344 @@
+
+#undef SQLCA
+#define SQLCA_NONE
+#include <sqlca.h>
+#include <sqlda.h>
+
+using namespace std;
+#include <iterator>
+#include <list>
+#include <string>
+#include "../include/cFiltroArvContato.h"
+
+typedef list<unsigned long> LISTA_PK;
+list<unsigned long>::iterator it;
+
+#define CONVIND(O,I) \
+{\
+	if (I == -1) { \
+		##O.arr[0]=0; \
+	} else { \
+		##O.arr[##O.len]=0; \
+	} \
+}
+
+#define endOraStr(varstr)      varstr.arr[varstr.len]= '\0'
+#define oraToStr(bstr,vchar)   if(!bstr) strncpy(bstr,vchar.arr,vchar.len)
+#define strToOra(vchar,bstr)   vchar.len = strlen(bstr);strncpy((char *)vchar.arr,bstr,vchar.len);vchar.arr[vchar.len] = 0
+
+/*---- Prototypes ---------------------------------------------*/
+void proCInsereFiltros( bool limpar, st_FiltroArvContato * pRegistro ,LISTA_STMT *xml_g );
+void proCGravaFiltros( char * stmtPrm );
+void proCSelArquivos( st_FiltroArvContato *pRegistro ,XMLGen *xml_g );
+void proCSelFiltros( st_FiltroArvContato * pRegistro ,XMLGen *xml_g );
+void ObtemTipoLinha( unsigned long idTipoLinhaPrm, char *dsTipoLinhaPrm );
+void ObtemSegmentacao( unsigned long idSegmentacaoPrm, char *dsSegmentacaoPrm );
+void ObtemNatureza( unsigned long idNaturezaPrm, char *dsNaturezaPrm );
+void ObtemTipoCarteira( unsigned long idTipoCarteiraPrm, char *dsTipoCarteiraPrm );
+void ObtemGrupo( unsigned long idGrupoPrm, char *dsGrupoPrm );
+void ObtemProcedencia( unsigned long idProcedenciaPrm, char *dsProcedenciaPrm );
+void ObtemTipoFechamento( unsigned long idTipoFechamentoPrm, char *dsTipoFechamentoPrm );
+void ObtemRegional( unsigned long idRegionalPrm, char *dsRegionalPrm );
+void ObtemCliente( unsigned long idRelacionamentoPrm, char *dsRelacionamentoPrm ); // Tipo Cliente
+void ObtemCanal( unsigned long idCanalPrm, char *dsCanalPrm );
+void ObtemNatureza( unsigned long idNaturezaPrm, char *dsNaturezaPrm );    // Natureza - PF ou PJ
+void SqlError( sqlca * sqlca );
+
+
+/*-------------------------------------------------------------*/
+void proCInsereFiltros( bool limpar, st_FiltroArvContato * pRegistro ,LISTA_STMT *pquery )
+{
+ //   ULOG_START( "proCInsereFiltros()" );
+
+
+    struct sqlca sqlca;
+    char buf[256];  
+    char sgDisponivel[2];
+    string buffer;
+    static bool flagSolicitado; 
+    static char DataSolicitacao[128];
+    static char nmLoginUser[128];
+    
+    if ( limpar == true )
+    {
+       flagSolicitado = false;
+       memset( DataSolicitacao,0x0,sizeof(DataSolicitacao) );
+    }
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char * query;
+        
+        VARCHAR nmLoginUsuario[256];
+        VARCHAR nmArquivo[256];
+        VARCHAR dtSolicitacao[256];
+
+        int idUsuario = pRegistro->idUsuario;
+        int TipoConsulta = pRegistro->idTipoRelatorio + 1;
+	    int idTipoLinha = pRegistro->idTipoLinha;
+	    int idSegmentacao = pRegistro->idSegmentacao;
+	    int idTipoCliente = pRegistro->idTipoCliente;
+	    int idTipoCarteira = pRegistro->idTipoCarteira;
+	    int idRegional = pRegistro->idRegional;
+	    int idNatureza = pRegistro->idNatureza;
+	    int idCanal = pRegistro->idCanal;
+	    int idTipoFechamento = pRegistro->idTipoFechamento;
+	    int idGrupoAbertura = pRegistro->idGrupoAbertura;
+        int idGrupoTratamento = pRegistro->idGrupoTratamento;
+        int idGrupoRetorno = pRegistro->idGrupoRetorno;
+        int idProcedencia = pRegistro->idProcedencia;
+
+        char urlDownload[51];
+
+        short i_nmLoginUsuario = -1;
+        short i_dtSolicitacao = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &nmArquivo       , 0x0, sizeof(nmArquivo) );
+    memset( urlDownload      , 0x0, sizeof(urlDownload) );
+    //memset( &nmLoginUsuario  , 0x0, sizeof(nmLoginUsuario) );
+    memset( sgDisponivel    , 0x0, sizeof(sgDisponivel) );
+    memset( buf           , 0x0, sizeof(buf) );
+    
+    strcpy( sgDisponivel,(char *)pRegistro->sgDisponivel );
+    
+    /*
+    ULOG( "inDisponivel [%s]",sgDisponivel );
+    
+    ULOG( "Usuario [%d]",idUsuario );
+    */
+    
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+
+    if ( flagSolicitado == false )
+    {
+        //memset( &dtSolicitacao   , 0x0, sizeof(dtSolicitacao) );
+        memset( DataSolicitacao  , 0x0, sizeof(DataSolicitacao) );
+        memset( nmLoginUser      , 0x0, sizeof(nmLoginUser) );
+        flagSolicitado = true;
+        EXEC SQL
+            SELECT
+                TO_CHAR( SYSDATE,'DD/MM/YYYY HH24:MI:SS' ) DTSOLICITACAO
+            INTO
+               :dtSolicitacao:i_dtSolicitacao
+            FROM DUAL;
+	    
+	    CONVIND( dtSolicitacao,i_dtSolicitacao );
+	    strcpy( DataSolicitacao,(char *)dtSolicitacao.arr );
+	    
+	    EXEC SQL
+	        SELECT
+	            NMLOGINUSUARIO
+	        INTO
+	        :nmLoginUsuario:i_nmLoginUsuario
+	        FROM
+	            ACESSO.USUARIO
+	        WHERE
+	            IDPESSOAUSUARIO = :idUsuario
+	        AND 
+	            ROWNUM < 2;
+	
+	    CONVIND( nmLoginUsuario,i_nmLoginUsuario );
+	    strcpy( nmLoginUser,(char *)nmLoginUsuario.arr );
+	    
+    }
+
+	char relatorio[28];
+	if ( TipoConsulta == 1 ) strcpy( relatorio,"Contato" );
+	if ( TipoConsulta == 2 ) strcpy( relatorio,"Grupo" );
+	if ( TipoConsulta == 3 ) strcpy( relatorio,"Contato X Grupo" );
+		
+    sprintf( buf,"%s_%s",relatorio,nmLoginUser );
+    strToOra( nmArquivo,buf );
+
+#ifdef  WIN32
+    printf( "... Usuario            [%d]\n",idUsuario );
+    printf( "... Login              [%s]\n",(char *)nmLoginUsuario.arr );
+    printf( "... Tipo de Relatorio  [%s]\n",(char *)pRegistro->nmTipoRelatorio );
+    printf( "... Tipo de Linha      [%d]\n",idTipoLinha );
+    printf( "... Segmentacao        [%d]\n",idSegmentacao );
+    printf( "... Tipo de Cliente    [%d]\n",idTipoCliente );
+    printf( "... Tipo de Carteira   [%d]\n",idTipoCarteira );
+    printf( "... Regional           [%d]\n",idRegional );
+    printf( "... Natureza           [%d]\n",idNatureza );
+    printf( "... Canal              [%d]\n",idCanal );
+    printf( "... Tipo de Fechamento [%d]\n",idTipoFechamento );
+    printf( "... Grupo Abertura     [%d]\n",idGrupoAbertura );
+    printf( "... Grupo Tratamento   [%d]\n",idGrupoTratamento );
+    printf( "... Grupo Retorno      [%d]\n",idGrupoRetorno );
+    printf( "... Nome do Arquivo    [%s]\n",buf );
+#endif
+
+
+    /*
+    ULOG( "... Usuario            [%d]",idUsuario );
+    ULOG( "... Login              [%s]",(char *)nmLoginUsuario.arr );
+    ULOG( "... Tipo de Relatorio  [%s]",(char *)pRegistro->nmTipoRelatorio );
+    ULOG( "... Tipo de Linha      [%d]",idTipoLinha );
+    ULOG( "... Segmentacao        [%d]",idSegmentacao );
+    ULOG( "... Tipo de Cliente    [%d]",idTipoCliente );
+    ULOG( "... Tipo de Carteira   [%d]",idTipoCarteira );
+    ULOG( "... Regional           [%d]",idRegional );
+    ULOG( "... Natureza           [%d]",idNatureza );
+    ULOG( "... Canal              [%d]",idCanal );
+    ULOG( "... Tipo de Fechamento [%d]",idTipoFechamento );
+    ULOG( "... Grupo Abertura     [%d]",idGrupoAbertura );
+    ULOG( "... Grupo Tratamento   [%d]",idGrupoTratamento );
+    ULOG( "... Grupo Retorno      [%d]",idGrupoRetorno );
+    ULOG( "... Nome do Arquivo    [%s]\n",buf );
+    */
+            
+    buffer = "INSERT INTO "
+             "   CONTATOADM.FILTRORELATORIOCONTATO "
+             "( "
+                "IDFILTRORELATORIOCONTATO,"
+                "NMLOGINUSUARIO,"
+                "TPRELATORIO";
+    if ( idCanal > 0 )
+	{
+       buffer += ",IDCANAL";
+    }
+    if ( idTipoLinha > 0 )
+	{
+       buffer += ",IDTIPOLINHA";
+    }
+    if ( idSegmentacao > 0 )
+	{
+	    buffer += ",IDSEGMENTACAO";
+	}
+    if ( idTipoCliente > 0 )
+	{
+        buffer += ",IDTIPORELACIONAMENTO";
+    }
+    if ( idTipoCarteira > 0 )
+	{
+        buffer += ",IDTIPOCARTEIRA";
+    }
+    if ( idRegional > 0 )
+	{
+        buffer += ",IDUFOPERADORA";
+    }
+    if ( idNatureza > 0 )
+	{
+        buffer += ",IDTIPOPESSOA";
+    }
+    if ( idTipoFechamento > 0 )
+	{
+        buffer += ",IDTIPOFECHAMENTOCONTATO";
+    }
+                
+    if ( idGrupoAbertura > 0 )
+	{
+        buffer += ",IDGRUPOABERTURA";
+    }
+    if ( idGrupoTratamento > 0 )
+	{
+        buffer += ",IDGRUPOTRATAMENTO";
+    }
+    
+    if ( idGrupoRetorno > 0 )
+	{
+        buffer += ",IDGRUPORETORNO";
+    }
+    if ( sgDisponivel[0] != 0x0 )
+	{
+        buffer += ",INDISPONIVEL";
+    }
+    
+    if ( idProcedencia > 0 )
+	{
+        buffer += ",IDPROCEDENCIA";
+    }
+    if ( DataSolicitacao[0] != 0x0 )
+	{
+        buffer += ",DTSOLICITACAO";
+    }
+    if ( nmArquivo.arr[0] != 0x0 )
+	{
+        buffer += ",NMARQUIVO ";
+    }
+    
+    buffer += ") VALUES ( CONTATOADM.FILTRORELATORIOCONTATOSQ.NextVal,";
+    
+	strcpy( buf,nmLoginUser );
+	buffer += "'";
+    buffer += buf;
+	buffer += "'";
+	
+    buffer += ",";
+	sprintf( buf,"%d",TipoConsulta );
+    buffer += buf;
+    
+    if ( idCanal > 0 )
+	{
+	//	ULOG( "idCanal" );
+		sprintf(buf,"%d",idCanal);
+	    buffer += ",";
+	    buffer += buf;
+	}
+    if ( idTipoLinha > 0 )
+	{
+	//	ULOG( "idTipoLinha" );
+		sprintf(buf,"%d",idTipoLinha);
+	    buffer += ",";
+	    buffer += buf;
+	}
+    if ( idSegmentacao > 0 )
+	{
+	//	ULOG( "idSegmentacao" );
+		sprintf(buf,"%d",idSegmentacao);
+	    buffer += ",";
+	    buffer += buf;
+	}
+    if ( idTipoCliente > 0 )
+	{
+		//ULOG( "idTipoCliente" );
+		sprintf(buf,"%d",idTipoCliente);
+	    buffer += ",";
+	    buffer += buf;
+	}
+    if ( idTipoCarteira > 0 )
+	{
+		//ULOG( "idTipoCarteira" );
+		sprintf(buf,"%d",idTipoCarteira);
+	    buffer += ",";
+	    buffer += buf;
+	}
+    if ( idRegional > 0 )
+	{
+		sprintf(buf,"%d",idRegional);
+	//	ULOG( "idRegional [%s]",buf );
+	    buffer += ",";
+	    buffer += buf;
+	}
+    if ( idNatureza > 0 )
+	{
+	//	ULOG( "idNatureza" );
+		sprintf(buf,"%d",idNatureza);
+	    buffer += ",";
+	    buffer += buf;
+	}
+    if ( idTipoFechamento > 0 )
+	{
+	//	ULOG( "idTipoFechamento" );
+		sprintf(buf,"%d",idTipoFechamento);
+	    buffer += ",";
+	    buffer += buf;
+	}
+    if ( idGrupoAbertura > 0 )
+	{
+	//	ULOG( "idGrupoAbertura" );
+		sprintf(buf,"%d",idGrupoAbertura);
+	    buffer += ",";
+	    buffer += buf;
+	}
+    if ( idGrupoTratamento > 0 )
+	{
+	//	ULOG( "idGrupoTratamento" );
+		sprintf(buf,"%d",idGrupoTratamento);
+	    buffer += ",";
+	    buffer += buf;
+	}
+    if ( idGrupoRetorno > 0 )
+	{
+	//	ULOG( "idGrupoRetorno" );
+		sprintf(buf,"%d",idGrupoRetorno);
+	    buffer += ",";
+	    buffer += buf;
+	}
+    if ( sgDisponivel[0] != 0x0 )
+	{
+	//	ULOG( "sgDisponivel" );
+		
+	    buffer += ",";
+		buffer += "'";
+	    buffer += sgDisponivel;
+		buffer += "'";
+	}
+    if ( idProcedencia > 0 )
+	{
+	//	ULOG( "idProcedencia" );
+		sprintf(buf,"%d",idProcedencia);
+	    buffer += ",";
+	    buffer += buf;
+	}
+
+    // Data de Solicitacao
+	//ULOG( "dtSolicitacao" );
+    buffer += ",TO_DATE(";
+	buffer += "'";
+    buffer += DataSolicitacao;
+	buffer += "'";
+    buffer += ",'DD/MM/YYYY HH24:MI:SS')";
+
+    if ( nmArquivo.arr[0] != 0x0 )
+	{
+	//	ULOG( "nmArquivo" );
+		strcpy( buf,(char *)nmArquivo.arr);
+	    buffer += ",";
+		buffer += "'";
+	    buffer += buf;
+		buffer += "'";
+	}
+	
+	buffer += ")";
+    pquery->push_back( buffer );	                    
+	
+//    ULOG_END( "proCInsereFiltros()" );
+
+}
+
+
+
+
+void proCGravaFiltros( char * stmtPrm )
+{
+//    ULOG_START( "proCGravaFiltros()" );
+
+    struct sqlca sqlca; 
+    
+    //ULOG( "Statement [%s]",stmtPrm );
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char * query = stmtPrm;
+
+    EXEC SQL END DECLARE SECTION;
+                          
+	EXEC SQL WHENEVER SQLERROR CONTINUE;                          
+	
+	EXEC SQL EXECUTE IMMEDIATE :query;		
+	if (sqlca.sqlcode < 0)
+	{
+		if ( sqlca.sqlcode != -2051 )
+		{
+			SqlError((&(sqlca)));	
+		}
+	} 
+//    ULOG_END( "proCGravaFiltros()" );
+
+}
+
+
+
+
+void proCSelFiltros( st_FiltroArvContato * pRegistro ,XMLGen *xml_g )
+{
+    ULOG_START( "proCSelFiltros()" );
+    
+    LISTA_PK ltSegmentacao;
+    LISTA_PK ltTipoLinha;
+    LISTA_PK ltNatureza;
+    LISTA_PK ltTipoCarteira;
+    LISTA_PK ltGrupoAbertura;
+    LISTA_PK ltGrupoTratamento;
+    LISTA_PK ltGrupoRetorno;
+    LISTA_PK ltProcedencia;
+    LISTA_PK ltRegional;
+    LISTA_PK ltTipoCliente;
+    LISTA_PK ltTipoFechamento;
+    LISTA_PK ltCanal;
+
+
+    struct sqlca sqlca;
+    char dsSegmentacao[256]; 
+    char dsCliente[256]; 
+    char dsTipoLinha[256];
+    char dsNatureza[256];
+    char dsTipoCarteira[256];
+    char dsGrupoAbertura[256];
+    char dsGrupoTratamento[256];
+    char dsGrupoRetorno[256];
+    char dsProcedencia[256];
+    char dsTipoFechamento[256];
+    char dsRegional[256];
+    char dsCanal[256];
+    
+    memset( dsCanal           ,0x0,sizeof(dsCanal) );
+    memset( dsSegmentacao     ,0x0,sizeof(dsSegmentacao) );
+    memset( dsCliente         ,0x0,sizeof(dsCliente) );
+    memset( dsTipoLinha       ,0x0,sizeof(dsTipoLinha) );
+    memset( dsNatureza        ,0x0,sizeof(dsNatureza) );
+    memset( dsTipoCarteira    ,0x0,sizeof(dsTipoCarteira) );
+    memset( dsGrupoAbertura   ,0x0,sizeof(dsGrupoAbertura) );
+    memset( dsGrupoTratamento ,0x0,sizeof(dsGrupoTratamento) );
+    memset( dsGrupoRetorno    ,0x0,sizeof(dsGrupoRetorno) );
+    memset( dsProcedencia     ,0x0,sizeof(dsProcedencia) );
+    memset( dsTipoFechamento  ,0x0,sizeof(dsTipoFechamento) );
+    memset( dsRegional        ,0x0,sizeof(dsRegional) );
+
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR nmLoginUsuario[256];
+        VARCHAR nmArquivo[81];
+        VARCHAR dtSolicitacao[32]; 
+        VARCHAR idFiltro[65];
+        VARCHAR nmLoginCmp[256];
+        VARCHAR dtSolicitacaoCmp[256];
+        
+        int idUsuario = pRegistro->idUsuario;
+        VARCHAR TipoConsulta[3];
+	    VARCHAR idTipoLinha[64];
+	    VARCHAR idSegmentacao[64];
+	    VARCHAR idTipoCliente[64];
+	    VARCHAR idTipoCarteira[64];
+	    VARCHAR idRegional[64];
+	    VARCHAR idNatureza[64];
+	    VARCHAR idTipoFechamento[64];
+	    VARCHAR idGrupoAbertura[64];
+        VARCHAR idGrupoTratamento[64];
+        VARCHAR idGrupoRetorno[64];
+        VARCHAR idProcedencia[64];
+        VARCHAR idCanal[64];
+        VARCHAR idTpRelacionamento[64];
+
+        VARCHAR sgDisponivel[2];
+        char urlDownload[51];
+
+		short i_nmLoginCmp = -1;
+		short i_dtSolicitacaoCmp = -1;
+        short i_nmLoginUsuario = -1;
+        short i_TipoConsulta = -1;
+        short i_idTipoLinha = -1;
+        short i_idSegmentacao = -1;
+        short i_idTipoCliente = -1;
+        short i_idTipoCarteira = -1;
+        short i_idRegional = -1;
+        short i_idNatureza = -1;
+        short i_idTipoFechamento = -1;
+        short i_idGrupoAbertura = -1;
+        short i_idGrupoTratamento = -1;
+        short i_idGrupoRetorno = -1;
+        short i_idProcedencia = -1;
+        short i_idCanal = -1;      
+        short i_sgDisponivel = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &idFiltro          ,0x0 ,sizeof(idFiltro) );
+    memset( &TipoConsulta      ,0x0 ,sizeof(TipoConsulta) );
+    memset( &idTipoLinha       ,0x0 ,sizeof(idTipoLinha) );
+    memset( &idSegmentacao     ,0x0 ,sizeof(idSegmentacao) );
+    memset( &idTipoCliente     ,0x0 ,sizeof(idTipoCliente) );
+    memset( &idTipoCarteira    ,0x0 ,sizeof(idTipoCarteira) );
+    memset( &idRegional        ,0x0 ,sizeof(idRegional) );
+    memset( &idNatureza        ,0x0 ,sizeof(idNatureza) );
+    memset( &idTipoFechamento  ,0x0 ,sizeof(idTipoFechamento) );
+    memset( &idGrupoAbertura   ,0x0 ,sizeof(idGrupoAbertura) );
+    memset( &idGrupoTratamento ,0x0 ,sizeof(idGrupoTratamento) );
+    memset( &idGrupoRetorno    ,0x0 ,sizeof(idGrupoRetorno) );
+    memset( &idProcedencia     ,0x0 ,sizeof(idProcedencia) );
+    memset( &nmLoginCmp        ,0x0 ,sizeof(nmLoginCmp) );
+    memset( &idCanal           ,0x0 ,sizeof(idCanal) );
+    memset( &dtSolicitacaoCmp  ,0x0 ,sizeof(dtSolicitacaoCmp) );
+
+    
+    memset( &nmArquivo      ,0x0,sizeof(nmArquivo) );
+    memset( &nmLoginUsuario ,0x0,sizeof(nmLoginUsuario) );
+    memset( &sgDisponivel   ,0x0,sizeof(sgDisponivel) );
+    memset( &dtSolicitacao  ,0x0,sizeof(dtSolicitacao) );
+
+    memset( urlDownload,0x0,sizeof(urlDownload) );
+
+    // ULOG( "Pesquisando idArquivo [%s]",(char *)pRegistro->nmArquivo );
+    
+    strToOra( idFiltro        ,(char *)pRegistro->nmArquivo );
+    // ULOG( "Pesquisando ORA - idArquivo [%s]",(char *)idFiltro.arr );
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+
+    EXEC SQL
+        SELECT 
+	        FILTRORELATORIOCONTATO.NMLOGINUSUARIO NMLOGINUSUARIO,
+	        TO_CHAR(FILTRORELATORIOCONTATO.DTSOLICITACAO, 'DD/MM/YYYY HH24:MI:SS') DTSOLICITACAO
+	    INTO
+	        :nmLoginCmp:i_nmLoginCmp,
+	        :dtSolicitacaoCmp:i_dtSolicitacaoCmp
+        FROM
+	        CONTATOADM.FILTRORELATORIOCONTATO FILTRORELATORIOCONTATO
+        WHERE
+        	FILTRORELATORIOCONTATO.IDFILTRORELATORIOCONTATO = :idFiltro;
+
+    CONVIND( nmLoginCmp      , i_nmLoginCmp );            
+    CONVIND( dtSolicitacaoCmp, i_dtSolicitacaoCmp );            
+
+
+    EXEC SQL DECLARE Consulta CURSOR FOR 
+        SELECT 
+	        FILTRORELATORIOCONTATO.TPRELATORIO,
+	        FILTRORELATORIOCONTATO.IDSEGMENTACAO,
+	        FILTRORELATORIOCONTATO.IDTIPOLINHA,
+	        FILTRORELATORIOCONTATO.IDTIPOPESSOA,
+	        FILTRORELATORIOCONTATO.IDTIPOCARTEIRA,
+	        FILTRORELATORIOCONTATO.IDUFOPERADORA,
+	        FILTRORELATORIOCONTATO.IDTIPORELACIONAMENTO,
+	        FILTRORELATORIOCONTATO.IDGRUPOABERTURA,
+	        FILTRORELATORIOCONTATO.IDGRUPOTRATAMENTO,
+	        FILTRORELATORIOCONTATO.IDGRUPORETORNO,
+	        FILTRORELATORIOCONTATO.INDISPONIVEL,
+	        FILTRORELATORIOCONTATO.IDPROCEDENCIA,
+	        FILTRORELATORIOCONTATO.IDTIPOFECHAMENTOCONTATO,
+	        FILTRORELATORIOCONTATO.IDCANAL
+        FROM
+	        CONTATOADM.FILTRORELATORIOCONTATO FILTRORELATORIOCONTATO 
+	    WHERE
+		    UPPER(NMLOGINUSUARIO) = UPPER(:nmLoginCmp)
+		AND
+		    DTSOLICITACAO = TO_DATE(:dtSolicitacaoCmp,'DD/MM/YYYY HH24:MI:SS');
+
+
+	//ULOG( "idArquivo solicitado [%s]",(char *)idFiltro.arr );
+    
+    EXEC SQL OPEN Consulta;
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+    for( ;; )
+    {
+        
+        EXEC SQL FETCH Consulta INTO :TipoConsulta:i_TipoConsulta ,
+                                     :idSegmentacao:i_idSegmentacao ,
+                                     :idTipoLinha:i_idTipoLinha ,
+                                     :idNatureza:i_idNatureza ,
+                                     :idTipoCarteira:i_idTipoCarteira ,
+                                     :idRegional:i_idRegional ,
+                                     :idTipoCliente:i_idTipoCliente ,
+                                     :idGrupoAbertura:i_idGrupoAbertura ,
+                                     :idGrupoTratamento:i_idGrupoTratamento ,
+                                     :idGrupoRetorno:i_idGrupoRetorno ,
+                                     :sgDisponivel:i_sgDisponivel ,
+                                     :idProcedencia:i_idProcedencia ,
+                                     :idTipoFechamento:i_idTipoFechamento ,
+                                     :idCanal:i_idCanal ;
+
+   
+        CONVIND( TipoConsulta      ,i_TipoConsulta );            
+        
+        CONVIND( idCanal, i_idCanal );
+        if ( i_idCanal != -1 ) ltCanal.push_back(strtoul((char *)idCanal.arr,0,10));
+
+        CONVIND( idSegmentacao, i_idSegmentacao );
+        if ( i_idSegmentacao != -1 ) ltSegmentacao.push_back(strtoul((char *)idSegmentacao.arr,0,10));
+        
+        CONVIND( idTipoLinha, i_idTipoLinha );
+        if ( i_idTipoLinha != -1 ) ltTipoLinha.push_back(strtoul((char *)idTipoLinha.arr,0,10));
+
+        CONVIND( idNatureza, i_idNatureza );
+        if ( i_idNatureza != -1 ) ltNatureza.push_back(strtoul((char *)idNatureza.arr,0,10));
+
+        CONVIND( idTipoCarteira    ,i_idTipoCarteira );
+        if ( i_idTipoCarteira != -1 ) ltTipoCarteira.push_back(strtoul((char *)idTipoCarteira.arr,0,10));
+
+        CONVIND( idRegional        ,i_idRegional );
+        if ( i_idRegional != -1 ) ltRegional.push_back(strtoul((char *)idRegional.arr,0,10));
+
+        CONVIND( idTipoCliente     ,i_idTipoCliente );    
+        if ( i_idTipoCliente != -1 ) ltTipoCliente.push_back(strtoul((char *)idTipoCliente.arr,0,10));
+        
+        CONVIND( idGrupoAbertura   ,i_idGrupoAbertura );
+        if ( i_idGrupoAbertura != -1 ) ltGrupoAbertura.push_back(strtoul((char *)idGrupoAbertura.arr,0,10));
+
+        CONVIND( idGrupoTratamento ,i_idGrupoTratamento );
+        if ( i_idGrupoTratamento != -1 ) ltGrupoTratamento.push_back(strtoul((char *)idGrupoTratamento.arr,0,10));
+
+        CONVIND( idGrupoRetorno    ,i_idGrupoRetorno );
+        if ( i_idGrupoRetorno != -1 ) ltGrupoRetorno.push_back(strtoul((char *)idGrupoRetorno.arr,0,10));
+
+        CONVIND( sgDisponivel      ,i_sgDisponivel );  
+        
+        
+        CONVIND( idProcedencia     ,i_idProcedencia );
+        if ( i_idProcedencia != -1 ) ltProcedencia.push_back(strtoul((char *)idProcedencia.arr,0,10));
+
+        CONVIND( idTipoFechamento  ,i_idTipoFechamento );
+        if ( i_idTipoFechamento != -1 ) ltTipoFechamento.push_back(strtoul((char *)idTipoFechamento.arr,0,10));
+
+#ifdef WIN32
+    printf("\n");
+    printf( "... TipoConsulta      [%s]\n" ,(char *)TipoConsulta.arr );
+    printf( "... idSegmentacao     [%s]\n" ,(char *)idSegmentacao.arr );
+    printf( "... idTipoLinha       [%s]\n" ,(char *)idTipoLinha.arr );
+    printf( "... idNatureza        [%s]\n" ,(char *)idNatureza.arr );
+    printf( "... idTipoCarteira    [%s]\n" ,(char *)idTipoCarteira.arr );
+    printf( "... idGrupoAbertura   [%s]\n" ,(char *)idGrupoAbertura.arr );
+    printf( "... idGrupoTratamento [%s]\n" ,(char *)idGrupoTratamento.arr );
+    printf( "... idGrupoRetorno    [%s]\n" ,(char *)idGrupoRetorno.arr );
+    printf( "... sgDisponivel      [%s]\n" ,(char *)sgDisponivel.arr );
+    printf( "... idProcedencia     [%s]\n" ,(char *)idProcedencia.arr );
+    printf( "... idTipoFechamento  [%s]\n" ,(char *)idTipoFechamento.arr );
+#endif  
+
+    }    
+    EXEC SQL CLOSE Consulta;
+	
+	ltCanal.sort();
+	ltCanal.unique();
+	ltRegional.sort();
+	ltRegional.unique();
+	ltSegmentacao.sort();
+	ltSegmentacao.unique(); 
+	ltTipoCliente.sort();
+	ltTipoCliente.unique();
+	ltTipoLinha.sort();
+	ltTipoLinha.unique();
+	ltNatureza.sort();
+	ltNatureza.unique();
+	ltTipoCarteira.sort();
+	ltTipoCarteira.unique();
+	ltGrupoAbertura.sort();
+	ltGrupoAbertura.unique();
+	ltGrupoTratamento.sort();
+	ltGrupoTratamento.unique();
+	ltGrupoRetorno.sort();
+	ltGrupoRetorno.unique();
+	ltProcedencia.sort();
+	ltProcedencia.unique();
+	ltTipoFechamento.sort();
+	ltTipoFechamento.unique();
+	
+	xml_g->createTag("VariaveisArvoreContatoVO");
+	xml_g->addProp("xmlns","admsistemas.fo.vivo.com.br/vo");
+	if ( atoi((char *)TipoConsulta.arr) == 1 ) xml_g->addItem("inTipoConsulta" ,"Contato" );
+	if ( atoi((char *)TipoConsulta.arr) == 2 ) xml_g->addItem("inTipoConsulta" ,"Grupo" );
+	if ( atoi((char *)TipoConsulta.arr) == 3 ) xml_g->addItem("inTipoConsulta" ,"Contato x Grupo" );
+
+	xml_g->addItem("inDisponivel" ,(char *)sgDisponivel.arr );
+	
+	    xml_g->createTag("operadora");
+		for ( it = ltRegional.begin(); it != ltRegional.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemRegional( *it, dsRegional );
+				xml_g->addItem("descricao" , dsRegional );
+		    }
+		}
+		xml_g->closeTag();
+
+	    xml_g->createTag("tipoCliente");
+		for ( it = ltTipoCliente.begin(); it != ltTipoCliente.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemCliente( *it, dsCliente );
+				xml_g->addItem("descricao" , dsCliente );
+		    }
+		}
+		xml_g->closeTag();
+
+	    xml_g->createTag("segmentacao");
+		for ( it = ltSegmentacao.begin(); it != ltSegmentacao.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemSegmentacao( *it,dsSegmentacao );
+				xml_g->addItem("descricao" ,dsSegmentacao );
+		    }
+		}
+		xml_g->closeTag();
+
+	    xml_g->createTag("canal");
+		for ( it = ltCanal.begin(); it != ltCanal.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemCanal( *it,dsCanal );
+				xml_g->addItem("descricao" ,dsCanal );
+		    }
+		}
+		xml_g->closeTag();
+
+	    xml_g->createTag("tipoLinha");
+		for ( it = ltTipoLinha.begin(); it != ltTipoLinha.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemTipoLinha( *it,dsTipoLinha );
+				xml_g->addItem("descricao" ,dsTipoLinha );
+		    }
+		}
+		xml_g->closeTag();
+
+	    xml_g->createTag("natureza");
+		for ( it = ltNatureza.begin(); it != ltNatureza.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemNatureza( *it,dsNatureza );
+				xml_g->addItem("descricao" ,dsNatureza );
+		    }
+		}
+		xml_g->closeTag();
+
+	    xml_g->createTag("carteirizacao");
+		for ( it = ltTipoCarteira.begin(); it != ltTipoCarteira.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemTipoCarteira( *it,dsTipoCarteira );
+				xml_g->addItem("descricao" ,dsTipoCarteira );
+		    }
+		}
+		xml_g->closeTag();
+
+	    xml_g->createTag("grupoAbertura");
+		for ( it = ltGrupoAbertura.begin(); it != ltGrupoAbertura.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemGrupo( *it,dsGrupoAbertura );
+				xml_g->addItem("descricao" ,dsGrupoAbertura );
+		    }
+		}
+		xml_g->closeTag();
+
+	    xml_g->createTag("grupoTratamento");
+		for ( it = ltGrupoTratamento.begin(); it != ltGrupoTratamento.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemGrupo( *it,dsGrupoTratamento );
+				xml_g->addItem("descricao" ,dsGrupoTratamento );
+		    }
+		}
+		xml_g->closeTag();
+
+	    xml_g->createTag("grupoRetorno");
+		for ( it = ltGrupoRetorno.begin(); it != ltGrupoRetorno.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemGrupo( *it,dsGrupoRetorno );
+				xml_g->addItem("descricao" ,dsGrupoRetorno );
+		    }
+		}
+		xml_g->closeTag();
+
+	    xml_g->createTag("procedencia");
+		for ( it = ltProcedencia.begin(); it != ltProcedencia.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemProcedencia( *it,dsProcedencia );
+				xml_g->addItem("descricao" ,dsProcedencia );
+		    }
+		}
+		xml_g->closeTag();
+
+	    xml_g->createTag("fechamento");
+		for ( it = ltTipoFechamento.begin(); it != ltTipoFechamento.end(); it++ )
+		{
+			if ( *it > 0 )
+		    {
+				xml_g->addItem("id" ,*it );
+				ObtemTipoFechamento( *it,dsTipoFechamento );
+				xml_g->addItem("descricao" , dsTipoFechamento );
+		    }
+		}
+		xml_g->closeTag();
+
+	xml_g->closeTag();
+
+
+
+    ULOG_END( "proCSelFiltros()" );
+
+}
+
+
+
+void proCSelArquivos( st_FiltroArvContato *pRegistro ,XMLGen *xml_g )
+{
+    ULOG_START( "proCSelArquivos()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR idRelatorio[64];
+        VARCHAR nmLogin[256];
+        VARCHAR nmArquivo[81];
+        VARCHAR nmPath[256];
+        VARCHAR dtSolicitacao[32];
+        VARCHAR dtGeracao[32];
+        
+        short i_idRelatorio   = -1;
+        short i_nmLogin       = -1;
+        short i_nmArquivo     = -1;
+        short i_nmPath        = -1;
+        short i_dtSolicitacao = -1;
+        short i_dtGeracao     = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    memset( &idRelatorio   ,0x0 ,sizeof(idRelatorio)   );
+    memset( &nmLogin       ,0x0 ,sizeof(nmLogin)   );
+    memset( &nmArquivo     ,0x0 ,sizeof(nmArquivo) );
+    memset( &nmPath        ,0x0 ,sizeof(nmPath) );
+    memset( &dtSolicitacao ,0x0 ,sizeof(dtSolicitacao) );
+    memset( &dtGeracao     ,0x0 ,sizeof(dtGeracao) );
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+
+    EXEC SQL DECLARE ConsultaArquivos CURSOR FOR 
+        SELECT 
+	        FILTRORELATORIOCONTATO.IDFILTRORELATORIOCONTATO IDFILTRORELATORIOCONTATO,
+	        FILTRORELATORIOCONTATO.NMLOGINUSUARIO NMLOGINUSUARIO,
+	        TO_CHAR(FILTRORELATORIOCONTATO.DTSOLICITACAO, 'DD/MM/YYYY HH24:MI:SS') DTSOLICITACAO,
+	        FILTRORELATORIOCONTATO.NMARQUIVO NMARQUIVO,
+	        FILTRORELATORIOCONTATO.URLDOWNLOAD URLDOWNLOAD,
+            TO_CHAR(FILTRORELATORIOCONTATO.DTGERACAO, 'DD/MM/YYYY HH24:MI:SS') DTGERACAO
+        FROM
+	        CONTATOADM.FILTRORELATORIOCONTATO FILTRORELATORIOCONTATO
+        WHERE ROWNUM <= 50
+		ORDER BY DTSOLICITACAO; 
+
+    EXEC SQL OPEN ConsultaArquivos;
+    EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    xml_g->createTag("AdmVarAContatoArqGeradosVO");
+    xml_g->addProp("xmlns","admsistemas.fo.vivo.com.br/vo");
+    for( ;; )
+    {
+        
+        EXEC SQL FETCH ConsultaArquivos
+            INTO :idRelatorio:i_idRelatorio ,
+                 :nmLogin:i_nmLogin ,
+                 :dtSolicitacao:i_dtSolicitacao ,
+                 :nmArquivo:i_nmArquivo ,
+                 :nmPath:i_nmPath ,
+                 :dtGeracao:i_dtGeracao ;
+
+        CONVIND( idRelatorio   ,i_idRelatorio );
+        CONVIND( nmLogin       ,i_nmLogin );
+        CONVIND( nmPath        ,i_nmPath );
+        CONVIND( dtSolicitacao ,i_dtSolicitacao );
+        CONVIND( nmArquivo     ,i_nmArquivo );
+        CONVIND( dtGeracao     ,i_dtGeracao );
+
+            xml_g->createTag("arquivoGerado");
+                xml_g->addItem("id" ,(char*)idRelatorio.arr);
+                xml_g->addItem("nmLoginSolicitante" ,(char*)nmLogin.arr);
+                xml_g->addItem("dtSolicitacao" ,(char*)dtSolicitacao.arr);
+                xml_g->addItem("nmArquivo" ,(char*)nmArquivo.arr); 
+                xml_g->addItem("dsPath",(char *)nmPath.arr );
+                xml_g->addItem("dtGeracao" ,(char*)dtGeracao.arr);
+            xml_g->closeTag();
+
+#ifdef WIN32
+        printf("\n");
+        printf( "... idRelatorio         [%s]\n",(char *)idRelatorio.arr );
+        printf( "... Login               [%s]\n",(char *)nmLogin.arr );
+        printf( "... Data de Solicitacao [%s]\n",(char *)dtSolicitacao.arr );
+        printf( "... Nome do Arquivo     [%s]\n",(char *)nmArquivo.arr );
+        printf( "... Data de Geracao     [%s]\n",(char *)dtGeracao.arr );
+#endif
+
+        /*
+        ULOG( "... idRelatorio         [%s]",(char *)idRelatorio.arr );
+        ULOG( "... Login               [%s]",(char *)nmLogin.arr );
+        ULOG( "... Data de Solicitacao [%s]",(char *)dtSolicitacao.arr );
+        ULOG( "... Nome do Arquivo     [%s]",(char *)nmArquivo.arr );
+        ULOG( "... Data de Geracao     [%s]",(char *)dtGeracao.arr );
+        */
+    }    
+    xml_g->closeTag();
+
+    EXEC SQL CLOSE ConsultaArquivos;
+
+    ULOG_END( "proCSelArquivos()" );
+
+}
+
+
+
+void ObtemSegmentacao( unsigned long idSegmentacaoPrm, char *dsSegmentacaoPrm )
+{
+//    ULOG_START( "ObtemSegmentacao()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idSegmetacao = idSegmentacaoPrm;
+        VARCHAR nmSegmetacao[256];
+        short i_nmSegmetacao = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    //memset( &nmSegmetacao, 0x0, sizeof(nmSegmetacao) ); 
+	
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+    SELECT 
+    	DSSEGMENTACAO
+    INTO
+        :nmSegmetacao:i_nmSegmetacao
+    FROM 
+    	APOIO.SEGMENTACAO 
+    WHERE 
+    	IDSEGMENTACAO = :idSegmetacao;
+    
+    CONVIND( nmSegmetacao,i_nmSegmetacao );
+    sprintf( dsSegmentacaoPrm,"%.*s",nmSegmetacao.len,(char *)nmSegmetacao.arr );
+
+//    ULOG_END( "ObtemSegmentacao()" );
+}
+
+
+
+void ObtemRegional( unsigned long idRegionalPrm, char *dsRegionalPrm )
+{
+    //ULOG_START( "ObtemRegional()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idRegional = idRegionalPrm;
+        VARCHAR nmRegional[256];
+        short i_nmRegional = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    //memset( &nmRegional, 0x0, sizeof(nmRegional) ); 
+	
+	/*	SELECT
+             UFOPERADORA.SGUF || ' - ' || UFOPERADORA.NMPESSOA
+        INTO
+            :nmRegional:i_nmRegional
+		FROM 
+			CUSTOMER.UFOPERADORABZEROUM UFOPERADORA
+		WHERE
+			UFOPERADORA.IDUFOPERADORA = :idRegional;*/
+
+
+		/*REMOVENDO BZEROUM
+		 TCOSTA 18/06/2007 MPOG
+		*/
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+		SELECT UF.SGUF || ' - ' ||GRUPOOPERADORA.NMGRUPOOPERADORA NMPESSOA
+		INTO   :nmRegional:i_nmRegional
+		FROM   CUSTOMER.UFOPERADORA UFOPERADORA,
+			   CUSTOMER.OPERADORA	 OPERADORA,
+			   CUSTOMER.GRUPOOPERADORA GRUPOOPERADORA,
+			   APOIO.UF			 UF
+		WHERE  UFOPERADORA.IDUF=UF.IDUF
+		AND	   OPERADORA.IDPESSOADEPARAOPERADORA=UFOPERADORA.IDPESSOADEPARAOPERADORA
+		AND    OPERADORA.IDGRUPOOPERADORA=GRUPOOPERADORA.IDGRUPOOPERADORA
+		AND    UFOPERADORA.IDUFOPERADORA = :idRegional;
+ 	
+		        
+    CONVIND( nmRegional,i_nmRegional );
+    sprintf( dsRegionalPrm,"%.*s",nmRegional.len,(char *)nmRegional.arr );
+
+    //ULOG_END( "ObtemRegional()" );
+}
+
+
+
+void ObtemCanal( unsigned long idCanalPrm, char *dsCanalPrm )
+{
+    //ULOG_START( "ObtemCanal()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idCanal = idCanalPrm;
+        VARCHAR nmCanal[256];
+        short i_nmCanal = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    //memset( &nmCanal, 0x0, sizeof(nmCanal) ); 
+	
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+   		SELECT
+             CANAL.NMCANAL
+        INTO
+            :nmCanal:i_nmCanal
+		FROM 
+			APOIO.CANAL CANAL
+		WHERE
+			CANAL.IDCANAL = :idCanal;
+		        
+    CONVIND( nmCanal,i_nmCanal );
+    sprintf( dsCanalPrm,"%.*s",nmCanal.len,(char *)nmCanal.arr );
+
+    //ULOG_END( "ObtemCanal()" );
+}
+
+
+
+void ObtemCliente( unsigned long idRelacionamentoPrm, char *dsRelacionamentoPrm )
+{
+    //ULOG_START( "ObtemCliente()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idRelacionamento = idRelacionamentoPrm;
+        VARCHAR nmRelacionamento[256];
+        short i_nmRelacionamento = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    //memset( &nmRelacionamento, 0x0, sizeof(nmRelacionamento) ); 
+	
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+   		SELECT
+             TIPORELACIONAMENTO.NMTIPORELACIONAMENTO
+        INTO
+            :nmRelacionamento:i_nmRelacionamento
+		FROM 
+			CUSTOMER.TIPORELACIONAMENTO TIPORELACIONAMENTO
+		WHERE
+			TIPORELACIONAMENTO.IDTIPORELACIONAMENTO = :idRelacionamento;
+		        
+    CONVIND( nmRelacionamento,i_nmRelacionamento );
+    sprintf( dsRelacionamentoPrm,"%.*s",nmRelacionamento.len,(char *)nmRelacionamento.arr );
+
+    //ULOG_END( "ObtemCliente()" );
+}
+
+
+
+void ObtemTipoLinha( unsigned long idTipoLinhaPrm, char *dsTipoLinhaPrm )
+{
+    //ULOG_START( "ObtemTipoLinha()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idTipoLinha = idTipoLinhaPrm;
+        VARCHAR nmTipoLinha[256];
+        short i_nmTipoLinha = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    //memset( &nmTipoLinha, 0x0, sizeof(nmTipoLinha) ); 
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+	SELECT 
+		DSTIPOLINHA 
+    INTO
+        :nmTipoLinha:i_nmTipoLinha
+	FROM 
+		APOIO.TIPOLINHA 
+	WHERE 
+		IDTIPOLINHA = :idTipoLinha;
+    
+    CONVIND( nmTipoLinha,i_nmTipoLinha );
+    sprintf( dsTipoLinhaPrm,"%.*s",nmTipoLinha.len,(char *)nmTipoLinha.arr );
+
+    //ULOG_END( "ObtemTipoLinha()" );
+}
+
+
+
+void ObtemNatureza( unsigned long idNaturezaPrm, char *dsNaturezaPrm )
+{
+    //ULOG_START( "ObtemNatureza()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idNatureza = idNaturezaPrm;
+        VARCHAR nmNatureza[256];
+        short i_nmNatureza = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    //memset( &nmNatureza, 0x0, sizeof(nmNatureza) ); 
+	
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+	SELECT 
+		DSTIPOPESSOA 
+    INTO
+        :nmNatureza:i_nmNatureza
+	FROM 
+		APOIO.TIPOPESSOA 
+	WHERE 
+		IDTIPOPESSOA = :idNatureza;
+    
+    CONVIND( nmNatureza,i_nmNatureza );
+    sprintf( dsNaturezaPrm,"%.*s",nmNatureza.len,(char *)nmNatureza.arr );
+
+    //ULOG_END( "ObtemNatureza()" );
+}
+
+
+
+void ObtemTipoCarteira( unsigned long idTipoCarteiraPrm, char *dsTipoCarteiraPrm )
+{
+    //ULOG_START( "ObtemTipoCarteira()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idTipoCarteira = idTipoCarteiraPrm;
+        VARCHAR nmTipoCarteira[256];
+        short   i_nmTipoCarteira = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    //memset( &nmTipoCarteira, 0x0, sizeof(nmTipoCarteira) ); 
+	
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+	SELECT 
+		DSTIPOCARTEIRA 
+    INTO
+        :nmTipoCarteira:i_nmTipoCarteira
+	FROM 
+		APOIO.TIPOCARTEIRA
+	WHERE 
+		IDTIPOCARTEIRA = :idTipoCarteira;
+    
+    CONVIND( nmTipoCarteira,i_nmTipoCarteira );
+    sprintf( dsTipoCarteiraPrm,"%.*s",nmTipoCarteira.len,(char *)nmTipoCarteira.arr );
+
+    //ULOG_END( "ObtemTipoCarteira()" );
+}
+
+
+
+void ObtemGrupo( unsigned long idGrupoPrm, char *dsGrupoPrm )
+{
+    //ULOG_START( "ObtemGrupo()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idGrupo = idGrupoPrm;
+        VARCHAR nmGrupo[256];
+        short   i_nmGrupo = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    //memset( &nmGrupo, 0x0, sizeof(nmGrupo) ); 
+	
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+	SELECT 
+		NMGRUPO 
+    INTO
+        :nmGrupo:i_nmGrupo 
+	FROM 
+		ACESSO.GRUPO
+	WHERE 
+		IDGRUPO = :idGrupo;
+    
+    CONVIND( nmGrupo,i_nmGrupo );
+    sprintf( dsGrupoPrm,"%.*s",nmGrupo.len,(char *)nmGrupo.arr );
+
+    //ULOG_END( "ObtemGrupo()" );
+}
+
+
+
+void ObtemProcedencia( unsigned long idProcedenciaPrm, char *dsProcedenciaPrm )
+{
+    //ULOG_START( "ObtemProcedencia()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idProcedencia = idProcedenciaPrm;
+        VARCHAR nmProcedencia[256];
+        short   i_nmProcedencia = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    //memset( &nmProcedencia, 0x0, sizeof(nmProcedencia) ); 
+	
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+	SELECT 
+		DSPROCEDENCIA 
+    INTO
+        :nmProcedencia:i_nmProcedencia 
+	FROM 
+		APOIO.PROCEDENCIA
+	WHERE 
+		IDPROCEDENCIA = :idProcedencia;
+    
+    CONVIND( nmProcedencia,i_nmProcedencia );
+    sprintf( dsProcedenciaPrm,"%.*s",nmProcedencia.len,(char *)nmProcedencia.arr );
+
+    //ULOG_END( "ObtemProcedencia()" );
+}
+
+
+
+void ObtemTipoFechamento( unsigned long idTipoFechamentoPrm, char *dsTipoFechamentoPrm )
+{
+    //ULOG_START( "ObtemTipoFechamento()" );
+
+    struct sqlca sqlca;
+    
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idTipoFechamento = idTipoFechamentoPrm;
+        VARCHAR nmTipoFechamento[256];
+        short   i_nmTipoFechamento = -1;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    //memset( &nmTipoFechamento, 0x0, sizeof(nmTipoFechamento) ); 
+	
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL
+	SELECT 
+		NMTIPOFECHAMENTOCONTATO 
+    INTO
+        :nmTipoFechamento:i_nmTipoFechamento 
+	FROM 
+		CONTATOADM.TIPOFECHAMENTOCONTATO
+	WHERE 
+		IDTIPOFECHAMENTOCONTATO = :idTipoFechamento;
+    
+    CONVIND( nmTipoFechamento,i_nmTipoFechamento );
+    sprintf( dsTipoFechamentoPrm,"%.*s",nmTipoFechamento.len,(char *)nmTipoFechamento.arr );
+
+    //ULOG_END( "ObtemTipoFechamento()" );
+}
+
+
+
+void SqlError( sqlca * sqlca )
+{
+    char Msg[2048];
+
+
+    sprintf( Msg, "%.*s", sqlca->sqlerrm.sqlerrml-1, sqlca->sqlerrm.sqlerrmc );
+    ULOGE( "*** ERROR [%s]\n",Msg );
+
+#ifdef WIN32
+    printf( "*** ERROR [%s]\n",Msg );
+#endif
+    throw TuxBasicOraException(sqlca->sqlcode);
+}

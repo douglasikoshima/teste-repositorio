@@ -1,0 +1,622 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CCA.h"
+#include "../include/CPss.h"
+
+CCargoAtribuicao::CCargoAtribuicao()
+{
+}
+
+CCargoAtribuicao::~CCargoAtribuicao()
+{
+}
+
+int CCargoAtribuicao::Insert( 
+			char* cidCargo,
+			char* cidAtribuicao,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CCargoAtribuicao::Insert");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidCargoAtribuicao[21+1];
+		char* cAuxidCargo = cidCargo;
+		char* cAuxidAtribuicao = cidAtribuicao;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraCargoAtribuicao();
+		
+		memset( &cAuxidCargoAtribuicao, 0, sizeof(cAuxidCargoAtribuicao) ); 
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		
+		//Pega um id unico e sequencia para a insercao
+		EXEC SQL SELECT organograma.CargoAtribuicaoSQ.NEXTVAL INTO :cAuxidCargoAtribuicao FROM DUAL;
+
+		//Realiza o insert
+		EXEC SQL INSERT INTO organograma.CargoAtribuicao
+		(	idCargoAtribuicao,
+			idCargo,
+			idAtribuicao,
+			idUsuarioAlteracao,
+			dtUltimaAlteracao) 
+		VALUES 
+		(	:cAuxidCargoAtribuicao,
+			:cAuxidCargo,
+			:cAuxidAtribuicao,
+			:cAuxidUsuarioAlteracao,
+			SYSDATE);
+
+        ULOG_END("CCargoAtribuicao::Insert");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) 
+		{
+			return 0;//Erro
+		}
+		else 
+		{
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CCargoAtribuicao::Delete( char* cidCargoAtribuicao )
+{
+    ULOG_START("CCargoAtribuicao::Delete");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidCargoAtribuicao = cidCargoAtribuicao; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraCargoAtribuicao();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM organograma.CargoAtribuicao
+		WHERE (idCargoAtribuicao = :cAuxidCargoAtribuicao);
+		ULOG_END("CCargoAtribuicao::Delete");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) 
+		{
+			return 0;//Erro
+		}
+		else 
+		{
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if(sqlca.sqlcode == -2292)
+		return -2292;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CCargoAtribuicao::List( 
+			char* cidCargoAtribuicao,
+			char* cidCargo,
+			char* cidAtribuicao,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CCargoAtribuicao::List");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		
+			char cAuxidCargoAtribuicao[255+1];
+			char cAuxidCargo[255+1];
+			char cAuxidAtribuicao[255+1];
+			char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+		struct
+		{
+			VARCHAR stidCargoAtribuicao[21+1];
+			VARCHAR stidCargo[21+1];
+			VARCHAR stidAtribuicao[21+1];
+		} stCargoAtribuicaoRegistro;
+		struct
+		{
+			short iidCargoAtribuicao;
+			short iidCargo;
+			short iidAtribuicao;
+		} stCargoAtribuicaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+
+	if ( strlennull( cidCargoAtribuicao ) <= 0 )
+		strcpy(cAuxidCargoAtribuicao,"-1");
+		else
+		strcpy(cAuxidCargoAtribuicao,cidCargoAtribuicao);
+	
+	if ( strlennull( cidCargo ) <= 0 )
+		strcpy(cAuxidCargo,"-1");
+		else
+		strcpy(cAuxidCargo,cidCargo);
+	
+	if ( strlennull( cidAtribuicao ) <= 0 )
+		strcpy(cAuxidAtribuicao,"-1");
+		else
+		strcpy(cAuxidAtribuicao,cidAtribuicao);
+	
+
+	//Processamento Principal
+	try
+	{
+
+		//Zera a estrutura da classe
+		ZeraCargoAtribuicao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os Registros
+   		EXEC SQL DECLARE CursorCargoAtribuicao CURSOR FOR 
+   		SELECT 	
+   		   idCargoAtribuicao,
+	       idCargo,
+	       idAtribuicao
+		FROM 
+		   organograma.CargoAtribuicao
+		WHERE ( ((idCargoAtribuicao = :cAuxidCargoAtribuicao) OR ('-1' = :cAuxidCargoAtribuicao))
+	    AND ((idCargo = :cAuxidCargo) OR ('-1' = :cAuxidCargo))
+	    AND ((idAtribuicao = :cAuxidAtribuicao) OR ('-1' = :cAuxidAtribuicao)) );
+
+		// Abre o cursor
+		EXEC SQL OPEN CursorCargoAtribuicao;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		   return -1;//Erro
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stCargoAtribuicaoRegistro, 0, sizeof(stCargoAtribuicaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorCargoAtribuicao INTO :stCargoAtribuicaoRegistro:stCargoAtribuicaoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stCargoAtribuicaoRegistro.stidCargoAtribuicao.arr,
+				(char*)stCargoAtribuicaoRegistro.stidCargo.arr,
+				(char*)stCargoAtribuicaoRegistro.stidAtribuicao.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorCargoAtribuicao;
+		}
+		ULOG_END("CCargoAtribuicao::List");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CCargoAtribuicao::RelacionaCrg( char*cidCargo, char*cNomeIdTag, char*cidUsuarioAlteracao, DOMNode*dnode )
+{
+    
+	//Auxiliares
+	int iCont;
+	TuxHelper tuxHelper;
+	
+	//Consistencia
+	if ( strlennull( cidCargo ) <=0 )
+	{
+	    
+		return -1;
+	}
+
+	//Apaga todas as relacionadas ao id recebido
+	int iRet = EraseCrg( cidCargo );
+
+	//Adiciona as novas relacoes
+	if (iRet!=-2292)
+	for(iCont = 0;;iCont++)
+	{
+		char* cidAtribuicao = tuxHelper.walkTree(dnode,"idAtividade",iCont);
+		if (cidAtribuicao==NULL)
+			break;
+		Insert(  cidCargo, cidAtribuicao, cidUsuarioAlteracao );
+	}
+	return iRet;
+}
+int CCargoAtribuicao::EraseCrg( char* cidCargo ) 
+{
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidCargo = cidCargo; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraCargoAtribuicao();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDeleteMM0;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM organograma.CargoAtribuicao
+		WHERE (idCargo = :cAuxidCargo);
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+     	   return 0;//Erro
+		else 
+		{
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDeleteMM0:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if(sqlca.sqlcode == -2292)
+		return -2292;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CCargoAtribuicao::RelacionaAtv( char*cidAtribuicao, char*cNomeIdTag, char*cidUsuarioAlteracao, DOMNode*dnode )
+{
+	//Auxiliares
+	int iCont;
+	TuxHelper tuxHelper;
+	
+	//Consistencia
+	if ( strlennull( cidAtribuicao ) <=0 )
+		return -1;
+	
+	//Apaga todas as relacionadas ao id recebido
+	int iRet = EraseAtv( cidAtribuicao );
+	
+	//Adiciona as novas relacoes
+	if (iRet!=-2292)
+	for(iCont = 0;;iCont++)
+	{		
+		char* cidCargo = tuxHelper.walkTree(dnode,"idCargo",0);
+		char* cidAtribuicao = tuxHelper.walkTree(dnode,"idAtividade",0);
+
+		if ((strlennull(cidCargo)<=0)||(strlennull(cidAtribuicao)<=0))
+			break;
+
+		Insert(  cidCargo, cidAtribuicao, cidUsuarioAlteracao );
+	}
+	return iRet;
+}
+int CCargoAtribuicao::EraseAtv( char* cidAtribuicao ) 
+{
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidAtribuicao = cidAtribuicao; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraCargoAtribuicao();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDeleteMM1;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM organograma.CargoAtribuicao
+		WHERE (idAtribuicao = :cAuxidAtribuicao);
+		
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+		   return 0;//Erro
+		else
+		{
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDeleteMM1:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if(sqlca.sqlcode == -2292)
+		return -2292;
+	else
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CCargoAtribuicao::ListId( char* cidCargoAtribuicao ) 
+{
+    ULOG_END("CCargoAtribuicao::ListId");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidCargoAtribuicao = cidCargoAtribuicao; 
+		struct
+		{
+			VARCHAR stidCargoAtribuicao[21+1];
+			VARCHAR stidCargo[21+1];
+			VARCHAR stidAtribuicao[21+1];
+		} stCargoAtribuicaoRegistro;
+		struct
+		{
+			short iidCargoAtribuicao;
+			short iidCargo;
+			short iidAtribuicao;
+		} stCargoAtribuicaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraCargoAtribuicao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorCargoAtribuicaoId CURSOR FOR 
+   		SELECT 	idCargoAtribuicao,
+	            idCargo,
+	            idAtribuicao
+		FROM organograma.CargoAtribuicao
+		WHERE idCargoAtribuicao = :cAuxidCargoAtribuicao;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorCargoAtribuicaoId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stCargoAtribuicaoRegistro, 0, sizeof(stCargoAtribuicaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorCargoAtribuicaoId INTO :stCargoAtribuicaoRegistro:stCargoAtribuicaoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stCargoAtribuicaoRegistro.stidCargoAtribuicao.arr,
+				(char*)stCargoAtribuicaoRegistro.stidCargo.arr,
+				(char*)stCargoAtribuicaoRegistro.stidAtribuicao.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorCargoAtribuicaoId;
+		}
+		ULOG_END("CCargoAtribuicao::ListId");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CCargoAtribuicao::ListAll( void )
+{
+    ULOG_START("CCargoAtribuicao::ListAll");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidCargoAtribuicao[21+1];
+			VARCHAR stidCargo[21+1];
+			VARCHAR stidAtribuicao[21+1];
+		} stCargoAtribuicaoRegistro;
+		struct
+		{
+			short iidCargoAtribuicao;
+			short iidCargo;
+			short iidAtribuicao;
+		} stCargoAtribuicaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraCargoAtribuicao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorCargoAtribuicaoAll CURSOR FOR
+   		SELECT 	idCargoAtribuicao,
+		idCargo,
+		idAtribuicao
+		FROM organograma.CargoAtribuicao; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorCargoAtribuicaoAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		   return 0;//Erro
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stCargoAtribuicaoRegistro, 0, sizeof(stCargoAtribuicaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorCargoAtribuicaoAll INTO :stCargoAtribuicaoRegistro:stCargoAtribuicaoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stCargoAtribuicaoRegistro.stidCargoAtribuicao.arr,
+				(char*)stCargoAtribuicaoRegistro.stidCargo.arr,
+				(char*)stCargoAtribuicaoRegistro.stidAtribuicao.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorCargoAtribuicaoAll;
+		}
+		ULOG_END("CCargoAtribuicao::ListAll");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CCargoAtribuicao::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idCargoAtribuicao", Registro(x)->cidCargoAtribuicao );
+				xml->addItem("idCargo", Registro(x)->cidCargo );
+				xml->addItem("idAtividade", Registro(x)->cidAtribuicao ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+
+void CCargoAtribuicao::GetXml( char* cNomeTagArray, char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() >= 0 )
+	{
+		//Caso nao tenha recebido uma tag padrao, deixa sem
+		if( strlennull( cNomeTagArray ) > 0 ) {
+			xml->createTag(cNomeTagArray);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+		}
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 ) {
+				xml->createTag(cNomeTag);
+				//Adiciona a propriedade necessaria para o xml
+				xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			}
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idCargoAtribuicao", Registro(x)->cidCargoAtribuicao );
+				xml->addItem("idCargo", Registro(x)->cidCargo );
+				xml->addItem("idAtividade", Registro(x)->cidAtribuicao ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+		//So fecha um tag se abriu anteriormente
+		if( strlennull( cNomeTagArray ) > 0 )
+			xml->closeTag();
+	}
+}

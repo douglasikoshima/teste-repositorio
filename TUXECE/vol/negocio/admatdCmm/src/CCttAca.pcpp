@@ -1,0 +1,623 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CCttAca.h"
+
+CContatoAcao::CContatoAcao()
+{
+}
+
+CContatoAcao::~CContatoAcao()
+{
+}
+
+int CContatoAcao::Insert( 
+			char* cidUFOperadora,
+			char* cidTipoLinha,
+			char* cnmURLContatoAcao,
+			char* cidContato,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CContatoAcao::Insert()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidContatoAcao[21+1];
+		char* cAuxidUFOperadora = cidUFOperadora;
+		char* cAuxidTipoLinha = cidTipoLinha;
+		char* cAuxnmURLContatoAcao = cnmURLContatoAcao;
+		char* cAuxidContato = cidContato;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoAcao();
+		
+		memset( &cAuxidContatoAcao, 0, sizeof(cAuxidContatoAcao) ); 
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		
+		//Pega um id unico e sequencia para a insercao
+		EXEC SQL SELECT contatoadm.ContatoAcaoSQ.NEXTVAL INTO :cAuxidContatoAcao FROM DUAL;
+
+		//Realiza o insert
+		EXEC SQL INSERT INTO contatoadm.ContatoAcao
+		(	idContatoAcao,
+			idUFOperadora,
+			idTipoLinha,
+			nmURLContatoAcao,
+			idContato,
+			idUsuarioAlteracao,
+			dtUltimaAlteracao) 
+		VALUES 
+		(	:cAuxidContatoAcao,
+			:cAuxidUFOperadora,
+			:cAuxidTipoLinha,
+			:cAuxnmURLContatoAcao,
+			:cAuxidContato,
+			:cAuxidUsuarioAlteracao,
+			SYSDATE);
+        ULOG_END("CContatoAcao::Insert()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) {
+			return 0;//Erro
+		}
+		else {
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CContatoAcao::Update( 
+			char* cidContatoAcao,
+			char* cidUFOperadora,
+			char* cidTipoLinha,
+			char* cnmURLContatoAcao,
+			char* cidContato,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CContatoAcao::Update()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		
+			char* cAuxidContatoAcao = cidContatoAcao;
+			char* cAuxidUFOperadora = cidUFOperadora;
+			char* cAuxidTipoLinha = cidTipoLinha;
+			char* cAuxnmURLContatoAcao = cnmURLContatoAcao;
+			char* cAuxidContato = cidContato;
+			char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoAcao();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+		
+		//Executa a instrucao de update
+		EXEC SQL 
+		UPDATE contatoadm.ContatoAcao
+		SET 	idUFOperadora = :cAuxidUFOperadora,
+		idTipoLinha = :cAuxidTipoLinha,
+		nmURLContatoAcao = :cAuxnmURLContatoAcao,
+		idContato = :cAuxidContato,
+		idUsuarioAlteracao = :cAuxidUsuarioAlteracao,
+		dtUltimaAlteracao = SYSDATE
+		WHERE 	idContatoAcao = :cAuxidContatoAcao;   
+		ULOG_END("CContatoAcao::Update()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoUpdate:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CContatoAcao::Delete( char* cidContatoAcao )
+{
+    ULOG_START("CContatoAcao::Delete()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidContatoAcao = cidContatoAcao; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoAcao();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM contatoadm.ContatoAcao
+		WHERE (idContatoAcao = :cAuxidContatoAcao);
+		
+		ULOG_END("CContatoAcao::Delete()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoAcao::EraseFlh( char* cidContato ) 
+{
+    ULOG_START("CContatoAcao::EraseFlh()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidContato = cidContato; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoAcao();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDeleteMM0;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM contatoadm.ContatoAcao
+		WHERE (idContato = :cAuxidContato);
+		
+		ULOG_END("CContatoAcao::EraseFlh()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDeleteMM0:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoAcao::EraseLin( char* cidTipoLinha ) 
+{
+    ULOG_START("CContatoAcao::EraseLin()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidTipoLinha = cidTipoLinha; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoAcao();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDeleteMM1;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM contatoadm.ContatoAcao
+		WHERE (idTipoLinha = :cAuxidTipoLinha);
+		
+		ULOG_END("CContatoAcao::EraseLin()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDeleteMM1:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoAcao::EraseUfo( char* cidUFOperadora )
+{
+    ULOG_START("CContatoAcao::EraseUfo()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidUFOperadora = cidUFOperadora; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoAcao();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDeleteMM2;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM contatoadm.ContatoAcao
+		WHERE (idUFOperadora = :cAuxidUFOperadora);
+		
+		ULOG_END("CContatoAcao::EraseUfo()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDeleteMM2:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoAcao::ListId( char* cidContatoAcao ) 
+{
+    ULOG_END("CContatoAcao::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContatoAcao = cidContatoAcao; 
+		struct
+		{
+			VARCHAR stidContatoAcao[21+1];
+			VARCHAR stidUFOperadora[21+1];
+			VARCHAR stidTipoLinha[21+1];
+			VARCHAR stnmURLContatoAcao[255+1];
+			VARCHAR stidContato[21+1];
+		} stContatoAcaoRegistro;
+		struct
+		{
+			short iidContatoAcao;
+			short iidUFOperadora;
+			short iidTipoLinha;
+			short inmURLContatoAcao;
+			short iidContato;
+		} stContatoAcaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoAcao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorContatoAcaoId CURSOR FOR 
+   		SELECT 	idContatoAcao,
+	idUFOperadora,
+	idTipoLinha,
+	nmURLContatoAcao,
+	idContato
+		FROM contatoadm.ContatoAcao
+		WHERE idContatoAcao = :cAuxidContatoAcao;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorContatoAcaoId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stContatoAcaoRegistro, 0, sizeof(stContatoAcaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorContatoAcaoId INTO :stContatoAcaoRegistro:stContatoAcaoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stContatoAcaoRegistro.stidContatoAcao.arr,
+				(char*)stContatoAcaoRegistro.stidUFOperadora.arr,
+				(char*)stContatoAcaoRegistro.stidTipoLinha.arr,
+				(char*)stContatoAcaoRegistro.stnmURLContatoAcao.arr,
+				(char*)stContatoAcaoRegistro.stidContato.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorContatoAcaoId;
+		}
+		ULOG_END("CContatoAcao::ListId()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CContatoAcao::ListIdContato( char* cidContato ) 
+{
+    ULOG_START("CContatoAcao::ListIdContato()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		struct
+		{
+			VARCHAR stidContatoAcao[21+1];
+			VARCHAR stidUFOperadora[21+1];
+			VARCHAR stidTipoLinha[21+1];
+			VARCHAR stnmURLContatoAcao[255+1];
+			VARCHAR stidContato[21+1];
+		} stContatoAcaoRegistro;
+		struct
+		{
+			short iidContatoAcao;
+			short iidUFOperadora;
+			short iidTipoLinha;
+			short inmURLContatoAcao;
+			short iidContato;
+		} stContatoAcaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoAcao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListIdContato;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL 
+   			DECLARE 
+   				CursorListIdContato CURSOR FOR 
+			SELECT 	
+				IDCONTATOACAO,
+				IDUFOPERADORA,
+				IDTIPOLINHA,
+				NMURLCONTATOACAO,
+				IDCONTATO
+			FROM 
+				CONTATOADM.CONTATOACAO
+			WHERE 
+				IDCONTATO = :cAuxidContato;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorListIdContato;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stContatoAcaoRegistro, 0, sizeof(stContatoAcaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorListIdContato INTO :stContatoAcaoRegistro:stContatoAcaoIndicator;
+				//Adiciona a classe
+				Add( 	
+					(char*)stContatoAcaoRegistro.stidContatoAcao.arr,
+					(char*)stContatoAcaoRegistro.stidUFOperadora.arr,
+					(char*)stContatoAcaoRegistro.stidTipoLinha.arr,
+					(char*)stContatoAcaoRegistro.stnmURLContatoAcao.arr,
+					(char*)stContatoAcaoRegistro.stidContato.arr
+				);
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorListIdContato;
+		}
+		ULOG_END("CContatoAcao::ListIdContato()");
+		//Retorna a quantidade de registros
+		return iCont;
+		
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListIdContato:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CContatoAcao::ListAll( void )
+{
+    ULOG_START("CContatoAcao::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidContatoAcao[21+1];
+			VARCHAR stidUFOperadora[21+1];
+			VARCHAR stidTipoLinha[21+1];
+			VARCHAR stnmURLContatoAcao[255+1];
+			VARCHAR stidContato[21+1];
+		} stContatoAcaoRegistro;
+		struct
+		{
+			short iidContatoAcao;
+			short iidUFOperadora;
+			short iidTipoLinha;
+			short inmURLContatoAcao;
+			short iidContato;
+		} stContatoAcaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoAcao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorContatoAcaoAll CURSOR FOR
+   		SELECT 	idContatoAcao,
+		idUFOperadora,
+		idTipoLinha,
+		nmURLContatoAcao,
+		idContato
+		FROM contatoadm.ContatoAcao; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorContatoAcaoAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stContatoAcaoRegistro, 0, sizeof(stContatoAcaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorContatoAcaoAll INTO :stContatoAcaoRegistro:stContatoAcaoIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stContatoAcaoRegistro.stidContatoAcao.arr,
+				(char*)stContatoAcaoRegistro.stidUFOperadora.arr,
+				(char*)stContatoAcaoRegistro.stidTipoLinha.arr,
+				(char*)stContatoAcaoRegistro.stnmURLContatoAcao.arr,
+				(char*)stContatoAcaoRegistro.stidContato.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorContatoAcaoAll;
+		}
+		ULOG_END("CContatoAcao::ListAll()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CContatoAcao::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			xml->createTag(cNomeTag);
+			//Adiciona a proprieda necessaria para o Weblogic
+			xml->addProp( "xmlns", "admsistemas.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idContatoAcao", Registro(x)->cidContatoAcao );
+				xml->addItem("idUFOperadora", Registro(x)->cidUFOperadora );
+				xml->addItem("idTipoLinha", Registro(x)->cidTipoLinha );
+				xml->addItem("nmURLContatoAcao", Registro(x)->cnmURLContatoAcao );
+				xml->addItem("idContato", Registro(x)->cidContato ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			xml->closeTag();
+		}
+	}
+}

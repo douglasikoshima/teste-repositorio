@@ -1,0 +1,485 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CCfgPalitagem.h"
+
+#define endOraStr(varstr)      varstr.arr[varstr.len]= '\0'
+#define oraToStr(bstr,vchar)   if(!bstr) strncpy(bstr,vchar.arr,vchar.len)
+#define strToOra(vchar,bstr)   vchar.len = strlen(bstr);strncpy((char *)vchar.arr,bstr,vchar.len);vchar.arr[vchar.len] = 0
+#define strconv(buffer,fonte)  sprintf(buffer,"%d",fonte)
+
+
+CCfgPalitagem::CCfgPalitagem()
+{
+}
+
+CCfgPalitagem::~CCfgPalitagem()
+{
+}
+
+int CCfgPalitagem::Insert(
+            char* cidContato,
+			char* cidSistemaOrigem,
+			char* cdServicoPrm,
+			char* cdsServico,
+			char* cidProcedencia,
+            char* idUser
+            )
+{
+    ULOG_START("CCfgPalitagem::Insert()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+        char * idContato = cidContato;
+		char * idSistemaOrigem = cidSistemaOrigem;
+		char * cdServico = cdServicoPrm;
+		char * dsServico = cdsServico;
+		char * idProcedencia = cidProcedencia;
+        char * idUsuario = idUser;
+        int     ctRegistro;
+	EXEC SQL END DECLARE SECTION;
+    
+    ULOG( "idContato       [%s]",idContato );
+    ULOG( "idSistemaOrigem [%s]",idSistemaOrigem );
+    ULOG( "cdServico [%s]",cdServico );
+    ULOG( "dsServico       [%s]",dsServico );
+    ULOG( "idProcedencia   [%s]",idProcedencia );
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraCfgPalitagem();
+
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+
+        EXEC SQL
+        SELECT COUNT (1)
+          INTO :ctRegistro
+          FROM contatoadm.configurapalitagem
+         WHERE UPPER ( TRIM(SGSERVICO)) = UPPER (TRIM (:cdServico))
+         AND IDCONTATO = :idContato
+         AND IDSISTEMAORIGEM = :idSistemaOrigem;
+        if ( ctRegistro > 0 )
+        {
+            ULOG_END("ERRO:CCfgPalitagem::Insert() - Sigla de servico configurada para este contato");
+            return -7;
+        }
+
+        if( ctRegistro == 0 )
+        {
+
+            //Realiza o insert
+            EXEC SQL
+            INSERT INTO contatoadm.configurapalitagem
+                        (idcontato, idsistemaorigem, sgservico, dsservico, idprocedencia,
+                         idusuarioalteracao, dtultimaalteracao
+                        )
+                 VALUES (:idContato, :idSistemaOrigem, :cdServico, :dsServico, :idProcedencia,
+                         :idUsuario, SYSDATE
+                        );
+        }//if( stidCfgPalitagem.len <= 0 )
+
+        // Add( (char*)stidCfgPalitagem.arr,
+             // cAuxdsCfgPalitagem );
+
+        ULOG_END("CCfgPalitagem::Insert()");
+
+        return 1;//Sucesso
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+int CCfgPalitagem::Update(
+            char* cidContato,
+            char* cidSistemaOrigem,
+            char* cCDservico,
+            char* cdsServico,
+            char* cidProcedencia,
+            char* idUser
+            )
+{
+    ULOG_START("CCfgPalitagem::Update()");
+	// Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	// Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+        char* idContato = cidContato;
+        char* idSistemaOrigem = cidSistemaOrigem;
+        char* ocdServico = cCDservico;
+        char* dsServico = cdsServico;
+        char* idProcedencia = cidProcedencia;
+        char* idUsuario = idUser;
+	EXEC SQL END DECLARE SECTION;
+
+	// Processamento Principal
+	try
+	{
+		// Zera a estrutura da classe
+		ZeraCfgPalitagem();
+
+		// Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+
+		// Executa a instrucao de update
+		EXEC SQL
+		UPDATE contatoadm.configurapalitagem
+		SET IDSISTEMAORIGEM = :idSistemaOrigem,
+            DSSERVICO = :dsServico,
+            IDPROCEDENCIA = :idProcedencia,
+		    idUsuarioAlteracao = :idUsuario,
+		    dtUltimaAlteracao = SYSDATE
+		WHERE 
+            IDCONTATO = :idContato
+        AND
+            TRIM(UPPER(SGSERVICO)) = TRIM(UPPER(:ocdServico));
+        
+        if ( sqlca.sqlerrd[2] == 0 )
+        {
+            return 0;
+        }
+
+		ULOG_END("CCfgPalitagem::Update()");
+		// Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoUpdate:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+int CCfgPalitagem::Delete( char * cidSistemaOrigem, char* csgservico )
+{
+    ULOG_START("CCfgPalitagem::Delete()");
+	// Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	// Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+        char* idSistemaOrigem = cidSistemaOrigem;
+		char* cAuxsgservico = csgservico;
+	EXEC SQL END DECLARE SECTION;
+
+	// Processamento Principal
+	try
+	{
+		// Zera a estrutura da classe
+		ZeraCfgPalitagem();
+
+		// Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+
+		// Executa a instrucao de delecao
+		EXEC SQL 
+        DELETE FROM contatoadm.configurapalitagem WHERE sgservico = :cAuxsgservico AND IDSISTEMAORIGEM = :idSistemaOrigem;
+
+		ULOG_END("CCfgPalitagem::Delete()");
+		// Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+/*
+int CCfgPalitagem::ListId( char* cidCfgPalitagem )
+{
+    ULOG_START("CCfgPalitagem::ListId()");
+	// Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	// Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	// Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidCfgPalitagem = cidCfgPalitagem;
+		struct
+		{
+			VARCHAR stidCfgPalitagem[21+1];
+			VARCHAR stdsCfgPalitagem[255+1];
+		} stCfgPalitagemRegistro;
+		struct
+		{
+			short iidCfgPalitagem;
+			short idsCfgPalitagem;
+		} stCfgPalitagemIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	// Processamento Principal
+	try
+	{
+		// Zera a estrutura da classe
+		ZeraCfgPalitagem();
+
+		// Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		// Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorCfgPalitagemId CURSOR FOR
+   			SELECT
+					IDMENSAGEMAVISO,
+					DSMENSAGEMAVISO
+				FROM
+					CONTATOADM.MENSAGEMAVISO
+				WHERE
+					IDMENSAGEMAVISO = :cAuxidCfgPalitagem
+				ORDER BY
+					DSMENSAGEMAVISO;
+
+		// Abre o cursor
+		EXEC SQL OPEN CursorCfgPalitagemId;
+
+		// Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+		{
+			// Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				// Zera a estrutura de restorno
+				memset( &stCfgPalitagemRegistro, 0, sizeof(stCfgPalitagemRegistro) );
+				// Pega um registro no CURSOR
+				EXEC SQL FETCH CursorCfgPalitagemId INTO :stCfgPalitagemRegistro:stCfgPalitagemIndicator;
+				// Adiciona a classe
+				Add( (char*)stCfgPalitagemRegistro.stidCfgPalitagem.arr,
+				     (char*)stCfgPalitagemRegistro.stdsCfgPalitagem.arr );
+				// conta quantos existem
+				iCont++;
+			}
+			// Fecha o CURSOR
+			EXEC SQL CLOSE CursorCfgPalitagemId;
+		}
+		// Retorna a quantidade de registros
+		ULOG_END("CCfgPalitagem::ListId()");
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+*/
+
+
+
+int CCfgPalitagem::ListAll( char * cidContato )
+{
+    ULOG_START("CCfgPalitagem::ListAll()");
+	// Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+    char cidSistemaOrigem[40];
+    char csgServico[256];
+    char cdsServico[256];
+    char cidProcedencia[40];
+    char dtUltimaAlteracao[64];
+    
+	// Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	// Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+        char * idContato = cidContato;
+		struct
+		{
+            VARCHAR cidSistemaOrigem[21+1];
+            VARCHAR csgServico[100+1];
+            VARCHAR cdsServico[60+1];
+            VARCHAR cidProcedencia[21+1];
+            VARCHAR dtUltimaAlteracao[64+1];
+		} stCfgPalitagemRegistro;
+		struct
+		{
+            short i_cidSistemaOrigem;
+            short i_csgServico;
+            short i_cdsServico;
+            short i_cidProcedencia;
+            short i_dtUltimaAlteracao;
+		} stCfgPalitagemIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	// Processamento Principal
+	try
+	{
+		// Zera a estrutura da classe
+		ZeraCfgPalitagem();
+
+		// Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		// Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorCfgPalitagemAll CURSOR FOR
+        SELECT idsistemaorigem, sgservico, dsservico, idprocedencia,
+               trim(TO_CHAR(trunc(dtultimaalteracao), 'DD/MM/YYYY')) as dtultimaalteracao 
+          FROM contatoadm.configurapalitagem
+          where idcontato = :idContato;
+        // Abre o cursor
+		EXEC SQL OPEN CursorCfgPalitagemAll;
+
+		// Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+		{
+			// Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				// Zera a estrutura de restorno
+				memset( &stCfgPalitagemRegistro, 0, sizeof(stCfgPalitagemRegistro) );
+				// Pega um registro no CURSOR
+				EXEC SQL FETCH CursorCfgPalitagemAll INTO :stCfgPalitagemRegistro:stCfgPalitagemIndicator;
+                
+                sprintf( cidSistemaOrigem, "%.*s", stCfgPalitagemRegistro.cidSistemaOrigem.len, (char*)stCfgPalitagemRegistro.cidSistemaOrigem.arr );
+                sprintf( csgServico, "%.*s", stCfgPalitagemRegistro.csgServico.len, (char*)stCfgPalitagemRegistro.csgServico.arr );
+                sprintf( cdsServico, "%.*s", stCfgPalitagemRegistro.cdsServico.len, (char*)stCfgPalitagemRegistro.cdsServico.arr );
+                sprintf( cidProcedencia, "%.*s", stCfgPalitagemRegistro.cidProcedencia.len, (char*)stCfgPalitagemRegistro.cidProcedencia.arr );
+                sprintf( dtUltimaAlteracao, "%.*s", stCfgPalitagemRegistro.dtUltimaAlteracao.len, (char*)stCfgPalitagemRegistro.dtUltimaAlteracao.arr );
+
+                ULOG( "cidSistemaOrigem [%s]", cidSistemaOrigem );
+                ULOG( "csgServico [%s]", csgServico );
+                ULOG( "cdsServico [%s]", cdsServico );
+                ULOG( "cidProcedencia [%s]", cidProcedencia );
+                ULOG( "dtUltimaAlteracao [%s]", dtUltimaAlteracao );
+                
+				// Adiciona a classe
+				Add( cidSistemaOrigem,
+				     csgServico,
+				     cdsServico,
+				     cidProcedencia,
+				     dtUltimaAlteracao
+                );
+				// conta quantos existem
+				iCont++;
+			}
+			// Fecha o cursor
+			EXEC SQL CLOSE CursorCfgPalitagemAll;
+		}
+		ULOG_END("CCfgPalitagem::ListAll()");
+		// Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+void CCfgPalitagem::GetXml( char * sidContato, XMLGen*xml )
+{
+    ULOG_START("CCfgPalitagem::GetXml()");
+	struct sqlca sqlca;
+    
+	// Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+        char    idSistema[32];
+        VARCHAR nmSistema[256];
+        char    idProcedencia[32];
+        VARCHAR nmProcedencia[256];
+	EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL WHENEVER NOT FOUND CONTINUE;
+    EXEC SQL WHENEVER SQLERROR GOTO GotoGetXml;
+
+        //Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{
+				//Adiciona as tags necessarias
+				xml->createTag( "Palitagem" );
+    				xml->addItem("idPalitagem", sidContato );
+    				xml->createTag( "Servico" );
+        				xml->addItem("dsServico", Registro(x)->cdsServico );
+        				xml->addItem("cdServico", Registro(x)->csgServico );
+    				xml->closeTag();
+    				xml->createTag( "AdmProcedenciaVO" );
+        				xml->addItem("idProcedencia", Registro(x)->cidProcedencia );
+                        strcpy( idProcedencia,Registro(x)->cidProcedencia );
+                        EXEC SQL
+                        SELECT trim(dsprocedencia)
+                          INTO :nmProcedencia
+                          FROM apoio.procedencia
+                         WHERE idprocedencia = :idProcedencia;
+                        endOraStr( nmProcedencia );
+        				xml->addItem("nmProcedencia", (char*)nmProcedencia.arr );
+    				xml->closeTag();
+    				xml->createTag( "SistemaVO" );
+        				xml->addItem("idSistema", Registro(x)->cidSistemaOrigem );
+                        strcpy( idSistema,Registro(x)->cidSistemaOrigem );
+                        EXEC SQL
+                        SELECT trim(nmsistemaorigem)
+                          INTO :nmSistema
+                          FROM apoio.sistemaorigem
+                         WHERE idsistemaorigem = :idSistema;
+                        endOraStr(nmSistema);
+        				xml->addItem("nmSistema", (char*)nmSistema.arr );
+    				xml->closeTag();
+                    xml->addItem("dtAlteracao", Registro(x)->cdtUltimaAlteracao );
+   				xml->closeTag();
+			}
+		}
+	}
+    ULOG_END("CCfgPalitagem::GetXml()");
+    return;
+GotoGetXml:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}

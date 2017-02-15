@@ -1,0 +1,1109 @@
+// Senha.cpp: implementation of the CSenha class.
+//
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw/tuxfw.h>
+#include <Defines/Defines.h>
+#include <Util/Util.hpp>
+#include <PessoaAbstract/PessoaAbstract.hpp>
+#include <Lojista/Lojista.hpp>
+#include <Senha/Senha.hpp>
+
+
+EXEC SQL INCLUDE SQLCA;
+
+
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+CSenha::CSenha()
+{
+    // Inicializacao da Instancia
+	m_pPessoaAbstract = NULL;
+
+	this->setIdSenha(-1);
+	this->setIdTipoSenha(-1);
+	this->setSenha("");
+	this->setDsFraseSecreta("");
+	this->setDsLembreteFraseSecreta("");
+	this->setDsLembreteSenha("");
+	this->setQtTentFraseSecreta(-1);
+	this->setStatusFraseSecreta(FRASE_SECRETA_BLOQUEADA);
+	this->setCdSenha("");
+}
+
+CSenha::CSenha(CPessoaAbstract *p)
+{
+	CSenha();
+
+	if(p != NULL)
+		m_pPessoaAbstract = p;
+}
+
+CSenha::~CSenha()
+{
+}
+
+
+//Interface da Classe CSenha:
+
+// Operações da classe
+
+void CSenha::consultarLembreteFraseSecreta(long idPessoa, long idPessoaLinha, int idTipoRelacionamento)
+{	 
+	// Executa a Query no DB
+	this->carregarDadosSenhaDB(idPessoa, idPessoaLinha, idTipoRelacionamento);
+}
+
+void CSenha::excluirFraseSecreta(long idPessoa, long idPessoaLinha, int idTipoRelacionamento, int idCanal, int idPessoaUsuario) 
+{    	
+	this->excluirFraseSecretaDB(idPessoa, idPessoaLinha, idTipoRelacionamento, idCanal, idPessoaUsuario);
+}
+
+void CSenha::alterarQtTentFraseSecreta( long idPessoa, long idPessoaLinha, int idTipoRelacionamento)
+{
+	this->alterarQtTentFraseSecretaDB(idPessoa, idPessoaLinha, idTipoRelacionamento);
+}
+
+void CSenha::bloquearFraseSecreta(long idPessoa, long idPessoaLinha, int idTipoRelacionamento, int idCanal, int idPessoaUsuario, int inRegistrarHistorico)
+{
+	this->bloquearFraseSecretaDB(idPessoa, idPessoaLinha, idTipoRelacionamento, idCanal, idPessoaUsuario, inRegistrarHistorico);
+}
+
+void CSenha::validarSenha()
+{
+	if(NULL == m_pPessoaAbstract)
+	{
+		//versões anteriores
+		throw TuxBasicSvcException("11E0001","USAR NOVO CONTRUTOR DE CSENHA");
+	}
+	else
+	{
+		if(CPessoaAbstract::TP_LOJISTA == m_pPessoaAbstract->getTipoPessoa())
+		{
+			this->validarSenhaLojistaDB();
+		}
+		else
+		{
+			throw TuxBasicSvcException("11E0002","IMPOSSIVEL DETERMINAR TIPO PESSOA");
+		}
+	}
+}
+
+void CSenha::alterarSenha()
+{
+	if(NULL == m_pPessoaAbstract)
+	{
+		//versões anteriores
+		throw TuxBasicSvcException("11E0001","USAR NOVO CONTRUTOR DE CSENHA");
+	}
+	else
+	{
+		if(CPessoaAbstract::TP_LOJISTA == m_pPessoaAbstract->getTipoPessoa())
+		{
+			this->alterarSenhaLojistaDB();
+		}
+		else
+		{
+			throw TuxBasicSvcException("11E0002","IMPOSSIVEL DETERMINAR TIPO PESSOA");
+		}
+	}
+}
+
+void CSenha::alterarFraseSecreta(long idPessoa, 
+								 long idPessoaLinha, 
+								 int idTipoRelacionamento,
+								 int idCanal,
+								 int idPessoaUsuario)
+{
+    // Executa a Query no DB
+    this->alterarDadosSenhaDB(idPessoa, 
+		                      idPessoaLinha, 
+							  idTipoRelacionamento,
+							  idCanal,
+							  idPessoaUsuario);
+
+}
+
+void CSenha::registrarPrimeiroAcesso(int idCanal, int idPessoaUsuario, long idPessoaLinha, int iIdTerminal){
+	CSenha::registrarPrimeiroAcessoDB(idCanal, idPessoaUsuario, idPessoaLinha, iIdTerminal);
+}
+
+/*
+void CSenha::inserirFraseSecreta(long idPessoaLinha, char* dsFraseSecreta, char* dsLembreteFraseSecreta){
+ // Verifica de o idPessoa é Valido
+	 if(idPessoaLinha != -1){
+
+	    // Armazena a Chave da Alteracao:
+	    this->setIdPessoaLinha(idPessoaLinha);
+
+	    // Armazena os demais dados		
+		this->setDsFraseSecreta(dsFraseSecreta);
+        this->setDsLembreteFraseSecreta(dsLembreteFraseSecreta);
+
+        // Executa a Query no DB
+        this->inserirDadosSenhaDB();
+
+	 }
+	 else{
+	      throw TuxBasicSvcException("20E0001","CSenha Valor de idPessoa INVALIDO");
+	 }
+}
+*/
+
+/*
+  GETs
+*/
+
+int CSenha::getIdSenha()
+{
+	return this->m_iIdSenha;
+}
+
+int CSenha::getIdTipoSenha()
+{
+	return this->m_iIdTipoSenha;
+}
+
+char* CSenha::getSenha()
+{
+	return m_cSenha;
+}
+
+char * CSenha::getDsFraseSecreta()
+{
+	return m_cDsFraseSecreta;
+}
+
+char * CSenha::getDsLembreteFraseSecreta()
+{
+	return m_cDsLembreteFraseSecreta;
+}
+
+char * CSenha::getDsLembreteSenha()
+{
+	return m_cDsLembreteSenha;
+}
+
+int CSenha::getQtTentFraseSecreta()
+{
+	return m_iQtTentFraseSecreta;
+}
+
+int CSenha::getStatusFraseSecreta()
+{
+	return m_StatusFraseSecreta;
+}
+
+char *CSenha::getCdSenha()
+{
+	return m_cdSenha;
+}
+
+/*
+   SETs
+ */
+
+void CSenha::setIdSenha(int value)
+{
+	this->m_iIdSenha = value;
+}
+
+void CSenha::setIdTipoSenha(int value)
+{
+	this->m_iIdTipoSenha = value;
+}
+
+void CSenha::setDsFraseSecreta(char *value)
+{
+	strcpy(m_cDsFraseSecreta,value); 
+	//CUtil::upper(m_cDsFraseSecreta);
+}
+
+void CSenha::setDsLembreteFraseSecreta(char *value)
+{
+    strcpy(m_cDsLembreteFraseSecreta,value); 
+}
+
+void CSenha::setDsLembreteSenha(char *value)
+{
+    strcpy(m_cDsLembreteSenha,value); 
+}
+
+void CSenha::setSenha(char *value)
+{
+    strcpy(m_cSenha,value); 
+	//CUtil::upper(m_cSenha);
+}
+
+void CSenha::setCdSenha(char *value)
+{
+    strcpy(m_cdSenha,value); 
+}
+
+void CSenha::setQtTentFraseSecreta(int value)
+{
+	m_iQtTentFraseSecreta = value;
+}
+
+void CSenha::setStatusFraseSecreta(int value)
+{
+	m_StatusFraseSecreta = value;
+}
+
+// PRIVATE
+
+
+// Métodos de acesso a banco de dados
+
+// Carrega nos atributos da instancia da classe senha
+// o registro com dados da Senha da Pessoa em questão (Id)
+void CSenha::carregarDadosSenhaDB(long idPessoa, long idPessoaLinha, int idTipoRelacionamento)
+{
+	struct sqlca sqlca;
+
+ 	// Variáveis de paramentro para o  ProC
+	EXEC SQL BEGIN DECLARE SECTION;	
+	long  iIdPessoa;
+	long  iIdPessoaLinha;
+	int  iIdSenha;
+	int  iIdTipoSenha;
+	int  iIdTipoRelacionamento;
+	char cDsLembreteFraseSecreta[256];
+	char cDsFraseSecreta[256];
+	char cDsLembreteSenha[256];
+	char cCdSenha[256];
+	int  iQtTentFraseSecreta;
+	int  iIdStatusFraseSecreta;
+	EXEC SQL END DECLARE SECTION;
+
+    // Seta a Chave da Consulta:
+    iIdPessoa = idPessoa;
+	iIdPessoaLinha = idPessoaLinha;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	if (idPessoaLinha <= 0 && idTipoRelacionamento <= 0) 
+	{
+		// estamos trabalhando com usuario
+		idTipoRelacionamento = PESSOA_USUARIO;
+
+		iIdTipoRelacionamento = idTipoRelacionamento;
+
+		EXEC SQL
+
+			SELECT
+				   a.idPessoaLinha
+			INTO
+				   :iIdPessoaLinha
+			FROM
+				   customer.PessoaLinha	a,
+				   customer.PessoaDePara b
+			WHERE
+				   a.idPessoaDePara 		 = b.idPessoaDePara
+			AND	   b.idPessoa 				 = :iIdPessoa
+			AND	   a.idTipoRelacionamento	 = :iIdTipoRelacionamento
+			AND    Rownum 					 = 1;
+	}
+    
+	if(idTipoRelacionamento == PESSOA_USUARIO)
+	{
+		EXEC SQL 
+
+			SELECT
+				idSenha,
+				idTipoSenha,
+				NVL(dsLembreteFraseSecreta, ' ') as dsLembreteFraseSecreta,
+				NVL(dsFraseSecreta, ' ') as dsFraseSecreta,
+				NVL(dsLembreteSenha, ' ') as dsLembreteSenha,
+				NVL(QtTentativaFraseSecreta, '0') as QtTentativaFraseSecreta,
+				NVL(idStatusSenhaFraseSecreta, 0 ) as idStatusSenhaFraseSecreta,
+				NVL(cdsenha,' ') as cdsenha
+			INTO
+				:iIdSenha,
+				:iIdTipoSenha,
+				:cDsLembreteFraseSecreta, 
+				:cDsFraseSecreta, 
+				:cDsLembreteSenha,
+				:iQtTentFraseSecreta,
+				:iIdStatusFraseSecreta,
+				:cCdSenha
+			FROM
+				customer.Senha
+			WHERE
+				idPessoaLinha = :iIdPessoaLinha; 
+	}
+	else
+	{
+		EXEC SQL 
+
+			SELECT
+				idSenha,
+				idTipoSenha,
+				NVL(dsLembreteFraseSecreta, ' ') as dsLembreteFraseSecreta,
+				NVL(dsFraseSecreta, ' ') as dsFraseSecreta,
+				NVL(dsLembreteSenha, ' ') as dsLembreteSenha,
+				NVL(QtTentativaFraseSecreta, '0') as QtTentativaFraseSecreta,
+				NVL(idStatusSenhaFraseSecreta, 0 ) as idStatusSenhaFraseSecreta,
+				NVL(cdsenha,' ') as cdsenha
+			INTO
+				:iIdSenha,
+				:iIdTipoSenha,
+				:cDsLembreteFraseSecreta, 
+				:cDsFraseSecreta, 
+				:cDsLembreteSenha,
+				:iQtTentFraseSecreta,
+				:iIdStatusFraseSecreta,
+				:cCdSenha
+			FROM
+				customer.Senha
+			WHERE
+				idPessoa = :iIdPessoa;
+	}
+	
+	if (sqlca.sqlcode)
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+	this->setIdSenha(iIdSenha);
+	this->setIdTipoSenha(iIdTipoSenha);
+	this->setDsFraseSecreta(CUtil::trim(cDsFraseSecreta));
+ 	this->setDsLembreteFraseSecreta(CUtil::trim(cDsLembreteFraseSecreta));	
+	this->setDsLembreteSenha(CUtil::trim(cDsLembreteSenha));
+	this->setQtTentFraseSecreta(iQtTentFraseSecreta);
+	this->setStatusFraseSecreta(iIdStatusFraseSecreta);
+	this->setCdSenha(CUtil::trim(cCdSenha));
+
+	return;
+ 
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CSenha::excluirFraseSecretaDB(long idPessoa, long idPessoaLinha, int idTipoRelacionamento, int idCanal, int idPessoaUsuario)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	long  iIdPessoa;
+ 	long  iIdPessoaLinha;
+	int  iIdStatusFraseSecreta;
+
+	int  iIdSenha;
+	int  iIdTipoSenha;
+	int  iIdCanal;
+	int  iIdPessoaUsuario;
+	int  iIdTipoHistorico;
+	int  iIdTipoSistema;
+ 	EXEC SQL END DECLARE SECTION;
+
+	iIdPessoa = idPessoa;
+	iIdPessoaLinha = idPessoaLinha;
+	iIdStatusFraseSecreta = FRASE_SECRETA_ATIVADA;
+
+	// carregarDadosSenhaDB tem de vir sempre depois dos valores a serem alterados
+	this->carregarDadosSenhaDB(idPessoa, idPessoaLinha, idTipoRelacionamento);
+	
+	iIdSenha              = this->getIdSenha();
+	iIdTipoSenha          = this->getIdTipoSenha();
+	iIdCanal              = idCanal;
+	iIdPessoaUsuario      = idPessoaUsuario;
+	iIdStatusFraseSecreta = this->getStatusFraseSecreta();
+	iIdTipoHistorico      = ID_REINIC_FRASE_SECRETA;
+	iIdTipoSistema        = ID_TP_SISTEMA_FO;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+	if(idTipoRelacionamento == PESSOA_USUARIO)
+	{
+		EXEC SQL 
+
+			UPDATE
+				customer.Senha
+			SET
+				dsFraseSecreta = '',
+				DSLEMBRETEFRASESECRETA = '',
+				QtTentativaFraseSecreta = 0,
+				idStatusSenhaFraseSecreta = :iIdStatusFraseSecreta,
+				DtBloqueioFraseSecreta = ''
+			WHERE
+				idPessoaLinha = :iIdPessoaLinha;
+	}
+	else
+	{
+		EXEC SQL 
+
+			UPDATE
+				customer.Senha
+			SET
+				dsFraseSecreta = '',
+				DSLEMBRETEFRASESECRETA = '',
+				QtTentativaFraseSecreta = 0,
+				idStatusSenhaFraseSecreta = :iIdStatusFraseSecreta,
+				DtBloqueioFraseSecreta = ''
+			WHERE
+				idPessoa = :iIdPessoa;		
+	}
+
+	if(sqlca.sqlcode)
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+	if(iIdCanal > 0)
+	{
+
+		EXEC SQL
+
+			INSERT INTO CUSTOMER.HISTORICOSENHA
+			(
+				idHistoricoSenha,
+				idSenha,
+				idTipoSenha, 
+				idTipoStatusSenha, 
+				idTipoHistoricoSenha,
+				idTipoSistema, 
+				idCanal,
+				idPessoaUsuario,
+				dtRegistroHistorico,
+				idPessoaLinha
+			)  
+			VALUES
+			(
+				customer.HistoricoSenhaSQ.nextval,
+				:iIdSenha,
+				:iIdTipoSenha,
+				:iIdStatusFraseSecreta, 
+				:iIdTipoHistorico, 
+				:iIdTipoSistema,  
+				:iIdCanal, 
+				:iIdPessoaUsuario,
+				sysdate,
+				:iIdPessoaLinha
+			);
+	}
+
+	return;
+ 
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CSenha::alterarQtTentFraseSecretaDB(long idPessoa, long idPessoaLinha, int idTipoRelacionamento)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;	
+	long  iIdPessoa;
+	long  iIdPessoaLinha;
+	int  iQtTentFraseSecreta;
+	EXEC SQL END DECLARE SECTION;
+
+	iIdPessoa = idPessoa;
+	iIdPessoaLinha = idPessoaLinha;
+	iQtTentFraseSecreta = this->getQtTentFraseSecreta();
+
+	if(idTipoRelacionamento == PESSOA_USUARIO)
+	{
+		EXEC SQL 
+
+			UPDATE
+				customer.Senha
+			SET
+				QtTentativaFraseSecreta = :iQtTentFraseSecreta
+			WHERE
+				idPessoaLinha = :iIdPessoaLinha; 
+	}
+	else
+	{
+		EXEC SQL 
+
+			UPDATE
+				customer.Senha
+			SET
+				QtTentativaFraseSecreta = :iQtTentFraseSecreta
+			WHERE
+				idPessoa = :iIdPessoa;
+	}
+	
+	if (sqlca.sqlcode)
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+	return;
+ 
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CSenha::bloquearFraseSecretaDB(long idPessoa, 
+									long idPessoaLinha, 
+									int idTipoRelacionamento,
+									int idCanal,
+									int idPessoaUsuario, 
+									int inRegistrarHistorico)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;	
+	long  iIdPessoa;
+	long  iIdPessoaLinha;
+	int  iIdStatusFraseSecreta;
+	int  iIdSenha;
+	int  iIdTipoSenha;
+	int  iIdCanal;
+	int  iIdPessoaUsuario;
+	int  iIdTipoHistorico;
+	int  iIdTipoSistema;
+	EXEC SQL END DECLARE SECTION;
+
+	iIdPessoa             = idPessoa;
+	iIdPessoaLinha        = idPessoaLinha;
+	iIdStatusFraseSecreta = FRASE_SECRETA_BLOQUEADA;
+	iIdSenha              = this->getIdSenha();
+	iIdTipoSenha          = this->getIdTipoSenha();
+	iIdCanal              = idCanal;
+	iIdPessoaUsuario      = idPessoaUsuario;
+	iIdTipoHistorico      = ID_BLOQ_FRASE_SECRETA;
+	iIdTipoSistema        = ID_TP_SISTEMA_FO;
+
+	if(idTipoRelacionamento == PESSOA_USUARIO)
+	{
+		EXEC SQL 
+
+			UPDATE
+				customer.Senha
+			SET
+				idStatusSenhaFraseSecreta = :iIdStatusFraseSecreta,
+				DtBloqueioFraseSecreta = (SELECT sysdate FROM dual)
+			WHERE
+				idPessoaLinha = :iIdPessoaLinha; 
+	}
+	else
+	{
+		EXEC SQL 
+
+			UPDATE
+				customer.Senha
+			SET
+				idStatusSenhaFraseSecreta = :iIdStatusFraseSecreta,
+				DtBloqueioFraseSecreta = (SELECT sysdate FROM dual)
+			WHERE
+				idPessoa = :iIdPessoa;
+	}
+	
+	if (sqlca.sqlcode)
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+	this->setStatusFraseSecreta(iIdStatusFraseSecreta);
+
+	if ( inRegistrarHistorico == 1 )
+	{
+		EXEC SQL
+			INSERT INTO CUSTOMER.HISTORICOSENHA
+			(
+				idHistoricoSenha,
+				idSenha,
+				idTipoSenha, 
+				idTipoStatusSenha, 
+				idTipoHistoricoSenha,
+				idTipoSistema, 
+				idCanal,
+				idPessoaUsuario,
+				dtRegistroHistorico
+			)  
+			VALUES
+			(
+				customer.HistoricoSenhaSQ.nextval,
+				:iIdSenha,
+				:iIdTipoSenha,
+				:iIdStatusFraseSecreta, 
+				:iIdTipoHistorico, 
+				:iIdTipoSistema,  
+				:iIdCanal, 
+				:iIdPessoaUsuario,
+				sysdate
+			);
+	}
+
+	return;
+ 
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CSenha::validarSenhaLojistaDB()
+{
+	char cSenha[32];
+
+	// pegando a senha atual a ser comparada
+	strcpy(cSenha, this->getSenha());
+
+	m_pPessoaAbstract->AsLojista()->consultarDados();
+
+	if(strlen(CUtil::trim(this->getSenha())) <= 0 || (strcmp(CUtil::trim(cSenha), this->getSenha())))
+	{
+		//voltando senha original
+		this->setSenha(cSenha);
+
+		throw TuxBasicSvcException("13E0000","SENHAS DIFERENTES");
+	}
+	else
+	{
+		if(!strcmp(this->getSenha(), "0000"))
+		{
+			// primeira conexão - alterar senha
+			throw TuxBasicSvcException("13E0001");		
+		}
+	}
+
+}
+
+void CSenha::alterarSenhaLojistaDB()
+{
+	struct sqlca sqlca;
+
+ 	// Variáveis de paramentro para o  ProC
+	EXEC SQL BEGIN DECLARE SECTION;	
+	int  iIdTerminal;
+	char cSenha[256];
+	EXEC SQL END DECLARE SECTION;
+
+	iIdTerminal = m_pPessoaAbstract->AsLojista()->getIdTerminal();
+	
+	strcpy(cSenha, this->getSenha());
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+	EXEC SQL 
+		
+		UPDATE		   
+		   vol.SiteFTerminal
+		SET
+			cdSiteFSenha = :cSenha
+		WHERE
+			idTerminal = :iIdTerminal;
+
+	if(sqlca.sqlcode)
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+	return;
+ 
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+/*
+void CSenha::inserirDadosSenhaDB(void){
+
+	struct sqlca sqlca;
+
+ 	// Variáveis de paramentro para o  ProC
+	EXEC SQL BEGIN DECLARE SECTION;	
+	long iIdPessoa;
+	long iIdPessoaLinha;
+	int iIdAux;
+	char cDataAtual[19+1];
+	char cDataExp[19+1];
+	char cNmPessoa[256];
+	char cDsFraseSecreta[256];
+	char cDsLembreteFraseSecreta[256];
+	EXEC SQL END DECLARE SECTION;
+
+    // Seta os dados a Alteraao
+	iIdPessoa = this->getIdPessoa();
+	iIdPessoaLinha = this->getIdPessoaLinha();
+	strcpy(cDsFraseSecreta, this->getDsFraseSecreta());
+	strcpy(cDsLembreteFraseSecreta, this->getDsLembreteFraseSecreta() );
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL SELECT customer.SenhaSQ.NEXTVAL INTO :iIdAux FROM DUAL;
+	EXEC SQL SELECT to_char(SYSDATE, 'dd/mm/YYYY hh24:mi:ss'), to_char(add_months(SYSDATE, 24), 'dd/mm/YYYY hh24:mi:ss') INTO: cDataAtual, :cDataExp FROM DUAL;
+     
+	EXEC SQL 
+		
+		SELECT 
+			a1.nmpessoa
+		INTO
+			:cNmPessoa
+		FROM
+			customer.pessoa a1, 
+			customer.pessoalinha a, 
+			customer.pessoadepara b
+		WHERE 
+			A.IDPESSOADEPARA = B.IDPESSOADEPARA AND
+			A1.IDPESSOA = B.IDPESSOA AND
+			B.IDPESSOA = :iIdPessoa ;
+     
+	EXEC SQL 
+		INSERT INTO
+			customer.Senha
+			(	
+				CDSENHA, 
+				DTPRIMEIROACESSO, 
+				DTULTIMOACESSO, 
+				DTULTIMAATUALIZACAO, 
+				QTTENTATIVAERRO, 
+				IDTIPOSTATUSSENHA, 
+				IDTIPOSENHA, 
+				IDPESSOALINHA, 
+				DTEXPIRACAO, 
+				NMREPRESENTANTE, 
+				IDPESSOA, 
+				IDSENHA, 
+				INTROCASENHA, 
+				DTBLOQUEIO,		
+				IDUSUARIOALTERACAO, 
+				DTULTIMAALTERACAO, 
+				DSFRASESECRETA, 
+				DSLEMBRETEFRASESECRETA, 
+				DSLEMBRETESENHA
+			)
+			VALUES	
+			( 
+				' ',
+				to_date(:cDataAtual, 'dd/mm/yyyy hh24:mi:ss'),
+				to_date(:cDataAtual, 'dd/mm/yyyy hh24:mi:ss'),
+				to_date(:cDataAtual, 'dd/mm/yyyy hh24:mi:ss'),
+				'0',
+				'0',
+				'1',
+				:iIdPessoaLinha,
+				to_date(:cDataExp, 'dd/mm/yyyy hh24:mi:ss'),
+				:cNmPessoa,
+				:iIdPessoa,
+				:iIdAux,
+				'0',
+				NULL,
+				'1',
+				to_date(:cDataAtual, 'dd/mm/yyyy hh24:mi:ss'),
+				:cDsFraseSecreta,
+				:cDsLembreteFraseSecreta,
+				' '
+			);
+	
+	if(sqlca.sqlcode)
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+	return;
+ 
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+*/
+
+void CSenha::alterarDadosSenhaDB(long idPessoa, 
+                                 long idPessoaLinha, 
+                                 int idTipoRelacionamento,
+                                 int idCanal,
+                                 int idPessoaUsuario)
+
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;	
+	long  iIdPessoa;
+	long  iIdPessoaLinha;
+	char cDsFraseSecreta[256];
+	char cDsLembreteFraseSecreta[256];
+
+	int  iIdStatusFraseSecreta;
+	int  iIdSenha;
+	int  iIdTipoSenha;
+	int  iIdCanal;
+	int  iIdPessoaUsuario;
+	int  iIdTipoHistorico;
+	int  iIdTipoSistema;
+
+	EXEC SQL END DECLARE SECTION;
+
+    // Seta os dados a Alteraao
+	iIdPessoa = idPessoa;	
+	iIdPessoaLinha = idPessoaLinha;	
+
+	strcpy(cDsFraseSecreta, this->getDsFraseSecreta());
+	strcpy(cDsLembreteFraseSecreta, this->getDsLembreteFraseSecreta() );
+	
+	// carregarDadosSenhaDB tem de vir sempre depois dos valores a serem alterados
+	this->carregarDadosSenhaDB(idPessoa, idPessoaLinha, idTipoRelacionamento);
+	
+	iIdSenha              = this->getIdSenha();
+	iIdTipoSenha          = this->getIdTipoSenha();
+	iIdCanal              = idCanal;
+	iIdPessoaUsuario      = idPessoaUsuario;
+	iIdStatusFraseSecreta = this->getStatusFraseSecreta();
+	iIdTipoHistorico      = ID_ALTER_FRASE_SECRETA;
+	iIdTipoSistema        = ID_TP_SISTEMA_FO;
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+     
+	if(idTipoRelacionamento == PESSOA_USUARIO)
+	{
+		EXEC SQL 
+
+			UPDATE
+				customer.Senha
+			SET
+				dsFraseSecreta = :cDsFraseSecreta ,
+				dsLembreteFraseSecreta = :cDsLembreteFraseSecreta ,
+				dtUltimaAlteracao = SYSDATE
+			WHERE
+				idPessoaLinha = :iIdPessoaLinha; 
+	}
+	else
+	{
+		EXEC SQL
+
+			UPDATE
+				customer.Senha
+			SET
+				dsFraseSecreta = :cDsFraseSecreta ,
+				dsLembreteFraseSecreta = :cDsLembreteFraseSecreta ,
+				dtUltimaAlteracao = SYSDATE
+			WHERE
+				idPessoa = :iIdPessoa; 
+	}
+
+	if (sqlca.sqlcode)
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+	if(iIdCanal > 0)
+	{
+
+		EXEC SQL
+
+			INSERT INTO CUSTOMER.HISTORICOSENHA
+			(
+				idHistoricoSenha,
+				idSenha,
+				idTipoSenha, 
+				idTipoStatusSenha, 
+				idTipoHistoricoSenha,
+				idTipoSistema, 
+				idCanal,
+				idPessoaUsuario,
+				dtRegistroHistorico,
+				IDPESSOALINHA
+			)  
+			VALUES
+			(
+				customer.HistoricoSenhaSQ.nextval,
+				:iIdSenha,
+				:iIdTipoSenha,
+				:iIdStatusFraseSecreta, 
+				:iIdTipoHistorico, 
+				:iIdTipoSistema,  
+				:iIdCanal, 
+				:iIdPessoaUsuario,
+				sysdate,
+				:iIdPessoaLinha
+			);
+	}
+
+    return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CSenha::registrarPrimeiroAcessoDB(int idCanal, int idPessoaUsuario, long idPessoaLinha, int iIdTerminal){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;	
+	int iIdTipoHistoricoSenhaDB;
+	int iIdCanalDB;
+	int iIdPessoaUsuarioDB;
+	int iIdSenhaDB;
+	int	iIdTipoSenhaDB;
+	int	iIdStatusFraseSecretaDB;
+	int	iIdTipoSistemaDB;
+	int iIdHistoricoSenha=0;
+	long iIdPessoaLinhaDB=0;
+	int iIdTerminalDB = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	iIdTipoHistoricoSenhaDB = ID_TIPO_HISTORICO_SENHA_PRIACESSO;
+	iIdCanalDB				= idCanal;
+	iIdPessoaUsuarioDB      = idPessoaUsuario;
+
+	iIdSenhaDB              = this->getIdSenha();
+	iIdTipoSenhaDB          = this->getIdTipoSenha();
+	iIdStatusFraseSecretaDB = this->getStatusFraseSecreta();
+	iIdTipoSistemaDB		= ID_TP_SISTEMA_FO;
+
+	iIdPessoaLinhaDB		= idPessoaLinha;
+	iIdTerminalDB			= iIdTerminal < 0 ? 0 : iIdTerminal;
+
+
+	// Marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL
+		SELECT
+			NVL(idHistoricoSenha,0)
+		INTO	
+			:iIdHistoricoSenha
+		FROM
+			customer.HistoricoSenha
+		WHERE
+			idSenha				= :iIdSenhaDB
+		AND	idCanal				= :iIdCanalDB
+		AND	idTipoHistoricoSenha= :iIdTipoHistoricoSenhaDB
+		AND	rownum	= 1;
+
+	//Registra o primeiro acesso, somente se não existir.
+	//Caso a frase secreta seja reiniciada, passará pela tela do primeiro acesso novamente, mas não poderá registrar o histórico
+	//Nao Verifica se a frase secreta e nula, pois a linha pode ja ter sido logado em um dos canais e nao ser mais nula. Entao a regra e´ se existe o primeiro acesso para o canal em questao no historico.
+	if (iIdHistoricoSenha <= 0)
+	{
+		EXEC SQL
+			INSERT INTO CUSTOMER.HISTORICOSENHA
+			(
+				idHistoricoSenha,
+				idSenha,
+				idTipoSenha, 
+				idTipoStatusSenha, 
+				idTipoHistoricoSenha,
+				idTipoSistema, 
+				idCanal,
+				idPessoaUsuario,
+				dtRegistroHistorico,
+				idPessoaLinha,
+				idTerminal
+			)	
+			VALUES
+			(	
+				customer.HistoricoSenhaSQ.nextval,
+				:iIdSenhaDB,
+				:iIdTipoSenhaDB,
+				:iIdStatusFraseSecretaDB, 
+				:iIdTipoHistoricoSenhaDB, 
+				:iIdTipoSistemaDB,  
+				:iIdCanalDB, 
+				:iIdPessoaUsuarioDB,
+				sysdate,
+				DECODE(:iIdPessoaLinhaDB, 0, NULL, :iIdPessoaLinhaDB),
+				DECODE(:iIdTerminalDB, 0, NULL, :iIdTerminalDB)
+			);
+	}
+
+    return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CSenha::validarSenhaWS(char*ddd,char*linha,char*senha)
+{
+	tuxfw_getlogger()->debug("CSenha::validarSenhaWS");
+	tuxfw_getlogger()->debug("linha=%s",linha);
+	tuxfw_getlogger()->debug("ddd=%s",ddd);
+	tuxfw_getlogger()->debug("senha=%s",senha);
+
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char*clinha = linha;
+		char*cddd = ddd;
+		char*csenha = senha;
+		int validarSenha = 0;
+		struct param{
+			VARCHAR idLinhaTelefonica[22];
+			VARCHAR inTrocaSenha[22];
+			VARCHAR sgTipoStatusSenha[255];
+		}m_param;
+		struct iparam{
+			short idLinhaTelefonica;
+			short inTrocaSenha;
+			short sgTipoStatusSenha;
+		}m_iparam;
+	EXEC SQL END DECLARE SECTION;
+	sqlca.sqlcode = 0;
+
+	memset(&m_param,0,sizeof(m_param));
+	memset(&m_iparam,0,sizeof(m_iparam));
+
+	// validar linha
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;	
+	EXEC SQL
+		SELECT 
+			LINHATELEFONICA.IDLINHATELEFONICA
+		INTO
+			:m_param.idLinhaTelefonica:m_iparam.idLinhaTelefonica
+		FROM
+			LINHA.LINHABASE LINHABASE,
+			LINHA.LINHATELEFONICA LINHATELEFONICA,
+			APOIO.AREAREGISTRO AREAREGISTRO
+		WHERE
+			LINHABASE.IDLINHABASE = LINHATELEFONICA.IDLINHABASE AND
+			LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO AND
+			LINHABASE.NRLINHA = :clinha AND
+			AREAREGISTRO.CDAREAREGISTRO = :cddd;
+
+	tuxfw_getlogger()->debug("idlinhatelefonica = %s",(char*)m_param.idLinhaTelefonica.arr); 
+
+	if(sqlca.sqlcode == 1403)
+	{
+		tuxfw_getlogger()->debug("Linha inexistente!");
+		return -1;
+	}
+	
+	// validar senha tanto de usuário ou cliente
+	sqlca.sqlcode = 0;
+	EXEC SQL WHENEVER SQLERROR GOTO Error;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;	
+	EXEC SQL
+		SELECT 
+			NVL(SENHA.INTROCASENHA,'0'),
+			NVL(TIPOSTATUSSENHA.SGTIPOSTATUSSENHA,' ')
+		INTO
+			:m_param.inTrocaSenha:m_iparam.inTrocaSenha,
+			:m_param.sgTipoStatusSenha:m_iparam.sgTipoStatusSenha
+		FROM
+			CUSTOMER.PESSOALINHA PESSOALINHA,
+			CUSTOMER.PESSOADEPARA PESSOADEPARA,
+			CUSTOMER.SENHA SENHA,
+			APOIO.TIPOSTATUSSENHA TIPOSTATUSSENHA
+		WHERE
+			PESSOALINHA.IDPESSOADEPARA = PESSOADEPARA.IDPESSOADEPARA AND
+			SENHA.IDPESSOA = PESSOADEPARA.IDPESSOA AND
+			SENHA.IDTIPOSTATUSSENHA = TIPOSTATUSSENHA.IDTIPOSTATUSSENHA AND
+			SENHA.CDSENHA = :csenha AND
+			PESSOALINHA.IDLINHATELEFONICA = :m_param.idLinhaTelefonica AND
+			ROWNUM <= 1;
+
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+
+	// retorna erro caso não localize a senha para a linha
+	if(sqlca.sqlcode == 1403)
+	{
+		tuxfw_getlogger()->debug("Senha não encontrada para idlinhatelefonica = %s",(char*)m_param.idLinhaTelefonica.arr);
+		return -4;
+	}
+
+	// tratamento de erro para senha
+	if(!strcmp((char*)m_param.inTrocaSenha.arr,"1"))
+		return -2; // retorna erro em caso de flag de troca de senha
+	else
+	if(strcmp((char*)m_param.sgTipoStatusSenha.arr,"A") != 0)
+		return -3; // retorna erro se a senha estiver bloqueada com com qualquer status diferente de A
+
+	return 1;
+			
+Error:
+	tuxfw_getlogger()->debug("ERRO: sqlca.sqlcode = %d",sqlca.sqlcode);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}

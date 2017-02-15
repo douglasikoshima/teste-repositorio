@@ -1,0 +1,155 @@
+/**
+ * 
+ * @modulo  Workflow
+ * @usecase Workflow
+ * @author  Miguel Benaventes
+ * @version $Revision: 1.1.6.3 $
+ * @CVS     $Author: a5114878 $ - $Date: 2012/08/27 19:27:30 $
+ **/
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/selectData.h"
+
+int NiveisWriter::CleanPreviousData( long seqID ) const
+{
+   ULOG_START("NiveisWriter::CleanPreviousData()");
+	INITIALIZE_SQL;
+	EXEC SQL BEGIN DECLARE SECTION;
+		long idSequenciaMandatoria;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+
+	idSequenciaMandatoria = seqID;
+
+	EXEC SQL 
+        DELETE FROM 
+            contatoadm.NivelSequencia 
+        WHERE
+		    idSequenciaMandatoria = :idSequenciaMandatoria;
+		    
+   ULOG_END("NiveisWriter::CleanPreviousData()");
+	return 1;
+
+UndefinedError:
+    throw new TuxBasicOraException(  sqlca.sqlcode
+                                    ,sqlca.sqlerrm.sqlerrmc
+                                    ,sqlca.sqlerrm.sqlerrml
+                                  );
+}
+
+
+
+
+int NiveisWriter::WorkWithNivel( DOMNode*node,long seqID )
+{
+   ULOG_START("NiveisWriter::WorkWithNivel()");
+	DOMNode *pdngt;
+	DOMNode *pdnsq;
+	int      pdngtind,pdngtzr;
+	int      pdnsqind,pdnsqzr;
+	char    *plevelInd,*pvlr;
+
+    INITIALIZE_SQL;
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			long idNivelSequencia;
+			long idSequenciaMandatoria;
+			long idSequencia;
+			long nrNivel;
+			long sqOrdem;
+			long idUsr;
+		}oranvlIn;
+	EXEC SQL END DECLARE SECTION;
+
+	pdngtind=0;
+	oranvlIn.idSequenciaMandatoria=seqID;
+	for ( ;; )
+	{
+		pdngtzr = 0;
+		pdngt = walkDOM(node,"GrupoTratamento",&pdngtzr,pdngtind++);
+		if( pdngt == NULL )	
+			break;
+		
+        pdnsqind = 0;
+		plevelInd = walkTree( pdngt,"nivel",0 );
+		oranvlIn.nrNivel = plevelInd ? atol(plevelInd) : 0L;
+        if ( plevelInd ) 
+            XMLString::release(&plevelInd);
+
+		if( !idUsr || !*idUsr )
+			oranvlIn.idUsr = 0L;
+		else
+			oranvlIn.idUsr = atol(idUsr);
+		pdngt = walkDOM( pdngt,"Sequencia" );
+		if( pdngt == NULL )
+			throw new TuxBasicSvcException("09E0013","Cannot find \"Sequencia\" in current level");
+		
+        for ( ;; )
+		{
+			pdnsqzr = 0;
+			pdnsq = walkDOM( pdngt,"GrupoVO",&pdnsqzr,pdnsqind++ );
+			if( pdnsq == NULL )
+				break;
+		
+            pvlr = walkTree( pdnsq,"codigo",0 );
+			if( pvlr == NULL )
+				throw new TuxBasicSvcException("09E0012","Invalid \"Sequencia\" node");
+
+            oranvlIn.idSequencia=atol(pvlr);
+            XMLString::release(&pvlr);
+			pvlr = walkTree( pdnsq,"ordem",0 );
+			if( pvlr == NULL )
+				oranvlIn.sqOrdem = 0L;
+			else
+            {
+				oranvlIn.sqOrdem = atol( pvlr );
+                XMLString::release(&pvlr);
+            }
+
+			EXEC SQL 
+                SELECT 
+                    contatoadm.NivelSequenciaSq.nextval 
+                INTO 
+                    :oranvlIn.idNivelSequencia
+				FROM DUAL;
+			
+            EXEC SQL 
+                INSERT INTO 
+                    contatoadm.NivelSequencia 
+                (
+                    IDNIVELSEQUENCIA,
+                    IDSEQUENCIAMANDATORIA,
+				    IDSEQUENCIA,
+                    NRNIVEL,
+                    SQORDEM,
+                    IDUSUARIOALTERACAO,
+                    DTULTIMAALTERACAO
+                )
+				VALUES 
+                (
+                    :oranvlIn.idNivelSequencia,
+                    :oranvlIn.idSequenciaMandatoria,
+					:oranvlIn.idSequencia,
+                    :oranvlIn.nrNivel,
+                    :oranvlIn.sqOrdem,
+                    :oranvlIn.idUsr,
+                    SYSDATE
+                );
+		}
+	}
+
+   ULOG_END("NiveisWriter::WorkWithNivel()");
+	return 1;
+
+UndefinedError:
+    throw new TuxBasicOraException(  sqlca.sqlcode
+                                    ,sqlca.sqlerrm.sqlerrmc
+                                    ,sqlca.sqlerrm.sqlerrml
+                                  );
+}

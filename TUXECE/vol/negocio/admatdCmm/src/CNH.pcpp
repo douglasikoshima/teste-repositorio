@@ -1,0 +1,367 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CNH.h"
+
+CNivelHierarquia::CNivelHierarquia()
+{
+}
+
+CNivelHierarquia::~CNivelHierarquia()
+{
+}
+
+int CNivelHierarquia::Insert(	char* cidNivel,
+								char* cidNivelPai,
+								char* cidUsuarioAlteracao )
+{
+    ULOG_END("CNivelHierarquia::Insert()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		//char* cAuxidNivel = cidNivel;
+		char* cAuxidNivel = cidNivel;
+		char* cAuxidNivelPai = cidNivelPai;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+
+	if (strcmp(cAuxidNivel,cAuxidNivelPai)==0)
+	{
+	    ULOG_END("CNivelHierarquia::Insert()");
+		return -3;
+	}
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNivelHierarquia();
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		
+		//Pega um id unico e sequencia para a insercao
+		//Realiza o insert
+		EXEC SQL INSERT INTO organograma.NivelHierarquia
+		(	idNivel,
+			idNivelPai,
+			idUsuarioAlteracao,
+			dtUltimaAlteracao) 
+		VALUES 
+		(	:cAuxidNivel,
+			:cAuxidNivelPai,
+			:cAuxidUsuarioAlteracao,
+			SYSDATE);
+			
+        ULOG_END("CNivelHierarquia::Insert()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) {
+			return 0;//Erro
+		}
+		else {
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CNivelHierarquia::Delete( char* cidNivel )
+{
+    ULOG_START("CNivelHierarquia::Delete()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidNivel = cidNivel; 
+		int iCont = 0;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNivelHierarquia();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+		
+		
+		EXEC SQL SELECT COUNT( idNivel )
+		INTO :iCont
+		FROM organograma.NivelHierarquia
+		WHERE idNivelPai = :cAuxidNivel;
+				
+		//Caso existe esta relacao, deve-se remover os relacionamentos antes
+		if( iCont > 0 )
+		{
+			SetErro( "Nível tem dependências, primeiro apague a relação para depois apagar este item" );
+			ULOG_END("CNivelHierarquia::Delete()");
+			return -1;
+		}
+
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM organograma.NivelHierarquia
+		WHERE (idNivel = :cAuxidNivel);
+		ULOG_END("CNivelHierarquia::Delete()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return 1;//Sucesso
+		
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CNivelHierarquia::ListId( char* cidNivel ) 
+{
+    ULOG_START("CNivelHierarquia::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidNivel = cidNivel; 
+		struct
+		{
+			VARCHAR stidNivel[21+1];
+			VARCHAR stidNivelPai[21+1];
+		} stNivelHierarquiaRegistro;
+		struct
+		{
+			short iidNivel;
+			short iidNivelPai;
+		} stNivelHierarquiaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNivelHierarquia();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorNivelHierarquiaId CURSOR FOR 
+   		SELECT 	idNivel, idNivelPai
+		FROM organograma.NivelHierarquia
+		WHERE idNivel = :cAuxidNivel;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorNivelHierarquiaId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CNivelHierarquia::ListId()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stNivelHierarquiaRegistro, 0, sizeof(stNivelHierarquiaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorNivelHierarquiaId INTO :stNivelHierarquiaRegistro:stNivelHierarquiaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stNivelHierarquiaRegistro.stidNivel.arr,
+				(char*)stNivelHierarquiaRegistro.stidNivelPai.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorNivelHierarquiaId;
+		}
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CNivelHierarquia::ListAll( void )
+{
+    ULOG_START("CNivelHierarquia::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidNivel[21+1];
+			VARCHAR stidNivelPai[21+1];
+		} stNivelHierarquiaRegistro;
+		struct
+		{
+			short iidNivel;
+			short iidNivelPai;
+		} stNivelHierarquiaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraNivelHierarquia();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+	
+		Add( 	(char*)stNivelHierarquiaRegistro.stidNivel.arr,
+					(char*)stNivelHierarquiaRegistro.stidNivelPai.arr );
+
+
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorNivelHierarquiaAll CURSOR FOR
+   		SELECT 	idNivel,
+		idNivelPai
+		FROM organograma.NivelHierarquia; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorNivelHierarquiaAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CNivelHierarquia::ListAll()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stNivelHierarquiaRegistro, 0, sizeof(stNivelHierarquiaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorNivelHierarquiaAll INTO :stNivelHierarquiaRegistro:stNivelHierarquiaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stNivelHierarquiaRegistro.stidNivel.arr,
+				(char*)stNivelHierarquiaRegistro.stidNivelPai.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorNivelHierarquiaAll;
+		}
+		ULOG_END("CNivelHierarquia::ListAll()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CNivelHierarquia::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idNivel", Registro(x)->cidNivel );
+				xml->addItem("idNivelPai", Registro(x)->cidNivelPai ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+
+
+void CNivelHierarquia::GetXml( char* cNomeTagArray, char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Caso nao tenha recebido uma tag padrao, deixa sem
+		if( strlennull( cNomeTagArray ) > 0 ) {
+			xml->createTag(cNomeTagArray);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+		}
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 ) {
+				xml->createTag(cNomeTag);
+				//Adiciona a propriedade necessaria para o xml
+				xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			}
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idNivel", Registro(x)->cidNivel );
+				xml->addItem("idNivelPai", Registro(x)->cidNivelPai ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+		//So fecha um tag se abriu anteriormente
+		if( strlennull( cNomeTagArray ) > 0 )
+			xml->closeTag();
+	}
+}

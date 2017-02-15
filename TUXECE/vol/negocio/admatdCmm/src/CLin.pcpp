@@ -1,0 +1,853 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CLin.h"
+
+CTipoLinha::CTipoLinha()
+{
+}
+
+CTipoLinha::~CTipoLinha()
+{
+}
+
+int CTipoLinha::RelacaoCttLin( char* cidContato )
+{
+	ULOG_START("CTipoLinha::RelacaoCttLin()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		struct
+		{
+			VARCHAR stidTipoLinha[21+1];
+			VARCHAR stsgTipoLinha[255+1];
+			VARCHAR stdsTipoLinha[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinhaRegistro;
+		struct
+		{
+			short iidTipoLinha;
+			short isgTipoLinha;
+			short idsTipoLinha;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraTipoLinha();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Declara um cursor para listar os Registros
+
+/* 		SELECT apoio.TipoLinha.idTipoLinha, apoio.TipoLinha.idTipoLinha, apoio.TipoLinha.idTipoLinha, apoio.TipoLinha.idTipoLinha 
+		FROM apoio.TipoLinha, contatoadm.ContatoTipoLinhaBZEROUM
+		WHERE apoio.TipoLinha.idTipoLinha = contatoadm.ContatoTipoLinhaBZEROUM.idContato 
+		AND contatoadm.ContatoTipoLinhaBZEROUM.idContato = :cAuxidContato ;*/
+
+	/*REMOVENDO BZEROUM
+	 TCOSTA 18/06/2007 MPOG
+	*/
+		EXEC SQL DECLARE CursorTipoLinhaRelacao_00 CURSOR FOR
+		SELECT tl.idtipolinha, 
+			   tl.sgtipolinha,
+			   tl.dstipolinha, 
+			   tl.vlpeso
+		FROM   apoio.tipolinha tl,
+			   contatoadm.contatotipolinha ctl
+		WHERE  tl.IDTIPOLINHA= ctl.idtipolinha
+		AND    ctl.idcontato = :cAuxidContato;
+
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacao;
+
+		EXEC SQL OPEN CursorTipoLinhaRelacao_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+			ULOG_END("CTipoLinha::RelacaoCttLin()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stTipoLinhaRegistro, 0, sizeof(stTipoLinhaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorTipoLinhaRelacao_00 INTO :stTipoLinhaRegistro:stTipoLinhaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stTipoLinhaRegistro.stidTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stsgTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stdsTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stvlPeso.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorTipoLinhaRelacao_00;
+		}
+		ULOG_END("CTipoLinha::RelacaoCttLin()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoRelacao:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CTipoLinha::ExistemCttLin( char* cidContato )
+{
+    ULOG_START("CTipoLinha::ExistemCttLin()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		struct
+		{
+			VARCHAR stidTipoLinha[21+1];
+			VARCHAR stsgTipoLinha[255+1];
+			VARCHAR stdsTipoLinha[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinhaRegistro;
+		struct
+		{
+			short iidTipoLinha;
+			short isgTipoLinha;
+			short idsTipoLinha;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraTipoLinha();
+
+		sqlca.sqlcode=0;
+
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;		
+		//Declara um cursor para listar os Registros
+
+/*   		SELECT apoio.TipoLinha.idTipoLinha, apoio.TipoLinha.idTipoLinha, apoio.TipoLinha.idTipoLinha, apoio.TipoLinha.idTipoLinha 
+		FROM apoio.TipoLinha 
+		WHERE apoio.TipoLinha.idTipoLinha NOT IN ( SELECT apoio.TipoLinha.idTipoLinha FROM apoio.TipoLinha, contatoadm.ContatoTipoLinhaBZEROUM WHERE apoio.TipoLinha.idTipoLinha = contatoadm.ContatoTipoLinhaBZEROUM.idContato AND contatoadm.ContatoTipoLinhaBZEROUM.idContato = :cAuxidContato  ); */
+
+	/*REMOVENDO BZEROUM
+	 TCOSTA 18/06/2007 MPOG
+	*/
+   		EXEC SQL DECLARE CursorTipoLinhaExistem_00 CURSOR FOR 
+		SELECT idtipolinha, 
+			   sgtipolinha,
+			   dstipolinha, 
+			   vlpeso
+		FROM   apoio.tipolinha
+		WHERE  idtipolinha NOT IN (  SELECT idtipolinha FROM contatoadm.contatotipolinha
+									 WHERE idcontato = :cAuxidContato);
+
+		EXEC SQL WHENEVER SQLERROR GOTO GotoExistem;
+
+		EXEC SQL OPEN CursorTipoLinhaExistem_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CTipoLinha::ExistemCttLin()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stTipoLinhaRegistro, 0, sizeof(stTipoLinhaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorTipoLinhaExistem_00 INTO :stTipoLinhaRegistro:stTipoLinhaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stTipoLinhaRegistro.stidTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stsgTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stdsTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stvlPeso.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorTipoLinhaExistem_00;
+		}
+		ULOG_END("CTipoLinha::ExistemCttLin()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoExistem:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CTipoLinha::ListId( char* cidTipoLinha ) 
+{
+    ULOG_START("CTipoLinha::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidTipoLinha = cidTipoLinha; 
+		struct
+		{
+			VARCHAR stidTipoLinha[21+1];
+			VARCHAR stsgTipoLinha[255+1];
+			VARCHAR stdsTipoLinha[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinhaRegistro;
+		struct
+		{
+			short iidTipoLinha;
+			short isgTipoLinha;
+			short idsTipoLinha;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraTipoLinha();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorTipoLinhaId CURSOR FOR 
+   		SELECT 	idTipoLinha,
+	sgTipoLinha,
+	dsTipoLinha,
+	vlPeso
+		FROM apoio.TipoLinha
+		WHERE idTipoLinha = :cAuxidTipoLinha;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorTipoLinhaId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CTipoLinha::ListId()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stTipoLinhaRegistro, 0, sizeof(stTipoLinhaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorTipoLinhaId INTO :stTipoLinhaRegistro:stTipoLinhaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stTipoLinhaRegistro.stidTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stsgTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stdsTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stvlPeso.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorTipoLinhaId;
+		}
+		ULOG_END("CTipoLinha::ListId()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CTipoLinha::ListAll( void )
+{
+    ULOG_START("CTipoLinha::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidTipoLinha[21+1];
+			VARCHAR stsgTipoLinha[255+1];
+			VARCHAR stdsTipoLinha[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinhaRegistro;
+		struct
+		{
+			short iidTipoLinha;
+			short isgTipoLinha;
+			short idsTipoLinha;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraTipoLinha();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorTipoLinhaAll CURSOR FOR
+   		SELECT 	idTipoLinha,
+		sgTipoLinha,
+		dsTipoLinha,
+		vlPeso
+		FROM apoio.TipoLinha; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorTipoLinhaAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CTipoLinha::ListAll()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stTipoLinhaRegistro, 0, sizeof(stTipoLinhaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorTipoLinhaAll INTO :stTipoLinhaRegistro:stTipoLinhaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stTipoLinhaRegistro.stidTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stsgTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stdsTipoLinha.arr,
+				(char*)stTipoLinhaRegistro.stvlPeso.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorTipoLinhaAll;
+		}
+		ULOG_END("CTipoLinha::ListAll()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CTipoLinha::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+			{
+				xml->createTag(cNomeTag);
+				//Adiciona a proprieda necessaria para o Weblogic
+				xml->addProp( "xmlns", "admsistemas.fo.vivo.com.br/vo" );
+			}
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idTipoLinha", Registro(x)->cidTipoLinha );
+				xml->addItem("sgTipoLinha", Registro(x)->csgTipoLinha );
+				xml->addItem("dsTipoLinha", Registro(x)->cdsTipoLinha );
+				xml->addItem("vlPeso", Registro(x)->cvlPeso ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+
+int CTipoLinha::Relacionadas( char* cidContato )
+{
+    ULOG_START("CTipoLinha::Relacionadas()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		struct
+		{
+			VARCHAR stidTipoLinha[21+1];
+			VARCHAR stsgTipoLinha[255+1];
+			VARCHAR stdsTipoLinha[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinhaRegistro;
+		struct
+		{
+			short iidTipoLinha;
+			short isgTipoLinha;
+			short idsTipoLinha;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraTipoLinha();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacionados;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+
+/*   			SELECT DISTINCT
+   				IDTIPOLINHA,
+				SGTIPOLINHA,
+				DSTIPOLINHA,
+				VLPESO
+			FROM 
+				CONTATOADM.CONTATOFOLHACAMPOBZEROUM
+			WHERE 
+				IDCONTATO = :cAuxidContato;*/
+	/*REMOVENDO BZEROUM
+	 TCOSTA 18/06/2007 MPOG
+	*/
+   		EXEC SQL 
+   			DECLARE 
+   				CursorRelacionados CURSOR FOR 
+ 			SELECT DISTINCT
+   				tl.IDTIPOLINHA,
+				tl.SGTIPOLINHA,
+				tl.DSTIPOLINHA,
+				tl.VLPESO
+			FROM apoio.tipolinha tl,
+				 CONTATOADM.CONTATOFOLHACAMPO cfc
+			WHERE
+				  cfc.IDTIPOLINHA=tl.IDTIPOLINHA
+			AND 
+				cfc.IDCONTATO = :cAuxidContato;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorRelacionados;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CTipoLinha::Relacionadas()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stTipoLinhaRegistro, 0, sizeof(stTipoLinhaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorRelacionados INTO :stTipoLinhaRegistro:stTipoLinhaIndicator;
+				//Adiciona a classe
+				Add( 
+					(char*)stTipoLinhaRegistro.stidTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stsgTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stdsTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stvlPeso.arr 
+				);
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorRelacionados;
+		}
+		ULOG_END("CTipoLinha::Relacionadas()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoRelacionados:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CTipoLinha::NaoRelacionadas( char* cidContato )
+{
+    ULOG_START("CTipoLinha::NaoRelacionadas()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		struct
+		{
+			VARCHAR stidTipoLinha[21+1];
+			VARCHAR stsgTipoLinha[255+1];
+			VARCHAR stdsTipoLinha[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinhaRegistro;
+		struct
+		{
+			short iidTipoLinha;
+			short isgTipoLinha;
+			short idsTipoLinha;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraTipoLinha();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoNaoRelacionados;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL 
+   			DECLARE 
+   				CursorNaoRelacionados CURSOR FOR 
+   			SELECT
+   				IDTIPOLINHA,
+				SGTIPOLINHA,
+				DSTIPOLINHA,
+				VLPESO
+			FROM 
+				APOIO.TIPOLINHA
+			WHERE 
+				IDTIPOLINHA NOT IN
+                (
+           			SELECT
+           				IDTIPOLINHA
+        			FROM 
+        				CONTATOADM.CONTATOFOLHACAMPO
+        			WHERE 
+        				IDCONTATO = :cAuxidContato
+                );
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorNaoRelacionados;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CTipoLinha::NaoRelacionadas()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stTipoLinhaRegistro, 0, sizeof(stTipoLinhaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorNaoRelacionados INTO :stTipoLinhaRegistro:stTipoLinhaIndicator;
+				//Adiciona a classe
+				Add( 
+					(char*)stTipoLinhaRegistro.stidTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stsgTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stdsTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stvlPeso.arr 
+				);
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorNaoRelacionados;
+		}
+		ULOG_END("CTipoLinha::NaoRelacionadas()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoNaoRelacionados:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CTipoLinha::Relacionadas( char* cidContato, char* cidFaseProcesso )
+{
+    ULOG_START("CTipoLinha::Relacionadas()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		char* cAuxidFaseProcesso = cidFaseProcesso;
+		struct
+		{
+			VARCHAR stidTipoLinha[21+1];
+			VARCHAR stsgTipoLinha[255+1];
+			VARCHAR stdsTipoLinha[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinhaRegistro;
+		struct
+		{
+			short iidTipoLinha;
+			short isgTipoLinha;
+			short idsTipoLinha;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraTipoLinha();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacionadasFase;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+        // Esta query foi otimizada conforme incidência de Homologação Vivo 4328
+   		EXEC SQL 
+   			DECLARE 
+   				CursorRelacionadasFase CURSOR FOR 
+   			SELECT DISTINCT
+		          TIPOLINHA.IDTIPOLINHA,
+		          TIPOLINHA.SGTIPOLINHA,
+		          TIPOLINHA.DSTIPOLINHA,
+		          TIPOLINHA.VLPESO
+             FROM CONTATOADM.CAMPO CAMPO,
+                  CONTATOADM.CONTATOFOLHA CONTATOFOLHA,
+                  CONTATOADM.FASEPROCESSO FASEPROCESSO,
+                  APOIO.TIPOLINHA TIPOLINHA,
+                  CUSTOMER.UFOPERADORA UFOPERADORA,
+                  CONTATOADM.CONTATOFOLHACAMPO CONTATOFOLHACAMPO
+            WHERE CONTATOFOLHACAMPO.IDTIPOLINHA = TIPOLINHA.IDTIPOLINHA
+              AND CONTATOFOLHACAMPO.IDCAMPO = CAMPO.IDCAMPO
+              AND CONTATOFOLHACAMPO.IDCONTATO = CONTATOFOLHA.IDCONTATO
+              AND CONTATOFOLHACAMPO.IDFASEPROCESSO = FASEPROCESSO.IDFASEPROCESSO
+              AND CONTATOFOLHACAMPO.IDUFOPERADORA = UFOPERADORA.IDUFOPERADORA
+	          AND CONTATOFOLHACAMPO.IDCONTATO = :cAuxidContato
+	          AND CONTATOFOLHACAMPO.IDFASEPROCESSO = :cAuxidFaseProcesso;
+
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorRelacionadasFase;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CTipoLinha::Relacionadas()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stTipoLinhaRegistro, 0, sizeof(stTipoLinhaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorRelacionadasFase INTO :stTipoLinhaRegistro:stTipoLinhaIndicator;
+				//Adiciona a classe
+				Add( 
+					(char*)stTipoLinhaRegistro.stidTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stsgTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stdsTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stvlPeso.arr 
+				);
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorRelacionadasFase;
+		}
+		ULOG_END("CTipoLinha::Relacionadas()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoRelacionadasFase:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CTipoLinha::NaoRelacionadas( char* cidContato, char* cidFaseProcesso )
+{
+    ULOG_START("CTipoLinha::NaoRelacionadas()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		char* cAuxidFaseProcesso = cidFaseProcesso;
+		struct
+		{
+			VARCHAR stidTipoLinha[21+1];
+			VARCHAR stsgTipoLinha[255+1];
+			VARCHAR stdsTipoLinha[255+1];
+			VARCHAR stvlPeso[21+1];
+		} stTipoLinhaRegistro;
+		struct
+		{
+			short iidTipoLinha;
+			short isgTipoLinha;
+			short idsTipoLinha;
+			short ivlPeso;
+		} stTipoLinhaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraTipoLinha();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoNaoRelacionadasFase;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL 
+   			DECLARE 
+   				CursorNaoRelacionadasFase CURSOR FOR 
+   			SELECT
+   				IDTIPOLINHA,
+				SGTIPOLINHA,
+				DSTIPOLINHA,
+				VLPESO
+			FROM 
+				APOIO.TIPOLINHA
+			WHERE 
+				IDTIPOLINHA NOT IN
+                (
+           			SELECT
+           				IDTIPOLINHA
+        			FROM 
+        				CONTATOADM.CONTATOFOLHACAMPO
+        			WHERE 
+        				IDCONTATO = :cAuxidContato
+					AND
+						IDFASEPROCESSO = :cAuxidFaseProcesso
+                );
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorNaoRelacionadasFase;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CTipoLinha::NaoRelacionadas()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stTipoLinhaRegistro, 0, sizeof(stTipoLinhaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorNaoRelacionadasFase INTO :stTipoLinhaRegistro:stTipoLinhaIndicator;
+				//Adiciona a classe
+				Add( 
+					(char*)stTipoLinhaRegistro.stidTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stsgTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stdsTipoLinha.arr,
+					(char*)stTipoLinhaRegistro.stvlPeso.arr 
+				);
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorNaoRelacionadasFase;
+		}
+		ULOG_END("CTipoLinha::NaoRelacionadas()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoNaoRelacionadasFase:   
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}

@@ -1,0 +1,5590 @@
+// Senha.cpp: implementation of the CSenha class.
+//
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <tuxfw/tuxfw.h>
+#include <Defines/Defines.h>
+#include <Relacionamento/Relacionamento.hpp>
+
+
+#define TECNOLOGIA_CDMA		1
+#define TECNOLOGIA_GSM		2
+#define POS_CDMA			1
+#define PRE_CDMA			2
+#define POS_GSM				5
+#define PRE_GSM				6
+#define CONTROLE_CDMA			4
+#define CONTROLE_GSM			7
+
+EXEC SQL INCLUDE SQLCA;
+
+
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+CRelacionamento::CRelacionamento(){
+
+    // Inicializacao da Instancia
+
+	strcpy( this->m_cDsOperacao, "" );
+	strcpy( this->m_cDtRelacionamento, "" );
+	strcpy( this->m_cHrRelacionamento, "" );
+	strcpy( this->m_cDsCanal, "" );
+	m_iIdCanal = -1;
+}
+
+CRelacionamento::~CRelacionamento(){
+}
+
+
+void CRelacionamento::remoteCall(char* nomeServico, char* sMsgIn, int lFlags)
+{
+	//
+	// Declaracao de variaveis
+	char*   sMsgOut = 0L;
+	int ret = TUXFWRET_ERROR;
+	tuxfw_getlogger()->debug("CRelacionamento::remoteCall assincrono\r\n");
+
+
+	char*   bufferE = 0L;
+	char*   bufferS = 0L;
+  
+	// Max: Preenche os tamanhos de buffers para a chamada ao tpcall
+	long    snd_len = strlen(sMsgIn);
+	long	rcv_len = TUXFW_MAX_MSG_LEN;
+
+	//
+	// Aloca um buffer de envio com o tamanho do XML de entrada
+	if ((bufferE = (char *)tpalloc("STRING", NULL, snd_len+1)) == NULL)
+	{
+ 		throw new TuxException(ERR_TUX_TPALLOC_RET_CD, ERR_TUX_TPALLOC_RET_MSG);
+	}
+	//
+	// Aloca um buffer de recepcao  com tamanho maximo possivel para retorno
+	if ((bufferS = (char *)tpalloc("STRING", NULL, TUXFW_MAX_MSG_LEN)) == NULL)
+	{
+ 		tpfree(bufferE);
+  		throw new TuxException(ERR_TUX_TPALLOC_RET_CD, ERR_TUX_TPALLOC_RET_MSG);
+	}
+
+	// clona o buffer de entrada no buffer tuxedo de envio
+	strcpy(bufferE, sMsgIn);
+	tuxfw_getlogger()->debug("CRemoteLogBase::remoteCall: dump call parameters:\n\t# serviceName=[%s]\n\tinputBuffer=[%s]\n\t# inputLen=[%d]\n\t# flags=[%d]", nomeServico, bufferE, snd_len, lFlags );
+	if ( tpacall(nomeServico, (char*) bufferE, snd_len, TPNOTRAN|TPNOREPLY) == -1)
+	{
+		long errNo = tperrno;
+		long urCode = tpurcode;
+		tuxfw_getlogger()->error("CRemoteLogBase::remoteCall: tpacall com erro, Tperrno = %d, TpUrCode = %d ", errNo, urCode);
+		//
+		// O porquisse !!! Tenta aproveitar alguma coisa do buffer de retorno mesmo tendo
+		// dado erro na chamada se for erro 11 !!!!
+		if( errNo == TPESVCFAIL )
+		{
+			// Copia o buffer tuxedo de retorno
+			bufferS[rcv_len]='\0';
+			//sMsgOut = derivStr( bufferS );
+			tuxfw_getlogger()->warning("CRemoteLogBase::remoteCall: tpacall processada com ERRO, outputMessage=[%s]", sMsgOut);
+		}
+		else 
+		{
+		
+			tpfree(bufferE); 
+			// Max:
+			bufferE = 0L;
+
+
+			tpfree(bufferS);
+			// Max:
+			bufferS = 0L;
+
+			throw new TuxException(ERR_TUX_REMOTE_CALL_CD , ERR_TUX_REMOTE_CALL_MSG, nomeServico, errNo, urCode);
+		}
+	}
+	else
+	{
+			// Copia o buffer tuxedo de retorno
+			bufferS[rcv_len]='\0';
+			//sMsgOut = derivStr( bufferS );
+			tuxfw_getlogger()->information("CRemoteLogBase::remoteCall: tpacall processada com sucesso, outputMessage=[%s], tamanho=[%d]", sMsgOut, strlen(sMsgOut));
+	}
+	if(bufferE) tpfree(bufferE); bufferE = 0L;
+	if(bufferS) tpfree(bufferS); bufferS = 0L;
+}
+
+
+
+
+void CRelacionamento::registraContato(XMLGen &xmlInput, char *cUsuario)
+{		
+
+	int	  iXMLLen;
+	int	  iRet = TUXFWRET_OK;
+	
+	char* pcStatusCode = NULL;
+	char* pcStatusText = NULL;
+
+
+	// Faz a solicitação ao serviço de consulta
+	TuxRemoteService remoteService;
+	TuxMessage inputMessage;
+
+/*	remoteService = new TuxRemoteService();
+	inputMessage = new TuxMessage();*/
+	
+	inputMessage.setUser(cUsuario);
+	inputMessage.setService("REGCONTATO");
+	inputMessage.setMessageBody(&xmlInput);
+
+	tuxfw_getlogger()->information("\r\nREGCONTATO Assincrono\r\n"); 
+
+	tuxfw_getlogger()->information("\r\nCONTATO::XML_ENTRADA:\r\n%s\r\n", xmlInput.retrieveXML(&iXMLLen)); 
+
+	try
+	{
+		// Repassa configuracoes ao manipulador do serviço remoto e invoca o servico.
+		remoteService.setServiceName("REGCONTATO");
+		remoteService.setInputMessage(&inputMessage);
+
+		char*sMsgIn = inputMessage.getMessageXML(); 
+
+		this->remoteCall("REGCONTATO", sMsgIn, 0);
+	
+	}
+	catch(...)
+	{
+		// vamos asseguar que iRet esteja realmente com erro
+		tuxfw_getlogger()->debug("CRegistroContato::erro ao chamar DREGCONTATO");
+		iRet = TUXFWRET_ERROR;
+	}
+
+
+}
+
+void CRelacionamento::consultarAcessoPorDia(list< CRelacionamento > & lstRelac, int iIdTipoHistorico, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia)
+{
+	if (iIsAgrupado == 1)
+		CRelacionamento::consultarAcessoPorDiaAgrupadoDB(lstRelac, iIdTipoHistorico, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia);
+	else
+		CRelacionamento::consultarAcessoPorDiaDB(lstRelac,  iIdTipoHistorico, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia);
+}
+
+
+
+void CRelacionamento::consultarAcessoPorDiaLoja(list< CRelacionamento > & lstRelac, int iIdTipoHistorico, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal)
+{
+	if (iIsAgrupado == 1)
+		CRelacionamento::consultarAcessoPorDiaLojaAgrupadoDB(lstRelac, iIdTipoHistorico, iIdTipoCarteira, iIdTipoRelacionamento,  iIdTipoLinha,   iIdUFOperadora, iIdSegmentacao,  iIdGrupoOperadora,  iIdCanal,  iCdAreaRegistro, iNrLinha, 	iIsAgrupado, iIdTecnologia, iIdPessoaDePara, iIdTerminal);
+	else
+		CRelacionamento::consultarAcessoPorDiaLojaDB(lstRelac, iIdTipoHistorico, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia, iIdPessoaDePara, iIdTerminal);
+}
+
+
+
+void CRelacionamento::consultarAcessoPorHora(list< CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia){
+
+	
+	CRelacionamento::consultarAcessoPorHoraDB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIdTecnologia);
+}
+
+
+void CRelacionamento::consultarAcessoPorHoraLoja(list< CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado,int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal ){
+	CRelacionamento::consultarAcessoPorHoraLojaDB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIdTecnologia, iIdPessoaDePara, iIdTerminal);
+}
+
+
+void CRelacionamento::consultarAcessoNegado(list< CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia){
+	if (iIsAgrupado == 1)
+		CRelacionamento::consultarAcessoNegadoAgrupadoDB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia);
+	else
+		CRelacionamento::consultarAcessoNegadoDB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia);
+}
+
+
+
+
+void CRelacionamento::consultarAcessoNegadoLoja(list< CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal){
+	if (iIsAgrupado == 1)
+		CRelacionamento::consultarAcessoNegadoLojaAgrupadoDB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia, iIdPessoaDePara, iIdTerminal);
+	else
+		CRelacionamento::consultarAcessoNegadoLojaDB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia, iIdPessoaDePara, iIdTerminal);
+}
+
+
+void CRelacionamento::consultarServicosEfetuados(list< CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia){
+
+	if (iIsAgrupado == 1)
+		CRelacionamento::consultarServicosEfetuadosAgrupadoDB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia);
+	else
+		CRelacionamento::consultarServicosEfetuadosDB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia);
+}
+
+
+void CRelacionamento::consultarServicosEfetuadosURA(list< CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia){
+
+	if (iIsAgrupado == 1)
+		CRelacionamento::consultarServicosEfetuadosAgrupadoURADB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia);
+	else
+		CRelacionamento::consultarServicosEfetuadosURADB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia);
+}
+
+
+
+void CRelacionamento::consultarServicosEfetuadosLoja(list< CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia, int iIdGrupoOperadoraTerminal, int iIdUFOperadoraTerminal, int iIdPessoaDePara, int iIdTerminal)
+{
+
+	if (iIsAgrupado == 1)
+		CRelacionamento::consultarServicosEfetuadosLojaAgrupadoDB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia, iIdGrupoOperadoraTerminal,  iIdUFOperadoraTerminal, iIdPessoaDePara, iIdTerminal);
+	else
+		CRelacionamento::consultarServicosEfetuadosLojaDB(lstRelac, iIdTipoCarteira, iIdTipoRelacionamento, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha, iIsAgrupado, iIdTecnologia,  iIdGrupoOperadoraTerminal,  iIdUFOperadoraTerminal, iIdPessoaDePara, iIdTerminal);
+}
+
+
+
+void CRelacionamento::consultarServicosDisponiveis(list< CRelacionamento > & lstRelac){
+	CRelacionamento::consultarServicosDisponiveisDB(lstRelac);
+}
+
+
+
+void CRelacionamento::consultarServicosDisponiveisURA(list< CRelacionamento > & lstRelac){
+	CRelacionamento::consultarServicosDisponiveisURADB(lstRelac);
+}
+
+void CRelacionamento::consultarPrimeiroAcesso(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha){
+	CRelacionamento::consultarPrimeiroAcessoDB(lstRelac, iIdTipoCarteira, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iCdAreaRegistro, iNrLinha);
+}
+void CRelacionamento::consultarTotalClientes(int iIdCanal){
+	CRelacionamento::consultarTotalClientesDB(iIdCanal);
+}
+void CRelacionamento::consultarAcessoIncidencia(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iIdTecnologia, int iQtIntervaloInicial, int iQtIntervaloFinal){
+	CRelacionamento::consultarAcessoIncidenciaDB(lstRelac, iIdTipoCarteira, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal,iIdTecnologia, iQtIntervaloInicial, iQtIntervaloFinal);
+}
+
+void CRelacionamento::consultarAcessoIncidenciaLoja(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal, int iQtIntervaloInicial, int iQtIntervaloFinal){
+	CRelacionamento::consultarAcessoIncidenciaLojaDB(lstRelac, iIdTipoCarteira, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iIdTecnologia, iIdPessoaDePara, iIdTerminal, iQtIntervaloInicial, iQtIntervaloFinal);
+}
+
+void CRelacionamento::registrarLoginSessao(int iCdAreaRegistro, int iNrLinha, int iIdTipoRelacionamento){
+	CRelacionamento::registrarLoginSessaoDB(iCdAreaRegistro, iNrLinha, iIdTipoRelacionamento);
+}
+void CRelacionamento::registrarLogoutSessao(void){
+	CRelacionamento::registrarLogoutSessaoDB();
+}
+void CRelacionamento::consultarTempoSessao(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iIdTecnologia, int iQtIntervaloInicial, int iQtIntervaloFinal){
+	CRelacionamento::consultarTempoSessaoDB(lstRelac, iIdTipoCarteira, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iIdTecnologia, iQtIntervaloInicial, iQtIntervaloFinal);
+}
+void CRelacionamento::consultarTempoSessaoLoja(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal, int iQtIntervaloInicial, int iQtIntervaloFinal){
+	CRelacionamento::consultarTempoSessaoLojaDB(lstRelac, iIdTipoCarteira, iIdTipoLinha, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdCanal, iIdTecnologia, iIdPessoaDePara, iIdTerminal, iQtIntervaloInicial, iQtIntervaloFinal);
+}
+
+
+void CRelacionamento::registrarIP(void){
+	CRelacionamento::registrarIPDB();
+}
+void CRelacionamento::consultarIP(void){
+	CRelacionamento::consultarIPDB();
+}
+
+/*
+  GETs
+*/
+
+//Setters Para Pesquisa
+void CRelacionamento::setDtRelacionamentoInicio(char * value){
+	strcpy( this->m_cDtRelacionamentoInicio, value );
+}
+void CRelacionamento::setDtRelacionamentoFinal(char * value){
+	strcpy( this->m_cDtRelacionamentoFinal, value );
+}
+void CRelacionamento::setCanalPesquisa(char * value){
+	strcpy( this->m_cCanalPesquisa, value );
+}
+void CRelacionamento::setQtdRelac(int i){
+	m_QtdRelac = i;
+}
+
+void CRelacionamento::setCdAreaRegistro(int value) {
+	this->m_iCdAreaRegistro = value;
+}
+
+void CRelacionamento::setNrLinha(int value) {
+	this->m_iNrLinha = value;
+}
+
+void CRelacionamento::setDsOperacao(char * value){
+	strcpy( this->m_cDsOperacao, value );
+}
+void CRelacionamento::setDtRelacionamento(char * value){
+	strcpy( this->m_cDtRelacionamento, value );
+}
+void CRelacionamento::setHrRelacionamento(char * value){
+	strcpy( this->m_cHrRelacionamento, value );
+}
+void CRelacionamento::setIdCanal(int i ){
+	this->m_iIdCanal = i;
+}
+void CRelacionamento::setDsCanal(char * value){
+	strcpy( this->m_cDsCanal, value );
+}
+void CRelacionamento::setIdContato(int value){
+	m_iIdContato = value;
+}
+
+void CRelacionamento::setQtVOLPreCliente(int value){
+	m_iQtVOLPreCliente = value;
+}
+void CRelacionamento::setQtVOLPreUsuario(int value){
+	m_iQtVOLPreUsuario = value;
+}
+void CRelacionamento::setQtVOLPosCliente(int value){
+	m_iQtVOLPosCliente = value;
+}
+void CRelacionamento::setQtVOLPosUsuario(int value){
+	m_iQtVOLPosUsuario = value;
+}
+void CRelacionamento::setQtTAVPreCliente(int value){
+	m_iQtTAVPreCliente = value;
+}
+void CRelacionamento::setQtTAVPreUsuario(int value){
+	m_iQtTAVPreUsuario = value;
+}
+void CRelacionamento::setQtTAVPosCliente(int value){
+	m_iQtTAVPosCliente = value;
+}
+void CRelacionamento::setQtTAVPosUsuario(int value){
+	m_iQtTAVPosUsuario = value;
+}
+
+void CRelacionamento::setQtVOLControleCliente(int value){
+	m_iQtVOLControleCliente = value;
+}
+void CRelacionamento::setQtVOLControleUsuario(int value){
+	m_iQtVOLControleUsuario = value;
+}
+void CRelacionamento::setQtTAVControleCliente(int value){
+	m_iQtTAVControleCliente = value;
+}
+void CRelacionamento::setQtTAVControleUsuario(int value){
+	m_iQtTAVControleUsuario = value;
+}
+
+
+void CRelacionamento::setQtVOL(float value){
+	m_iQtVOL = value;
+}
+
+void CRelacionamento::setQtURA(int value){
+	m_iQtURA = value;
+}
+
+
+void CRelacionamento::setQtTAV(float value){
+	m_iQtTAV = value;
+}
+
+
+/*****************gsm*****************/
+
+void CRelacionamento::setQtVOLPreGsmCliente(int value){
+	m_iQtVOLPreGsmCliente = value;
+}
+void CRelacionamento::setQtVOLPreGsmUsuario(int value){
+	m_iQtVOLPreGsmUsuario = value;
+}
+void CRelacionamento::setQtVOLPosGsmCliente(int value){
+	m_iQtVOLPosGsmCliente = value;
+}
+void CRelacionamento::setQtVOLPosGsmUsuario(int value){
+	m_iQtVOLPosGsmUsuario = value;
+}
+void CRelacionamento::setQtTAVPreGsmCliente(int value){
+	m_iQtTAVPreGsmCliente = value;
+}
+void CRelacionamento::setQtTAVPreGsmUsuario(int value){
+	m_iQtTAVPreGsmUsuario = value;
+}
+void CRelacionamento::setQtTAVPosGsmCliente(int value){
+	m_iQtTAVPosGsmCliente = value;
+}
+void CRelacionamento::setQtTAVPosGsmUsuario(int value){
+	m_iQtTAVPosGsmUsuario = value;
+}
+
+void CRelacionamento::setQtVOLControleGsmCliente(int value){
+	m_iQtVOLControleGsmCliente = value;
+}
+void CRelacionamento::setQtVOLControleGsmUsuario(int value){
+	m_iQtVOLControleGsmUsuario = value;
+}
+void CRelacionamento::setQtTAVControleGsmCliente(int value){
+	m_iQtTAVControleGsmCliente = value;
+}
+void CRelacionamento::setQtTAVControleGsmUsuario(int value){
+	m_iQtTAVControleGsmUsuario = value;
+}
+
+void CRelacionamento::setNmLoja (char *cNmLoja)
+{
+	strcpy(m_cNmLoja, cNmLoja);
+}
+
+void CRelacionamento::setNmTerminal (char *cNmTerminal)
+{
+	strcpy(m_cNmTerminal, cNmTerminal);
+}
+
+
+
+/**************************************************/
+
+void CRelacionamento::setIdTipoHistoricoSenha(int value){
+	m_iIdTipoHistoricoSenha = value;
+}
+void CRelacionamento::setDsTipoHistoricoSenha(char * value){
+	strcpy( this->m_cDsTipoHistoricoSenha, value );
+}
+void CRelacionamento::setNuNivel(int value){
+	m_iNuNivel = value;
+}
+void CRelacionamento::setQtTotalClientes(long value){
+	m_lQtTotalClientes = value;
+}
+void CRelacionamento::setIdTempoSessao(long value){
+	m_lIdTempoSessao = value;
+}
+void CRelacionamento::setInTimeout(int value){
+	m_iInTimeout = value;
+}
+
+void CRelacionamento::setTmVOLPreCliente(char * value){
+	strcpy(this->m_cTmVOLPreCliente, value);
+}
+void CRelacionamento::setTmVOLPreUsuario(char * value){
+	strcpy(this->m_cTmVOLPreUsuario, value);
+}
+void CRelacionamento::setTmVOLPosCliente(char * value){
+	strcpy(this->m_cTmVOLPosCliente, value);
+}
+void CRelacionamento::setTmVOLPosUsuario(char * value){
+	strcpy(this->m_cTmVOLPosUsuario, value);
+}
+void CRelacionamento::setTmTAVPreCliente(char * value){
+	strcpy(this->m_cTmTAVPreCliente, value);
+}
+void CRelacionamento::setTmTAVPreUsuario(char * value){
+	strcpy(this->m_cTmTAVPreUsuario, value);
+}
+void CRelacionamento::setTmTAVPosCliente(char * value){
+	strcpy(this->m_cTmTAVPosCliente, value);
+}
+void CRelacionamento::setTmTAVPosUsuario(char * value){
+	strcpy(this->m_cTmTAVPosUsuario, value);
+}
+void CRelacionamento::setTmTAVControleCliente(char * value){
+	strcpy(this->m_cTmTAVControleCliente, value);
+}
+void CRelacionamento::setTmTAVControleUsuario(char * value){
+	strcpy(this->m_cTmTAVControleUsuario, value);
+}
+void CRelacionamento::setTmVOLControleCliente(char * value){
+	strcpy(this->m_cTmVOLControleCliente, value);
+}
+void CRelacionamento::setTmVOLControleUsuario(char * value){
+	strcpy(this->m_cTmVOLControleUsuario, value);
+}
+
+
+
+void CRelacionamento::setTmTotalUtilizacao(char * value){
+	strcpy(this->m_cTmTotalUtilizacao, value);
+}
+void CRelacionamento::setNrIP(char * value){
+	strcpy(this->m_cNrIP, value);
+}
+
+
+
+//Getters Para Pesquisa
+int CRelacionamento::getQtdRelac(void){
+	return m_QtdRelac;
+}
+char * CRelacionamento::getDtRelacionamentoInicio(void){
+	return m_cDtRelacionamentoInicio;
+}
+char * CRelacionamento::getDtRelacionamentoFinal(void){
+	return m_cDtRelacionamentoFinal;
+}
+char * CRelacionamento::getCanalPesquisa(void){
+	return m_cCanalPesquisa;
+}
+
+
+
+
+//Getters
+
+char * CRelacionamento::getDsOperacao(void){
+	return m_cDsOperacao;
+}
+char * CRelacionamento::getDtRelacionamento(void){
+	return m_cDtRelacionamento;
+}
+char * CRelacionamento::getHrRelacionamento(void){
+	return m_cHrRelacionamento;
+}
+int CRelacionamento::getIdCanal(void){
+	return m_iIdCanal;
+}
+char * CRelacionamento::getDsCanal(void){
+	return m_cDsCanal;
+}
+int CRelacionamento::getIdContato(void){
+	return m_iIdContato;
+}
+	
+int CRelacionamento::getCdAreaRegistro(void) {
+	return this->m_iCdAreaRegistro;
+}
+
+int CRelacionamento::getNrLinha(void) {
+	return this->m_iNrLinha;
+}
+
+int CRelacionamento::getQtURA(void){
+	return m_iQtURA;
+}
+
+
+int CRelacionamento::getQtVOLPreCliente(void){
+	return m_iQtVOLPreCliente;
+}
+int CRelacionamento::getQtVOLPreUsuario(void){
+	return m_iQtVOLPreUsuario;
+}
+int CRelacionamento::getQtVOLPosCliente(void){
+	return m_iQtVOLPosCliente;
+}
+int CRelacionamento::getQtVOLPosUsuario(void){
+	return m_iQtVOLPosUsuario;
+}
+int CRelacionamento::getQtTAVPreCliente(void){
+	return m_iQtTAVPreCliente;
+}
+int CRelacionamento::getQtTAVPreUsuario(void){
+	return m_iQtTAVPreUsuario;
+}
+int CRelacionamento::getQtTAVPosCliente(void){
+	return m_iQtTAVPosCliente;
+}
+int CRelacionamento::getQtTAVPosUsuario(void){
+	return m_iQtTAVPosUsuario;
+}
+
+int CRelacionamento::getQtVOLControleCliente(void)
+{
+	return m_iQtVOLControleCliente;
+}
+int CRelacionamento::getQtVOLControleUsuario(void)
+{
+	return m_iQtVOLControleUsuario;
+}
+int CRelacionamento::getQtTAVControleCliente(void)
+{
+	return m_iQtTAVControleCliente;
+}
+int CRelacionamento::getQtTAVControleUsuario(void)
+{
+	return m_iQtTAVControleUsuario;
+}
+
+
+float CRelacionamento::getQtVOL(void){
+	return m_iQtVOL;
+}
+float CRelacionamento::getQtTAV(void){
+	return m_iQtTAV;
+}
+
+/*******************gsm*************************/
+
+int CRelacionamento::getQtVOLPreGsmCliente(void){
+	return m_iQtVOLPreGsmCliente;
+}
+int CRelacionamento::getQtVOLPreGsmUsuario(void){
+	return m_iQtVOLPreGsmUsuario;
+}
+int CRelacionamento::getQtVOLPosGsmCliente(void){
+	return m_iQtVOLPosGsmCliente;
+}
+int CRelacionamento::getQtVOLPosGsmUsuario(void){
+	return m_iQtVOLPosGsmUsuario;
+}
+int CRelacionamento::getQtTAVPreGsmCliente(void){
+	return m_iQtTAVPreGsmCliente;
+}
+int CRelacionamento::getQtTAVPreGsmUsuario(void){
+	return m_iQtTAVPreGsmUsuario;
+}
+int CRelacionamento::getQtTAVPosGsmCliente(void){
+	return m_iQtTAVPosGsmCliente;
+}
+int CRelacionamento::getQtTAVPosGsmUsuario(void){
+	return m_iQtTAVPosGsmUsuario;
+}
+
+int CRelacionamento::getQtVOLControleGsmCliente(void)
+{
+	return m_iQtVOLControleGsmCliente;
+}
+int CRelacionamento::getQtVOLControleGsmUsuario(void)
+{
+	return m_iQtVOLControleGsmUsuario;
+}
+int CRelacionamento::getQtTAVControleGsmCliente(void)
+{
+	return m_iQtTAVControleGsmCliente;
+}
+int CRelacionamento::getQtTAVControleGsmUsuario(void)
+{
+	return m_iQtTAVControleGsmUsuario;
+}
+
+char * CRelacionamento::getNmLoja(void)
+{
+	return m_cNmLoja;
+}
+
+char * CRelacionamento::getNmTerminal(void)
+{
+	return m_cNmTerminal;
+}
+
+
+
+/**********************************************/
+
+int CRelacionamento::getIdTipoHistoricoSenha(void){
+	return m_iIdTipoHistoricoSenha;
+}
+char * CRelacionamento::getDsTipoHistoricoSenha(void){
+	return m_cDsTipoHistoricoSenha;
+}
+int CRelacionamento::getNuNivel(void){
+	return m_iNuNivel;
+} 
+long CRelacionamento::getQtTotalClientes(void){
+	return m_lQtTotalClientes;
+}
+long CRelacionamento::getIdTempoSessao(void){
+	return m_lIdTempoSessao;
+}
+int CRelacionamento::getInTimeout(void){
+	return m_iInTimeout;
+}
+char * CRelacionamento::getTmVOLPreCliente(void){
+	return m_cTmVOLPreCliente;
+}
+char * CRelacionamento::getTmVOLPreUsuario(void){
+	return m_cTmVOLPreUsuario;
+}
+char * CRelacionamento::getTmVOLPosCliente(void){
+	return m_cTmVOLPosCliente;
+}
+char * CRelacionamento::getTmVOLPosUsuario(void){
+	return m_cTmVOLPosUsuario;
+}
+char * CRelacionamento::getTmTAVPreCliente(void){
+	return m_cTmTAVPreCliente;
+}
+char * CRelacionamento::getTmTAVPreUsuario(void){
+	return m_cTmTAVPreUsuario;
+}
+char * CRelacionamento::getTmTAVPosCliente(void){
+	return m_cTmTAVPosCliente;
+}
+char * CRelacionamento::getTmTAVPosUsuario(void){
+	return m_cTmTAVPosUsuario;
+}
+char * CRelacionamento::getTmTAVControleCliente(void){
+	return m_cTmTAVControleCliente;
+}
+char * CRelacionamento::getTmTAVControleUsuario(void){
+	return m_cTmTAVControleUsuario;
+}
+char * CRelacionamento::getTmVOLControleCliente(void){
+	return m_cTmVOLControleCliente;
+}
+char * CRelacionamento::getTmVOLControleUsuario(void){
+	return m_cTmVOLControleUsuario;
+}
+char * CRelacionamento::getTmTotalUtilizacao(void){
+	return m_cTmTotalUtilizacao;
+}
+char * CRelacionamento::getNrIP(void){
+	return m_cNrIP;
+}
+
+
+
+void CRelacionamento::consultarUltimosRelacionamentos(long IdPessoa,
+														list< CRelacionamento > & lstRelac)
+{
+	if (this->getQtdRelac() == 3)
+		CRelacionamento::consultarUltimosRelacionamentosTelaInicialDB(IdPessoa, lstRelac);
+	else
+		CRelacionamento::consultarUltimosRelacionamentosDB(IdPessoa, lstRelac);
+}
+
+void CRelacionamento::consultarUltimosRelacionamentosCanal(long IdPessoa,
+														list< CRelacionamento > & lstRelac){
+	CRelacionamento::consultarUltimosRelacionamentosCanalDB(IdPessoa, lstRelac);
+}
+
+void CRelacionamento::consultarRelacionamentosPeriodo(long IdPessoa, list < CRelacionamento > & lstRelac){
+	CRelacionamento::consultarRelacionamentosPeriodoDataDB(IdPessoa, lstRelac);
+}
+	
+
+
+void CRelacionamento::setaQteTotalVOLTAV(char *cDtRelacionamento, int iIdCanal, int iIdTipoLinha, int iIdTipoRelacionamento, int iTotal)
+{
+
+	if((iIdCanal == 15) && (iIdTipoLinha == 2) && (iIdTipoRelacionamento == 2))
+		this->setQtVOLPreCliente(iTotal);
+
+	else if((iIdCanal == 15) && (iIdTipoLinha == 2) && (iIdTipoRelacionamento == 1))
+		this->setQtVOLPreUsuario(iTotal);
+
+	else if((iIdCanal == 15) && (iIdTipoLinha == 1) && (iIdTipoRelacionamento == 2))
+		this->setQtVOLPosCliente(iTotal);
+
+	else if((iIdCanal == 15) && (iIdTipoLinha == 1) && (iIdTipoRelacionamento == 1))
+		this->setQtVOLPosUsuario(iTotal);
+	
+	else if((iIdCanal == 13) && (iIdTipoLinha == 2) && (iIdTipoRelacionamento == 2))
+		this->setQtTAVPreCliente(iTotal);
+		
+	else if((iIdCanal == 13) && (iIdTipoLinha == 2) && (iIdTipoRelacionamento == 1))
+		this->setQtTAVPreUsuario(iTotal);
+
+	else if((iIdCanal == 13) && (iIdTipoLinha == 1) && (iIdTipoRelacionamento == 2))
+		this->setQtTAVPosCliente(iTotal);
+
+	else if((iIdCanal == 13) && (iIdTipoLinha == 1) && (iIdTipoRelacionamento == 1))
+		this->setQtTAVPosUsuario(iTotal);
+
+	else if((iIdCanal == 15) && (iIdTipoLinha == 4) && (iIdTipoRelacionamento == 2))
+		this->setQtVOLControleCliente(iTotal);
+
+	else if((iIdCanal == 15) && (iIdTipoLinha == 4) && (iIdTipoRelacionamento == 1))
+		this->setQtVOLControleUsuario(iTotal);
+
+	else if((iIdCanal == 13) && (iIdTipoLinha == 4) && (iIdTipoRelacionamento == 2))
+		this->setQtTAVControleCliente(iTotal);
+
+	else if((iIdCanal == 13) && (iIdTipoLinha == 4) && (iIdTipoRelacionamento == 1))
+		this->setQtTAVControleUsuario(iTotal);
+
+
+	/********************Nova Tecnologia *******************************************/
+
+	if((iIdCanal == 15) && (iIdTipoLinha == 6) && (iIdTipoRelacionamento == 2))
+		this->setQtVOLPreGsmCliente(iTotal);
+
+	else if((iIdCanal == 15) && (iIdTipoLinha == 6) && (iIdTipoRelacionamento == 1))
+		this->setQtVOLPreGsmUsuario(iTotal);
+
+	else if((iIdCanal == 15) && (iIdTipoLinha == 5) && (iIdTipoRelacionamento == 2))
+		this->setQtVOLPosGsmCliente(iTotal);
+
+	else if((iIdCanal == 15) && (iIdTipoLinha == 5) && (iIdTipoRelacionamento == 1))
+		this->setQtVOLPosGsmUsuario(iTotal);
+	
+	else if((iIdCanal == 13) && (iIdTipoLinha == 6) && (iIdTipoRelacionamento == 2))
+		this->setQtTAVPreGsmCliente(iTotal);
+		
+	else if((iIdCanal == 13) && (iIdTipoLinha == 6) && (iIdTipoRelacionamento == 1))
+		this->setQtTAVPreGsmUsuario(iTotal);
+
+	else if((iIdCanal == 13) && (iIdTipoLinha == 5) && (iIdTipoRelacionamento == 2))
+		this->setQtTAVPosGsmCliente(iTotal);
+
+	else if((iIdCanal == 13) && (iIdTipoLinha == 5) && (iIdTipoRelacionamento == 1))
+		this->setQtTAVPosGsmUsuario(iTotal);
+
+	else if((iIdCanal == 15) && (iIdTipoLinha == 7) && (iIdTipoRelacionamento == 2))
+		this->setQtVOLControleCliente(iTotal);
+
+	else if((iIdCanal == 15) && (iIdTipoLinha == 7) && (iIdTipoRelacionamento == 1))
+		this->setQtVOLControleUsuario(iTotal);
+
+	else if((iIdCanal == 13) && (iIdTipoLinha == 7) && (iIdTipoRelacionamento == 2))
+		this->setQtTAVControleCliente(iTotal);
+
+	else if((iIdCanal == 13) && (iIdTipoLinha == 7) && (iIdTipoRelacionamento == 1))
+		this->setQtTAVControleUsuario(iTotal);
+
+	/******************************************************************************/
+
+	this->setDtRelacionamento(cDtRelacionamento);
+
+}
+
+
+void CRelacionamento::reiniciaValores(int iValor)
+{
+	
+	this->setQtVOLPreCliente(iValor);
+	this->setQtVOLPreUsuario(iValor);
+	this->setQtVOLPosCliente(iValor);
+	this->setQtVOLPosUsuario(iValor);
+	this->setQtTAVPreCliente(iValor);
+	this->setQtTAVPreUsuario(iValor);
+	this->setQtTAVPosCliente(iValor);
+	this->setQtTAVPosUsuario(iValor);
+	// nova tipo de linha
+	this->setQtVOLControleCliente(iValor);
+	this->setQtVOLControleUsuario(iValor);
+	this->setQtTAVControleCliente(iValor);
+	this->setQtTAVControleUsuario(iValor);
+
+
+	this->setQtVOLPreGsmCliente(iValor);
+	this->setQtVOLPreGsmUsuario(iValor);
+	this->setQtVOLPosGsmCliente(iValor);
+	this->setQtVOLPosGsmUsuario(iValor);
+	this->setQtTAVPreGsmCliente(iValor);
+	this->setQtTAVPreGsmUsuario(iValor);
+	this->setQtTAVPosGsmCliente(iValor);
+	this->setQtTAVPosGsmUsuario(iValor);
+
+	this->setQtVOLControleGsmCliente(iValor);
+	this->setQtVOLControleGsmUsuario(iValor);
+	this->setQtTAVControleGsmCliente(iValor);
+	this->setQtTAVControleGsmUsuario(iValor);
+
+
+	this->setDtRelacionamento("");
+
+	this->setNmLoja("");
+
+	this->setNmTerminal("");
+	
+}
+
+char *CRelacionamento::itoa(int i,char *dest,int /*radix*/)
+{
+    sprintf(dest,"%d",i);
+    return dest;
+}
+
+
+
+void CRelacionamento::MontaPesquisaLiteral(char *chrPesquisa, int iIdTipoHistorico, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdTipoLinha, int iIdCanal, int iCdAreaRegistro,int iNrLinha, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal, char *cDtRelacionamentoInicio, char *cDtRelacionamentoFinal)
+{
+	
+	char chrVariavel[30] = "";
+
+
+	if (iIdTipoHistorico > 0){
+
+		itoa(iIdTipoHistorico, chrVariavel, 10);
+		strcat (chrPesquisa, chrVariavel);
+	
+	}
+
+	if (iIdTipoCarteira > 0) { 
+
+		strcat (chrPesquisa, " AND A.idTipoCarteira = ");
+		itoa(iIdTipoCarteira, chrVariavel, 10);
+		strcat (chrPesquisa, chrVariavel);
+	}
+
+	if (iIdTipoRelacionamento > 0){
+		
+		strcat (chrPesquisa, " AND A.idTipoRelacionamento = ");
+		itoa(iIdTipoRelacionamento, chrVariavel, 10);
+		strcat (chrPesquisa, chrVariavel);
+	}
+
+	if (iIdUFOperadora > 0){
+		
+		strcat (chrPesquisa, " AND A.idUFOperadora = ");
+		itoa(iIdUFOperadora, chrVariavel, 10);
+		strcat (chrPesquisa, chrVariavel);
+	}
+
+	if (iIdSegmentacao > 0){
+		
+		strcat (chrPesquisa, " AND 	A.idSegmentacao = ");
+		itoa(iIdSegmentacao, chrVariavel, 10);
+		strcat (chrPesquisa, chrVariavel);
+	}
+
+	if (iIdGrupoOperadora > 0){
+		
+		strcat (chrPesquisa, " AND  A.idGrupoOperadora = ");
+		itoa(iIdGrupoOperadora,  chrVariavel, 10);
+		strcat (chrPesquisa, chrVariavel);
+	}
+
+	
+	if (iIdTecnologia == TECNOLOGIA_GSM) 
+	{	
+		if (iIdTipoLinha == POS_CDMA)
+			iIdTipoLinha = POS_GSM;
+
+		if (iIdTipoLinha == PRE_CDMA)
+			iIdTipoLinha = PRE_GSM;
+
+		if (iIdTipoLinha == CONTROLE_CDMA)
+			iIdTipoLinha = CONTROLE_GSM;
+
+
+		if (iIdTipoLinha > 0) 
+		{
+			strcat (chrPesquisa, " AND 	A.idTipoLinha = ");
+			itoa(iIdTipoLinha, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+		else			
+			strcat (chrPesquisa, " AND 	A.idTipoLinha IN (5, 6, 7) ");
+	}		
+	else if (iIdTecnologia == TECNOLOGIA_CDMA)
+	{
+
+		if (iIdTipoLinha > 0) 
+		{
+			strcat (chrPesquisa, " AND 	A.idTipoLinha = ");
+			itoa(iIdTipoLinha, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+		else
+			strcat (chrPesquisa, " AND 	A.idTipoLinha IN (1, 2, 4) ");
+
+	}
+	else 
+	{
+		if (iIdTipoLinha == POS_CDMA) 	
+			strcat (chrPesquisa, " AND 	A.idTipoLinha IN (1, 5) ");
+	
+		else if (iIdTipoLinha == PRE_CDMA) 	
+			strcat (chrPesquisa, " AND 	A.idTipoLinha IN (2, 6) ");
+
+		else if (iIdTipoLinha == CONTROLE_CDMA) 	
+			strcat (chrPesquisa, " AND 	A.idTipoLinha IN (4, 7) ");
+
+	}	
+
+	if (iIdCanal > 0){
+		
+		strcat (chrPesquisa, " AND 	idCanal = ");
+		itoa(iIdCanal, chrVariavel, 10);
+		strcat (chrPesquisa, chrVariavel);
+	}
+
+	if (iCdAreaRegistro > 0){
+		
+		strcat (chrPesquisa, " AND 	A.cdAreaRegistro = ");
+		itoa(iCdAreaRegistro, chrVariavel, 10);
+		strcat (chrPesquisa, chrVariavel);
+	}
+
+	if (iNrLinha > 0){
+		
+		strcat (chrPesquisa, " AND 	A.nrLinha = ");
+		itoa(iNrLinha, chrVariavel, 10);
+		strcat (chrPesquisa, chrVariavel);
+	}
+
+
+	if ((iIdPessoaDePara > 0) || (iIdTerminal > 0)){
+		
+		if (iIdTerminal > 0)
+		{
+			strcat (chrPesquisa, " AND A.idTerminal = ");
+			itoa(iIdTerminal, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+		else{
+			strcat (chrPesquisa, " AND a.idTerminal in ");
+			strcat (chrPesquisa, "	(SELECT idTerminal from vol.sitefterminal where idPessoadePara = ");
+			itoa (iIdPessoaDePara, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+			strcat (chrPesquisa, " ) ");
+
+		}
+
+	}
+
+	if (cDtRelacionamentoInicio){
+
+		strcat ( chrPesquisa,"  AND	A.DTREGISTROHISTORICOSENHA BETWEEN TO_DATE('");
+		strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+		strcat (chrPesquisa, "' || '00:00:00', 'dd/mm/yyyy hh24:mi:ss') ");
+		strcat ( chrPesquisa,"  AND	 TO_DATE('");
+		strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+		strcat (chrPesquisa, "' || '23:59:59', 'dd/mm/yyyy hh24:mi:ss') ");
+	}
+
+
+}
+
+
+void CRelacionamento::registrarLoginSessaoDB(int iCdAreaRegistro, int iNrLinha, int iIdTipoRelacionamento)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int iCdAreaRegistroDB;
+	int iNrLinhaDB;
+	int iIdTipoRelacionamentoDB;
+	int iIdCanalDB;
+	int iIdLinhaTelefonicaDB;
+	long lIdTempoSessaoDB;
+	EXEC SQL END DECLARE SECTION;
+
+	iCdAreaRegistroDB = iCdAreaRegistro;
+	iNrLinhaDB = iNrLinha;
+	iIdTipoRelacionamentoDB = iIdTipoRelacionamento;
+	iIdCanalDB = this->getIdCanal();
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+		
+	EXEC SQL
+		SELECT 
+			   idLinhaTelefonica
+		INTO
+			   :iIdLinhaTelefonicaDB
+		FROM
+			   apoio.AreaRegistro	ar,
+			   linha.LinhaBase			lb,
+			   linha.LinhaTelefonica	lt
+		WHERE
+			   ar.idAreaRegistro 		= lb.idAreaRegistro
+		AND	   lb.idLinhaBase			= lt.idLinhaBase
+		AND	   ar.cdAreaRegistro		= :iCdAreaRegistroDB
+		AND	   lb.nrLinha				= :iNrLinhaDB;
+
+	EXEC SQL 
+		INSERT INTO	
+			vol.TempoSessao
+			(IDTEMPOSESSAO, IDLINHATELEFONICA, IDTIPORELACIONAMENTO, IDCANAL, DTINICIAL, DTFINAL, inTimeout)
+		VALUES
+			(vol.TempoSessaoSQ.nextval, :iIdLinhaTelefonicaDB, :iIdTipoRelacionamentoDB, :iIdCanalDB, SYSDATE, NULL, 0)
+		RETURNING
+			IDTEMPOSESSAO
+        INTO
+			:lIdTempoSessaoDB;
+
+
+	this->setIdTempoSessao(lIdTempoSessaoDB);
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+		
+}
+
+
+void CRelacionamento::registrarLogoutSessaoDB(void){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	
+	long lIdTempoSessaoDB=0;
+	int	 iInTimeoutDB=0;
+	char cNrIpTerminal[256]="";
+
+	EXEC SQL END DECLARE SECTION;
+
+	lIdTempoSessaoDB = this->getIdTempoSessao();
+	iInTimeoutDB = this->getInTimeout();
+
+	strcpy (cNrIpTerminal, CUtil::trim(this->getNrIP()));
+
+	tuxfw_getlogger()->debug("cNrIpTerminal =  %s\r\n", cNrIpTerminal);
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL 
+		UPDATE
+			vol.TempoSessao
+		SET
+			dtFinal = SYSDATE,
+			inTimeout = :iInTimeoutDB,
+			nrIP      = :cNrIpTerminal
+		WHERE
+			idTempoSessao = :lIdTempoSessaoDB;
+
+	// ID não existe.
+	if (sqlca.sqlcode == NO_DATA_FOUND){ 
+		throw TuxBasicOraException(sqlca.sqlcode);
+	}
+
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+void CRelacionamento::registrarIPDB(void){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	long lIdTempoSessaoDB=0;
+	char cNrIPDB[256]="";
+	EXEC SQL END DECLARE SECTION;
+
+	lIdTempoSessaoDB = this->getIdTempoSessao();
+	strcpy(cNrIPDB, this->getNrIP());
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL 
+		UPDATE
+			vol.TempoSessao
+		SET
+			nrIP = :cNrIPDB
+		WHERE
+			idTempoSessao = :lIdTempoSessaoDB;
+
+	// ID não existe.
+	if (sqlca.sqlcode == NO_DATA_FOUND){ 
+		throw TuxBasicOraException(sqlca.sqlcode);
+	}
+
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+void CRelacionamento::consultarIPDB(void){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	long lIdTempoSessaoDB=0;
+	char cNrIPDB[256]="";
+	EXEC SQL END DECLARE SECTION;
+
+	lIdTempoSessaoDB = this->getIdTempoSessao();
+
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL 
+		SELECT
+			NVL(nrIP, ' ')
+		INTO
+			:cNrIPDB
+		FROM
+			vol.TempoSessao
+		WHERE
+			idTempoSessao = :lIdTempoSessaoDB;
+
+	// ID não existe.
+	if (sqlca.sqlcode == NO_DATA_FOUND){ 
+		throw TuxBasicOraException(sqlca.sqlcode);
+	}
+
+	this->setNrIP(cNrIPDB);
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+void CRelacionamento::consultarTotalClientesDB(int iIdCanal){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int		iIdCanalDB=0;
+	int		iIdTipoHistoricoSenhaDB;
+	long	lQtTotalClientes=0;
+	EXEC SQL END DECLARE SECTION;
+
+	iIdCanalDB = iIdCanal;
+	iIdTipoHistoricoSenhaDB = ID_TIPO_HISTORICO_SENHA_PRIACESSO;
+
+	//CRelacionamento oRelacionamento;
+
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL 
+		SELECT 
+			NVL(COUNT(idHistoricoSenha),0)
+		INTO
+			:lQtTotalClientes
+		FROM 
+			vol.auxhistoricosenha
+		WHERE
+			idTipoHistoricoSenha	= :iIdTipoHistoricoSenhaDB 
+		AND	idCanal					= :iIdCanalDB;
+
+/*		SELECT 
+			NVL(Count(idHistoricoSenha),0)
+		INTO
+			:lQtTotalClientes
+		FROM 
+			customer.HistoricoSenha
+		WHERE 
+			idTipoHistoricoSenha	= :iIdTipoHistoricoSenhaDB 
+		AND	idCanal					= :iIdCanalDB;
+*/
+
+	this->setQtTotalClientes(lQtTotalClientes);
+
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+void CRelacionamento::consultarAcessoIncidenciaDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iIdTecnologia, int iQtIntervaloInicial, int iQtIntervaloFinal)
+{
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000];
+	char chrVariavel [30]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	int iIdUFOperadoraSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+	int iIdTipoCarteiraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdCanalSQL=0;
+	int iIdTipoLinhaSQL=0;
+	int iIdTecnologiaSQL = 0;
+	int iQtIntervaloInicialSQL=0;
+	int iQtIntervaloFinalSQL=0;
+
+	long lQtTotalClientes=0;
+	EXEC SQL END DECLARE SECTION;
+
+	memset(chrPesquisa, 0, sizeof(chrPesquisa));
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+	iIdTipoCarteiraSQL =  iIdTipoCarteira < 0 ? 0 : iIdTipoCarteira;
+	iIdSegmentacaoSQL = iIdSegmentacao < 0 ? 0 : iIdSegmentacao;
+
+	iIdCanalSQL = iIdCanal < 0 ? 0 : iIdCanal;
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	iIdTecnologiaSQL = iIdTecnologia < 0 ? 0 : iIdTecnologia;
+
+	iQtIntervaloInicialSQL = iQtIntervaloInicial;
+	iQtIntervaloFinalSQL = iQtIntervaloFinal;
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+
+	strcpy(chrPesquisa, 
+	"SELECT  "
+		"COUNT(*) "					
+	"FROM "
+		"( "  
+			"SELECT /*+ index (A AUXHISTORICOSENHAIE1)  */  "
+				"CDAREAREGISTRO, "
+				"nrLinha, "
+				"COUNT(*) "
+			"FROM  "
+				"vol.AuxHistoricoSenha   A  "
+			"WHERE  "
+				"idTipoHistoricoSenha   = 2 "); //Validacao de senha 
+
+			MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteiraSQL, 0, iIdUFOperadoraSQL, iIdSegmentacaoSQL, iIdGrupoOperadoraSQL, iIdTipoLinhaSQL, iIdCanalSQL, 0, 0, iIdTecnologiaSQL, 0, 0, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+
+
+	strcat (chrPesquisa,
+	" GROUP BY  "
+		"CDAREAREGISTRO, "
+		"nrLinha "
+	"HAVING "
+		"COUNT(*) BETWEEN ");
+	
+		itoa(iQtIntervaloInicialSQL, chrVariavel, 10);
+
+		strcat (chrPesquisa, chrVariavel);
+
+		strcat (chrPesquisa, " AND ");
+
+		itoa(iQtIntervaloFinalSQL, chrVariavel, 10);
+
+		strcat (chrPesquisa, chrVariavel);
+
+		strcat (chrPesquisa, " ) ");
+
+		tuxfw_getlogger()->debug("Pesquisa:[ %s ] \r\n", chrPesquisa);
+	
+
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+
+	EXEC SQL DECLARE LSTTOTALCLIENTE CURSOR FOR qPesquisa;
+			
+	EXEC SQL OPEN LSTTOTALCLIENTE;
+
+	EXEC SQL FETCH LSTTOTALCLIENTE INTO	:lQtTotalClientes;
+
+	
+		this->setQtTotalClientes(lQtTotalClientes);
+			
+	EXEC SQL CLOSE LSTTOTALCLIENTE;
+	
+	
+	return;
+
+	sqlErrorConstrutor:		
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+void CRelacionamento::consultarAcessoIncidenciaLojaDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal, int iQtIntervaloInicial, int iQtIntervaloFinal)
+{
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000];
+	char chrVariavel [30]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	int iIdUFOperadoraSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+	int iIdTipoCarteiraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdCanalSQL=0;
+	int iIdTipoLinhaSQL=0;
+
+	int iQtIntervaloInicialSQL=0;
+	int iQtIntervaloFinalSQL=0;
+	long lQtTotalClientes=0;
+
+	char cNmLoja[256]="";
+	char cNmTerminal[256]="";
+	
+
+	int iIdTecnologiaSQL = 0;
+	int iIdPessoaDeParaSQL = 0;
+	int iIdTerminalSQL = 0;
+    
+    short i_cNmLoja = -1;
+    short i_cNmTerminal = -1;
+    short i_lQtTotalClientes = -1;
+
+    
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	memset(chrPesquisa, 0, sizeof(chrPesquisa));
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+	iIdTipoCarteiraSQL =  iIdTipoCarteira < 0 ? 0 : iIdTipoCarteira;
+	iIdSegmentacaoSQL = iIdSegmentacao < 0 ? 0 : iIdSegmentacao;
+
+	iIdCanalSQL = iIdCanal < 0 ? 0 : iIdCanal;
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	
+	iIdTecnologiaSQL = iIdTecnologia < 0 ? 0 : iIdTecnologia;
+	iIdPessoaDeParaSQL = iIdPessoaDePara < 0 ? 0 : iIdPessoaDePara;
+	iIdTerminalSQL = iIdTerminal < 0 ? 0 : iIdTerminal;
+
+	iQtIntervaloInicialSQL = iQtIntervaloInicial;
+	iQtIntervaloFinalSQL = iQtIntervaloFinal;
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	strcpy(chrPesquisa, 
+	"SELECT  "
+		"nmpessoa, "
+		"nrterminal, "	 	
+		"COUNT(*)    "					
+	"FROM "
+		"( "  
+			"SELECT   /*+ index (A AUXHISTORICOSENHAIE1) */  "
+				"nmPessoa,		 "
+				"nrterminal,     "
+				"CDAREAREGISTRO, "
+				"nrLinha, "
+				"COUNT(*) "
+			"FROM  "
+				"vol.AuxHistoricoSenha   A , "
+				"vol.SitefTerminal b, "
+				"customer.pessoadepara c,   "
+				 "customer.pessoa d  "
+			"WHERE   "
+				"A.idTipoHistoricoSenha   = 2  AND "
+				"a.IDTERMINAL = b.IDTERMINAL AND "
+	  	 		"b.IDPESSOADEPARA = c.IDPESSOADEPARA AND  "
+			 	"c.IDPESSOA = d.IDPESSOA "); //Validacao de senha 
+
+			MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteiraSQL, 0, iIdUFOperadoraSQL, iIdSegmentacaoSQL, iIdGrupoOperadoraSQL, iIdTipoLinhaSQL, iIdCanalSQL, 0, 0, iIdTecnologiaSQL, iIdPessoaDeParaSQL, iIdTerminalSQL, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+
+
+			strcat (chrPesquisa,
+			" GROUP BY  "
+				"CDAREAREGISTRO, "
+				"nrLinha,    "
+				"nrterminal, "
+				"nmpessoa    "
+			"HAVING "
+				"COUNT(*) BETWEEN ");
+
+	
+		itoa(iQtIntervaloInicialSQL, chrVariavel, 10);
+		
+		strcat (chrPesquisa, chrVariavel);
+
+		strcat (chrPesquisa, " AND ");
+
+		itoa(iQtIntervaloFinalSQL, chrVariavel, 10);
+
+		strcat (chrPesquisa, chrVariavel);
+
+		strcat (chrPesquisa, 
+		" ) "
+		"GROUP BY "
+			"nmpessoa,  "
+			"nrterminal	");		 
+
+		tuxfw_getlogger()->debug("Pesquisa:[ %s ]  \r\n", chrPesquisa);
+		printf ("Pesquisa:[ %s ]  \r\n", chrPesquisa);
+
+
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+
+	EXEC SQL DECLARE LSTINCIDENCIALOJA CURSOR FOR qPesquisa;
+			
+	EXEC SQL OPEN LSTINCIDENCIALOJA;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	for( ;; ) {
+
+		EXEC SQL FETCH LSTINCIDENCIALOJA  INTO	
+			:cNmLoja:i_cNmLoja,
+			:cNmTerminal:i_cNmTerminal,
+			:lQtTotalClientes:i_lQtTotalClientes;
+
+
+		oRelacionamento.setNmLoja( CUtil::trim(cNmLoja) );
+		oRelacionamento.setNmTerminal( CUtil::trim(cNmTerminal) );		
+		oRelacionamento.setQtTotalClientes(lQtTotalClientes);
+
+
+		lstRelac.push_back( oRelacionamento );
+
+	}
+			
+	EXEC SQL CLOSE LSTINCIDENCIALOJA;
+	
+	
+	return;
+
+	sqlErrorConstrutor:		
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+
+
+
+void CRelacionamento::consultarServicosEfetuadosAgrupadoDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia)
+{
+	struct sqlca sqlca;
+	
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	char chrVariavel[20]="";
+	long iIdContato;
+
+	char cDtRelacionamento[10+1];
+	char cNmContato[256];
+	int	 iQtVOL;
+	int	 iQtTAV;
+
+	long  iIdContatoParametro=0;
+	char cNmContatoParametro[256];
+
+	int iIdTecnologiaSQL = 0;
+
+    short i_cDtRelacionamento = -1;
+    short i_cNmContato = -1;
+    short i_iQtVOL = -1;
+    short i_iQtTAV = -1;
+
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+	iIdContato = this->getIdContato();
+
+	if (iIdContato < 0)
+		iIdContato = 0;
+
+
+
+
+	tuxfw_getlogger()->information("0.1-Data Inicio:		  %s", cDtRelacionamentoInicio); 
+	tuxfw_getlogger()->information("0.1-Data Final.:		  %s", cDtRelacionamentoFinal); 	
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	strcpy (chrPesquisa, 
+	"SELECT	 	b.dtAbertura, "
+		"		b.nmcontato,  "
+		"		COUNT(DECODE (b.IDCANAL, 15, b.idContato)) AS QTVOL,"
+		"		COUNT(DECODE (b.IDCANAL, 13, b.idContato)) AS QTTAV	"			  					   
+	" FROM ( "
+		"  SELECT /*+ index (A AUXSERVICOSEFETUADOSIE1)  */  "
+		"	  idcanal	 AS idcanal,	"
+		" 	  A.idcontato	 AS idcontato,	"
+		"  	  DECODE (DSCONTATOCANAIS, NULL, REPLACE (SUBSTR(SUBSTR(NMPATH, 6), 1, INSTR(SUBSTR(NMPATH, 6), '/', 1, 2)  -1 ), '/', ' '), DSCONTATOCANAIS) AS nmcontato, "
+		"	  dtabertura AS dtabertura    "					
+		"  FROM   "
+		"	vol.AUXSERVICOSEFETUADOS   A, "			 
+		"	CONTATOADM.CONTATO CONTATO,  "
+		"	CONTATOADM.CONTATOFOLHA CONTATOFOLHA "			 
+		"  WHERE	 ");
+
+	strcat ( chrPesquisa," 	A.dtAbertura BETWEEN TO_DATE('");
+	strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+	strcat ( chrPesquisa, "' || '00:00:00', 'dd/mm/yyyy hh24:mi:ss') ");
+	strcat ( chrPesquisa,"  AND	 TO_DATE('");
+	strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+	strcat ( chrPesquisa, "' || '23:59:59', 'dd/mm/yyyy hh24:mi:ss') "
+		" AND A.IDCONTATO = CONTATO.IDCONTATO AND "
+		" CONTATO.IDCONTATO = CONTATOFOLHA.IDCONTATO ");			
+
+	if (iIdContato){
+		strcat(chrPesquisa," AND A.idcontato = ");
+		sprintf(chrVariavel,"%ld",iIdContato);
+		strcat(chrPesquisa, chrVariavel);
+	}
+
+
+	MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteira, iIdTipoRelacionamento, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdTipoLinha, iIdCanal, iCdAreaRegistro,iNrLinha, iIdTecnologia, 0, 0, 0, 0);
+
+
+	strcat (chrPesquisa,
+			" GROUP BY A.nrlinha,		  "
+				 	 "A.CDAREAREGISTRO, "
+					 "A.dtabertura,	  "
+					 "A.idcontato,      "
+					 "A.idcanal,        "
+					 "DSCONTATOCANAIS, "
+					" NMPATH) b	  "		
+	"GROUP BY    dtabertura, "
+	  	 		 "idcontato, "
+				 "nmcontato  ");
+
+	tuxfw_getlogger()->information("Pesquisa [ %s ]\r\n", chrPesquisa); 	
+	
+
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+
+	EXEC SQL DECLARE LSTSERVICOSEFETUADOSAGR CURSOR FOR qPesquisa;
+
+	EXEC SQL OPEN LSTSERVICOSEFETUADOSAGR;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	for( ;; ) {
+
+		strcpy(cNmContato, "");
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTSERVICOSEFETUADOSAGR INTO 
+			:cDtRelacionamento:i_cDtRelacionamento,
+			:cNmContato:i_cNmContato,
+			:iQtVOL:i_iQtVOL,
+			:iQtTAV:i_iQtTAV;
+			//Localiza a descrição do parametro referente ao idContato.
+		
+			if (strlen(cNmContato)!= 0){
+						
+				oRelacionamento.setDtRelacionamento(cDtRelacionamento);
+				oRelacionamento.setDsOperacao(cNmContato);
+				oRelacionamento.setQtVOL(iQtVOL);
+				oRelacionamento.setQtTAV(iQtTAV);
+				lstRelac.push_back( oRelacionamento );
+
+			}
+		}
+
+	EXEC SQL CLOSE LSTSERVICOSEFETUADOSAGR;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->information("5-sqlErrorConstrutor %d", sqlca.sqlcode); 
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+}
+
+void CRelacionamento::consultarServicosEfetuadosDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	long iIdContato;
+
+
+	char cDtRelacionamento[10+1];
+	char cNmContato[256];
+	int	 iQtVOL;
+	int	 iQtTAV;
+	char chrVariavel[10]="";
+
+	long  iIdContatoParametro=0;
+	char cNmContatoParametro[256];
+    
+    short i_cDtRelacionamento = -1;
+    short i_cNmContato = -1;
+    short i_iQtVOL = -1;
+    short i_iQtTAV = -1;
+
+
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+	iIdContato = this->getIdContato();
+
+	if (iIdContato < 0)
+		iIdContato = 0;
+
+
+	tuxfw_getlogger()->information("0.1-Data Inicio:		  %s", cDtRelacionamentoInicio); 
+	tuxfw_getlogger()->information("0.1-Data Final.:		  %s", cDtRelacionamentoFinal); 
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	strcpy (chrPesquisa, 
+	"SELECT /*+ index (A AUXSERVICOSEFETUADOSIE1)  */ " 
+		   " dtAbertura, "
+		   " DECODE (DSCONTATOCANAIS, NULL, REPLACE (SUBSTR(SUBSTR(NMPATH, 6), 1, INSTR(SUBSTR(NMPATH, 6), '/', 1, 2)  -1 ), '/', ' '), DSCONTATOCANAIS),  "
+		   " COUNT(DECODE (IDCANAL, 15, a.idContato)) AS QTVOL, "
+	 	   " COUNT(DECODE (IDCANAL, 13, a.idContato)) AS QTTAV  "					  					   
+	"FROM  "
+		" VOL.AUXSERVICOSEFETUADOS  A, "
+		" CONTATOADM.CONTATO CONTATO,  "
+		" CONTATOADM.CONTATOFOLHA    "			 
+	"WHERE		");
+
+	strcat ( chrPesquisa, "	A.dtAbertura BETWEEN TO_DATE('");
+	strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+	strcat ( chrPesquisa, "' || '00:00:00', 'dd/mm/yyyy hh24:mi:ss') ");
+	strcat ( chrPesquisa, "  AND	  TO_DATE('");
+	strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+	strcat ( chrPesquisa, "' || '23:59:59', 'dd/mm/yyyy hh24:mi:ss') ");
+	strcat ( chrPesquisa, " AND A.IDCONTATO = CONTATO.IDCONTATO " 
+	" AND CONTATO.IDCONTATO  = CONTATOFOLHA.IDCONTATO ");
+
+	if (iIdContato)
+	{
+		strcat(chrPesquisa, " AND A.idcontato = ");
+		sprintf(chrVariavel,"%ld",iIdContato);
+		strcat(chrPesquisa, chrVariavel);
+	}
+
+
+	MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteira, iIdTipoRelacionamento, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdTipoLinha, iIdCanal, iCdAreaRegistro,iNrLinha, iIdTecnologia, 0, 0, 0, 0);
+
+
+	strcat (chrPesquisa, 
+	"  GROUP BY	A.dtabertura, "
+	  	"       A.idcontato,  "
+		"	DSCONTATOCANAIS,  "
+		"	NMPATH  " ); 
+		
+
+	tuxfw_getlogger()->information("Pesquisa [ %s ]\r\n", chrPesquisa); 	
+	
+
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+
+	EXEC SQL DECLARE LSTSERVICOSEFETUADOS CURSOR FOR qPesquisa;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	EXEC SQL OPEN LSTSERVICOSEFETUADOS;
+
+	for( ;; )
+	{		
+
+		strcpy(cNmContato, "");
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTSERVICOSEFETUADOS INTO 
+			:cDtRelacionamento:i_cDtRelacionamento,
+			:cNmContato:i_cNmContato,
+			:iQtVOL:i_iQtVOL,
+			:iQtTAV:i_iQtTAV;
+
+			oRelacionamento.setDtRelacionamento(cDtRelacionamento);
+			oRelacionamento.setDsOperacao(CUtil::trim(cNmContato));
+			oRelacionamento.setQtVOL(iQtVOL);
+			oRelacionamento.setQtTAV(iQtTAV);
+
+			lstRelac.push_back( oRelacionamento );
+
+	}
+
+
+	EXEC SQL CLOSE LSTSERVICOSEFETUADOS;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->information("sqlErrorConstrutor %d", sqlca.sqlcode); 
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+
+void CRelacionamento::consultarServicosEfetuadosURADB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	long iIdContato;
+
+
+	char cDtRelacionamento[10+1];
+	char cNmContato[256];
+	int	 iQtURA;	
+	char chrVariavel[10]="";
+
+	long  iIdContatoParametro=0;
+	char cNmContatoParametro[256];
+
+    short i_cDtRelacionamento = -1;
+    short i_cNmContato = -1;
+    short i_iQtURA = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal,  this->getDtRelacionamentoFinal());
+	iIdContato = this->getIdContato();
+
+	if (iIdContato < 0)
+		iIdContato = 0;
+
+	tuxfw_getlogger()->information("0.1-Data Inicio:		  %s", cDtRelacionamentoInicio); 
+	tuxfw_getlogger()->information("0.1-Data Final.:		  %s", cDtRelacionamentoFinal); 
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	strcpy (chrPesquisa, 
+	"SELECT /*+ index (A AUXSERVICOSEFETUADOSIE1)  */ " 
+		   " DTABERTURA, "
+		   " DECODE (DSCONTATOCANAIS, NULL, REPLACE (SUBSTR(SUBSTR(NMPATH, 6), 1, INSTR(SUBSTR(NMPATH, 6), '/', 1, 2)  -1 ), '/', ' '), DSCONTATOCANAIS),    "
+		   " COUNT(1) AS QTURA "	 	   
+	"FROM  "
+		"	VOL.AUXSERVICOSEFETUADOS  A, "
+		"	CONTATOADM.CONTATO CONTATO,  "
+		"	CONTATOADM.CONTATOFOLHA CONTATOFOLHA "
+	"WHERE		");
+
+	strcat ( chrPesquisa," 	A.dtAbertura BETWEEN TO_DATE('");
+	strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+	strcat ( chrPesquisa, "' || '00:00:00', 'dd/mm/yyyy hh24:mi:ss') ");
+	strcat ( chrPesquisa,"  AND	  TO_DATE('");
+	strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+	strcat ( chrPesquisa, "' || '23:59:59', 'dd/mm/yyyy hh24:mi:ss') ");
+
+	if (iIdContato)
+	{
+		strcat(chrPesquisa," AND A.idcontato = ");
+		sprintf(chrVariavel,"%ld",iIdContato);
+		strcat(chrPesquisa, chrVariavel);
+	}
+
+
+	strcat (chrPesquisa, " AND  A.IDCONTATO = CONTATO.IDCONTATO AND "
+			     " CONTATO.IDCONTATO = CONTATOFOLHA.IDCONTATO  ");
+
+	MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteira, iIdTipoRelacionamento, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdTipoLinha, 9, iCdAreaRegistro,iNrLinha, iIdTecnologia, 0, 0, 0, 0);
+
+
+	strcat (chrPesquisa, 
+	"  GROUP BY	A.dtabertura, "
+	  		" A.idcontato,  "
+			" DSCONTATOCANAIS, "
+			" NMPATH "); 
+		
+
+	tuxfw_getlogger()->information("Pesquisa [ %s ]\r\n", chrPesquisa); 	
+	
+
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+
+	EXEC SQL DECLARE LSTSERVICOSEFETUADOSURA CURSOR FOR qPesquisa;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	EXEC SQL OPEN LSTSERVICOSEFETUADOSURA;
+
+	for( ;; ) {		
+
+		strcpy(cNmContato, "");
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTSERVICOSEFETUADOSURA INTO 
+			:cDtRelacionamento:i_cDtRelacionamento,
+			:cNmContato:i_cNmContato,
+			:iQtURA:i_iQtURA;
+
+			oRelacionamento.setDtRelacionamento(cDtRelacionamento);
+			oRelacionamento.setDsOperacao(CUtil::trim(cNmContato));
+			oRelacionamento.setQtURA(iQtURA);
+			
+
+			lstRelac.push_back( oRelacionamento );
+
+	}
+
+
+
+	EXEC SQL CLOSE LSTSERVICOSEFETUADOSURA;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->information("sqlErrorConstrutor %d", sqlca.sqlcode); 
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+void CRelacionamento::consultarServicosEfetuadosAgrupadoURADB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia)
+{
+	struct sqlca sqlca;
+	
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	char chrVariavel[20]="";
+	long iIdContato;
+
+	char cDtRelacionamento[10+1];
+	char cNmContato[256];
+	int	 iQtURA;
+	
+	long  iIdContatoParametro=0;
+	char cNmContatoParametro[256];
+
+	int iIdTecnologiaSQL = 0;
+
+    short i_cDtRelacionamento = -1;
+    short i_cNmContato = -1;
+    short i_iQtURA = -1;
+
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+	iIdContato = this->getIdContato();
+
+	if (iIdContato < 0)
+		iIdContato = 0;
+
+	tuxfw_getlogger()->information("0.1-Data Inicio:		  %s", cDtRelacionamentoInicio); 
+	tuxfw_getlogger()->information("0.1-Data Final.:		  %s", cDtRelacionamentoFinal); 	
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	strcpy (chrPesquisa, 
+	"SELECT	 	b.dtAbertura, "
+		"	b.nmcontato,  "
+		"	COUNT(1) AS QTURA "		
+	" FROM ( "
+		"  SELECT /*+ index (A AUXSERVICOSEFETUADOSIE1)  */  "
+		"	 idcanal	 AS idcanal,	  "
+		" 	 a.idcontato	 AS idcontato,	  "
+		"  	 DECODE (DSCONTATOCANAIS, NULL, REPLACE (SUBSTR(SUBSTR(NMPATH, 6), 1, INSTR(SUBSTR(NMPATH, 6), '/', 1, 2)  -1 ), '/', ' '), DSCONTATOCANAIS) AS nmcontato,  "
+		"	 dtabertura AS dtabertura    "					
+		"  FROM   "
+		"	VOL.AUXSERVICOSEFETUADOS  A,    "	
+		"	CONTATOADM.CONTATO CONTATO,     " 
+		"	CONTATOADM.CONTATOFOLHA CONTATOFOLHA  "			 
+		"  WHERE	 ");
+
+	strcat ( chrPesquisa," 	A.dtAbertura BETWEEN TO_DATE('");
+	strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+	strcat ( chrPesquisa, "' || '00:00:00', 'dd/mm/yyyy hh24:mi:ss') ");
+	strcat ( chrPesquisa,"  AND	 TO_DATE('");
+	strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+	strcat ( chrPesquisa, "' || '23:59:59', 'dd/mm/yyyy hh24:mi:ss') ");
+	strcat ( chrPesquisa, "	AND CONTATO.IDCONTATO = A.IDCONTATO   "
+			      "	AND CONTATO.IDCONTATO = CONTATOFOLHA.IDCONTATO  ");
+	if (iIdContato)
+	{
+		strcat(chrPesquisa," AND A.idcontato = ");
+		sprintf(chrVariavel,"%ld",iIdContato);
+		strcat(chrPesquisa, chrVariavel);
+	}
+
+	MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteira, iIdTipoRelacionamento, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdTipoLinha, 9, iCdAreaRegistro,iNrLinha, iIdTecnologia, 0, 0, 0, 0);
+
+
+	strcat (chrPesquisa,
+			" GROUP BY A.nrlinha,		    "
+				 	 "A.CDAREAREGISTRO, "
+					 "A.dtabertura,	    "
+					 "A.idcontato,      "
+					 "A.idcanal,        "
+					 "DSCONTATOCANAIS,  "
+					 "NMPATH) b    "		
+	"GROUP BY    dtabertura, "
+	  	     "idcontato, "
+		     "nmcontato  ");
+
+	tuxfw_getlogger()->information("Pesquisa [ %s ]\r\n", chrPesquisa); 	
+	
+
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+
+	EXEC SQL DECLARE LSTSERVICOSEFETUADOSAGRURA CURSOR FOR qPesquisa;
+
+	EXEC SQL OPEN LSTSERVICOSEFETUADOSAGRURA;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	for( ;; ) {
+
+		strcpy(cNmContato, "");
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTSERVICOSEFETUADOSAGRURA INTO 
+			:cDtRelacionamento:i_cDtRelacionamento,
+			:cNmContato:i_cNmContato,
+			:iQtURA:i_iQtURA;
+			//Localiza a descrição do parametro referente ao idContato.
+		
+			if (strlen(cNmContato)!= 0){
+						
+				oRelacionamento.setDtRelacionamento(cDtRelacionamento);
+				oRelacionamento.setDsOperacao(CUtil::trim(cNmContato));
+				oRelacionamento.setQtURA(iQtURA);				
+				lstRelac.push_back( oRelacionamento );
+
+			}
+		}
+
+	EXEC SQL CLOSE LSTSERVICOSEFETUADOSAGRURA;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->information("5-sqlErrorConstrutor %d", sqlca.sqlcode); 
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+}
+
+
+
+/******************GSM**********/
+
+void CRelacionamento::consultarServicosEfetuadosLojaAgrupadoDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia,  int iIdGrupoOperadoraTerminal, int iIdUFOperadoraTerminal, int iIdPessoaDePara, int iIdTerminal)
+{
+	struct sqlca sqlca;
+	
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	char chrVariavel[20]="";
+	long iIdContato;	
+	char cDtRelacionamento[10+1];
+	char cNmContato[256];
+	int	 iQtVOL;
+	int	 iQtTAV;
+
+	long  iIdContatoParametro=0;
+	char cNmContatoParametro[256];
+
+	int iIdTecnologiaSQL = 0;
+
+	char cNmTerminal[256]="";
+	char cNmLoja[256]="";
+
+    short i_cDtRelacionamento = -1;
+    short i_cNmContato = -1;
+    short i_cNmLoja = -1;
+    short i_cNmTerminal = -1;
+    short i_iQtVOL = -1;
+    short i_iQtTAV = -1;
+
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+	iIdContato = this->getIdContato();
+
+	if (iIdContato < 0)
+		iIdContato = 0;
+
+
+	tuxfw_getlogger()->information("0.1-Data Inicio:		  %s", cDtRelacionamentoInicio); 
+	tuxfw_getlogger()->information("0.1-Data Final.:		  %s", cDtRelacionamentoFinal); 	
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	strcpy (chrPesquisa, 
+	"SELECT	     "
+		"		b.dtAbertura, "
+		"		b.nmcontato,  "
+		"		NVL(nmPessoa,' ') ,    "		
+		"		NVL(nrTerminal, ' '),  "
+		"		COUNT(DECODE (b.IDCANAL, 15, b.idContato)) AS QTVOL,"
+		"		COUNT(DECODE (b.IDCANAL, 13, b.idContato)) AS QTTAV	"			  					   
+	" FROM ( "
+		"  SELECT  /*+ index (A AUXSERVICOSEFETUADOSIE1)  */  "
+		"		  idcanal	    AS idcanal,		"
+		" 		  a.idcontato	    AS idcontato,	"
+		"  	          DECODE (DSCONTATOCANAIS, NULL, REPLACE (SUBSTR(SUBSTR(NMPATH, 6), 1, INSTR(SUBSTR(NMPATH, 6), '/', 1, 2)  -1 ), '/', ' '), DSCONTATOCANAIS) AS nmcontato,  "
+		"		  d.NMPESSOA    AS nmPessoa,	"
+		"		  b.NRTERMINAL  AS nrTERMINAL,	" 
+		"		  dtabertura	AS dtabertura   "					
+		"  FROM  "
+				" vol.AUXSERVICOSEFETUADOS	A, "
+				" vol.SitefTerminal		b, "
+				" customer.pessoadepara		c, "
+				" customer.pessoa		d,  "
+				" CONTATOADM.CONTATO CONTATO,       "
+				" CONTATOADM.CONTATOFOLHA CONTATOFOLHA " 		
+		"  WHERE	"
+				" b.IDPESSOADEPARA = c.IDPESSOADEPARA(+)  AND "
+				" c.IDPESSOA = d.IDPESSOA(+) AND "	      				
+				" a.IDTERMINAL = b.IDTERMINAL(+) AND  "
+				" A.IDCONTATO = CONTATO.IDCONTATO AND "
+				" CONTATOFOLHA.IDCONTATO = CONTATO.IDCONTATO AND ");
+
+			strcat ( chrPesquisa," 	A.dtAbertura BETWEEN TO_DATE('");
+			strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+			strcat ( chrPesquisa, "' || '00:00:00', 'dd/mm/yyyy hh24:mi:ss') ");
+			strcat ( chrPesquisa,"  AND	  TO_DATE('");
+			strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+			strcat ( chrPesquisa, "' || '23:59:59', 'dd/mm/yyyy hh24:mi:ss') ");
+
+	if (iIdContato > 0)
+	{
+		strcat(chrPesquisa," AND A.idcontato = ");
+		sprintf(chrVariavel,"%ld",iIdContato);
+		strcat(chrPesquisa, chrVariavel);
+	}
+
+	if (iIdUFOperadoraTerminal > 0)
+	{
+	
+		strcat (chrPesquisa, " AND B.IDUFOPERADORA = ");
+		sprintf(chrVariavel,"%ld",iIdUFOperadoraTerminal);
+		strcat (chrPesquisa, chrVariavel);	
+	}
+	else if (iIdGrupoOperadoraTerminal > 0)
+	{
+		strcat (chrPesquisa,
+		" AND B.IDUFOPERADORA IN ( " 
+					"SELECT "
+						"IDUFOPERADORA  "
+					"FROM	"
+						"CUSTOMER.OPERADORA			OPERADORA,   "
+						"CUSTOMER.UFOPERADORA			UFOPERADORA  "
+					"WHERE "
+						"OPERADORA.IDPESSOADEPARAOPERADORA = UFOPERADORA.IDPESSOADEPARAOPERADORA  AND " 
+						"OPERADORA.IDGRUPOOPERADORA = ");								
+				
+						sprintf(chrVariavel,"%ld",iIdGrupoOperadoraTerminal);
+						strcat (chrPesquisa, chrVariavel);		
+						strcat (chrPesquisa,  
+					") ");
+		
+	}	
+
+	MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteira, iIdTipoRelacionamento, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdTipoLinha, iIdCanal, iCdAreaRegistro, iNrLinha,  iIdTecnologia, iIdPessoaDePara, iIdTerminal, 0, 0);
+
+
+	strcat (chrPesquisa,
+			" GROUP BY  "
+					 "nrlinha,	     "
+				 	 "A.CDAREAREGISTRO,  "
+					 "A.dtabertura,	   "
+					 "A.idcontato,     "
+					 "A.idcanal,       "
+					 "dscontatocanais, "
+					 "nmpath,   "
+					 "nmPessoa, "		  
+					 "nrTerminal) b	 "		
+	"GROUP BY    "
+				 "dtabertura, "
+	  	 		 "idcontato,  "
+				 "nmcontato,  "
+				 "nmPessoa,   "
+				 "nrTerminal  ");
+
+	tuxfw_getlogger()->information("Pesquisa [ %s ]\r\n", chrPesquisa); 	
+	
+
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+
+	EXEC SQL DECLARE LSTSERVICOSEFETUADOSLOJAAGR CURSOR FOR qPesquisa;
+
+	EXEC SQL OPEN LSTSERVICOSEFETUADOSLOJAAGR;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+	for( ;; ) {
+
+		strcpy(cNmContato, "");
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTSERVICOSEFETUADOSLOJAAGR INTO 
+			:cDtRelacionamento:i_cDtRelacionamento,
+			:cNmContato:i_cNmContato,
+			:cNmLoja:i_cNmLoja,
+			:cNmTerminal:i_cNmTerminal,
+			:iQtVOL:i_iQtVOL,
+			:iQtTAV:i_iQtTAV;
+			//Localiza a descrição do parametro referente ao idContato.
+		
+			if (strlen(cNmContato)!= 0){
+						
+				oRelacionamento.setDtRelacionamento(cDtRelacionamento);
+				oRelacionamento.setDsOperacao(cNmContato);
+				oRelacionamento.setNmLoja( CUtil::trim(cNmLoja) );
+				oRelacionamento.setNmTerminal( CUtil::trim(cNmTerminal) );
+				oRelacionamento.setQtVOL(iQtVOL);
+				oRelacionamento.setQtTAV(iQtTAV);
+				lstRelac.push_back( oRelacionamento );
+
+			}
+		}
+
+	EXEC SQL CLOSE LSTSERVICOSEFETUADOSLOJAAGR;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->information("5-sqlErrorConstrutor %d", sqlca.sqlcode); 
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+}
+
+void CRelacionamento::consultarServicosEfetuadosLojaDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia, int iIdGrupoOperadoraTerminal, int iIdUFOperadoraTerminal, int iIdPessoaDePara, int iIdTerminal){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	long iIdContato;
+
+
+	char cDtRelacionamento[10+1];
+	char cNmContato[256];
+	int	 iQtVOL;
+	int	 iQtTAV;
+	char chrVariavel[10]="";
+
+	long  iIdContatoParametro=0;
+	char cNmContatoParametro[256];
+
+	char cNmTerminal[256]="";
+	char cNmLoja[256]="";
+
+    short i_cDtRelacionamento = -1;
+    short i_cNmContato = -1;
+    short i_cNmLoja = -1;
+    short i_cNmTerminal = -1;
+    short i_iQtVOL = -1;
+    short i_iQtTAV = -1;
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+	iIdContato = this->getIdContato();
+
+	if (iIdContato < 0)
+		iIdContato = 0;
+
+
+	tuxfw_getlogger()->information("0.1-Data Inicio:		  %s", cDtRelacionamentoInicio); 
+	tuxfw_getlogger()->information("0.1-Data Final.:		  %s", cDtRelacionamentoFinal); 
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	strcpy (chrPesquisa, 
+	"SELECT   /*+ index (A AUXSERVICOSEFETUADOSIE1)  */   "
+			" dtAbertura,  "
+			" DECODE (DSCONTATOCANAIS, NULL, REPLACE (SUBSTR(SUBSTR(NMPATH, 6), 1, INSTR(SUBSTR(NMPATH, 6), '/', 1, 2)  -1 ), '/', ' '), DSCONTATOCANAIS) AS nmcontato, "
+			" NVL(nmPessoa, ' '),   "
+			" NVL(nrTerminal, ' '), " 
+			" COUNT(DECODE (IDCANAL, 15, a.idContato)) AS QTVOL, "
+	 		" COUNT(DECODE (IDCANAL, 13, a.idContato)) AS QTTAV  "					  					   
+	"FROM   "
+		"	vol.auxServicosEfetuados  A, "
+		"	vol.SitefTerminal	  b, "
+		"	customer.pessoadepara     c, "
+		"	customer.pessoa		  d, "		
+		"	CONTATOADM.CONTATO CONTATO,  "
+		"	CONTATOADM.CONTATOFOLHA CONTATOFOLHA "			 		
+ 	"WHERE		"
+		"b.IDPESSOADEPARA   = c.IDPESSOADEPARA(+)	AND "
+		"c.IDPESSOA	    = d.IDPESSOA(+)		AND "	      				
+		"a.IDTERMINAL	    = b.IDTERMINAL(+)		AND "
+		"CONTATO.IDCONTATO  = A.IDCONTATO		AND "
+		"CONTATO.IDCONTATO   = CONTATOFOLHA.IDCONTATO   AND "
+		);
+
+	strcat ( chrPesquisa," 	A.dtAbertura BETWEEN TO_DATE('");
+	strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+	strcat ( chrPesquisa, "' || '00:00:00', 'dd/mm/yyyy hh24:mi:ss') ");
+	strcat ( chrPesquisa,"  AND	 TO_DATE('");
+	strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+	strcat ( chrPesquisa, "' || '23:59:59', 'dd/mm/yyyy hh24:mi:ss') ");
+
+	if (iIdContato > 0)
+	{
+		strcat(chrPesquisa," AND A.idcontato = ");
+		sprintf(chrVariavel,"%ld",iIdContato);
+		strcat(chrPesquisa, chrVariavel);
+	}
+
+	
+	if (iIdUFOperadoraTerminal > 0)
+	{
+	
+		strcat (chrPesquisa, " AND B.IDUFOPERADORA = ");
+		sprintf(chrVariavel,"%ld",iIdUFOperadoraTerminal);
+		strcat (chrPesquisa, chrVariavel);
+
+	
+	}
+	else if (iIdGrupoOperadoraTerminal > 0)
+	{
+		strcat (chrPesquisa,
+		" AND B.IDUFOPERADORA IN ( " 
+			"SELECT "
+				"IDUFOPERADORA  "
+			"FROM	"
+				"CUSTOMER.OPERADORA				OPERADORA,   "
+				"CUSTOMER.UFOPERADORA           UFOPERADORA  "
+			"WHERE "
+				"OPERADORA.IDPESSOADEPARAOPERADORA = UFOPERADORA.IDPESSOADEPARAOPERADORA  AND " 
+				"OPERADORA.IDGRUPOOPERADORA = ");								
+				
+				sprintf(chrVariavel,"%ld",iIdGrupoOperadoraTerminal);
+				strcat (chrPesquisa, chrVariavel);		
+				strcat (chrPesquisa,  
+			") ");		
+	}	
+
+
+	MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteira, iIdTipoRelacionamento, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdTipoLinha, iIdCanal, iCdAreaRegistro,iNrLinha, iIdTecnologia, iIdPessoaDePara, iIdTerminal, 0, 0);
+		
+	strcat (chrPesquisa, 
+	"  GROUP BY	A.dtabertura, "
+	  		" A.idcontato,  "
+			" DSCONTATOCANAIS, "
+			" NMPATH,   "
+			" nmPessoa,   "
+			" nrTerminal  "); 
+		
+
+	tuxfw_getlogger()->information("Pesquisa [ %s ]\r\n", chrPesquisa); 	
+	
+	printf("Pesquisa [ %s ]\r\n", chrPesquisa); 
+
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+
+	EXEC SQL DECLARE LSTSERVICOSEFETUADOSLOJA CURSOR FOR qPesquisa;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	EXEC SQL OPEN LSTSERVICOSEFETUADOSLOJA;
+
+	for( ;; ) {		
+
+		strcpy(cNmContato, "");
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTSERVICOSEFETUADOSLOJA INTO 
+			:cDtRelacionamento:i_cDtRelacionamento,
+			:cNmContato:i_cNmContato,
+			:cNmLoja:i_cNmLoja,
+			:cNmTerminal:i_cNmTerminal,
+			:iQtVOL:i_iQtVOL,
+			:iQtTAV:i_iQtTAV;
+
+			oRelacionamento.setDtRelacionamento(cDtRelacionamento);
+			oRelacionamento.setDsOperacao(cNmContato);
+			oRelacionamento.setNmLoja( CUtil::trim(cNmLoja) );
+			oRelacionamento.setNmTerminal( CUtil::trim(cNmTerminal) );		
+			oRelacionamento.setQtVOL(iQtVOL);
+			oRelacionamento.setQtTAV(iQtTAV);
+
+			lstRelac.push_back( oRelacionamento );
+
+	}
+
+
+
+	EXEC SQL CLOSE LSTSERVICOSEFETUADOSLOJA;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->information("sqlErrorConstrutor %d", sqlca.sqlcode); 
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+void CRelacionamento::consultarUltimosRelacionamentosDB(long idCliente, list < CRelacionamento > & lstRelac)
+{
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+ 	long  iIdCliente;
+	int iIdCanal;
+	char cDataRegistro[ 9+1 ];
+	char cHoraRegistro[ 7+1 ];
+	char cDtRegistro[ 19+1 ];
+	char cDsTipoHistoricoSenha[ 512 ];
+	char cNmCanal[ 255 ];
+	int  iQtdRelac;
+	int  iCdAreaRegistro;
+	int  iNrLinha;
+    short i_cDsTipoHistoricoSenha = -1;
+    short i_cDtRegistro = -1;
+    short i_cNmCanal = -1;
+    short i_iIdCanal = -1;
+	EXEC SQL END DECLARE SECTION;
+	
+	// valores das chaves da consulta SQL
+
+	memset(&cDtRegistro,			' ', sizeof(cDtRegistro));
+	memset(&cDsTipoHistoricoSenha,	' ', sizeof(cDsTipoHistoricoSenha));
+	memset(&cNmCanal,				' ', sizeof(cNmCanal));
+
+
+    iIdCliente = idCliente;
+    iQtdRelac = this->getQtdRelac();
+
+	iCdAreaRegistro = this->getCdAreaRegistro();
+	iNrLinha = this->getNrLinha();
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	// marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+	EXEC SQL DECLARE LSTRELAC CURSOR FOR
+
+		SELECT *
+		FROM
+			(SELECT
+				HISTORICO, 
+				to_char(DATAREGISTRO, 'dd/mm/yyyy hh24:mi:ss'), 
+				DSPROCEDENCIA, 
+				IDPROCEDENCIA
+			FROM
+				contatoADM.ContatoFolhaV01
+			WHERE
+	            IdPessoa = :iIdCliente
+			AND
+				cdAreaRegistro = :iCdAreaRegistro
+			AND
+				nrLinha = :iNrLinha
+			ORDER BY DATAREGISTRO
+			DESC )
+		WHERE
+			RowNum <= :iQtdRelac;
+	
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL OPEN LSTRELAC;
+
+	for( ;; ) {
+		// varre todos os registros para criar a lista com os Relacionamentos
+
+		EXEC SQL FETCH LSTRELAC INTO
+			  :cDsTipoHistoricoSenha:i_cDsTipoHistoricoSenha
+			, :cDtRegistro:i_cDtRegistro
+			, :cNmCanal:i_cNmCanal
+			, :iIdCanal:i_iIdCanal ;
+
+			memset(cDataRegistro,			' ', sizeof(cDataRegistro));
+			memset(cHoraRegistro,			' ', sizeof(cHoraRegistro));
+
+			sprintf(cDataRegistro, "%10.10s", &cDtRegistro[0]);
+			this->setDtRelacionamento(cDataRegistro);
+
+			sprintf(cHoraRegistro, "%8.8s", &cDtRegistro[11]);
+			this->setHrRelacionamento(cHoraRegistro);
+
+			this->setDsOperacao(CUtil::trim(cDsTipoHistoricoSenha));
+
+			this->setDsCanal(CUtil::trim(cNmCanal));
+
+			this->setIdCanal(iIdCanal);
+
+				lstRelac.push_back( *this );
+		}
+
+	EXEC SQL CLOSE LSTRELAC;
+
+
+	return;
+
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+
+
+void CRelacionamento::consultarUltimosRelacionamentosTelaInicialDB(long idCliente, list < CRelacionamento > & lstRelac)
+{
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+ 	long  iIdCliente;
+	int iIdCanal;
+	char cDataRegistro[ 9+1 ];
+	char cHoraRegistro[ 7+1 ];
+	char cDtRegistro[ 19+1 ];	
+	char cNmCanal[ 255 ];
+	int  iQtdRelac;
+	int  iCdAreaRegistro;
+	int  iNrLinha;
+    short i_cDtRegistro = -1;
+    short i_cNmCanal = -1;
+    short i_iIdCanal = -1;
+	EXEC SQL END DECLARE SECTION;
+	
+	// valores das chaves da consulta SQL
+
+	memset(&cDtRegistro,			' ', sizeof(cDtRegistro));	
+	memset(&cNmCanal,				' ', sizeof(cNmCanal));
+
+
+    iIdCliente = idCliente;
+    iQtdRelac = this->getQtdRelac();
+	
+	iCdAreaRegistro = this->getCdAreaRegistro();
+	iNrLinha = this->getNrLinha();
+
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	// marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+	EXEC SQL DECLARE LSTRELACTINICIAL CURSOR FOR
+    SELECT       
+        TO_CHAR(dtRegistroHistorico, 'dd/mm/yyyy hh24:mi:ss'),  
+        DECODE (idcanal, 15, 'Meu Vivo', 'Terminal de Auto-Atendimento') AS nmCanal,         
+        idcanal
+    from
+    (
+        SELECT  
+           HSEN.DTREGISTROHISTORICO ,
+           HSEN.IDCANAL,
+           HSEN.IDTIPOHISTORICOSENHA
+        FROM     APOIO.AREAREGISTRO AR,
+                 LINHA.LINHABASE LB,
+                 linha.linhatelefonica lt,
+                 customer.pessoadepara pdp,
+                 CUSTOMER.SENHA SEN,
+                 CUSTOMER.PESSOALINHA PL,
+                 CUSTOMER.HISTORICOSENHA HSEN
+           WHERE LB.IDAREAREGISTRO = AR.IDAREAREGISTRO
+           and   lt.IDLINHABASE=lb.IDLINHABASE
+           and   lt.IDLINHATELEFONICA=pl.IDLINHATELEFONICA
+           and   pl.IDPESSOADEPARA=pdp.idpessoadepara
+           and   pdp.IDPESSOA=sen.IDPESSOA
+           and   pl.IDTIPORELACIONAMENTO=2
+           AND (HSEN.IDSENHA = SEN.IDSENHA)
+           AND (HSEN.IDTIPOHISTORICOSENHA = 2)
+           AND  HSEN.idcanal    IN( 13, 15 )
+           AND (AR.CDAREAREGISTRO = :iCdAreaRegistro)
+           AND (LB.NRLINHA = :iNrLinha )
+           ORDER BY DTREGISTROHISTORICO DESC
+    )
+    WHERE
+        ROWNUM <= :iQtdRelac;
+
+
+
+	/*-------------------------------------------------------------------------------------------*\
+    *  Melhoria na performance de consulta
+    *  12/2011 - Marcelo Nunes
+    *
+   SELECT		
+		TO_CHAR(dtRegistroHistorico, 'dd/mm/yyyy hh24:mi:ss'),  
+	    DECODE (idcanal, 15, 'Meu Vivo', 'Terminal de Auto-Atendimento')	AS nmCanal, 		
+		idcanal
+	FROM 
+	(	
+		SELECT DISTINCT 
+		   HSEN.DTREGISTROHISTORICO,
+		   HSEN.IDCANAL,
+		   HSEN.IDTIPOHISTORICOSENHA
+		FROM APOIO.AREAREGISTRO AR,
+				 LINHA.LINHABASE LB,
+				 LINHA.LINHATELEFONICA LT,
+				 CUSTOMER.SENHA SEN,
+				 CUSTOMER.PESSOALINHA PL,
+				 CUSTOMER.HISTORICOSENHA HSEN,
+				 CUSTOMER.PESSOADEPARA PDP
+		   WHERE     (LB.IDAREAREGISTRO = AR.IDAREAREGISTRO)
+				 AND (LT.IDLINHABASE = LB.IDLINHABASE)
+				 AND (PL.IDLINHATELEFONICA = LT.IDLINHATELEFONICA)
+				 AND (HSEN.IDSENHA = SEN.IDSENHA)
+				 AND (PL.IDPESSOADEPARA = PDP.IDPESSOADEPARA)
+				 AND (PDP.IDPESSOA = SEN.IDPESSOA)
+				 AND (HSEN.IDTIPOHISTORICOSENHA = 2)
+				 AND  HSEN.idcanal	IN( 13, 15 )
+				 AND (AR.CDAREAREGISTRO = :iCdAreaRegistro)
+				 AND (LB.NRLINHA = :iNrLinha )
+		ORDER BY HSEN.DTREGISTROHISTORICO DESC
+	)
+	WHERE
+		ROWNUM <= :iQtdRelac;
+   *
+   *----------------------------------------------------------------------*/
+
+	/*
+	SELECT		
+		TO_CHAR(dtRegistroHistorico, 'dd/mm/yyyy hh24:mi:ss'),  
+	    DECODE (idcanal, 15, 'Meu Vivo', 'Terminal de Auto-Atendimento')	AS nmCanal, 		
+		idcanal
+	FROM (	
+		SELECT 
+			hs.dtRegistroHistorico,
+			HS.IDCANAL,
+			hs.idtipohistoricosenha					
+		FROM 
+			linha.LinhaBase				 lb,
+			linha.LinhaTelefonica 		 lt,
+   			apoio.AreaRegistro	 		 ar,
+   			customer.PessoaLinha  		 pl,
+			customer.HistoricoSenha		 hs 			 		
+		WHERE 
+			lb.NRLINHA					 = :iNrLinha
+			AND	lb.idAreaRegistro		 = ar.idAreaRegistro
+			AND ar.CDAREAREGISTRO		 = :iCdAreaRegistro
+			AND lt.idLinhabase			 = lb.idLinhaBase
+			AND	pl.idLinhaTelefonica	 = lt.idLinhaTelefonica 
+			AND hs.idPessoaLinha		 = pl.idPessoaLinha 
+			AND hs.idcanal				 IN(13, 15)
+			AND hs.IDTIPOHISTORICOSENHA	 = 2
+		ORDER BY DTREGISTROHISTORICO
+		DESC)		
+	WHERE
+		ROWNUM <= :iQtdRelac;
+	*/
+
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL OPEN LSTRELACTINICIAL;
+
+	for( ;; ) {
+		// varre todos os registros para criar a lista com os Relacionamentos
+
+		EXEC SQL FETCH LSTRELACTINICIAL INTO			
+			  :cDtRegistro:i_cDtRegistro
+			, :cNmCanal:i_cNmCanal
+			, :iIdCanal:i_iIdCanal ;
+
+			memset(cDataRegistro,			' ', sizeof(cDataRegistro));
+			memset(cHoraRegistro,			' ', sizeof(cHoraRegistro));
+
+			
+
+			sprintf(cDataRegistro, "%10.10s", &cDtRegistro[0]);
+			this->setDtRelacionamento(cDataRegistro);
+
+			sprintf(cHoraRegistro, "%8.8s", &cDtRegistro[11]);
+			this->setHrRelacionamento(cHoraRegistro);			
+
+			this->setDsCanal(CUtil::trim(cNmCanal));
+
+			this->setIdCanal(iIdCanal);
+
+			this->setDsOperacao("Validação de senha");
+
+			lstRelac.push_back( *this );
+		}
+
+	EXEC SQL CLOSE LSTRELACTINICIAL;
+
+
+	return;
+
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+void CRelacionamento::consultarUltimosRelacionamentosCanalDB(long idCliente, list < CRelacionamento > & lstRelac){
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+ 	long  iIdCliente;
+	int iIdCanal;
+	char cDataRegistro[ 9+1 ];
+	char cHoraRegistro[ 7+1 ];
+	char cDtRegistro[ 19+1 ];
+	char cDsTipoHistoricoSenha[ 512 ];
+	char cNmCanal[ 255 ];
+	int  iQtdRelac;	 	
+    short i_cDsTipoHistoricoSenha = -1;
+    short i_cDtRegistro = -1;
+    short i_cNmCanal = -1;
+    short i_iIdCanal = -1;
+	EXEC SQL END DECLARE SECTION;
+		
+	// valores das chaves da consulta SQL
+
+	memset(&cDtRegistro,			' ', sizeof(cDtRegistro));
+	memset(&cDsTipoHistoricoSenha,	' ', sizeof(cDsTipoHistoricoSenha));
+	memset(&cNmCanal,				' ', sizeof(cNmCanal));
+
+    iIdCliente = idCliente;
+    iQtdRelac = this->getQtdRelac();
+	iIdCanal = this->getIdCanal();
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	// marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+
+	EXEC SQL DECLARE LSTRELACCANAL CURSOR FOR
+
+		SELECT *
+		FROM
+			(SELECT
+				HISTORICO, 
+				to_char(DATAREGISTRO, 'dd/mm/yyyy hh24:mi:ss'), 
+				DSPROCEDENCIA, 
+				IDPROCEDENCIA
+			FROM
+				contatoADM.ContatoFolhaV01
+			WHERE
+				IdPessoa = :iIdCliente
+			AND IDPROCEDENCIA = :iIdCanal
+			AND IDTIPOHISTORICO = 2
+			ORDER BY 
+				DATAREGISTRO
+			DESC)
+		WHERE
+			RowNum <= :iQtdRelac;
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL OPEN LSTRELACCANAL;
+
+	for( ;; ) {
+		// varre todos os registros para criar a lista com os Relacionamentos
+
+		EXEC SQL FETCH LSTRELACCANAL INTO
+			:cDsTipoHistoricoSenha:i_cDsTipoHistoricoSenha
+			, :cDtRegistro:i_cDtRegistro
+			, :cNmCanal:i_cNmCanal
+			, :iIdCanal:i_iIdCanal ;
+
+			memset(cDataRegistro,			' ', sizeof(cDataRegistro));
+			memset(cHoraRegistro,			' ', sizeof(cHoraRegistro));
+
+			sprintf(cDataRegistro, "%10.10s", &cDtRegistro[0]);
+			this->setDtRelacionamento(cDataRegistro);
+
+			sprintf(cHoraRegistro, "%8.8s", &cDtRegistro[11]);
+			this->setHrRelacionamento(cHoraRegistro);
+
+			this->setDsOperacao(CUtil::trim(cDsTipoHistoricoSenha));
+
+			this->setDsCanal(CUtil::trim(cNmCanal));
+
+			this->setIdCanal(iIdCanal);
+
+				lstRelac.push_back( *this );
+		}
+
+	EXEC SQL CLOSE LSTRELACCANAL;
+
+	return;
+
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+void CRelacionamento::consultarRelacionamentosPeriodoDataDB(long idCliente, list < CRelacionamento > & lstRelac){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	long  iIdCliente;
+	int iIdCanal;
+	char cDataRegistro[ 8+1 ];
+	char cHoraRegistro[ 8+1 ];
+	char cDtRegistro[ 19+1 ];
+	char cDsTipoHistoricoSenha[ 512 ];
+	char cNmCanal[ 255 ];
+	char cDataInicioPesq[19+1];
+	char cDataFimPesq[19+1]; 	
+	int  iCdAreaRegistro;
+	int  iNrLinha;
+    short i_cDsTipoHistoricoSenha = -1;
+    short i_cDtRegistro = -1;
+    short i_cNmCanal = -1;
+    short i_iIdCanal = -1;
+	EXEC SQL END DECLARE SECTION;
+		
+	// valores das chaves da consulta SQL
+
+	memset(&cDtRegistro,				' ', sizeof(cDtRegistro));
+	memset(&cDsTipoHistoricoSenha,	' ', sizeof(cDsTipoHistoricoSenha));
+	memset(&cNmCanal,				' ', sizeof(cNmCanal));
+
+	iCdAreaRegistro = this->getCdAreaRegistro();
+	iNrLinha = this->getNrLinha();
+
+    iIdCliente = idCliente;
+    sprintf(cDataInicioPesq, "%10.10s 00:00:00", this->getDtRelacionamentoInicio());
+	sprintf(cDataFimPesq, "%8.8s 23:59:59", this->getDtRelacionamentoFinal());
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	// marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+	EXEC SQL DECLARE LSTRELACDATE CURSOR FOR
+
+		SELECT
+			HISTORICO, 
+			to_char(DATAREGISTRO, 'dd/mm/yyyy hh24:mi:ss'), 
+			DSPROCEDENCIA, 
+			IDPROCEDENCIA
+		FROM
+			contatoADM.ContatoFolhaV01
+		WHERE
+            (IdPessoa = :iIdCliente OR :iIdCliente = 0) //Caso o iIdCliente seja =0, considera todos os idPessoa para a linha selecionada, podendo existir cliente e usuário distintos, isso irá ocorrer para o Relatório de acessos por cliente do FO.
+            AND DATAREGISTRO  >= TO_DATE( :cDataInicioPesq , 'dd/mm/yyyy  hh24:mi:ss')
+			AND DATAREGISTRO  <= TO_DATE( :cDataFimPesq ,    'dd/mm/yyyy  hh24:mi:ss')
+			AND cdAreaRegistro = :iCdAreaRegistro
+			AND nrLinha = :iNrLinha
+			ORDER BY DATAREGISTRO
+		DESC;
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL OPEN LSTRELACDATE;
+
+	for( ;; ) {
+		// varre todos os registros para criar a lista com os Relacionamentos
+
+		EXEC SQL FETCH LSTRELACDATE INTO
+			:cDsTipoHistoricoSenha:i_cDsTipoHistoricoSenha
+			, :cDtRegistro:i_cDtRegistro
+			, :cNmCanal:i_cNmCanal
+			, :iIdCanal:i_iIdCanal;
+
+			memset(cDataRegistro,			' ', sizeof(cDataRegistro));
+			memset(cHoraRegistro,			' ', sizeof(cHoraRegistro));
+
+/*			memcpy(cDataRegistro, &cDtRegistro[0], sizeof(cDataRegistro)	);*/
+			sprintf(cDataRegistro, "%10.10s", &cDtRegistro[0]);
+/*			memcpy(cHoraRegistro, &cDtRegistro[11], sizeof(cHoraRegistro)	);
+
+*/
+/*			strncpy(cDataRegistro, &cDtRegistro[0], sizeof(cDataRegistro));*/
+			this->setDtRelacionamento(cDataRegistro);
+			strncpy(cHoraRegistro, &cDtRegistro[11], sizeof(cHoraRegistro));
+			this->setHrRelacionamento(cHoraRegistro);
+
+			this->setDsOperacao(CUtil::trim(cDsTipoHistoricoSenha));
+
+			this->setIdCanal(iIdCanal);
+			this->setDsCanal(CUtil::trim(cNmCanal));
+
+	
+			lstRelac.push_back( *this );
+		}
+
+	EXEC SQL CLOSE LSTRELACDATE;
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+void CRelacionamento::consultarAcessoPorDiaDB(list < CRelacionamento > & lstRelac, int iIdTipoHistorico, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";		
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	int iIdTipoCarteiraSQL=0;
+	int iIdTipoRelacionamentoSQL=0;
+	int iIdUFOperadoraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+
+	int iIdTipoLinhaSQL=0;
+	int iIdCanalSQL=0;
+	int iCdAreaRegistroSQL=0;
+	int iNrLinhaSQL=0;
+	int iIsAgrupadoSQL=0;
+
+	int iIdTecnologiaSQL = 0;
+
+	char cDtRelacionamento[10+1];
+	int  iIdCanalRel;
+	int  iIdTipoLinhaRel;
+	int  iIdTipoRelacionamentoRel;
+	int	 iTotalRel;
+	int count = 0;
+    
+    short i_cDtRelacionamento = -1;
+    short i_iIdCanalRel = -1;
+    short i_iIdTipoLinhaRel = -1;
+    short i_iIdTipoRelacionamentoRel = -1;
+    short i_iTotalRel = -1;
+
+	
+	EXEC SQL END DECLARE SECTION;
+
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+	iIdTipoCarteiraSQL =  iIdTipoCarteira < 0 ? 0 : iIdTipoCarteira;
+	iIdTipoRelacionamentoSQL = iIdTipoRelacionamento < 0 ? 0 : iIdTipoRelacionamento;
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdSegmentacaoSQL = iIdSegmentacao < 0 ? 0 : iIdSegmentacao;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	iIdCanalSQL = iIdCanal < 0 ? 0 : iIdCanal;
+	iCdAreaRegistroSQL = iCdAreaRegistro < 0 ? 0 : iCdAreaRegistro;
+	iNrLinhaSQL = iNrLinha < 0 ? 0 : iNrLinha;
+	iIsAgrupadoSQL = iIsAgrupado < 0 ? 0 : iIsAgrupado;
+
+	iIdTecnologiaSQL = iIdTecnologia < 0 ? 0 : iIdTecnologia;
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+
+	strcpy (chrPesquisa,
+	"SELECT /*+ index (A AUXHISTORICOSENHAIE1) */  "
+		"TO_CHAR(TRUNC(dtRegistroHistoricoSenha,'DD'),'DD/MM/YYYY') AS dtRegistroHistorico, "
+		"IDCANAL, "
+		"IDTIPOLINHA, "
+		"IDTIPORELACIONAMENTO, "
+		"COUNT(1) "
+	"FROM "
+		"vol.AUXHISTORICOSENHA	A "	
+	"WHERE "
+		"idTipoHistoricoSenha 	=  ");
+							
+						
+	
+		MontaPesquisaLiteral(chrPesquisa,iIdTipoHistorico, iIdTipoCarteiraSQL, iIdTipoRelacionamentoSQL, iIdUFOperadoraSQL, iIdSegmentacaoSQL, iIdGrupoOperadoraSQL, iIdTipoLinhaSQL, iIdCanalSQL, iCdAreaRegistroSQL,iNrLinhaSQL, iIdTecnologiaSQL, 0, 0, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+						
+
+	strcat (chrPesquisa,
+	" GROUP BY "
+		"TRUNC(dtRegistroHistoricoSenha,'DD'), "
+		"IDCANAL, "
+		"IDTIPOLINHA, "
+		"IDTIPORELACIONAMENTO ");
+
+	tuxfw_getlogger()->debug("Pesquisa:[ %s ] \r\n", chrPesquisa);
+
+	printf ("Pesquisa:[ %s ] \r\n", chrPesquisa);
+	
+	
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+	
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+		
+	EXEC SQL DECLARE LSTACESSOPORDIA CURSOR FOR qPesquisa;
+	
+	EXEC SQL OPEN LSTACESSOPORDIA;
+
+
+	for( ;; ) {
+	
+		// varre todos os registros para criar a lista com os Relacionamentos		
+		EXEC SQL FETCH LSTACESSOPORDIA INTO
+			:cDtRelacionamento:i_cDtRelacionamento,
+			:iIdCanalRel:i_iIdCanalRel,
+			:iIdTipoLinhaRel:i_iIdTipoLinhaRel,
+			:iIdTipoRelacionamentoRel:i_iIdTipoRelacionamentoRel,
+			:iTotalRel:i_iTotalRel;
+
+		if ( count++ == 0 )		
+			oRelacionamento.reiniciaValores(0);
+			
+	
+		if ( strcmp(oRelacionamento.getDtRelacionamento(), "") != 0 && strcmp(oRelacionamento.getDtRelacionamento(), cDtRelacionamento) != 0){
+			//se mudou de dia!! 
+			lstRelac.push_back( oRelacionamento );
+			oRelacionamento.reiniciaValores(0);
+
+		}
+	
+		oRelacionamento.setaQteTotalVOLTAV(cDtRelacionamento, iIdCanalRel, iIdTipoLinhaRel, iIdTipoRelacionamentoRel, iTotalRel);
+	}
+
+
+	
+	if (count)
+		lstRelac.push_back( oRelacionamento );
+
+	
+
+	EXEC SQL CLOSE LSTACESSOPORDIA;
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+/*****************************************Projeto W *************************/
+
+void CRelacionamento::consultarAcessoPorDiaLojaDB(list < CRelacionamento > & lstRelac, int iIdTipoHistorico, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal)
+{
+	tuxfw_getlogger()->debug("consultarAcessoPorDiaLojaDB");
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";		
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	int iIdTipoCarteiraSQL=0;
+	int iIdTipoRelacionamentoSQL=0;
+	int iIdTipoHistoricoSQL = 0;
+	int iIdUFOperadoraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+	int iIdTipoLinhaSQL=0;
+	int iIdCanalSQL=0;
+	int iCdAreaRegistroSQL=0;
+	int iNrLinhaSQL=0;
+	int iIsAgrupadoSQL=0;
+	int iIdTecnologiaSQL = 0;
+	int iIdPessoaDeParaSQL = 0;
+	int iIdTerminalSQL = 0;
+	char cDtRelacionamento[10+1];
+	char cNmLoja[256]="";
+	char cNmTerminal[256]="";
+	int  iIdCanalRel;
+	int  iIdTipoLinhaRel;
+	int  iIdTipoRelacionamentoRel;
+	int	 iTotalRel;
+	int  count = 0;
+
+    short i_cDtRelacionamento = -1;
+    short i_iIdCanalRel = -1;
+    short i_iIdTipoLinhaRel = -1;
+    short i_iIdTipoRelacionamentoRel = -1;
+    short i_cNmLoja = -1;
+    short i_cNmTerminal = -1;
+    short i_iTotalRel = -1;
+    
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	lstRelac.clear();
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+	iIdTipoCarteiraSQL =  iIdTipoCarteira < 0 ? 0 : iIdTipoCarteira;
+	iIdTipoRelacionamentoSQL = iIdTipoRelacionamento < 0 ? 0 : iIdTipoRelacionamento;
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdSegmentacaoSQL = iIdSegmentacao < 0 ? 0 : iIdSegmentacao;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	iIdCanalSQL = iIdCanal < 0 ? 0 : iIdCanal;
+	iCdAreaRegistroSQL = iCdAreaRegistro < 0 ? 0 : iCdAreaRegistro;
+	iNrLinhaSQL = iNrLinha < 0 ? 0 : iNrLinha;
+	iIsAgrupadoSQL = iIsAgrupado < 0 ? 0 : iIsAgrupado;
+
+
+	iIdTecnologiaSQL = iIdTecnologia < 0 ? 0 : iIdTecnologia;
+	iIdPessoaDeParaSQL = iIdPessoaDePara < 0 ? 0 : iIdPessoaDePara;
+	iIdTerminalSQL = iIdTerminal < 0 ? 0 : iIdTerminal;
+	iIdTipoHistoricoSQL = iIdTipoHistorico < 0 ? 0 : iIdTipoHistorico; 
+
+	strcpy (chrPesquisa,
+	"SELECT /*+ index (A AUXHISTORICOSENHAIE1) */  "
+		"TO_CHAR(TRUNC(dtRegistroHistoricoSenha,'DD'),'DD/MM/YYYY') AS dtRegistroHistorico, "
+		"IDCANAL,  "
+		"IDTIPOLINHA,  "
+		"IDTIPORELACIONAMENTO,  "
+		"NVL(d.NMPESSOA,' ') ,  "
+		"NVL(b.NRTERMINAL,' '),  " 
+		"COUNT(1) "
+	"FROM  "
+		"vol.AUXHISTORICOSENHA a,"
+		"vol.SitefTerminal b,	 "
+		"customer.pessoadepara c,    "
+		"customer.pessoa d           "
+	"WHERE "
+		"b.IDPESSOADEPARA = c.IDPESSOADEPARA (+) "
+		"AND c.IDPESSOA = d.IDPESSOA	     (+) "				
+		"AND a.IDTERMINAL = b.IDTERMINAL     (+) "
+		"AND A.IDTIPOHISTORICOSENHA =   ");
+
+		MontaPesquisaLiteral(chrPesquisa, iIdTipoHistoricoSQL, iIdTipoCarteiraSQL, iIdTipoRelacionamentoSQL, iIdUFOperadoraSQL, iIdSegmentacaoSQL, iIdGrupoOperadoraSQL, iIdTipoLinhaSQL, iIdCanalSQL, iCdAreaRegistroSQL,iNrLinhaSQL, iIdTecnologiaSQL, iIdPessoaDeParaSQL, iIdTerminalSQL, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+
+
+	strcat (chrPesquisa,
+	"GROUP BY "
+		" TRUNC(dtRegistroHistoricoSenha,'DD'), "
+		"a.IDCANAL,				 "
+		"a.IDTIPOLINHA,			 "
+		"a.IDTIPORELACIONAMENTO, "
+		"a.idterminal,			 "
+		"b.nrterminal,			 "
+		"d.NMPESSOA	"
+	"ORDER BY "
+		"DTREGISTROHISTORICO,  "
+		"NMPESSOA, "
+		"NRTERMINAL ");
+
+	tuxfw_getlogger()->debug("Pesquisa:[ %s ] \r\n", chrPesquisa);
+
+	printf (" Pesquisa : [ %s / \r\n", chrPesquisa);
+
+	
+	
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+	
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+		
+	EXEC SQL DECLARE LSTACESSOPORDIALOJA CURSOR FOR qPesquisa;
+	
+	EXEC SQL OPEN LSTACESSOPORDIALOJA;
+
+
+	for( ;; ) {
+	
+		// varre todos os registros para criar a lista com os Relacionamentos		
+		EXEC SQL FETCH LSTACESSOPORDIALOJA INTO
+			:cDtRelacionamento:i_cDtRelacionamento,
+			:iIdCanalRel:i_iIdCanalRel,
+			:iIdTipoLinhaRel:i_iIdTipoLinhaRel,
+			:iIdTipoRelacionamentoRel:i_iIdTipoRelacionamentoRel,
+			:cNmLoja:i_cNmLoja,
+			:cNmTerminal:i_cNmTerminal,
+			:iTotalRel:i_iTotalRel;
+
+		if ( count++ == 0 )		
+			oRelacionamento.reiniciaValores(0);
+			
+	
+		if ( ( strcmp(oRelacionamento.getDtRelacionamento(), "") != 0 && strcmp(oRelacionamento.getDtRelacionamento(), cDtRelacionamento) != 0) 
+			|| ( strcmp(oRelacionamento.getNmLoja(), "") != 0 && strcmp(oRelacionamento.getNmLoja(),  CUtil::trim(cNmLoja) ) != 0 )  
+			|| ( strcmp(oRelacionamento.getNmTerminal(), "") != 0  && strcmp(oRelacionamento.getNmTerminal(),  CUtil::trim(cNmTerminal) ) != 0) ) 
+		{ 
+			//se mudou de dia, loja ou terminal!! 
+			lstRelac.push_back( oRelacionamento );
+			oRelacionamento.reiniciaValores(0);
+
+		}
+	
+		oRelacionamento.setaQteTotalVOLTAV(cDtRelacionamento, iIdCanalRel, iIdTipoLinhaRel, iIdTipoRelacionamentoRel, iTotalRel);
+
+		oRelacionamento.setNmLoja( CUtil::trim(cNmLoja) );
+		oRelacionamento.setNmTerminal( CUtil::trim(cNmTerminal) );
+	}
+
+
+	
+	if (count)
+		lstRelac.push_back( oRelacionamento );
+
+	
+
+	EXEC SQL CLOSE LSTACESSOPORDIA;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+}
+
+void CRelacionamento::consultarAcessoPorDiaAgrupadoDB(list < CRelacionamento > & lstRelac, int iIdTipoHistorico, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	char chrPesquisa[1000];
+	int iIdTipoCarteiraSQL=0;
+	int iIdTipoRelacionamentoSQL=0;
+	int iIdUFOperadoraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+
+	int iIdTipoLinhaSQL=0;
+	int iIdCanalSQL=0;
+	int iCdAreaRegistroSQL=0;
+	int iNrLinhaSQL=0;
+	int iIsAgrupadoSQL=0;
+	int iIdTecnologiaSQL = 0;
+	int iIdTipoHistoricoSQL = 0;
+	
+
+	char cDtRelacionamento[10+1];
+	int  iIdCanalRel;
+	int  iIdTipoLinhaRel;
+	int  iIdTipoRelacionamentoRel;
+	int	 iTotalRel;
+	int  count = 0;
+	
+    short i_cDtRelacionamento = -1;
+    short i_iIdCanalRel = -1;
+    short i_iIdTipoLinhaRel = -1;
+    short i_iIdTipoRelacionamentoRel = -1;
+    short i_iTotalRel = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+	iIdTipoCarteiraSQL =  iIdTipoCarteira < 0 ? 0 : iIdTipoCarteira;
+	iIdTipoRelacionamentoSQL = iIdTipoRelacionamento < 0 ? 0 : iIdTipoRelacionamento;
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdSegmentacaoSQL = iIdSegmentacao < 0 ? 0 : iIdSegmentacao;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	iIdCanalSQL = iIdCanal < 0 ? 0 : iIdCanal;
+	iCdAreaRegistroSQL = iCdAreaRegistro < 0 ? 0 : iCdAreaRegistro;
+	iNrLinhaSQL = iNrLinha < 0 ? 0 : iNrLinha;
+	iIsAgrupadoSQL = iIsAgrupado < 0 ? 0 : iIsAgrupado;
+	iIdTecnologiaSQL = iIdTecnologia < 0 ? 0 : iIdTecnologia;
+	iIdTipoHistoricoSQL = iIdTipoHistorico < 0 ? 0 : iIdTipoHistorico;  
+
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+
+	strcpy (chrPesquisa,
+	"SELECT /*+ index (A AUXHISTORICOSENHAIE1) */  "
+		"DATA, "
+		"IDCANAL, "
+		"IDTIPOLINHA, "
+		"IDTIPORELACIONAMENTO, "
+		"COUNT(1) "
+	"FROM ( "		
+		"SELECT "
+			"NRLINHA, "
+			"CDAREAREGISTRO, "
+			"IDCANAL, "
+			"idtipolinha, "
+			"idtiporelacionamento , "
+			"TRUNC(dtregistrohistoricoSenha) AS data "
+		"FROM "
+			"vol.AUXHISTORICOSENHA A "
+		"WHERE	"
+			"A.IDTIPOHISTORICOSENHA = ");
+	
+		MontaPesquisaLiteral(chrPesquisa, iIdTipoHistoricoSQL,  iIdTipoCarteiraSQL, iIdTipoRelacionamentoSQL, iIdUFOperadoraSQL, iIdSegmentacaoSQL, iIdGrupoOperadoraSQL, iIdTipoLinhaSQL, iIdCanalSQL, iCdAreaRegistroSQL,iNrLinhaSQL, iIdTecnologia, 0, 0, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+
+
+	strcat (chrPesquisa,		
+		" GROUP BY "
+			"nrlinha, "
+			"cdarearegistro, "
+			"idtipolinha, "
+			"idtiporelacionamento, "
+			"TRUNC(dtregistrohistoricoSenha), idcanal) "	
+	" GROUP BY  "
+		"DATA, "
+		"IDTIPOLINHA, "
+		"IDTIPORELACIONAMENTO, "
+		"IDCANAL");
+
+
+	tuxfw_getlogger()->debug("Pesquisa:[ %s ]\r\n", chrPesquisa);
+	
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;	
+	
+	EXEC SQL DECLARE LSTACESSOPORDIAAGR CURSOR FOR qPesquisa;
+
+	EXEC SQL OPEN LSTACESSOPORDIAAGR;
+
+
+	for( ;; ) {
+	
+		// varre todos os registros para criar a lista com os Relacionamentos		
+		EXEC SQL FETCH LSTACESSOPORDIAAGR INTO
+			:cDtRelacionamento:i_cDtRelacionamento,
+			:iIdCanalRel:i_iIdCanalRel,
+			:iIdTipoLinhaRel:i_iIdTipoLinhaRel,
+			:iIdTipoRelacionamentoRel:i_iIdTipoRelacionamentoRel,
+			:iTotalRel:i_iTotalRel;
+
+
+			if (count++ == 0)
+				oRelacionamento.reiniciaValores(0);
+
+
+			if ( strcmp(oRelacionamento.getDtRelacionamento(), "") != 0 && strcmp(oRelacionamento.getDtRelacionamento(), cDtRelacionamento) != 0)
+			{
+				lstRelac.push_back( oRelacionamento );
+				oRelacionamento.reiniciaValores(0);
+			
+			}	
+
+			oRelacionamento.setaQteTotalVOLTAV(cDtRelacionamento, iIdCanalRel, iIdTipoLinhaRel, iIdTipoRelacionamentoRel, iTotalRel);
+	}
+	
+
+	if (count)
+		lstRelac.push_back( oRelacionamento );
+
+	EXEC SQL CLOSE LSTACESSOPORDIAAGR;
+	
+	return;
+
+	sqlErrorConstrutor:		
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+void CRelacionamento::consultarAcessoPorDiaLojaAgrupadoDB(list < CRelacionamento > & lstRelac, int iIdTipoHistorico, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";		
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	int iIdTipoCarteiraSQL=0;
+	int iIdTipoRelacionamentoSQL=0;
+	int iIdUFOperadoraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+	int iIdTipoLinhaSQL=0;
+	int iIdCanalSQL=0;
+	int iCdAreaRegistroSQL=0;
+	int iNrLinhaSQL=0;
+	int iIsAgrupadoSQL=0;
+	int iIdTecnologiaSQL = 0;
+	int iIdPessoaDeParaSQL = 0;
+	int iIdTerminalSQL = 0;
+	int iIdTipoHistoricoSQL = 0;
+	char cDtRelacionamento[10+1];
+	char cNmLoja[256]="";
+	char cNmTerminal[256]="";
+	int  iIdCanalRel;
+	int  iIdTipoLinhaRel;
+	int  iIdTipoRelacionamentoRel;
+	int	 iTotalRel;
+	int  count = 0;
+    
+    short i_cDtRelacionamento = -1;
+    short i_iIdCanalRel = -1;
+    short i_iIdTipoLinhaRel = -1;
+    short i_iIdTipoRelacionamentoRel = -1;
+    short i_cNmLoja = -1;
+    short i_cNmTerminal = -1;
+    short i_iTotalRel = -1;
+    
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	lstRelac.clear();
+	
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+	iIdTipoCarteiraSQL =  iIdTipoCarteira < 0 ? 0 : iIdTipoCarteira;
+	iIdTipoRelacionamentoSQL = iIdTipoRelacionamento < 0 ? 0 : iIdTipoRelacionamento;
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdSegmentacaoSQL = iIdSegmentacao < 0 ? 0 : iIdSegmentacao;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	iIdCanalSQL = iIdCanal < 0 ? 0 : iIdCanal;
+	iCdAreaRegistroSQL = iCdAreaRegistro < 0 ? 0 : iCdAreaRegistro;
+	iNrLinhaSQL = iNrLinha < 0 ? 0 : iNrLinha;
+	iIsAgrupadoSQL = iIsAgrupado < 0 ? 0 : iIsAgrupado;
+
+	iIdTecnologiaSQL = iIdTecnologia < 0 ? 0 : iIdTecnologia;
+	iIdPessoaDeParaSQL = iIdPessoaDePara < 0 ? 0 : iIdPessoaDePara;
+	iIdTerminalSQL = iIdTerminal < 0 ? 0 : iIdTerminal;
+
+	iIdTipoHistoricoSQL =  iIdTipoHistorico < 0 ? 0 :  iIdTipoHistorico;
+
+	strcpy (chrPesquisa,
+	"SELECT /*+ index (A AUXHISTORICOSENHAIE1) */ "
+		"DATA, "
+		"IDCANAL, "
+		"IDTIPOLINHA, "
+		"IDTIPORELACIONAMENTO, "
+		"NVL(NMPESSOA, ' '), "
+		"NVL(NRTERMINAL,' '), "							
+		"COUNT(1) "
+	"FROM ( "		
+		"SELECT "
+			"NRLINHA, "
+			"CDAREAREGISTRO, "
+			"IDCANAL, "
+			"idtipolinha, "
+			"idtiporelacionamento , "		
+			"NVL(B.NRTERMINAL,' ') AS NRTERMINAL,  "
+			"NVL(D.NMPESSOA,' ') AS NMPESSOA ,  " 
+			"TRUNC(dtregistrohistoricoSenha) AS data "
+		"FROM "
+			"vol.AUXHISTORICOSENHA A,  "									
+			"vol.sitefterminal 	   B,  "
+			"customer.pessoadepara C,  "
+			"customer.pessoa       D   "
+		"WHERE	"									
+			"A.IDTERMINAL = B.IDTERMINAL (+) AND "
+			"B.IDPESSOADEPARA = C.IDPESSOADEPARA (+) AND "
+			"C.IDPESSOA = D.IDPESSOA  (+) AND " 
+			"IDTIPOHISTORICOSENHA = ");
+	
+		MontaPesquisaLiteral(chrPesquisa, iIdTipoHistoricoSQL, iIdTipoCarteiraSQL, iIdTipoRelacionamentoSQL, iIdUFOperadoraSQL, iIdSegmentacaoSQL, iIdGrupoOperadoraSQL, iIdTipoLinhaSQL, iIdCanalSQL, iCdAreaRegistroSQL,iNrLinhaSQL, iIdTecnologia, iIdPessoaDeParaSQL, iIdTerminalSQL, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+
+
+		strcat (chrPesquisa,	
+		" GROUP BY "
+			"nrlinha, "
+			"cdarearegistro, "
+			"idtipolinha, "
+			"idtiporelacionamento, "
+			"A.IDTERMINAL, "
+			"B.NRTERMINAL, "
+			"D.NMPESSOA, "
+			"TRUNC(dtregistrohistoricoSenha), idcanal) "	
+	" GROUP BY  "
+		"DATA, "
+		"IDTIPOLINHA, "
+		"IDTIPORELACIONAMENTO, "
+		"IDCANAL, "
+		"NRTERMINAL, "
+		"NMPESSOA "
+	"ORDER BY "
+		"DATA, "
+		"NMPESSOA, "
+		"NRTERMINAL	");
+
+	tuxfw_getlogger()->debug("Pesquisa:[ %s ] \r\n", chrPesquisa);
+
+	
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+	
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+		
+	EXEC SQL DECLARE LSTACESSOPORDIALOJAAGR CURSOR FOR qPesquisa;
+	
+	EXEC SQL OPEN LSTACESSOPORDIALOJA;
+
+
+	for( ;; ) {
+	
+		// varre todos os registros para criar a lista com os Relacionamentos		
+		EXEC SQL FETCH LSTACESSOPORDIALOJAAGR INTO
+			:cDtRelacionamento:i_cDtRelacionamento,
+			:iIdCanalRel:i_iIdCanalRel,
+			:iIdTipoLinhaRel:i_iIdTipoLinhaRel,
+			:iIdTipoRelacionamentoRel:i_iIdTipoRelacionamentoRel,
+			:cNmLoja:i_cNmLoja,
+			:cNmTerminal:i_cNmTerminal,
+			:iTotalRel:i_iTotalRel;
+
+		if ( count++ == 0 )		
+			oRelacionamento.reiniciaValores(0);
+			
+		if (strcmp(cNmTerminal, "") == 0)
+			tuxfw_getlogger()->debug("terminal = vazio  \r\n");
+
+
+		if ( ( strcmp(oRelacionamento.getDtRelacionamento(), "") != 0 && strcmp(oRelacionamento.getDtRelacionamento(), cDtRelacionamento) != 0) 
+			|| ( strcmp(oRelacionamento.getNmLoja(), "") != 0 && strcmp(oRelacionamento.getNmLoja(),  CUtil::trim(cNmLoja) ) != 0 )  
+			|| ( strcmp(oRelacionamento.getNmTerminal(),  CUtil::trim(cNmTerminal) ) != 0) ) 
+ 
+		{
+			//se mudou de dia ou de loja ou terminal!! 
+			lstRelac.push_back( oRelacionamento );
+			oRelacionamento.reiniciaValores(0);
+
+		}
+	
+		oRelacionamento.setaQteTotalVOLTAV(cDtRelacionamento, iIdCanalRel, iIdTipoLinhaRel, iIdTipoRelacionamentoRel, iTotalRel);
+
+		oRelacionamento.setNmLoja( CUtil::trim(cNmLoja) );
+		oRelacionamento.setNmTerminal( CUtil::trim(cNmTerminal) );
+	}
+
+
+	
+	if (count)
+		lstRelac.push_back( oRelacionamento );
+
+	
+
+	EXEC SQL CLOSE LSTACESSOPORDIALOJAAGR;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+}
+
+	
+void CRelacionamento::consultarAcessoPorHoraDB(list< CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIdTecnologia)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000];
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	char cHrRelacionamento[8+1];
+	float iQtVOL;
+	float iQtTAV;	
+    short i_cHrRelacionamento = -1;
+    short i_iQtVOL = -1;
+    short i_iQtTAV = -1;
+	EXEC SQL END DECLARE SECTION;
+
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+
+	strcpy (chrPesquisa, 
+	"SELECT /*+ index (A AUXHISTORICOSENHAIE1) */  "
+		" DiaHora.hrRegistroHistorico, "
+		"AVG(DiaHora.qtVOL) AS qtVOL, "
+		"AVG(DiaHora.qtTAV) AS qtTAV "
+	"FROM(	 "
+		"SELECT  "
+			"TO_CHAR(TRUNC(dtRegistroHistoricoSenha,'DD'), 'dd/mm/yyyy') AS dtRegistroHistorico, "
+		   	"TO_CHAR(TRUNC(dtRegistroHistoricoSenha,'HH24'), 'HH24') AS hrRegistroHistorico,	 "  
+		   	"COUNT(DECODE (IDCANAL, 15, idHistoricoSenha)) AS qtVOL, "
+		   	"COUNT(DECODE (IDCANAL, 13, idHistoricoSenha)) AS qtTAV "
+		"FROM "
+			"vol.AUXHISTORICOSENHA  A	 "
+		"WHERE  "
+			"A.idTipoHistoricoSenha = ");
+
+			MontaPesquisaLiteral(chrPesquisa, 2, iIdTipoCarteira, iIdTipoRelacionamento, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdTipoLinha, iIdCanal, iCdAreaRegistro , iNrLinha, iIdTecnologia, 0, 0, cDtRelacionamentoInicio, cDtRelacionamentoFinal);			
+
+		strcat (chrPesquisa,	
+		" GROUP BY "
+			"TRUNC(A.dtRegistroHistoricoSenha,'DD'), "
+			"TRUNC(A.dtRegistroHistoricoSenha,'HH24') "
+			")DiaHora  "
+	"GROUP BY "
+		"DiaHora.hrRegistroHistorico "
+	"ORDER BY "
+		"DiaHora.hrRegistroHistorico");
+
+
+	tuxfw_getlogger()->debug("Pesquisa:[ %s ]\r\n", chrPesquisa);
+
+	
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;	
+	
+	EXEC SQL DECLARE LSTACESSOPORHORA CURSOR FOR qPesquisa;
+
+	
+	EXEC SQL OPEN LSTACESSOPORHORA;
+
+	for( ;; ) {
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTACESSOPORHORA INTO
+			:cHrRelacionamento:i_cHrRelacionamento ,
+			:iQtVOL:i_iQtVOL ,
+			:iQtTAV:i_iQtTAV ;
+
+
+			oRelacionamento.setHrRelacionamento(cHrRelacionamento);
+			oRelacionamento.setQtVOL(iQtVOL);
+			oRelacionamento.setQtTAV(iQtTAV);
+
+
+			lstRelac.push_back( oRelacionamento );
+		}
+
+	EXEC SQL CLOSE LSTACESSOPORHORA;
+
+	
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+
+
+
+
+
+void CRelacionamento::consultarAcessoPorHoraLojaDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000];
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	int iIdTipoCarteiraSQL=0;
+	int iIdTipoRelacionamentoSQL=0;
+	int iIdTipoLinhaSQL=0;
+	int iIdUFOperadoraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+	char cHrRelacionamento[8+1];
+	int iIdPessoaDeParaSQL = 0;
+	int iIdTerminalSQL = 0;
+	float iQtVOL;
+	float iQtTAV;	
+    short i_cHrRelacionamento = -1;
+    short i_iQtVOL = -1;
+    short i_iQtTAV = -1;
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	strcpy (chrPesquisa, 
+	"SELECT /*+ index (A AUXHISTORICOSENHAIE1) */  "
+		"DiaHora.hrRegistroHistorico, "
+		"AVG(DiaHora.qtVOL) AS qtVOL, "
+		"AVG(DiaHora.qtTAV) AS qtTAV "
+	"FROM(	 "
+		"SELECT  "
+			"TO_CHAR(TRUNC(dtRegistroHistoricoSenha,'DD'), 'dd/mm/yyyy') AS dtRegistroHistorico, "
+		   	"TO_CHAR(TRUNC(dtRegistroHistoricoSenha,'HH24'), 'HH24') AS hrRegistroHistorico,	 "  
+		   	"COUNT(DECODE (IDCANAL, 15, idHistoricoSenha)) AS qtVOL, "
+		   	"COUNT(DECODE (IDCANAL, 13, idHistoricoSenha)) AS qtTAV "
+		"FROM "
+			"vol.AUXHISTORICOSENHA A,  "
+			"vol.sitefterminal 	   B,  "
+			"customer.pessoadepara C,  "
+			"customer.pessoa       D   "
+		"WHERE	"									
+			"A.IDTERMINAL = B.IDTERMINAL AND "
+			"B.IDPESSOADEPARA = C.IDPESSOADEPARA AND "
+			"C.IDPESSOA = D.IDPESSOA  AND " 
+			"A.idTipoHistoricoSenha = ");
+
+			MontaPesquisaLiteral(chrPesquisa, 2, iIdTipoCarteira, iIdTipoRelacionamento, iIdUFOperadora, iIdSegmentacao, iIdGrupoOperadora, iIdTipoLinha, iIdCanal, iCdAreaRegistro, iNrLinha, iIdTecnologia, iIdPessoaDePara , iIdTerminal, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+
+		strcat (chrPesquisa,	
+		" GROUP BY "
+			"TRUNC(A.dtRegistroHistoricoSenha,'DD'), "
+			"TRUNC(A.dtRegistroHistoricoSenha,'HH24') "
+			")DiaHora  "
+	"GROUP BY "
+		"DiaHora.hrRegistroHistorico "
+	"ORDER BY "
+		"DiaHora.hrRegistroHistorico");
+
+
+	tuxfw_getlogger()->debug("Pesquisa:[ %s ]\r\n", chrPesquisa);
+
+	
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;	
+	
+	EXEC SQL DECLARE LSTACESSOPORHORALOJA CURSOR FOR qPesquisa;
+
+	
+	EXEC SQL OPEN LSTACESSOPORHORALOJA;
+
+	for( ;; ) {
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTACESSOPORHORALOJA INTO
+			:cHrRelacionamento:i_cHrRelacionamento ,
+			:iQtVOL:i_iQtVOL ,
+			:iQtTAV:i_iQtTAV ;
+
+
+			oRelacionamento.setHrRelacionamento(cHrRelacionamento);
+			oRelacionamento.setQtVOL(iQtVOL);
+			oRelacionamento.setQtTAV(iQtTAV);
+
+
+			lstRelac.push_back( oRelacionamento );
+		}
+
+	EXEC SQL CLOSE LSTACESSOPORHORALOJA;
+
+	
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+
+
+
+
+void CRelacionamento::consultarAcessoNegadoDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	int iIdTipoCarteiraSQL=0;
+	int iIdTipoRelacionamentoSQL=0;
+	int iIdUFOperadoraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+	int iIdTecnologiaSQL = 0;
+	int iIdTipoLinhaSQL=0;
+	int iIdCanalSQL=0;
+	int iCdAreaRegistroSQL=0;
+	int iNrLinhaSQL=0;
+	int iIsAgrupadoSQL=0;
+	char cDtRelacionamento[10+1];
+	int  iIdCanalRel;
+	int  iIdTipoLinhaRel;
+	int  iIdTipoRelacionamentoRel;
+	int  iTotalRel;
+	char cDsTipoHistoricoSenha[255];
+	int  count = 0;
+	char cNmLoja[256] = "";
+	char cNmTerminal[256] = "";
+    
+    short i_cDtRelacionamento = -1;
+    short i_iIdCanalRel = -1;
+    short i_iIdTipoLinhaRel = -1;
+    short i_iIdTipoRelacionamentoRel = -1;
+    short i_iTotalRel = -1;
+	EXEC SQL END DECLARE SECTION;
+
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+	iIdTipoCarteiraSQL =  iIdTipoCarteira < 0 ? 0 : iIdTipoCarteira;
+	iIdTipoRelacionamentoSQL = iIdTipoRelacionamento < 0 ? 0 : iIdTipoRelacionamento;
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdSegmentacaoSQL = iIdSegmentacao < 0 ? 0 : iIdSegmentacao;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	iIdCanalSQL = iIdCanal < 0 ? 0 : iIdCanal;
+	iCdAreaRegistroSQL = iCdAreaRegistro < 0 ? 0 : iCdAreaRegistro;
+	iNrLinhaSQL = iNrLinha < 0 ? 0 : iNrLinha;
+	iIsAgrupadoSQL = iIsAgrupado < 0 ? 0 : iIsAgrupado;
+	iIdTecnologiaSQL = iIdTecnologia < 0 ? 0 : iIdTecnologia;
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+
+
+	strcpy (chrPesquisa, 
+	"SELECT /*+ index (A AUXHISTORICOSENHAIE1) */  "
+		"TO_CHAR(TRUNC(dtRegistroHistoricoSenha,'DD'),'DD/MM/YYYY') AS dtRegistroHistorico, "
+		"IDCANAL, "
+		"IDTIPOLINHA, "
+		"IDTIPORELACIONAMENTO, "
+		"COUNT(1) "
+	"FROM "
+		"vol.auxhistoricosenha 	A "
+	"WHERE	  "
+		"A.idTipoHistoricoSenha IN (8, 10) ");
+
+	
+		MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteiraSQL, iIdTipoRelacionamentoSQL, iIdUFOperadoraSQL, iIdSegmentacaoSQL, iIdGrupoOperadoraSQL, iIdTipoLinhaSQL, iIdCanalSQL, iCdAreaRegistroSQL,iNrLinhaSQL, iIdTecnologiaSQL, 0, 0, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+
+	strcat(chrPesquisa,
+	" GROUP BY "
+		"TRUNC(A.dtRegistroHistoricoSenha,'DD'), "
+		"A.IDCANAL, "
+		"A.IDTIPOLINHA, "
+		"A.IDTIPORELACIONAMENTO ");
+
+
+	tuxfw_getlogger()->debug("Pesquisa:[ %s ]\r\n", chrPesquisa);
+
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;	
+    
+	EXEC SQL DECLARE LSTACESSONEGADO CURSOR FOR qPesquisa;
+
+	EXEC SQL OPEN LSTACESSONEGADO;
+
+	
+	for( ;; ) {
+
+		// varre todos os registros para criar a lista com os Relacionamentos		
+		EXEC SQL FETCH LSTACESSONEGADO INTO
+			:cDtRelacionamento:i_cDtRelacionamento ,
+			:iIdCanalRel:i_iIdCanalRel ,
+			:iIdTipoLinhaRel:i_iIdTipoLinhaRel ,
+			:iIdTipoRelacionamentoRel:i_iIdTipoRelacionamentoRel ,
+			:iTotalRel:i_iTotalRel ;
+
+
+			if (count++ == 0)
+				oRelacionamento.reiniciaValores(0);
+
+			if ( strcmp(oRelacionamento.getDtRelacionamento(), "") != 0 && strcmp(oRelacionamento.getDtRelacionamento(), cDtRelacionamento) != 0){
+				
+				lstRelac.push_back( oRelacionamento );
+				oRelacionamento.reiniciaValores(0);
+			}
+	
+	
+			oRelacionamento.setaQteTotalVOLTAV(cDtRelacionamento, iIdCanalRel, iIdTipoLinhaRel, iIdTipoRelacionamentoRel, iTotalRel);
+	
+	}
+
+	if (count)
+		lstRelac.push_back( oRelacionamento );
+
+
+	EXEC SQL CLOSE LSTACESSONEGADO;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+void CRelacionamento::consultarAcessoNegadoAgrupadoDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	int iIdTipoCarteiraSQL=0;
+	int iIdTipoRelacionamentoSQL=0;
+	int iIdUFOperadoraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+	
+	int iIdTipoLinhaSQL=0;
+	int iIdCanalSQL=0;
+	int iCdAreaRegistroSQL=0;
+	int iNrLinhaSQL=0;
+	int iIsAgrupadoSQL=0;
+	int iIdTecnologiaSQL = 0;
+	int iIdPessoaDeParaSQL = 0;
+	int iIdTerminalSQL = 0;
+
+	char cDtRelacionamento[10+1];
+	int  iIdCanalRel;
+	int  iIdTipoLinhaRel;
+	int  iIdTipoRelacionamentoRel;
+	int  iTotalRel;
+
+	int	 iIdTipoHistoricoSenha;
+	char cDsTipoHistoricoSenha[255];
+	int  count = 0;
+    short i_cDtRelacionamento = -1;
+    short i_iIdCanalRel = -1;
+    short i_iIdTipoLinhaRel = -1;
+    short i_iIdTipoRelacionamentoRel = -1;
+    short i_iTotalRel = -1;
+	EXEC SQL END DECLARE SECTION;
+
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+	iIdTipoCarteiraSQL =  iIdTipoCarteira < 0 ? 0 : iIdTipoCarteira;
+	iIdTipoRelacionamentoSQL = iIdTipoRelacionamento < 0 ? 0 : iIdTipoRelacionamento;
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdSegmentacaoSQL = iIdSegmentacao < 0 ? 0 : iIdSegmentacao;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	iIdCanalSQL = iIdCanal < 0 ? 0 : iIdCanal;
+	iCdAreaRegistroSQL = iCdAreaRegistro < 0 ? 0 : iCdAreaRegistro;
+	iNrLinhaSQL = iNrLinha < 0 ? 0 : iNrLinha;
+	iIsAgrupadoSQL = iIsAgrupado < 0 ? 0 : iIsAgrupado;
+
+	iIdTecnologiaSQL = iIdTecnologia < 0 ? 0 : iIdTecnologia;
+	
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	strcpy(chrPesquisa,
+	"SELECT  "
+		"DTREGISTROHISTORICO, " 
+		"IDCANAL, "
+		"IDTIPOLINHA, "
+		"IDTIPORELACIONAMENTO, "
+		"COUNT(1) "
+	"FROM(	 "
+		"SELECT  /*+ index (A AUXHISTORICOSENHAIE1) */  "
+			"TO_CHAR(TRUNC(dtRegistroHistoricoSenha,'DD'),'DD/MM/YYYY') AS dtRegistroHistorico, "
+			"IDTIPOLINHA, "
+			"IDTIPORELACIONAMENTO, "
+			"IDCANAL, "
+			"COUNT(1) "			  	   	     
+		"FROM  "
+			"vol.auxhistoricosenha 	A	 "
+		"WHERE	"
+			"A.idTipoHistoricoSenha 		IN (8, 10) ");
+
+	
+			MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteiraSQL, iIdTipoRelacionamentoSQL, iIdUFOperadoraSQL, iIdSegmentacaoSQL, iIdGrupoOperadoraSQL, iIdTipoLinhaSQL, iIdCanalSQL, iCdAreaRegistroSQL,iNrLinhaSQL, iIdTecnologiaSQL, 0, 0, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+
+	strcat (chrPesquisa,	
+		" GROUP BY  "
+			"TRUNC(A.dtRegistroHistoricoSenha,'DD'), "
+			"A.IDCANAL, "
+			"A.IDTIPOLINHA, "
+			"A.IDTIPORELACIONAMENTO, "
+			"A.NRLINHA, "
+			"A.CDAREAREGISTRO "
+		")A "
+	" GROUP BY "
+		"DTREGISTROHISTORICO, "
+		"IDTIPOLINHA, "
+		"IDTIPORELACIONAMENTO,  "
+		"IDCANAL ");
+
+	tuxfw_getlogger()->debug("Pesquisa:[ %s ]\r\n", chrPesquisa);
+
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;	
+	
+	EXEC SQL DECLARE LSTACESSONEGADOAGR CURSOR FOR qPesquisa;
+
+	EXEC SQL OPEN LSTACESSONEGADOAGR;
+
+
+
+	for( ;; ) {
+
+		// varre todos os registros para criar a lista com os Relacionamentos		
+		EXEC SQL FETCH LSTACESSONEGADOAGR INTO
+			:cDtRelacionamento:i_cDtRelacionamento ,
+			:iIdCanalRel:i_iIdCanalRel ,
+			:iIdTipoLinhaRel:i_iIdTipoLinhaRel ,
+			:iIdTipoRelacionamentoRel:i_iIdTipoRelacionamentoRel ,
+			:iTotalRel:i_iTotalRel ;
+
+			if (count++ == 0)
+				oRelacionamento.reiniciaValores(0);
+
+			if ( strcmp(oRelacionamento.getDtRelacionamento(), "") != 0 && strcmp(oRelacionamento.getDtRelacionamento(), cDtRelacionamento) != 0){
+				
+				lstRelac.push_back( oRelacionamento );
+				oRelacionamento.reiniciaValores(0);
+			}
+	
+	
+			oRelacionamento.setaQteTotalVOLTAV(cDtRelacionamento, iIdCanalRel, iIdTipoLinhaRel, iIdTipoRelacionamentoRel, iTotalRel);
+	}
+
+
+	if (count)
+		lstRelac.push_back( oRelacionamento );
+
+	
+	EXEC SQL CLOSE LSTACESSONEGADOAGR;	
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+/******************************GSM*************************************/
+void CRelacionamento::consultarAcessoNegadoLojaDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	int iIdTipoCarteiraSQL=0;
+	int iIdTipoRelacionamentoSQL=0;
+	int iIdUFOperadoraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+	
+	int iIdTecnologiaSQL = 0;
+	int iIdPessoaDeParaSQL = 0;
+	int iIdTerminalSQL = 0;
+
+	int iIdTipoLinhaSQL=0;
+	int iIdCanalSQL=0;
+	int iCdAreaRegistroSQL=0;
+	int iNrLinhaSQL=0;
+	int iIsAgrupadoSQL=0;
+	char cDtRelacionamento[10+1];
+	int  iIdCanalRel;
+	int  iIdTipoLinhaRel;
+	int  iIdTipoRelacionamentoRel;
+	int  iTotalRel;
+	char cDsTipoHistoricoSenha[255];
+
+	char cNmLoja[256] = "";
+	char cNmTerminal[256] = "";
+	int  count = 0;
+    short i_cDtRelacionamento = -1;
+    short i_iIdCanalRel = -1;
+    short i_iIdTipoLinhaRel = -1;
+    short i_iIdTipoRelacionamentoRel = -1;
+    short i_cNmLoja = -1;
+    short i_cNmTerminal = -1;
+    short i_iTotalRel = -1;
+	EXEC SQL END DECLARE SECTION;
+
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+	iIdTipoCarteiraSQL =  iIdTipoCarteira < 0 ? 0 : iIdTipoCarteira;
+	iIdTipoRelacionamentoSQL = iIdTipoRelacionamento < 0 ? 0 : iIdTipoRelacionamento;
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdSegmentacaoSQL = iIdSegmentacao < 0 ? 0 : iIdSegmentacao;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	iIdCanalSQL = iIdCanal < 0 ? 0 : iIdCanal;
+	iCdAreaRegistroSQL = iCdAreaRegistro < 0 ? 0 : iCdAreaRegistro;
+	iNrLinhaSQL = iNrLinha < 0 ? 0 : iNrLinha;
+	iIsAgrupadoSQL = iIsAgrupado < 0 ? 0 : iIsAgrupado;
+
+	iIdTecnologiaSQL = iIdTecnologia < 0 ? 0 : iIdTecnologia;
+	iIdPessoaDeParaSQL = iIdPessoaDePara < 0 ? 0 : iIdPessoaDePara;
+	iIdTerminalSQL = iIdTerminal < 0 ? 0 : iIdTerminal;
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	strcpy (chrPesquisa, 
+	"SELECT  /*+ index (A AUXHISTORICOSENHAIE1) */  "
+		"TO_CHAR(TRUNC(dtRegistroHistoricoSenha,'DD'),'DD/MM/YYYY') AS dtRegistroHistorico, "
+		"IDCANAL,				"
+		"IDTIPOLINHA,			"
+		"IDTIPORELACIONAMENTO,  "
+		"NVL(D.NMPESSOA,' '),   "
+		"NVL(B.NRTERMINAL,' '), "	
+		"COUNT(1)				"
+	"FROM		"
+		"vol.auxhistoricosenha A, "
+		"vol.sitefterminal 	   B, "
+		"customer.pessoadepara C, "
+		"customer.pessoa       D  "    	 
+	"WHERE	"
+		"A.IDTERMINAL = B.IDTERMINAL(+) AND	     "
+		"B.IDPESSOADEPARA = C.IDPESSOADEPARA(+) AND "
+		"C.IDPESSOA = D.IDPESSOA(+) AND			 "
+		"IDTIPOHISTORICOSENHA IN (8, 10)		 ");
+
+
+		MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteiraSQL, iIdTipoRelacionamentoSQL, iIdUFOperadoraSQL, iIdSegmentacaoSQL, iIdGrupoOperadoraSQL, iIdTipoLinhaSQL, iIdCanalSQL, iCdAreaRegistroSQL,iNrLinhaSQL, iIdTecnologiaSQL, iIdPessoaDeParaSQL , iIdTerminalSQL, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+	
+	strcat (chrPesquisa,
+	" GROUP BY  "
+ 		"TRUNC(A.dtRegistroHistoricoSenha,'DD'),	  "
+		"A.IDCANAL,	   "
+		"A.IDTIPOLINHA,  "
+		"A.IDTERMINAL, "
+		"B.NRTERMINAL, "
+		"D.NMPESSOA,   "
+		"A.IDTIPORELACIONAMENTO "
+	"ORDER BY "	
+		"dtRegistroHistorico, "
+		"NMPESSOA, "
+		"NRTERMINAL ");
+
+
+	tuxfw_getlogger()->debug("Pesquisa:[ %s ]\r\n", chrPesquisa);
+
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;	
+    
+	EXEC SQL DECLARE LSTACESSONEGADOLOJA CURSOR FOR qPesquisa;
+
+	EXEC SQL OPEN LSTACESSONEGADOLOJA;
+
+	
+	for( ;; ) {
+
+		// varre todos os registros para criar a lista com os Relacionamentos		
+		EXEC SQL FETCH LSTACESSONEGADOLOJA INTO
+			:cDtRelacionamento:i_cDtRelacionamento ,
+			:iIdCanalRel:i_iIdCanalRel ,
+			:iIdTipoLinhaRel:i_iIdTipoLinhaRel ,
+			:iIdTipoRelacionamentoRel:i_iIdTipoRelacionamentoRel ,
+			:cNmLoja:i_cNmLoja ,
+			:cNmTerminal:i_cNmTerminal ,
+			:iTotalRel:i_iTotalRel ;
+
+
+			if (count++ == 0)
+				oRelacionamento.reiniciaValores(0);
+
+			if ( ( strcmp(oRelacionamento.getDtRelacionamento(), "") != 0 && strcmp(oRelacionamento.getDtRelacionamento(), cDtRelacionamento) != 0) 
+			|| ( strcmp(oRelacionamento.getNmLoja(), "") != 0 && strcmp(oRelacionamento.getNmLoja(),  CUtil::trim(cNmLoja) ) != 0 )  
+			|| ( strcmp(oRelacionamento.getNmTerminal(), "") != 0  && strcmp(oRelacionamento.getNmTerminal(),  CUtil::trim(cNmTerminal) ) != 0) ) 
+ 			{
+				
+				lstRelac.push_back( oRelacionamento );
+				oRelacionamento.reiniciaValores(0);
+			}
+	
+	
+			oRelacionamento.setaQteTotalVOLTAV(cDtRelacionamento, iIdCanalRel, iIdTipoLinhaRel, iIdTipoRelacionamentoRel, iTotalRel);
+			oRelacionamento.setNmLoja( CUtil::trim(cNmLoja) );
+			oRelacionamento.setNmTerminal( CUtil::trim(cNmTerminal) );
+	}
+
+	if (count)
+		lstRelac.push_back( oRelacionamento );
+
+
+	EXEC SQL CLOSE LSTACESSONEGADOLOJA;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+void CRelacionamento::consultarAcessoNegadoLojaAgrupadoDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoRelacionamento, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha, int iIsAgrupado, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	int iIdTipoCarteiraSQL=0;
+	int iIdTipoRelacionamentoSQL=0;
+	int iIdUFOperadoraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+	
+	int iIdTipoLinhaSQL=0;
+	int iIdCanalSQL=0;
+	int iCdAreaRegistroSQL=0;
+	int iNrLinhaSQL=0;
+	int iIsAgrupadoSQL=0;
+
+	int iIdTecnologiaSQL = 0;
+	int iIdPessoaDeParaSQL = 0;
+	int iIdTerminalSQL = 0;
+
+	char cDtRelacionamento[10+1];
+	int  iIdCanalRel;
+	int  iIdTipoLinhaRel;
+	int  iIdTipoRelacionamentoRel;
+	int  iTotalRel;
+
+	int	 iIdTipoHistoricoSenha;
+	char cDsTipoHistoricoSenha[255];
+
+	char cNmLoja[256] = "";
+	char cNmTerminal[256] = "";
+
+	int  count = 0;
+    short i_cDtRelacionamento = -1;
+    short i_iIdCanalRel = -1;
+    short i_iIdTipoLinhaRel = -1;
+    short i_iIdTipoRelacionamentoRel = -1;
+    short i_cNmLoja = -1;
+    short i_cNmTerminal = -1;
+    short i_iTotalRel = -1;
+	EXEC SQL END DECLARE SECTION;
+
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+	iIdTipoCarteiraSQL =  iIdTipoCarteira < 0 ? 0 : iIdTipoCarteira;
+	iIdTipoRelacionamentoSQL = iIdTipoRelacionamento < 0 ? 0 : iIdTipoRelacionamento;
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdSegmentacaoSQL = iIdSegmentacao < 0 ? 0 : iIdSegmentacao;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	iIdCanalSQL = iIdCanal < 0 ? 0 : iIdCanal;
+	iCdAreaRegistroSQL = iCdAreaRegistro < 0 ? 0 : iCdAreaRegistro;
+	iNrLinhaSQL = iNrLinha < 0 ? 0 : iNrLinha;
+	iIsAgrupadoSQL = iIsAgrupado < 0 ? 0 : iIsAgrupado;
+
+	iIdTecnologiaSQL = iIdTecnologia < 0 ? 0 : iIdTecnologia;
+	iIdPessoaDeParaSQL = iIdPessoaDePara < 0 ? 0 : iIdPessoaDePara;
+	iIdTerminalSQL = iIdTerminal < 0 ? 0 : iIdTerminal;
+
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	strcpy(chrPesquisa,
+	"SELECT    "
+		"DTREGISTROHISTORICO, " 
+		"IDCANAL, "
+		"IDTIPOLINHA, "
+		"IDTIPORELACIONAMENTO, "	
+		"NVL(NMPESSOA, ' '), "
+		"NVL(NRTERMINAL, ' '), "
+		"COUNT(1) "
+	"FROM(	 "
+		"SELECT /*+ index (A AUXHISTORICOSENHAIE1) */ "
+			"TO_CHAR(TRUNC(dtRegistroHistoricoSenha,'DD'),'DD/MM/YYYY') AS dtRegistroHistorico, "
+			"IDTIPOLINHA, "
+			"IDTIPORELACIONAMENTO, "
+			"idcanal, "
+			"NVL(B.NRTERMINAL,' ') AS NRTERMINAL, "
+			"NVL(D.NMPESSOA,  ' ') AS NMPESSOA,   "		
+			"COUNT(1) "			  	   	     
+		"FROM  "
+			"vol.auxhistoricosenha A, "
+			"vol.sitefterminal 	   B, " 
+			"customer.pessoadepara C, "
+			"customer.pessoa       D  "
+		"WHERE	"
+			"A.IDTERMINAL = B.IDTERMINAL(+) AND		 "
+			"B.IDPESSOADEPARA = C.IDPESSOADEPARA(+) AND "
+			"C.IDPESSOA = D.IDPESSOA(+) AND			 "
+			"A.IDTIPOHISTORICOSENHA IN (8, 10)		 ");
+			
+			MontaPesquisaLiteral(chrPesquisa, 0, iIdTipoCarteiraSQL, iIdTipoRelacionamentoSQL, iIdUFOperadoraSQL, iIdSegmentacaoSQL, iIdGrupoOperadoraSQL, iIdTipoLinhaSQL, iIdCanalSQL, iCdAreaRegistroSQL,iNrLinhaSQL, iIdTecnologiaSQL, iIdPessoaDeParaSQL, iIdTerminalSQL, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+
+	strcat (chrPesquisa,	
+		" GROUP BY  "
+			"TRUNC(A.dtRegistroHistoricoSenha,'DD'), "
+			"A.IDCANAL,			   "
+			"A.IDTIPOLINHA,		   "
+			"A.IDTIPORELACIONAMENTO, "
+			"A.NRLINHA,			   "
+			"A.CDAREAREGISTRO,	   "
+			"A.IDTERMINAL,		   "
+			"B.NRTERMINAL,		   "
+			"D.NMPESSOA		       "
+			")A					   "
+	" GROUP BY "
+		"DTREGISTROHISTORICO,	"
+		"IDTIPOLINHA,			"
+		"IDTIPORELACIONAMENTO,  "
+		"IDCANAL,				"
+		"NRTERMINAL,			"
+		"NMPESSOA ");
+
+	tuxfw_getlogger()->debug("Pesquisa:[ %s ]\r\n", chrPesquisa);
+
+
+	printf("Pesquisa:[ %s ]\r\n", chrPesquisa);
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;	
+	
+	EXEC SQL DECLARE LSTACESSONEGADOLOJAAGR CURSOR FOR qPesquisa;
+
+	EXEC SQL OPEN LSTACESSONEGADOLOJAAGR;
+
+
+
+	for( ;; ) {
+
+		// varre todos os registros para criar a lista com os Relacionamentos		
+		EXEC SQL FETCH LSTACESSONEGADOLOJAAGR INTO
+			:cDtRelacionamento:i_cDtRelacionamento ,
+			:iIdCanalRel:i_iIdCanalRel ,
+			:iIdTipoLinhaRel:i_iIdTipoLinhaRel ,
+			:iIdTipoRelacionamentoRel:i_iIdTipoRelacionamentoRel ,		
+			:cNmLoja:i_cNmLoja ,
+			:cNmTerminal:i_cNmTerminal ,
+			:iTotalRel:i_iTotalRel ;
+
+			if (count++ == 0)
+				oRelacionamento.reiniciaValores(0);
+
+			if ( ( strcmp(oRelacionamento.getDtRelacionamento(), "") != 0 && strcmp(oRelacionamento.getDtRelacionamento(), cDtRelacionamento) != 0) 
+			|| ( strcmp(oRelacionamento.getNmLoja(), "") != 0 && strcmp(oRelacionamento.getNmLoja(),  CUtil::trim(cNmLoja) ) != 0 )  
+			|| ( strcmp(oRelacionamento.getNmTerminal(), "") != 0  && strcmp(oRelacionamento.getNmTerminal(),  CUtil::trim(cNmTerminal) ) != 0) ) 
+			{
+				
+				lstRelac.push_back( oRelacionamento );
+				oRelacionamento.reiniciaValores(0);
+			}
+	
+	
+			oRelacionamento.setaQteTotalVOLTAV(cDtRelacionamento, iIdCanalRel, iIdTipoLinhaRel, iIdTipoRelacionamentoRel, iTotalRel);
+
+
+			oRelacionamento.setNmLoja( CUtil::trim(cNmLoja) );
+			oRelacionamento.setNmTerminal( CUtil::trim(cNmTerminal) );
+	}
+
+
+	if (count)
+		lstRelac.push_back( oRelacionamento );
+
+	
+	EXEC SQL CLOSE LSTACESSONEGADOLOJAAGR;	
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+
+
+void CRelacionamento::consultarServicosDisponiveisURADB(list < CRelacionamento > & lstRelac){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int  iIdContato;
+	char cNmContato[255];
+    short i_iIdContato = -1;
+    short i_cNmContato = -1;
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+	EXEC SQL DECLARE LSTSERVICOSDISPONIVEISURA CURSOR FOR
+
+	SELECT DISTINCT
+		CONTATOFOLHA.IDCONTATO,		
+		DECODE (DSCONTATOCANAIS, NULL, REPLACE (SUBSTR(SUBSTR(NMPATH, 6), 1, INSTR(SUBSTR(NMPATH, 6), '/', 1, 2)  -1 ), '/', ' '), DSCONTATOCANAIS)  AS DSCONTATOCANAIS
+	FROM
+		CONTATOADM.CONFIGURAPALITAGEM CONFIGURAPALITAGEM,
+		CONTATOADM.CONTATOFOLHA	CONTATOFOLHA,
+		CONTATOADM.CONTATO CONTATO
+	WHERE
+		CONTATOFOLHA.IDCONTATO =  CONFIGURAPALITAGEM.IDCONTATO AND
+		CONTATOFOLHA.IDCONTATO =  CONTATO.IDCONTATO		  AND	
+		CONFIGURAPALITAGEM.IDSISTEMAORIGEM  = 30 AND
+		CONFIGURAPALITAGEM.SGSERVICO IN ('ContatoListaRestritivaOff', 'ContatoListaRestritivaOn')
+	ORDER BY DSCONTATOCANAIS;	
+
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	EXEC SQL OPEN LSTSERVICOSDISPONIVEISURA;
+
+
+	for( ;; ) {
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTSERVICOSDISPONIVEISURA INTO 		
+			:iIdContato:i_iIdContato ,
+			:cNmContato:i_cNmContato ;
+
+			oRelacionamento.setNuNivel(0);
+			oRelacionamento.setIdContato(iIdContato);
+			oRelacionamento.setDsOperacao(CUtil::trim(cNmContato));
+
+
+			lstRelac.push_back( oRelacionamento );
+		}
+
+	EXEC SQL CLOSE LSTSERVICOSDISPONIVEISURA;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+
+void CRelacionamento::consultarServicosDisponiveisDB(list < CRelacionamento > & lstRelac){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	int	 iNuNivel;
+	int  iIdContato;
+	char cNmContato[255];
+    short i_iNuNivel = -1;
+    short i_iIdContato = -1;
+    short i_cNmContato = -1;
+	EXEC SQL END DECLARE SECTION;
+
+
+	CRelacionamento oRelacionamento;
+
+
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+	EXEC SQL DECLARE LSTSERVICOSDISPONIVEIS CURSOR FOR
+	SELECT DISTINCT
+		CONTATOFOLHA.IDCONTATO,
+		0,
+		DECODE (DSCONTATOCANAIS, NULL, REPLACE (SUBSTR(SUBSTR(NMPATH, 6), 1, INSTR(SUBSTR(NMPATH, 6), '/', 1, 2)  -1 ), '/', ' '), DSCONTATOCANAIS)  AS DSCONTATOCANAIS
+	FROM
+		CONTATOADM.CONFIGURAPALITAGEM CONFIGURAPALITAGEM,
+		CONTATOADM.CONTATOFOLHA	CONTATOFOLHA,
+		CONTATOADM.CONTATO CONTATO
+	WHERE
+		CONTATOFOLHA.IDCONTATO =  CONFIGURAPALITAGEM.IDCONTATO AND
+		CONTATOFOLHA.IDCONTATO =  CONTATO.IDCONTATO		  AND	
+		CONFIGURAPALITAGEM.IDSISTEMAORIGEM IN (9, 28)
+	ORDER BY DSCONTATOCANAIS; 	
+
+
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	EXEC SQL OPEN LSTSERVICOSDISPONIVEIS;
+
+
+	for( ;; ) {
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTSERVICOSDISPONIVEIS INTO 
+			:iIdContato:i_iIdContato,
+			:iNuNivel:i_iNuNivel,			
+			:cNmContato:i_cNmContato;
+
+
+			oRelacionamento.setNuNivel(iNuNivel);
+			oRelacionamento.setIdContato(iIdContato);
+			oRelacionamento.setDsOperacao(CUtil::trim(cNmContato));
+
+
+			lstRelac.push_back( oRelacionamento );
+		}
+
+	EXEC SQL CLOSE LSTSERVICOSDISPONIVEIS;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}
+
+
+void CRelacionamento::consultarPrimeiroAcessoDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iCdAreaRegistro, int iNrLinha){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char chrPesquisa[2000]="";
+	char cDtRelacionamentoInicio[10+1];
+	char cDtRelacionamentoFinal[10+1];
+	int iIdUFOperadoraSQL=0;
+	int iIdGrupoOperadoraSQL=0;
+	int iIdTipoCarteiraSQL=0;
+	int iIdSegmentacaoSQL=0;
+	int iIdCanalSQL=0;
+	int iIdTipoLinhaSQL=0;
+	int iCdAreaRegistroSQL=0;
+	int iNrLinhaSQL=0;
+	char cDtRelacionamento[10+1];
+	int  iIdCanalRel;
+	int  iIdTipoLinhaRel;
+	int  iIdTipoRelacionamentoRel;
+	int  iTotalRel;
+	int  count = 0;
+    short i_cDtRelacionamento = -1;
+    short i_iIdCanalRel = -1;
+    short i_iIdTipoLinhaRel = -1;
+    short i_iIdTipoRelacionamentoRel = -1;
+    short i_iTotalRel = -1;
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+	iIdTipoCarteiraSQL =  iIdTipoCarteira < 0 ? 0 : iIdTipoCarteira;
+	iIdSegmentacaoSQL = iIdSegmentacao < 0 ? 0 : iIdSegmentacao;
+
+	iIdCanalSQL = iIdCanal < 0 ? 0 : iIdCanal;
+	iIdTipoLinhaSQL = iIdTipoLinha < 0 ? 0 : iIdTipoLinha;
+	iCdAreaRegistroSQL = iCdAreaRegistro < 0 ? 0 : iCdAreaRegistro;
+	iNrLinhaSQL = iNrLinha < 0 ? 0 : iNrLinha;
+
+
+	
+	// garante que a lista esta vazia
+	lstRelac.clear();
+
+
+	strcpy (chrPesquisa, 
+	"SELECT /*+ index (A AUXHISTORICOSENHAIE1) */ "
+		"TO_CHAR(TRUNC(dtRegistroHistoricoSENHA,'DD'),'DD/MM/YYYY') AS dtRegistroHistorico, "
+		"IDCANAL, "
+		"IDTIPOLINHA, "
+		"IDTIPORELACIONAMENTO, "
+		"COUNT(1) "
+	"FROM "
+		"vol.AUXHISTORICOSENHA 	A	 "
+	 "WHERE	 "
+		"A.idTipoHistoricoSenha  =  14 ");
+
+
+//	MontaPesquisaLiteral(chrPesquisa, iIdTipoCarteiraSQL, 0, iIdUFOperadoraSQL, iIdSegmentacaoSQL, iIdGrupoOperadoraSQL, iIdTipoLinhaSQL, iIdCanalSQL, iCdAreaRegistroSQL,iNrLinhaSQL, cDtRelacionamentoInicio, cDtRelacionamentoFinal);
+
+
+
+	strcat (chrPesquisa, "GROUP BY "
+							"TRUNC(dtRegistroHistoricoSENHA,'DD'), "
+							"IDCANAL, "
+							"IDTIPOLINHA, "
+							"IDTIPORELACIONAMENTO");
+
+							
+
+	tuxfw_getlogger()->debug("Pesquisa:[ %s ]\r\n", chrPesquisa);
+
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+ 	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+    
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;	
+
+	EXEC SQL DECLARE LSTPRIMEIROACESSO CURSOR FOR qPesquisa;
+			  
+	EXEC SQL OPEN LSTPRIMEIROACESSO;
+
+
+	tuxfw_getlogger()->debug("Cursor Aberto\r\n");
+
+	for( ;; ) {
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTPRIMEIROACESSO INTO
+			:cDtRelacionamento:i_cDtRelacionamento ,
+			:iIdCanalRel:i_iIdCanalRel ,
+			:iIdTipoLinhaRel:i_iIdTipoLinhaRel ,
+			:iIdTipoRelacionamentoRel:i_iIdTipoRelacionamentoRel ,
+			:iTotalRel:i_iTotalRel ;
+
+		
+
+			if (count++ == 0)
+				oRelacionamento.reiniciaValores(0);
+			
+
+			if ( strcmp(oRelacionamento.getDtRelacionamento(), "") != 0 && strcmp(oRelacionamento.getDtRelacionamento(), cDtRelacionamento) != 0){
+				
+
+				lstRelac.push_back( oRelacionamento );
+				oRelacionamento.reiniciaValores(0);
+			}
+	
+	
+			oRelacionamento.setaQteTotalVOLTAV(cDtRelacionamento, iIdCanalRel, iIdTipoLinhaRel, iIdTipoRelacionamentoRel, iTotalRel);
+
+	
+	}
+
+
+		
+	if (count)
+		lstRelac.push_back( oRelacionamento );
+	
+
+	tuxfw_getlogger()->debug("Fechando cursor\r\n");
+
+	EXEC SQL CLOSE LSTPRIMEIROACESSO;
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->debug(" sqlca.sqlcode = %d",sqlca.sqlcode);
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+}
+
+
+
+void CRelacionamento::consultarTempoSessaoLojaDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iIdTecnologia, int iIdPessoaDePara, int iIdTerminal, int iQtIntervaloInicial, int iQtIntervaloFinal)
+{
+	
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		char cDtRelacionamentoInicio[10+1];
+		char cDtRelacionamentoFinal[10+1];
+
+
+		char TmVOLPreCliente[24] = "";
+		char TmVOLPreUsuario[24] = "";
+		char TmVOLPosCliente[24] = "";
+		char TmVOLPosUsuario[24] = "";
+		char TmTAVPreCliente[24] = "";
+		char TmTAVPreUsuario[24] = "";
+		char TmTAVPosCliente[24] = "";
+		char TmTAVPosUsuario[24] = "";
+		long QtTotalClientes = 0;
+		char TmTotalUtilizacao[24] = "";
+
+		char chrPesquisa[5000] = "";
+
+		char cNmLoja[256]="";
+		char cNmTerminal[256]="";
+		char chrVariavel[10]="";
+
+        short i_cNmLoja = -1;
+        short i_cNmTerminal = -1;
+        short i_TmVOLPreCliente = -1;
+        short i_TmVOLPreUsuario = -1;
+        short i_TmVOLPosCliente = -1;
+        short i_TmVOLPosUsuario = -1;
+        short i_TmTAVPreCliente = -1;
+        short i_TmTAVPreUsuario = -1;
+        short i_TmTAVPosCliente = -1;
+        short i_TmTAVPosUsuario = -1;
+        short i_QtTotalClientes = -1;
+        short i_TmTotalUtilizacao = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	lstRelac.clear();
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+
+	
+	strcpy (chrPesquisa, 
+	"SELECT  "
+		"pessoa.nmpessoa,			"
+		"sitefterminal.NRTERMINAL,  "
+		"TO_CHAR(TRUNC(AVG((a.dtFinal - a.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((a.dtFinal - a.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmVOLPreCliente,	"
+		"TO_CHAR(TRUNC(AVG((b.dtFinal - b.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((b.dtFinal - b.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmVOLPreUsuario,  "
+		"TO_CHAR(TRUNC(AVG((c.dtFinal - c.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((c.dtFinal - c.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmVOLPosCliente,	"
+		"TO_CHAR(TRUNC(AVG((d.dtFinal - d.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((d.dtFinal - d.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmVOLPosUsuario,	"
+		"TO_CHAR(TRUNC(AVG((e.dtFinal - e.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((e.dtFinal - e.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTAVPreCliente,  "
+		"TO_CHAR(TRUNC(AVG((f.dtFinal - f.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((f.dtFinal - f.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTAVPreUsuario,	"
+		"TO_CHAR(TRUNC(AVG((g.dtFinal - g.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((g.dtFinal - g.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTAVPosCliente,	"
+		"TO_CHAR(TRUNC(AVG((h.dtFinal - h.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((h.dtFinal - h.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTAVPosUsuario,  "
+		"COUNT(*) AS qtTotalAcessos, "
+		"TO_CHAR(TRUNC(SUM((tsmaster.dtFinal - tsmaster.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(SUM((tsmaster.dtFinal - tsmaster.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTotalUtilizacao "
+	"FROM "
+		"vol.TEMPOSESSAO			tsmaster,	"
+		"vol.SITEFTERMINAL 			sitefterminal, "
+		"customer.PessoaDePara		pessoadepara,  "
+		"customer.Pessoa			Pessoa, "	
+		"(SELECT ts.*  FROM  vol.TEMPOSESSAO ts				  "
+		 "WHERE		idCanal		 = 15 /*VOL*/ AND			  "
+					"idTipoLinha    IN (2, 6) /*Pre*/   AND         "
+					"idTipoRelacionamento = 2 /*Cliente*/ AND "
+					"ts.dtfinal IS NOT NULL		   AND		  ");
+					strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+					strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+					strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+					strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+					strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+					strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+					strcat ( chrPesquisa, ") a, "			  	  
+			 "(SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			  "WHERE idCanal		 = 15 /*VOL*/ AND  "
+			   		 "idTipoLinha    IN (2, 6)  /*Pre*/   AND  "
+					 "idTipoRelacionamento = 1 /*Cliente*/ AND "
+					 "ts.dtfinal IS NOT NULL			   AND  ");
+			  	 	strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+					strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+					strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+					strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+					strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+					strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+					strcat ( chrPesquisa, ") b, "			  	 
+			  "(SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			  " WHERE idCanal		 = 15 /*VOL*/ AND  "
+			   		 "idTipoLinha    IN (1, 5) /*Pos*/   AND  "
+					  "idTipoRelacionamento = 2 /*Cliente*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+			  	    	strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") c, "				
+			 " (SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			  " WHERE idCanal		 = 15 /*VOL*/ AND  "
+			   		  "idTipoLinha   IN (1, 5) /*Pos*/   AND  "
+					  "idTipoRelacionamento = 1 /*Usuario*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND      ");
+			  	    	strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") d, "				
+			" (SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			 "	WHERE idCanal		 = 13 /*VOL*/ AND  "
+			   		  "idTipoLinha    IN (2, 6) /*Pre*/   AND  "
+					  "idTipoRelacionamento = 2 /*Cliente*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+			  	    	strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") e, "				
+			 "( SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			  " WHERE   idCanal		 = 13 /*VOL*/ AND "
+						"idTipoLinha    IN (2, 6) /*Pre*/   AND "
+						"idTipoRelacionamento = 1 /*Usuario*/ AND "
+						"ts.dtfinal IS NOT NULL		   AND ");
+		  	    		strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") f, "								
+			 " (SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			  " WHERE idCanal		 = 13 /*VOL*/ AND  "
+			   		  "idTipoLinha   IN (1, 5) /*Pos*/   AND  "
+					  "idTipoRelacionamento = 2 /*Cliente*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+						strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") g, "									
+			"  (SELECT ts.*  FROM vol.TEMPOSESSAO  ts "
+			   "WHERE idCanal		 = 13 /*VOL*/ AND  "
+			   		  "idTipoLinha   IN (1, 5) /*Pos*/   AND  "
+					  "idTipoRelacionamento = 1 /*Usuario*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+						strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") h "				
+		" WHERE	 "
+		"		  tsmaster.dtfinal IS NOT NULL "
+		"AND	  tsmaster.idTempoSessao	 = a.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = b.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = c.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = d.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = e.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = f.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = g.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = h.idTempoSessao (+)  ");
+
+		if (iIdUFOperadora > 0){		
+
+			strcat (chrPesquisa, " AND tsmaster.idUFOperadora  = ");
+			itoa(iIdUFOperadora, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+
+
+		if (iIdGrupoOperadora > 0) {		
+
+			strcat (chrPesquisa, " AND tsmaster.idGrupoOperadora  = ");
+			itoa(iIdGrupoOperadora, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+
+
+		if (iIdTipoCarteira > 0)	{	
+
+			strcat (chrPesquisa, " AND tsmaster.idTipoCarteira  = ");
+			itoa(iIdTipoCarteira, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+
+		if (iIdSegmentacao > 0){	
+
+			strcat (chrPesquisa, " AND tsmaster.idSegmentacao  = ");
+			itoa(iIdSegmentacao, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+
+	
+		if (iIdCanal > 0){		
+
+			strcat (chrPesquisa, " AND tsmaster.idCanal  = ");
+			itoa(iIdCanal, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+
+		if (iIdTecnologia == TECNOLOGIA_GSM) 
+		{	
+			if (iIdTipoLinha == POS_CDMA)
+				iIdTipoLinha = POS_GSM;
+
+			if (iIdTipoLinha == PRE_CDMA)
+				iIdTipoLinha = PRE_GSM;
+
+
+			if (iIdTipoLinha > 0) 
+			{
+				strcat (chrPesquisa, " AND 	tsmaster.idTipoLinha = ");
+				itoa(iIdTipoLinha, chrVariavel, 10);
+				strcat (chrPesquisa, chrVariavel);
+			}
+			else			
+				strcat (chrPesquisa, " AND 	A.idTipoLinha IN (5, 6) ");
+
+		}		
+		else if (iIdTecnologia == TECNOLOGIA_CDMA)
+		{
+
+			if (iIdTipoLinha > 0) 
+			{
+				strcat (chrPesquisa, " AND 	tsmaster.idTipoLinha = ");
+				itoa(iIdTipoLinha, chrVariavel, 10);
+				strcat (chrPesquisa, chrVariavel);
+			}
+			else
+				strcat (chrPesquisa, " AND 	tsmaster.idTipoLinha IN (1, 2) ");
+
+		}
+		else 
+		{
+			if (iIdTipoLinha == POS_CDMA) 	
+				strcat (chrPesquisa, " AND 	tsmaster.idTipoLinha IN (1, 5) ");
+	
+			else if (iIdTipoLinha == PRE_CDMA) 	
+				strcat (chrPesquisa, " AND 	tsmaster.idTipoLinha IN (2, 6) ");
+
+		}	
+
+
+		if ((iIdPessoaDePara > 0) || (iIdTerminal > 0)){
+		
+			if (iIdTerminal > 0)
+			{
+				strcat (chrPesquisa, " AND sitefterminal.idTerminal = ");
+				itoa(iIdTerminal, chrVariavel, 10);
+				strcat (chrPesquisa, chrVariavel);
+			}
+			else{
+				strcat (chrPesquisa, " AND sitefterminal.idTerminal in ");
+				strcat (chrPesquisa, "	(SELECT idTerminal from vol.sitefterminal where idPessoadePara = ");
+				itoa (iIdPessoaDePara, chrVariavel, 10);
+				strcat (chrPesquisa, chrVariavel);
+				strcat (chrPesquisa, " ) ");
+
+			}
+
+		}
+
+		strcat ( chrPesquisa, " AND  tsmaster.NRIP 	  = sitefterminal.NRIPTERMINAL ");
+		strcat ( chrPesquisa, " AND sitefterminal.IDPESSOADEPARA = pessoadepara.IDPESSOADEPARA ");
+		strcat ( chrPesquisa, " AND pessoadepara.IDPESSOA = pessoa.IDPESSOA ");
+		strcat ( chrPesquisa, " AND	TRUNC(tsmaster.dtInicial)  >= TO_DATE('");
+		strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+		strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+		strcat ( chrPesquisa,"  AND	  TRUNC(tsmaster.dtInicial) <= TO_DATE('");
+		strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+		strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+	
+	strcat (chrPesquisa, 
+	"GROUP BY "
+		"sitefterminal.NRTERMINAL, "
+		"pessoa.NMPESSOA ");
+	
+	tuxfw_getlogger()->debug("chrPesquisa = %s \r\n", chrPesquisa);
+
+	
+	printf("chrPesquisa = %s \r\n", chrPesquisa);
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+	
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+		
+	EXEC SQL DECLARE LSTTEMPOSESSAOLOJA  CURSOR FOR qPesquisa;
+	
+	EXEC SQL OPEN LSTTEMPOSESSAOLOJA;
+
+
+	for( ;; ) {
+
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTTEMPOSESSAOLOJA INTO 
+			:cNmLoja:i_cNmLoja ,
+			:cNmTerminal:i_cNmTerminal ,
+			:TmVOLPreCliente:i_TmVOLPreCliente ,
+			:TmVOLPreUsuario:i_TmVOLPreUsuario ,
+			:TmVOLPosCliente:i_TmVOLPosCliente ,
+			:TmVOLPosUsuario:i_TmVOLPosUsuario ,
+			:TmTAVPreCliente:i_TmTAVPreCliente ,
+			:TmTAVPreUsuario:i_TmTAVPreUsuario ,
+			:TmTAVPosCliente:i_TmTAVPosCliente ,
+			:TmTAVPosUsuario:i_TmTAVPosUsuario ,
+			:QtTotalClientes:i_QtTotalClientes ,
+			:TmTotalUtilizacao:i_TmTotalUtilizacao ;
+						
+			oRelacionamento.setNmLoja( CUtil::trim(cNmLoja) );
+			oRelacionamento.setNmTerminal( CUtil::trim(cNmTerminal) );	
+			oRelacionamento.setTmVOLPreCliente(TmVOLPreCliente);
+			oRelacionamento.setTmVOLPreUsuario(TmVOLPreUsuario);
+			oRelacionamento.setTmVOLPosCliente(TmVOLPosCliente);
+			oRelacionamento.setTmVOLPosUsuario(TmVOLPosUsuario);
+			oRelacionamento.setTmTAVPreCliente(TmTAVPreCliente);
+			oRelacionamento.setTmTAVPreUsuario(TmTAVPreUsuario);
+			oRelacionamento.setTmTAVPosCliente(TmTAVPosCliente);
+			oRelacionamento.setTmTAVPosUsuario(TmTAVPosUsuario);
+			oRelacionamento.setQtTotalClientes(QtTotalClientes);
+			oRelacionamento.setTmTotalUtilizacao(TmTotalUtilizacao);
+			
+
+
+
+			lstRelac.push_back( oRelacionamento );
+
+		}
+
+	EXEC SQL CLOSE LSTTEMPOSESSAOLOJA;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->information("-sqlErrorConstrutor %d", sqlca.sqlcode); 
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+}
+
+
+
+
+// PRIVATE
+// Métodos de acesso a banco de dados
+
+void CRelacionamento::consultarTempoSessaoDB(list < CRelacionamento > & lstRelac, int iIdTipoCarteira, int iIdTipoLinha, int iIdUFOperadora, int iIdSegmentacao, int iIdGrupoOperadora, int iIdCanal, int iIdTecnologia, int iQtIntervaloInicial, int iQtIntervaloFinal){
+	
+	struct sqlca sqlca;
+
+	tuxfw_getlogger()->debug("consultarTempoSessaoDB"); 
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		
+		char cDtRelacionamentoInicio[10+1];
+		char cDtRelacionamentoFinal[10+1];
+
+
+		char TmVOLPreCliente[24] = "";
+		char TmVOLPreUsuario[24] = "";
+		char TmVOLPosCliente[24] = "";
+		char TmVOLPosUsuario[24] = "";
+		char TmTAVPreCliente[24] = "";
+		char TmTAVPreUsuario[24] = "";
+		char TmTAVPosCliente[24] = "";
+		char TmTAVPosUsuario[24] = "";
+		char TmTAVControleCliente[24] = "";
+		char TmTAVControleUsuario[24] = "";
+		char TmVOLControleCliente[24] = "";
+		char TmVOLControleUsuario[24] = "";
+
+		long QtTotalClientes = 0;
+		char TmTotalUtilizacao[24] = "";
+
+		char chrPesquisa[10500] = "";
+
+		char cNmLoja[256]="";
+		char cNmTerminal[256]="";
+		char chrVariavel[10]="";
+
+        short i_TmVOLPreCliente = -1;
+        short i_TmVOLPreUsuario = -1;
+        short i_TmVOLPosCliente = -1;
+        short i_TmVOLPosUsuario = -1;
+        short i_TmTAVPreCliente = -1;
+        short i_TmTAVPreUsuario = -1;
+        short i_TmTAVPosCliente = -1;
+        short i_TmTAVPosUsuario = -1;
+        short i_TmTAVControleCliente = -1;
+        short i_TmTAVControleUsuario = -1;
+        short i_TmVOLControleCliente = -1;
+        short i_TmVOLControleUsuario = -1;
+        short i_QtTotalClientes = -1;
+        short i_TmTotalUtilizacao = -1;
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	lstRelac.clear();
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal, this->getDtRelacionamentoFinal());
+
+
+	
+	strcpy (chrPesquisa, 
+	"SELECT  "
+		"TO_CHAR(TRUNC(AVG((a.dtFinal - a.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((a.dtFinal - a.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmVOLPreCliente,	"
+		"TO_CHAR(TRUNC(AVG((b.dtFinal - b.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((b.dtFinal - b.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmVOLPreUsuario,  "
+		"TO_CHAR(TRUNC(AVG((c.dtFinal - c.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((c.dtFinal - c.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmVOLPosCliente,	"
+		"TO_CHAR(TRUNC(AVG((d.dtFinal - d.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((d.dtFinal - d.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmVOLPosUsuario,	"
+		"TO_CHAR(TRUNC(AVG((e.dtFinal - e.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((e.dtFinal - e.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTAVPreCliente,  "
+		"TO_CHAR(TRUNC(AVG((f.dtFinal - f.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((f.dtFinal - f.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTAVPreUsuario,	"
+		"TO_CHAR(TRUNC(AVG((g.dtFinal - g.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((g.dtFinal - g.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTAVPosCliente,	"
+		"TO_CHAR(TRUNC(AVG((h.dtFinal - h.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((h.dtFinal - h.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTAVPosUsuario,  "
+		"TO_CHAR(TRUNC(AVG((i.dtFinal - i.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((i.dtFinal - i.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTAVControleCliente,  "
+		"TO_CHAR(TRUNC(AVG((j.dtFinal - j.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((j.dtFinal - j.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTAVControleUsuario,  "
+		"TO_CHAR(TRUNC(AVG((k.dtFinal - k.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((k.dtFinal - k.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmVOLControleCliente,  "
+		"TO_CHAR(TRUNC(AVG((l.dtFinal - l.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(AVG((l.dtFinal - l.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmVOLControleUsuario,  "
+		"COUNT(*) AS qtTotalAcessos, "
+		"TO_CHAR(TRUNC(SUM((tsmaster.dtFinal - tsmaster.dtInicial) *24* 60)) || ' Min ' || TRUNC(MOD(SUM((tsmaster.dtFinal - tsmaster.dtInicial)) *24 *60 *60, 60)) || ' Seg') AS tmTotalUtilizacao "
+	"FROM "
+		"vol.TEMPOSESSAO			tsmaster,	"
+		"(SELECT ts.*  FROM  vol.TEMPOSESSAO ts				  "
+		 "WHERE		idCanal		 = 15 /*VOL*/ AND			  "
+					"idTipoLinha    IN (2, 6) /*Pre*/   AND         "
+					"idTipoRelacionamento = 2 /*Cliente*/ AND "
+					"ts.dtfinal IS NOT NULL		   AND		  ");
+					strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+					strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+					strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+					strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+					strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+					strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+					strcat ( chrPesquisa, ") a, "			  	  
+			 "(SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			  "WHERE idCanal		 = 15 /*VOL*/ AND  "
+			   		 "idTipoLinha    IN (2, 6) /*Pre*/   AND  "
+					 "idTipoRelacionamento = 1 /*Cliente*/ AND "
+					 "ts.dtfinal IS NOT NULL			   AND  ");
+			  	 	strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+					strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+					strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+					strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+					strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+					strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+					strcat ( chrPesquisa, ") b, "			  	 
+			  "(SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			  " WHERE idCanal		 = 15 /*VOL*/ AND  "
+			   		 "idTipoLinha    IN (1, 5) /*Pos*/   AND  "
+					  "idTipoRelacionamento = 2 /*Cliente*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+			  	    	strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") c, "				
+			 " (SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			  " WHERE idCanal		 = 15 /*VOL*/ AND  "
+			   		  "idTipoLinha    IN (1, 5) /*Pos*/   AND  "
+					  "idTipoRelacionamento = 1 /*Usuario*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND      ");
+			  	    	strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") d, "				
+			" (SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			 "	WHERE idCanal		 = 13 /*VOL*/ AND  "
+			   		  "idTipoLinha    IN (2, 6) /*Pre*/   AND  "
+					  "idTipoRelacionamento = 2 /*Cliente*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+			  	    	strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") e, "				
+			 "( SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			  " WHERE   idCanal		 = 13 /*VOL*/ AND "
+						"idTipoLinha    IN (2, 6) /*Pre*/   AND "
+						"idTipoRelacionamento = 1 /*Usuario*/ AND "
+						"ts.dtfinal IS NOT NULL		   AND ");
+		  	    		strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") f, "								
+			 " (SELECT ts.*  FROM  vol.TEMPOSESSAO  ts "
+			  " WHERE idCanal		 = 13 /*VOL*/ AND  "
+			   		  "idTipoLinha    IN (1, 5) /*Pos*/   AND  "
+					  "idTipoRelacionamento = 2 /*Cliente*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+						strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") g, "									
+			"  (SELECT ts.*  FROM vol.TEMPOSESSAO  ts "
+			   "WHERE idCanal		 = 13 /*VOL*/ AND  "
+			   		  "idTipoLinha    IN (1, 5) /*Pos*/   AND  "
+					  "idTipoRelacionamento = 1 /*Usuario*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+						strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") h, "						
+			"  (SELECT ts.*  FROM vol.TEMPOSESSAO  ts "
+			   "WHERE idCanal		 = 15 /*TAV*/ AND  "
+			   		  "idTipoLinha    IN (4, 7) /*Controle*/   AND  "
+					  "idTipoRelacionamento = 2 /*Cliente*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+						strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") i, "
+			"  (SELECT ts.*  FROM vol.TEMPOSESSAO  ts "
+			   "WHERE idCanal		 = 15 /*TAV*/ AND  "
+			   		  "idTipoLinha    IN (4, 7) /*Controle*/   AND  "
+					  "idTipoRelacionamento = 1 /*Usuario*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+						strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") j, "
+			"  (SELECT ts.*  FROM vol.TEMPOSESSAO  ts "
+			   "WHERE idCanal		 = 13 /*VOL*/ AND  "
+			   		  "idTipoLinha    IN (4, 7) /*Controle*/   AND  "
+					  "idTipoRelacionamento = 2 /*Cliente*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+						strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") k, "
+			"  (SELECT ts.*  FROM vol.TEMPOSESSAO  ts "
+			   "WHERE idCanal		 = 13 /*VOL*/ AND  "
+			   		  "idTipoLinha    IN (4, 7) /*Controle*/   AND  "
+					  "idTipoRelacionamento = 1 /*Usuario*/ AND "
+					  "ts.dtfinal IS NOT NULL		   AND ");
+						strcat ( chrPesquisa," 	TRUNC(ts.dtInicial)  >= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+						strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa,"  AND	  TRUNC(ts.dtInicial) <= TO_DATE('");
+						strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+						strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+						strcat ( chrPesquisa, ") l "
+
+		" WHERE	 "
+		"		  tsmaster.dtfinal IS NOT NULL "
+		"AND	  tsmaster.idTempoSessao	 = a.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = b.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = c.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = d.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = e.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = f.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = g.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = h.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = i.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = j.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = k.idTempoSessao (+)  "
+		"AND	  tsmaster.idTempoSessao	 = l.idTempoSessao (+)  ");
+
+		if (iIdUFOperadora > 0){		
+
+			strcat (chrPesquisa, " AND tsmaster.idUFOperadora  = ");
+			itoa(iIdUFOperadora, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+
+
+		if (iIdGrupoOperadora > 0) {		
+
+			strcat (chrPesquisa, " AND tsmaster.idGrupoOperadora  = ");
+			itoa(iIdGrupoOperadora, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+
+
+		if (iIdTipoCarteira > 0)	{	
+
+			strcat (chrPesquisa, " AND tsmaster.idTipoCarteira  = ");
+			itoa(iIdTipoCarteira, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+
+		if (iIdSegmentacao > 0){	
+
+			strcat (chrPesquisa, " AND tsmaster.idSegmentacao  = ");
+			itoa(iIdSegmentacao, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+
+	
+		if (iIdCanal > 0){		
+
+			strcat (chrPesquisa, " AND tsmaster.idCanal  = ");
+			itoa(iIdCanal, chrVariavel, 10);
+			strcat (chrPesquisa, chrVariavel);
+		}
+
+
+
+		if (iIdTecnologia == TECNOLOGIA_GSM) 
+		{	
+			if (iIdTipoLinha == POS_CDMA)
+				iIdTipoLinha = POS_GSM;
+
+			if (iIdTipoLinha == PRE_CDMA)
+				iIdTipoLinha = PRE_GSM;
+
+			if (iIdTipoLinha == CONTROLE_CDMA)
+				iIdTipoLinha = CONTROLE_GSM;
+
+
+			if (iIdTipoLinha > 0) 
+			{
+				strcat (chrPesquisa, " AND 	tsmaster.idTipoLinha = ");
+				itoa(iIdTipoLinha, chrVariavel, 10);
+				strcat (chrPesquisa, chrVariavel);
+			}
+			else			
+				strcat (chrPesquisa, " AND 	A.idTipoLinha IN (5, 6, 7) ");
+
+		}		
+		else if (iIdTecnologia == TECNOLOGIA_CDMA)
+		{
+
+			if (iIdTipoLinha > 0) 
+			{
+				strcat (chrPesquisa, " AND 	tsmaster.idTipoLinha = ");
+				itoa(iIdTipoLinha, chrVariavel, 10);
+				strcat (chrPesquisa, chrVariavel);
+			}
+			else
+				strcat (chrPesquisa, " AND 	tsmaster.idTipoLinha IN (1, 2, 4) ");
+
+		}
+		else 
+		{
+			if (iIdTipoLinha == POS_CDMA) 	
+				strcat (chrPesquisa, " AND 	tsmaster.idTipoLinha IN (1, 5) ");
+	
+			else if (iIdTipoLinha == PRE_CDMA) 	
+				strcat (chrPesquisa, " AND 	tsmaster.idTipoLinha IN (2, 6) ");
+
+			else if (iIdTipoLinha == CONTROLE_CDMA) 	
+				strcat (chrPesquisa, " AND 	tsmaster.idTipoLinha IN (4, 7) ");
+
+		}	
+
+		strcat ( chrPesquisa, " AND	TRUNC(tsmaster.dtInicial)  >= TO_DATE('");
+		strcat ( chrPesquisa,	cDtRelacionamentoInicio);
+		strcat ( chrPesquisa, " ', 'dd/mm/yyyy') ");
+		strcat ( chrPesquisa,"  AND	  TRUNC(tsmaster.dtInicial) <= TO_DATE('");
+		strcat ( chrPesquisa,	cDtRelacionamentoFinal);
+		strcat ( chrPesquisa, "', 'dd/mm/yyyy') ");
+	
+
+	tuxfw_getlogger()->debug("chrPesquisa = %s \r\n", chrPesquisa);
+
+	printf("chrPesquisa = %s \r\n", chrPesquisa);
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+	
+	EXEC SQL WHENEVER NOT FOUND DO BREAK;
+	
+	EXEC SQL PREPARE qPesquisa FROM :chrPesquisa;
+		
+	EXEC SQL DECLARE LSTTEMPOSESSAO  CURSOR FOR qPesquisa;
+	
+	EXEC SQL OPEN LSTTEMPOSESSAO;
+
+
+	for( ;; ) {
+
+		// varre todos os registros para criar a lista com os Relacionamentos
+		EXEC SQL FETCH LSTTEMPOSESSAO INTO 		
+			:TmVOLPreCliente:i_TmVOLPreCliente ,
+			:TmVOLPreUsuario:i_TmVOLPreUsuario ,
+			:TmVOLPosCliente:i_TmVOLPosCliente ,
+			:TmVOLPosUsuario:i_TmVOLPosUsuario ,
+			:TmTAVPreCliente:i_TmTAVPreCliente ,
+			:TmTAVPreUsuario:i_TmTAVPreUsuario ,
+			:TmTAVPosCliente:i_TmTAVPosCliente ,
+			:TmTAVPosUsuario:i_TmTAVPosUsuario ,
+			:TmTAVControleCliente:i_TmTAVControleCliente ,
+			:TmTAVControleUsuario:i_TmTAVControleUsuario ,
+			:TmVOLControleCliente:i_TmVOLControleCliente ,
+			:TmVOLControleUsuario:i_TmVOLControleUsuario ,
+			:QtTotalClientes:i_QtTotalClientes ,
+			:TmTotalUtilizacao:i_TmTotalUtilizacao ;
+						
+			oRelacionamento.setTmVOLPreCliente(TmVOLPreCliente);
+			oRelacionamento.setTmVOLPreUsuario(TmVOLPreUsuario);
+			oRelacionamento.setTmVOLPosCliente(TmVOLPosCliente);
+			oRelacionamento.setTmVOLPosUsuario(TmVOLPosUsuario);
+			oRelacionamento.setTmTAVPreCliente(TmTAVPreCliente);
+			oRelacionamento.setTmTAVPreUsuario(TmTAVPreUsuario);
+			oRelacionamento.setTmTAVPosCliente(TmTAVPosCliente);
+			oRelacionamento.setTmTAVPosUsuario(TmTAVPosUsuario);
+			oRelacionamento.setTmTAVControleCliente(TmTAVControleCliente);
+			oRelacionamento.setTmTAVControleUsuario(TmTAVControleUsuario);
+			oRelacionamento.setTmVOLControleCliente(TmVOLControleCliente);
+			oRelacionamento.setTmVOLControleUsuario(TmVOLControleUsuario);
+			oRelacionamento.setQtTotalClientes(QtTotalClientes);
+			oRelacionamento.setTmTotalUtilizacao(TmTotalUtilizacao);
+			
+
+			lstRelac.push_back( oRelacionamento );
+
+		}
+
+	EXEC SQL CLOSE LSTTEMPOSESSAO;
+
+	return;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->information("-sqlErrorConstrutor %d", sqlca.sqlcode); 
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+}
+
+
+bool CRelacionamento::consultarUsoServicoVIP(int iNrLinha, int iCdAreaRegistro)
+{
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;		
+	int iNrLinhaSQL = 0;
+	int iCdAreaRegistroSQL = 0;
+	int iPalitagemAcessoVIP = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	iNrLinhaSQL = iNrLinha;
+	iCdAreaRegistroSQL = iCdAreaRegistro;
+
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+	EXEC SQL
+	SELECT 
+		COUNT(1)
+	INTO
+		:iPalitagemAcessoVIP
+	FROM
+		ATENDIMENTO.ATENDIMENTO ATENDIMENTO,
+		LINHA.LINHABASE LINHABASE,
+		LINHA.LINHATELEFONICA LINHATELEFONICA,
+		CONTATOADM.CONTATOFUNCIONALIDADE CONTATOFUNCIONALIDADE,
+		APOIO.AREAREGISTRO AREAREGISTRO
+	WHERE
+		CONTATOFUNCIONALIDADE.CDFUNCIONALIDADE  = 'ContatoAtendimentoAgendado' AND
+		CONTATOFUNCIONALIDADE.IDCONTATO		= ATENDIMENTO.IDCONTATO AND
+		LINHABASE.NRLINHA			= :iNrLinhaSQL AND
+		LINHABASE.IDAREAREGISTRO		= AREAREGISTRO.IDAREAREGISTRO AND
+		AREAREGISTRO.CDAREAREGISTRO		= :iCdAreaRegistroSQL AND
+		LINHABASE.IDLINHABASE			= LINHATELEFONICA.IDLINHABASE AND 
+		ATENDIMENTO.IDLINHATELEFONICA		= LINHATELEFONICA.IDLINHATELEFONICA AND
+		ROWNUM = 1;
+
+	if (iPalitagemAcessoVIP)
+		return true;
+	else
+		return false;
+
+	sqlErrorConstrutor:
+		tuxfw_getlogger()->information("-sqlErrorConstrutor %d", sqlca.sqlcode); 
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+}
+
+
+void CRelacionamento::consultarCampanhaVip (int iIdUFOperadora, int iIdGrupoOperadora, int iCdAreaRegistro, int iNrLinha, int inAtivadoEnvioMail, XMLGen* xml_g)
+{
+
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+	char cDtRelacionamentoInicio[10 + 1];
+	char cDtRelacionamentoFinal[10 + 1];
+	int iIdUFOperadoraSQL=0;
+	int iIdGrupoOperadoraSQL=0;	
+	int iCdAreaRegistroSQL=0;
+	int iNrLinhaSQL=0;
+	char cDtRelacionamento[10+1];
+	char cNmPessoa[256];
+	char cDsEmail[50];
+	char cDtCadastro[50];	
+	char cNrLinhaFixo[30];		
+	char cCpf[30];
+	int  bInAtivadoEnvioMail = 0;
+	char cDsEndereco[255];
+	char cIdTipoRelacionamento[3];
+	char cAtivadoEnvioMail[5];
+	int  inAtivadoEnvioMailSQL = 0;
+    
+    short i_iCdAreaRegistroSQL = -1;
+    short i_iNrLinhaSQL = -1;
+    short i_cDtCadastro = -1;
+    short i_cNmPessoa = -1;
+    short i_cNrLinhaFixo = -1;
+    short i_cDsEmail = -1;
+    short i_cDsEndereco = -1;
+    short i_cCpf = -1;
+    short i_cAtivadoEnvioMail = -1;
+    short i_cIdTipoRelacionamento = -1;
+	EXEC SQL END DECLARE SECTION;
+
+	CRelacionamento oRelacionamento;
+
+	sprintf(cDtRelacionamentoInicio, this->getDtRelacionamentoInicio());
+	sprintf(cDtRelacionamentoFinal,  this->getDtRelacionamentoFinal());
+
+	iIdUFOperadoraSQL = iIdUFOperadora < 0 ? 0 : iIdUFOperadora;
+	iIdGrupoOperadoraSQL = iIdGrupoOperadora < 0 ? 0 : iIdGrupoOperadora;
+	iCdAreaRegistroSQL = iCdAreaRegistro < 0 ? 0 : iCdAreaRegistro;
+	iNrLinhaSQL = iNrLinha < 0 ? 0 : iNrLinha;
+	inAtivadoEnvioMailSQL = inAtivadoEnvioMail < 0? 0 :inAtivadoEnvioMail;
+
+	EXEC SQL WHENEVER SQLERROR  GOTO OraException;
+
+	EXEC SQL DECLARE LSTCAMPANHAIPHONE CURSOR FOR	
+	SELECT 
+		cdAreaRegistro,
+		linhabase.nrLinha,
+		TO_CHAR(dtCadastro, 'dd/mm/yyyy'),
+		NVL(nmPessoa, ' '), 
+		TO_CHAR(DECODE(nrLinhaFixo, NULL, 0, nrLinhaFixo)),
+		NVL(dsEmail, ' '),
+		NVL(dsEndereco, ' '),
+		NVL(cpf, ' '),
+		DECODE(inativadoenviomail, 1, 'Sim', 2, 'Não'),
+		DECODE(idtiporelacionamento, 1, 'U', 2, 'C')
+	FROM
+		VOL.CAMPANHAVIP CAMPANHAVIP,
+		LINHA.LINHABASE LINHABASE,
+		APOIO.AREAREGISTRO AREAREGISTRO,
+		CUSTOMER.UFOPERADORA UFOPERADORA,  
+		CUSTOMER.OPERADORA OPERADORA
+	WHERE		
+		CAMPANHAVIP.IDLINHABASE = LINHABASE.IDLINHABASE						 AND
+		LINHABASE.IDAREAREGISTRO = AREAREGISTRO.IDAREAREGISTRO					 AND	
+		CAMPANHAVIP.DTCADASTRO BETWEEN TO_DATE(TO_CHAR(:cDtRelacionamentoInicio) || '00:00:00', 'dd/mm/yyyy hh24:mi:ss')		 AND
+		 TO_DATE(TO_CHAR(:cDtRelacionamentoFinal) || '23:59:59', 'dd/mm/yyyy hh24:mi:ss') 	 AND		
+		(CAMPANHAVIP.INATIVADOENVIOMAIL  = :inAtivadoEnvioMailSQL OR :inAtivadoEnvioMailSQL = 0) AND
+		AREAREGISTRO.IDUFOPERADORA = UFOPERADORA.IDUFOPERADORA					 AND
+		UFOPERADORA.IDPESSOADEPARAOPERADORA = OPERADORA.IDPESSOADEPARAOPERADORA			 AND
+		(LINHABASE.NRLINHA	     = :iNrLinhaSQL   OR  :iNrLinhaSQL = 0)			 AND
+		(AREAREGISTRO.CDAREAREGISTRO = :iCdAreaRegistroSQL   OR  :iCdAreaRegistroSQL      = 0)   AND		
+		(AREAREGISTRO.IDUFOPERADORA  = :iIdUFOperadoraSQL    OR  :iIdUFOperadoraSQL       = 0)	 AND
+		(OPERADORA.IDGRUPOOPERADORA  = :iIdGrupoOperadoraSQL OR  :iIdGrupoOperadoraSQL    = 0);
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	
+	EXEC SQL OPEN LSTCAMPANHAIPHONE;
+
+	xml_g->createTag("VOLTAVRelatorioIphoneVO");
+	xml_g->addProp("xmlns", "dados.vol.vivo.com.br/vo");
+
+
+	for( ;; ) 
+	{
+		// varre todos os registros para criar a lista com as linhas		
+		EXEC SQL FETCH LSTCAMPANHAIPHONE INTO
+		:iCdAreaRegistroSQL:i_iCdAreaRegistroSQL ,
+		:iNrLinhaSQL:i_iNrLinhaSQL ,
+		:cDtCadastro:i_cDtCadastro ,
+		:cNmPessoa:i_cNmPessoa ,
+		:cNrLinhaFixo:i_cNrLinhaFixo ,
+		:cDsEmail:i_cDsEmail ,
+		:cDsEndereco:i_cDsEndereco ,
+		:cCpf:i_cCpf ,
+		:cAtivadoEnvioMail:i_cAtivadoEnvioMail ,
+		:cIdTipoRelacionamento:i_cIdTipoRelacionamento ;
+		
+		xml_g->createTag("VOLTAVRelatorioIphone");
+			xml_g->addItem("cdAreaRegistro",	iCdAreaRegistroSQL);
+			xml_g->addItem("nrLinha",		iNrLinhaSQL);
+			xml_g->addItem("dtCadastro",		CUtil::trim(cDtCadastro));
+			xml_g->addItem("nmPessoa",		CUtil::trim(cNmPessoa));
+			xml_g->addItem("nrLinhaFixo",		CUtil::trim(cNrLinhaFixo));
+			xml_g->addItem("dsEmail",		CUtil::trim(cDsEmail));
+			xml_g->addItem("cpf",			CUtil::trim(cCpf));
+			xml_g->addItem("inAtivadoEnvioMail",	CUtil::trim(cAtivadoEnvioMail));
+			xml_g->addItem("dsEndereco",		CUtil::trim(cDsEndereco));
+		xml_g->addItem("idTipoRelacionamento",	CUtil::trim(cIdTipoRelacionamento));
+		xml_g->closeTag();
+	}
+
+	EXEC SQL CLOSE LSTCAMPANHAIPHONE;
+
+	xml_g->closeTag();
+
+	return;
+
+OraException:
+	tuxfw_getlogger()->information("-sqlErrorConstrutor %d", sqlca.sqlcode); 
+	throw TuxBasicOraException( sqlca.sqlcode ); 
+
+
+}

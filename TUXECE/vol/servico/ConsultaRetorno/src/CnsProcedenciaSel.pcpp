@@ -1,0 +1,80 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <tuxfw.h>
+
+int ConsultaProcedenciaSel( const char *idContatoParam , const char *idRetorno, XMLGen *Saida )
+{
+   
+    ULOG_START("ConsultaProcedenciaSel()");
+    
+    struct sqlca sqlca;
+    sqlca.sqlcode=0 ;
+   
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR dsProcedencia[256];
+
+        unsigned long idProcedencia;
+        unsigned long idContato = atol(idContatoParam );
+        unsigned long ORA_idRetorno = atol( idRetorno );
+
+        short   i_dsProcedencia;
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL DECLARE ReadProcedencia CURSOR FOR 
+      SELECT 
+           b.idProcedencia,
+		   b.dsProcedencia
+      FROM 
+           ContatoAdm.TipoRetornoProcedencia   a,
+           Apoio.Procedencia                   b,
+           ContatoAdm.ContatoTipoRetorno       c
+      WHERE
+        a.idProcedencia > 0
+      AND 
+        a.idProcedencia = b.idProcedencia 
+      AND 
+        a.idContatoTipoRetorno = c.idContatoTipoRetorno
+      AND
+        c.idContato = :idContato
+      AND 
+        c.idTipoRetornoContato = :ORA_idRetorno
+	  ORDER BY b.dsProcedencia;
+
+
+    EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    EXEC SQL OPEN ReadProcedencia;
+
+    for( ;; )
+    {
+        EXEC SQL FETCH ReadProcedencia INTO :idProcedencia,
+                                            :dsProcedencia:i_dsProcedencia;
+
+        if ( i_dsProcedencia == -1 )
+            dsProcedencia.arr[0] = 0x0;
+        else
+            dsProcedencia.arr[ dsProcedencia.len ] = 0x0;
+
+        Saida->createTag( "AdmProcedenciaVO" );
+            Saida->addItem( "idProcedencia",idProcedencia );
+            Saida->addItem( "nmProcedencia",(char*)dsProcedencia.arr );
+        Saida->closeTag();
+
+        memset( (char *)dsProcedencia.arr , 0x0 , sizeof(dsProcedencia.arr) );
+    }
+    EXEC SQL CLOSE ReadProcedencia;
+    
+   ULOG_END("ConsultaProcedenciaSel()");
+   return 1;
+
+UndefinedError:
+        throw new TuxBasicOraException( sqlca.sqlcode,
+                                        sqlca.sqlerrm.sqlerrmc,
+                                        sqlca.sqlerrm.sqlerrml );
+
+}
+

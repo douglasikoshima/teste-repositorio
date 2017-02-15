@@ -1,0 +1,351 @@
+// Senha.cpp: implementation of the CSenha class.
+//
+//////////////////////////////////////////////////////////////////////
+
+#undef SQLCA
+#define SQLCA_NONE
+
+
+#include <sqlca.h>
+#include <tuxfw/tuxfw.h>
+#include <Defines/Defines.h>
+#include <Processo/Processo.hpp>
+
+EXEC SQL INCLUDE SQLCA;
+
+
+//////////////////////////////////////////////////////////////////////
+// Construction/Destruction
+//////////////////////////////////////////////////////////////////////
+
+CProcesso::CProcesso(){
+
+    // Inicializacao da Instancia
+
+	this->m_cIdAtendimento = -1;
+	strcpy( this->m_cDsAtendimento, "" );
+	strcpy( this->m_cDtAbertura, "" );
+	strcpy( this->m_cDtConclusao, "" );
+	strcpy( this->m_cDsStatus, "" );
+
+}
+
+CProcesso::~CProcesso(){
+}
+
+
+//Setters Para Pesquisa
+void CProcesso::setDtProcessoInicio(char * value){
+	strcpy( this->m_cDtProcessoInicio, value );
+}
+void CProcesso::setDtProcessoFinal(char * value){
+	strcpy( this->m_cDtProcessoFinal, value );
+}
+void CProcesso::setQtdProcessos(int value){
+	this->m_QtdProcessos = value; 
+}
+
+//Getters Para Pesquisa
+char * CProcesso::getDtProcessoInicio(void){
+	return m_cDtProcessoInicio;
+}
+char * CProcesso::getDtProcessoFinal(void){
+	return m_cDtProcessoFinal;
+}
+int CProcesso::getQtdProcessos(void){
+	return m_QtdProcessos;
+}
+
+//Setters
+void CProcesso::setIdAtendimentoProc(int value){
+	this->m_cIdAtendimento = value ;
+}
+void CProcesso::setDsAtendimentoProc(char * value){
+	strcpy( this->m_cDsAtendimento, value );
+}
+void CProcesso::setDtAberturaProc(char * value){
+	strcpy( this->m_cDtAbertura, value );
+}
+void CProcesso::setDtConclusaoProc(char * value ){
+	strcpy( this->m_cDtConclusao, value );
+}
+void CProcesso::setDsStatusProc(char * value){
+	strcpy( this->m_cDsStatus, value );
+}
+
+void CProcesso::setHrAberturaProc(char * value ){
+	strcpy( this->m_cHrAbertura, value );
+}
+void CProcesso::setHrConclusaoProc(char * value){
+	strcpy( this->m_cHrConclusao, value );
+}
+
+
+//Getters
+
+int CProcesso::getIdAtendimentoProc(void){
+	return m_cIdAtendimento;
+}
+char * CProcesso::getDsAtendimentoProc(void){
+	return m_cDsAtendimento;
+}
+char * CProcesso::getDtAberturaProc(void){
+	return m_cDtAbertura;
+}
+char * CProcesso::getDtConclusaoProc(void){
+	return m_cDtConclusao;
+}
+char * CProcesso::getDsStatusProc(void){
+	return m_cDsStatus;
+}
+	
+char * CProcesso::getHrAberturaProc(void){
+	return m_cHrAbertura;
+}
+char * CProcesso::getHrConclusaoProc(void){
+	return m_cHrConclusao;
+}
+ 
+
+//Metodos Publicos de acesso aos privadod DB
+
+void CProcesso::consultarUltimosProcessos( long IdPessoa,	list< CProcesso > & lstProc ){
+	CProcesso::consultarUltimosProcessosDB(IdPessoa, lstProc);
+}
+
+
+
+void CProcesso::consultarRangeDateProcessos( long IdPessoa, list < CProcesso > & lstProc ){
+	CProcesso::consultarProcessosPeriodoDataDB(IdPessoa, lstProc);
+}
+	
+
+
+
+// PRIVATE
+// Métodos de acesso a banco de dados
+void CProcesso::consultarUltimosProcessosDB(long idCliente, list < CProcesso > & lstProc){
+	
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+	long  iIdCliente;
+
+	int idAtendimento;
+	char cDsAtendimento  [ 256 ];
+	char cDsStatus       [ 256 ];
+	char cNmContato [ 256 ];
+
+	int iQtdProc;
+
+	char cAuxData  [ 10+1 ];
+	char cAuxHora  [ 8+1 ];
+	char cAuxDtRegiAbert [ 19+1 ];
+	char cAuxDtRegiFech  [ 19+1 ];
+	
+	EXEC SQL END DECLARE SECTION;
+
+
+	// valores das chaves da consulta SQL
+
+	memset(&cDsAtendimento,				' ', sizeof(cDsAtendimento));
+	memset(&cDsStatus,					' ', sizeof(cDsStatus));
+	memset(&cNmContato,					' ', sizeof(cNmContato));
+
+    iIdCliente = idCliente;
+	iQtdProc = this->getQtdProcessos();
+
+	// garante que a lista esta vazia
+	lstProc.clear();
+
+	// marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+       
+	EXEC SQL DECLARE LSTPROCQTTY CURSOR FOR
+
+		SELECT 
+			DATAABERT,
+			DATACONCL,
+			DSATENDIMENTO,
+			IDATENDIMENTO,
+			NOMECONTATO,
+			DSSTATUS
+		FROM
+			( SELECT
+				NVL(to_char(DATAABERTURA, 'dd/mm/yyyy hh24:mi:ss'), ' ') AS DATAABERT, 
+				NVL(to_char(DATACONCLUSAO, 'dd/mm/yyyy hh24:mi:ss'), ' ') AS DATACONCL, 
+				NVL(DSATENDIMENTO, ' ') as DSATENDIMENTO, 
+				NVL(IDATENDIMENTO, 0) as IDATENDIMENTO,
+				NVL(NOMECONTATO, ' ') as NOMECONTATO,
+				NVL(DSSTATUS, ' ') as DSSTATUS
+			FROM
+				contatoADM.ContatoProcessoV01
+			WHERE
+	            IdPessoa = :iIdCliente
+				ORDER BY DATAABERT
+			DESC )
+		WHERE
+		RowNum <= :iQtdProc;
+	
+	EXEC SQL WHENEVER NOT FOUND DO break;
+
+	EXEC SQL OPEN LSTPROCQTTY;
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+
+	for( ;; ) {
+
+		// varre todos os registros para criar a lista com os Relacionamentos
+
+		EXEC SQL FETCH LSTPROCQTTY INTO
+			  :cAuxDtRegiAbert
+			, :cAuxDtRegiFech
+			, :cDsAtendimento
+			, :idAtendimento
+			, :cNmContato
+			, :cDsStatus;
+
+			memset(cAuxData,			' ', sizeof(cAuxData));
+			sprintf(cAuxData, "%10.10s", &cAuxDtRegiAbert[0]);
+			this->setDtAberturaProc(CUtil::trim(cAuxData));
+
+			memset(cAuxHora,			' ', sizeof(cAuxHora));
+			strncpy(cAuxHora, &cAuxDtRegiAbert[11], sizeof(cAuxHora));
+			this->setHrAberturaProc(CUtil::trim(cAuxHora));
+
+			if ( NULL != cAuxDtRegiFech ){
+				memset(cAuxData,			' ', sizeof(cAuxData));
+				sprintf(cAuxData, "%10.10s", &cAuxDtRegiFech[0]);
+				this->setDtConclusaoProc(CUtil::trim(cAuxData));
+
+				memset(cAuxHora,			' ', sizeof(cAuxHora));
+				strncpy(cAuxHora, &cAuxDtRegiFech[11], sizeof(cAuxHora));
+				this->setHrConclusaoProc(CUtil::trim(cAuxHora));
+
+				this->setDsStatusProc(CUtil::trim(cDsStatus));
+			}else{
+				this->setDsStatusProc("Em Aberto");
+			}
+			this->setIdAtendimentoProc(idAtendimento);
+			this->setDsAtendimentoProc(CUtil::trim(cNmContato));
+
+			lstProc.push_back( *this );
+		}
+
+	EXEC SQL CLOSE LSTPROCQTTY;
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+
+
+}
+
+
+
+void CProcesso::consultarProcessosPeriodoDataDB(long idCliente, list < CProcesso > & lstProc){
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+
+	long  iIdCliente;
+
+	int idAtendimento;
+	char cDsAtendimento  [ 256 ];
+	char cDsStatus       [ 256 ];
+	char cNmContato [ 256 ];
+
+	char cDataInicioPesq [ 19+1 ];
+	char cDataFimPesq    [ 19+1 ];
+
+	char cAuxData  [ 10+1 ];
+	char cAuxHora  [ 8+1 ];
+	char cAuxDtRegiAbert [ 19+1 ];
+	char cAuxDtRegiFech  [ 19+1 ];
+	
+	EXEC SQL END DECLARE SECTION;
+
+
+	// valores das chaves da consulta SQL
+
+	memset(&cDsAtendimento,				' ', sizeof(cDsAtendimento));
+	memset(&cDsStatus,					' ', sizeof(cDsStatus));
+	memset(&cNmContato,					' ', sizeof(cNmContato));
+
+    iIdCliente = idCliente;
+    sprintf(cDataInicioPesq, "%10.10s 00:00:00", this->getDtProcessoInicio());
+	sprintf(cDataFimPesq, "%10.10s 23:59:59", this->getDtProcessoFinal());
+
+	// garante que a lista esta vazia
+	lstProc.clear();
+
+	// marca ponto de controle de erro
+	EXEC SQL WHENEVER SQLERROR GOTO sqlErrorConstrutor;
+    
+	EXEC SQL DECLARE LSTPROCDATE CURSOR FOR
+		SELECT
+			NVL(to_char(DATAABERTURA, 'dd/mm/yyyy hh24:mi:ss'), ' ') as DATAABERTURA, 
+			NVL(to_char(DATACONCLUSAO, 'dd/mm/yyyy hh24:mi:ss'), ' ') as DATACONCL, 
+			NVL(DSATENDIMENTO, ' ') as DSATENDIMENTO, 
+			NVL(IDATENDIMENTO, 0) as IDATENDIMENTO, 
+			NVL(NOMECONTATO, ' ') as NOMECONTATO, 
+			NVL(DSSTATUS, ' ') as DSSTATUS
+		FROM
+			contatoADM.ContatoProcessoV01
+		WHERE
+            IDPESSOA = :iIdCliente
+            AND DATAABERTURA  >= TO_DATE( :cDataInicioPesq , 'dd/mm/yyyy  hh24:mi:ss')
+			AND DATAABERTURA  <= TO_DATE( :cDataFimPesq ,    'dd/mm/yyyy  hh24:mi:ss')
+			//AND ROWNUM		  <= 100
+			ORDER BY DATAABERTURA
+		DESC;
+
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL OPEN LSTPROCDATE;
+
+	for( ;; ) {
+		// varre todos os registros para criar a lista com os Relacionamentos
+		
+		EXEC SQL FETCH LSTPROCDATE INTO
+			  :cAuxDtRegiAbert
+			, :cAuxDtRegiFech
+			, :cDsAtendimento
+			, :idAtendimento
+			, :cNmContato
+			, :cDsStatus;
+
+			memset(cAuxData,			' ', sizeof(cAuxData));
+			sprintf(cAuxData, "%10.10s", &cAuxDtRegiAbert[0]);
+			this->setDtAberturaProc(CUtil::trim(cAuxData));
+
+			memset(cAuxHora,			' ', sizeof(cAuxHora));
+			strncpy(cAuxHora, &cAuxDtRegiAbert[11], sizeof(cAuxHora));
+			this->setHrAberturaProc(CUtil::trim(cAuxHora));
+
+			if ( NULL != cAuxDtRegiFech ){
+				memset(cAuxData,			' ', sizeof(cAuxData));
+				sprintf(cAuxData, "%10.10s", &cAuxDtRegiFech[0]);
+				this->setDtConclusaoProc(CUtil::trim(cAuxData));
+
+				memset(cAuxHora,			' ', sizeof(cAuxHora));
+				strncpy(cAuxHora, &cAuxDtRegiFech[11], sizeof(cAuxHora));
+				this->setHrConclusaoProc(CUtil::trim(cAuxHora));
+
+				this->setDsStatusProc(CUtil::trim(cDsStatus));
+			}else{
+				this->setDsStatusProc("Em Aberto");
+			}
+			this->setIdAtendimentoProc(idAtendimento);
+			this->setDsAtendimentoProc(CUtil::trim(cNmContato));
+
+			lstProc.push_back( *this );
+		}
+
+	EXEC SQL CLOSE LSTPROCDATE;
+
+	return;
+
+	sqlErrorConstrutor:
+		throw TuxBasicOraException( sqlca.sqlcode ); 
+}

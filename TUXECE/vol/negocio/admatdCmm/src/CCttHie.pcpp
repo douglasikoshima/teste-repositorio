@@ -1,0 +1,306 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CCttHie.h"
+
+CContatoHierarquia::CContatoHierarquia()
+{
+}
+
+CContatoHierarquia::~CContatoHierarquia()
+{
+}
+
+int CContatoHierarquia::Insert( 
+			char* cidContato,
+			char* cidContatoPai,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CContatoHierarquia::Insert()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		
+		char* cAuxidContato = cidContato;
+		char* cAuxidContatoPai = cidContatoPai;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoHierarquia();
+		
+		 
+		
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+		
+		//Pega um id unico e sequencia para a insercao
+		
+
+		//Realiza o insert
+		EXEC SQL INSERT INTO contatoadm.ContatoHierarquia
+		(	idContato,
+			idContatoPai,
+			idUsuarioAlteracao,
+			dtUltimaAlteracao) 
+		VALUES 
+		(	:cAuxidContato,
+			:cAuxidContatoPai,
+			:cAuxidUsuarioAlteracao,
+			SYSDATE);
+			
+        ULOG_END("CContatoHierarquia::Insert()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode) {
+			return 0;//Erro
+		}
+		else {
+			return 1;//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoHierarquia::Delete( char* cidContato )
+{
+    ULOG_START("CContatoHierarquia::Delete()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidContato = cidContato; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoHierarquia();
+		
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+		
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM contatoadm.ContatoHierarquia
+		WHERE (idContato = :cAuxidContato);
+		
+		ULOG_END("CContatoHierarquia::Delete()");
+		//Verifica se houve ou nao erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CContatoHierarquia::ListId( char* cidContato ) 
+{
+    ULOG_START("CContatoHierarquia::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidContato = cidContato; 
+		struct
+		{
+			VARCHAR stidContato[21+1];
+			VARCHAR stidContatoPai[21+1];
+		} stContatoHierarquiaRegistro;
+		struct
+		{
+			short iidContato;
+			short iidContatoPai;
+		} stContatoHierarquiaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoHierarquia();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorContatoHierarquiaId CURSOR FOR 
+   		SELECT 	idContato,
+	idContatoPai
+		FROM contatoadm.ContatoHierarquia
+		WHERE idContato = :cAuxidContato;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorContatoHierarquiaId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		   ULOG_END("CContatoHierarquia::ListId()");
+		   return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stContatoHierarquiaRegistro, 0, sizeof(stContatoHierarquiaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorContatoHierarquiaId INTO :stContatoHierarquiaRegistro:stContatoHierarquiaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stContatoHierarquiaRegistro.stidContato.arr,
+				(char*)stContatoHierarquiaRegistro.stidContatoPai.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorContatoHierarquiaId;
+		}
+		ULOG_END("CContatoHierarquia::ListId()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CContatoHierarquia::ListAll( void )
+{
+    ULOG_START("CContatoHierarquia::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidContato[21+1];
+			VARCHAR stidContatoPai[21+1];
+		} stContatoHierarquiaRegistro;
+		struct
+		{
+			short iidContato;
+			short iidContatoPai;
+		} stContatoHierarquiaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraContatoHierarquia();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorContatoHierarquiaAll CURSOR FOR
+   		SELECT 	idContato,
+		idContatoPai
+		FROM contatoadm.ContatoHierarquia; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorContatoHierarquiaAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CContatoHierarquia::ListAll()");
+			return 0;//Erro
+		}	
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stContatoHierarquiaRegistro, 0, sizeof(stContatoHierarquiaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorContatoHierarquiaAll INTO :stContatoHierarquiaRegistro:stContatoHierarquiaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stContatoHierarquiaRegistro.stidContato.arr,
+				(char*)stContatoHierarquiaRegistro.stidContatoPai.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorContatoHierarquiaAll;
+		}
+		ULOG_END("CContatoHierarquia::ListAll()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CContatoHierarquia::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			xml->createTag(cNomeTag);
+			//Adiciona a proprieda necessaria para o Weblogic
+			xml->addProp( "xmlns", "admsistemas.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idContato", Registro(x)->cidContato );
+				xml->addItem("idContatoPai", Registro(x)->cidContatoPai ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			xml->closeTag();
+		}
+	}
+}

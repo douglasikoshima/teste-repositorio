@@ -1,0 +1,492 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CMnc.h"
+
+CMunicipio::CMunicipio()
+{
+}
+
+CMunicipio::~CMunicipio()
+{
+}
+
+int CMunicipio::RelacaoFrdMnc( char* cidFeriado )
+{
+    ULOG_START("CMunicipio::RelacaoFrdMnc()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidFeriado = cidFeriado; 
+		struct
+		{
+			VARCHAR stidMunicipio[21+1];
+			VARCHAR stnmMunicipio[255+1];
+			VARCHAR stidUF[21+1];
+		} stMunicipioRegistro;
+		struct
+		{
+			short iidMunicipio;
+			short inmMunicipio;
+			short iidUF;
+		} stMunicipioIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraMunicipio();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Declara um cursor para listar os Registros
+		
+   		/*SELECT apoio.Municipio.idMunicipio, apoio.Municipio.idMunicipio, apoio.Municipio.idMunicipio 
+		FROM apoio.Municipio, calendario.MunicipioFeriadoBZEROUM
+		WHERE apoio.Municipio.idMunicipio = calendario.MunicipioFeriadoBZEROUM.idFeriado 
+		AND calendario.MunicipioFeriadoBZEROUM.idFeriado = :cAuxidFeriado ;*/
+	
+	/*REMOVENDO BZEROUM
+	 TCOSTA 18/06/2007 MPOG
+	*/
+		EXEC SQL DECLARE CursorMunicipioRelacao_00 CURSOR FOR
+		SELECT municipio.idmunicipio, 
+			   municipio.nmmunicipio,
+			   municipio.iduf
+		FROM   municipio municipio, 
+			   calendario.municipioferiado municipioferiado
+		WHERE  municipio.idmunicipio = municipioferiado.idferiado
+		AND		calendario.municipioferiado.idferiado = :cAuxidFeriado;
+
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacao;
+
+		EXEC SQL OPEN CursorMunicipioRelacao_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CMunicipio::RelacaoFrdMnc()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stMunicipioRegistro, 0, sizeof(stMunicipioRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorMunicipioRelacao_00 INTO :stMunicipioRegistro:stMunicipioIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stMunicipioRegistro.stidMunicipio.arr,
+				(char*)stMunicipioRegistro.stnmMunicipio.arr,
+				(char*)stMunicipioRegistro.stidUF.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorMunicipioRelacao_00;
+		}
+		ULOG_END("CMunicipio::RelacaoFrdMnc()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoRelacao:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CMunicipio::ExistemFrdMnc( char* cidFeriado )
+{
+    ULOG_START("CMunicipio::ExistemFrdMnc()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidFeriado = cidFeriado; 
+		struct
+		{
+			VARCHAR stidMunicipio[21+1];
+			VARCHAR stnmMunicipio[255+1];
+			VARCHAR stidUF[21+1];
+		} stMunicipioRegistro;
+		struct
+		{
+			short iidMunicipio;
+			short inmMunicipio;
+			short iidUF;
+		} stMunicipioIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraMunicipio();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Declara um cursor para listar os Registros
+
+/*   		SELECT apoio.Municipio.idMunicipio, apoio.Municipio.idMunicipio, apoio.Municipio.idMunicipio 
+		FROM apoio.Municipio
+		WHERE apoio.Municipio.idMunicipio NOT IN ( SELECT apoio.Municipio.idMunicipio FROM apoio.Municipio, 
+		calendario.MunicipioFeriadoBZEROUM WHERE apoio.Municipio.idMunicipio = calendario.MunicipioFeriadoBZEROUM.idFeriado AND calendario.MunicipioFeriadoBZEROUM.idFeriado = :cAuxidFeriado  ); */
+
+	/*REMOVENDO BZEROUM
+	 TCOSTA 18/06/2007 MPOG
+	*/
+   		EXEC SQL DECLARE CursorMunicipioExistem_00 CURSOR FOR 
+		SELECT idmunicipio, 
+			   nmmunicipio,
+			   iduf
+		  FROM apoio.municipio
+		 WHERE idmunicipio NOT IN ( SELECT idmunicipio FROM calendario.municipioferiado
+									WHERE idferiado = :cAuxidFeriado);    
+
+		EXEC SQL WHENEVER SQLERROR GOTO GotoExistem;
+
+		EXEC SQL OPEN CursorMunicipioExistem_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CMunicipio::ExistemFrdMnc()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stMunicipioRegistro, 0, sizeof(stMunicipioRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorMunicipioExistem_00 INTO :stMunicipioRegistro:stMunicipioIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stMunicipioRegistro.stidMunicipio.arr,
+				(char*)stMunicipioRegistro.stnmMunicipio.arr,
+				(char*)stMunicipioRegistro.stidUF.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorMunicipioExistem_00;
+		}
+		ULOG_END("CMunicipio::ExistemFrdMnc()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoExistem:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CMunicipio::ListId( char* cidMunicipio ) 
+{
+    ULOG_START("CMunicipio::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidMunicipio = cidMunicipio; 
+		struct
+		{
+			VARCHAR stidMunicipio[21+1];
+			VARCHAR stnmMunicipio[255+1];
+			VARCHAR stidUF[21+1];
+		} stMunicipioRegistro;
+		struct
+		{
+			short iidMunicipio;
+			short inmMunicipio;
+			short iidUF;
+		} stMunicipioIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraMunicipio();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL DECLARE CursorMunicipioId CURSOR FOR 
+   		SELECT 	idMunicipio,
+	            nmMunicipio,
+	            idUF
+		FROM apoio.Municipio
+		WHERE idMunicipio = :cAuxidMunicipio;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorMunicipioId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CMunicipio::ListId()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stMunicipioRegistro, 0, sizeof(stMunicipioRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorMunicipioId INTO :stMunicipioRegistro:stMunicipioIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stMunicipioRegistro.stidMunicipio.arr,
+				(char*)stMunicipioRegistro.stnmMunicipio.arr,
+				(char*)stMunicipioRegistro.stidUF.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorMunicipioId;
+		}
+		ULOG_END("CMunicipio::ListId()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CMunicipio::ListIdUF( char* cidUF ) 
+{
+    ULOG_START("CMunicipio::ListIdUF()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidUF = cidUF; 
+		struct
+		{
+			VARCHAR stidMunicipio[21+1];
+			VARCHAR stnmMunicipio[255+1];
+			VARCHAR stidUF[21+1];
+		} stMunicipioRegistro;
+		struct
+		{
+			short iidMunicipio;
+			short inmMunicipio;
+			short iidUF;
+		} stMunicipioIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraMunicipio();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListIdUF;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		EXEC SQL 
+   			DECLARE 
+   				CursorListIdUF CURSOR FOR 
+   			SELECT 	
+   				IDMUNICIPIO,
+				NMMUNICIPIO,
+				IDUF
+			FROM 
+				APOIO.MUNICIPIO
+			WHERE 
+				IDUF = :cAuxidUF;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorListIdUF;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CMunicipio::ListIdUF()");
+			return 0;//Erro
+		}
+		else
+		{
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stMunicipioRegistro, 0, sizeof(stMunicipioRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorListIdUF INTO :stMunicipioRegistro:stMunicipioIndicator;
+				//Adiciona a classe
+				Add( (char*)stMunicipioRegistro.stidMunicipio.arr,
+				     (char*)stMunicipioRegistro.stnmMunicipio.arr,
+				     (char*)stMunicipioRegistro.stidUF.arr );
+				//conta quantos existem
+				iCont++;
+			}
+		}
+		//Fecha o CURSOR
+		EXEC SQL CLOSE CursorListIdUF;
+        ULOG_START("CMunicipio::ListIdUF()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListIdUF:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CMunicipio::ListAll( void )
+{
+    ULOG_START("CMunicipio::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidMunicipio[21+1];
+			VARCHAR stnmMunicipio[255+1];
+			VARCHAR stidUF[21+1];
+		} stMunicipioRegistro;
+		struct
+		{
+			short iidMunicipio;
+			short inmMunicipio;
+			short iidUF;
+		} stMunicipioIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraMunicipio();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE CursorMunicipioAll CURSOR FOR
+   		SELECT 	idMunicipio,
+		nmMunicipio,
+		idUF
+		FROM apoio.Municipio; 
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorMunicipioAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CMunicipio::ListAll()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stMunicipioRegistro, 0, sizeof(stMunicipioRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorMunicipioAll INTO :stMunicipioRegistro:stMunicipioIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stMunicipioRegistro.stidMunicipio.arr,
+				(char*)stMunicipioRegistro.stnmMunicipio.arr,
+				(char*)stMunicipioRegistro.stidUF.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorMunicipioAll;
+		}
+		ULOG_END("CMunicipio::ListAll()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CMunicipio::GetXml( char* cNomeTag, XMLGen*xml )
+{
+    
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			xml->createTag(cNomeTag);
+			//Adiciona a proprieda necessaria para o Weblogic
+			xml->addProp( "xmlns", "admsistemas.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idMunicipio", Registro(x)->cidMunicipio );
+				xml->addItem("nmMunicipio", Registro(x)->cnmMunicipio );
+				xml->addItem("idUf", Registro(x)->cidUF ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			xml->closeTag();
+		}
+	}
+}

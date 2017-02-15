@@ -1,0 +1,88 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <tuxfw.h>
+
+int ConsultaProcedencia( const char *idContatoParam , const char *idRetorno, XMLGen *Saida )
+{
+    ULOG_START("ConsultaProcedencia()");
+    struct sqlca sqlca;
+    sqlca.sqlcode=0 ;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        VARCHAR ORA_dsProcedencia[256];
+
+        unsigned long ORA_idProcedencia;
+        unsigned long ORA_idContato = atol( idContatoParam );
+        unsigned long ORA_idRetorno = atol( idRetorno );
+
+        short   ORA_i_dsProcedencia;
+
+    EXEC SQL END DECLARE SECTION;
+
+    EXEC SQL DECLARE ReadProcedencia CURSOR FOR 
+      SELECT 
+         idProcedencia, 
+		 dsProcedencia
+      FROM 
+         Apoio.Procedencia
+      WHERE 
+         idProcedencia > 0
+      AND
+         idProcedencia 
+      NOT IN
+      (
+         SELECT 
+            b.idProcedencia 
+         FROM 
+            ContatoAdm.TipoRetornoProcedencia   b ,
+            ContatoAdm.ContatoTipoRetorno       c
+         WHERE 
+            b.idContatoTipoRetorno = c.idContatoTipoRetorno
+         AND
+            c.idContato = :ORA_idContato
+         AND 
+           c.idTipoRetornoContato = :ORA_idRetorno
+      )
+	  ORDER BY dsProcedencia;
+
+   
+    EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    EXEC SQL OPEN ReadProcedencia;
+
+    for( ;; )
+    {
+        EXEC SQL FETCH ReadProcedencia INTO :ORA_idProcedencia,
+                                            :ORA_dsProcedencia:ORA_i_dsProcedencia;
+
+        if ( ORA_i_dsProcedencia == -1 )
+            ORA_dsProcedencia.arr[0] = 0x0;
+        else
+            ORA_dsProcedencia.arr[ ORA_dsProcedencia.len ] = 0x0;
+
+        Saida->createTag( "AdmProcedenciaVO" );
+            Saida->addItem( "idProcedencia",ORA_idProcedencia );
+            Saida->addItem( "nmProcedencia",(char*)ORA_dsProcedencia.arr );
+        Saida->closeTag();
+
+        memset( (char *)ORA_dsProcedencia.arr , 0x0 , sizeof(ORA_dsProcedencia.arr) );
+
+    }
+    EXEC SQL CLOSE ReadProcedencia;
+    
+   ULOG_END("ConsultaProcedencia()");
+   
+	return 1;
+
+UndefinedError:
+        throw new TuxBasicOraException( sqlca.sqlcode,
+                                        sqlca.sqlerrm.sqlerrmc,
+                                        sqlca.sqlerrm.sqlerrml );
+
+}
+

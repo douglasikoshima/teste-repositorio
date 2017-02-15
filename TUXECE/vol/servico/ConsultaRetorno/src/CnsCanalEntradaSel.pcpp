@@ -1,0 +1,78 @@
+#undef SQLCA
+#define SQLCA_NONE
+
+#include <sqlca.h>
+#include <sqlda.h>
+#include <tuxfw.h>
+
+int ConsultaCanalEntradaSel( const char *idContatoParam , const char *idRetorno, XMLGen *Saida )
+{
+   ULOG_START("ConsultaCanalEntradaSel()");  
+   struct sqlca sqlca;
+   sqlca.sqlcode=0 ;
+   
+   EXEC SQL BEGIN DECLARE SECTION;
+      VARCHAR dsCanal[256];
+      
+      unsigned long idCanal;
+      unsigned long idContato = atol( idContatoParam );
+      unsigned long ORA_idRetorno = atol( idRetorno );
+      
+      short   i_dsCanal;
+   EXEC SQL END DECLARE SECTION;
+
+   EXEC SQL DECLARE ReadCanal CURSOR FOR 
+      SELECT 
+           b.idCanal , b.nmCanal
+      FROM 
+           ContatoAdm.ContatoTipoRetornoCanal a ,
+           Apoio.Canal                        b ,
+           ContatoAdm.ContatoTipoRetorno      c	
+      WHERE 
+        a.idCanal > 0
+      AND
+        a.idCanal = b.idCanal 
+      AND 
+        a.idContatoTipoRetorno = c.idContatoTipoRetorno
+      AND
+        c.idContato = :idContato
+      AND 
+        c.idTipoRetornoContato = :ORA_idRetorno
+      ORDER BY b.NMCANAL;
+
+
+
+    EXEC SQL WHENEVER SQLERROR GOTO UndefinedError;
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    EXEC SQL OPEN ReadCanal;
+
+    for( ;; )
+    {
+        EXEC SQL FETCH ReadCanal INTO :idCanal , :dsCanal :i_dsCanal;
+
+        if ( i_dsCanal == -1 )
+            dsCanal.arr[0] = 0x0;
+        else
+            dsCanal.arr[ dsCanal.len ] = 0x0;
+
+        Saida->createTag( "AdmCanalEntradaVO" );
+            Saida->addItem( "idCanalEntrada",idCanal );
+            Saida->addItem( "nmCanalEntrada",(char*)dsCanal.arr );
+        Saida->closeTag();
+
+        memset( (char *)dsCanal.arr , 0x0 , sizeof(dsCanal.arr) );
+    }
+    EXEC SQL CLOSE ReadCanal;
+    
+   ULOG_START("ConsultaCanalEntradaSel()");  
+   
+   return 1;
+
+UndefinedError:
+        throw new TuxBasicOraException( sqlca.sqlcode,
+                                        sqlca.sqlerrm.sqlerrmc,
+                                        sqlca.sqlerrm.sqlerrml );
+
+}
+

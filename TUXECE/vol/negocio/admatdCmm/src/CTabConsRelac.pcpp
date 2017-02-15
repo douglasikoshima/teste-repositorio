@@ -1,0 +1,2316 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CTabConsRelac.h"
+#include "../include/CTabConsRelacItr.h"
+
+#include <string>
+#include <list>
+#include <iterator>
+using namespace std;
+
+struct Empresa
+{
+    char nrDocumento[129];
+    char nrDocumentoFmt[129];
+    char nmEmpresa[129];
+    char intipoassociacao[129];
+};
+
+typedef list<Empresa> ListaEmpresa;
+
+struct EmpresaEnvio
+{
+    char nrDocumento[129];
+    char nrDocumentoFmt[129];
+    char nmEmpresa[129];
+    char intipoassociacao[129];
+};
+
+typedef list<EmpresaEnvio> ListaEmpresaEnvio;
+
+bool ExisteConsultorRelacionamento( const char * nrDocumento );
+void PrmConsultas( char * nrRegistros );
+
+CTabConsRelac::CTabConsRelac()
+{
+}
+
+CTabConsRelac::~CTabConsRelac()
+{
+}
+
+CTabEmpresaRelac::CTabEmpresaRelac()
+{
+}
+
+CTabEmpresaRelac::~CTabEmpresaRelac()
+{
+}
+
+#define CONVIND(O,I) \
+{ \
+    if (I == -1) { \
+        ##O.arr[0]=0; \
+    } else { \
+        ##O.arr[##O.len]=0; \
+    } \
+}
+
+#define SAFE_STRNCPY(dst,src) strncpy(dst,src?src:"",sizeof(dst)-1);dst[sizeof(dst)-1]=0;
+
+EXEC SQL BEGIN DECLARE SECTION;
+#define TAM_MAX_BLC_ORA 500
+EXEC SQL END DECLARE SECTION;
+
+int CTabConsRelac::PesquisarConsultorIdCliente( XMLGen*saida,const char *nrDocumento )
+{
+    ULOG_START("CTabConsRelac::PesquisarConsultorIdCliente()");
+
+    int iCont = 0;
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        const char *pParamOraNrDocumento = nrDocumento;
+        char * nrLinhas;
+
+        struct
+        {
+            VARCHAR nrDocumento[256];
+            VARCHAR nmPessoa[256];
+            VARCHAR idTipoRelacionamento[40];
+        } DadoOraResult;
+
+        struct
+        {
+            short nrDocumento;
+            short nmPessoa;
+            short idTipoRelacionamento;
+        } StatOraResult;
+
+    EXEC SQL END DECLARE SECTION;
+
+
+    try
+    {
+        char nrRegistros[39];
+        memset( nrRegistros, 0x0, sizeof(nrRegistros) );
+        PrmConsultas( nrRegistros );
+        nrLinhas = nrRegistros;
+
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+        EXEC SQL WHENEVER SQLERROR GOTO GotoPesquisarConsultorIdCliente;
+
+        ULOG("Declaracao de pesquisa de consultor(es)...");
+
+        EXEC SQL DECLARE curConsRelacIdCliente CURSOR FOR 
+        select
+            pessoaconsultor.idpessoa ,
+            pessoa.nmnome ||' ('||usuario.nmloginusuario||')' AS NMCONSULTOR ,
+            tiporelacionamento.sgtiporelacionamento
+        from
+            customer.pessoaconsultor      pessoaconsultor ,
+            customer.pessoa               pessoa ,
+            customer.tiporelacionamento   tiporelacionamento ,
+            acesso.usuario                usuario
+        where
+            usuario.idperfilconsultoratd = 'CR'
+        and
+            tiporelacionamento.idtiporelacionamento = pessoaconsultor.idtiporelacionamento
+        and
+            pessoa.idpessoa = pessoaconsultor.idpessoa
+        and
+            pessoaconsultor.idpessoa = usuario.IDPESSOAUSUARIO
+        and 
+            pessoaconsultor.NRDOCUMENTO = :pParamOraNrDocumento
+        and
+            rownum <= :nrLinhas;
+    
+
+        EXEC SQL OPEN curConsRelacIdCliente;
+        
+        saida->createTag( "ConsultorRelacionamentoVO");
+        saida->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:ns1", "commons.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+
+        saida->addItem("tpOperacao","pesquisarConsultorVOPorIDCliente");
+        saida->createTag("Lista");
+        saida->addItem("nmSelect","ConsultorVO");
+        saida->createTag("Selecionado");
+
+        ULOG("Carga do resultado da pesquisa de consultor(es)...");
+
+        for(;;)
+        {
+            memset( &StatOraResult,-1, sizeof(StatOraResult) );
+
+            EXEC SQL FETCH curConsRelacIdCliente INTO :DadoOraResult:StatOraResult;
+
+            CONVIND(DadoOraResult.nrDocumento,StatOraResult.nrDocumento);
+            CONVIND(DadoOraResult.nmPessoa,StatOraResult.nmPessoa);
+            CONVIND(DadoOraResult.idTipoRelacionamento,StatOraResult.idTipoRelacionamento);
+
+            saida->createTag("ns1:IDValorRelacionamentoVO");
+                saida->addItem("ns1:id",(char*)DadoOraResult.nrDocumento.arr);
+                saida->addItem("ns1:valor",(char*)DadoOraResult.nmPessoa.arr);
+                saida->addItem("ns1:idRelacionamento",(char*)DadoOraResult.idTipoRelacionamento.arr);
+            saida->closeTag();
+
+            iCont++;
+        }
+
+        ULOG("Carga do resultado da pesquisa de consultor(es) encontrou %d consultor(es)",iCont);
+
+        saida->closeTag();
+        saida->closeTag();
+        saida->closeTag();
+
+        EXEC SQL CLOSE curConsRelacIdCliente;
+        
+        ULOG_END("CTabConsRelac::PesquisarConsultorIdCliente()");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    return iCont;
+
+GotoPesquisarConsultorIdCliente:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+int CTabConsRelac::PesquisaEmpresaSemFrm( char * nrDoc, XMLGen * saida )
+{
+    ULOG_START("CTabConsRelac::PesquisaEmpresaSemFrm()");
+
+    int iCont = 0;
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char * nrCNPJ = nrDoc;
+        char * nrLinhas;
+        struct
+        {
+            VARCHAR nrDocumento[255+1];
+            VARCHAR nrDocumentoFmt[255+1];
+            VARCHAR nmEmpresa[255+1];
+        } DadoOraResult;
+
+        struct
+        {
+            short nrDocumento;
+            short nrDocumentoFmt;
+            short nmEmpresa;
+        } StatOraResult;
+
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+
+        char nrRegistros[39];
+        memset( nrRegistros, 0x0, sizeof(nrRegistros) );
+        PrmConsultas( nrRegistros );
+        nrLinhas = nrRegistros;
+
+        EXEC SQL WHENEVER SQLERROR GOTO GotoPesquisaEmpresaSemFrm;
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+        EXEC SQL 
+        DECLARE 
+            curEmpresa CURSOR FOR 
+        select distinct
+           documento.nrdocumento ,
+           substr(documento.nrdocumento,1,2) || '.' || substr(documento.nrdocumento,3,3) || '.' || substr(documento.nrdocumento,6,3) || '/' || substr(documento.nrdocumento,9,4) || '-' || substr(documento.nrdocumento,13,2) as cnpjFromatado ,  
+           pessoa.nmpessoa 
+        from
+           customer.pessoadocumento              pessoadocumento ,
+           customer.documento                    documento ,        
+           customer.pessoa                       pessoa ,
+           apoio.tipodocumento                   tipodocumento
+        where
+           tipodocumento.SGTIPODOCUMENTO = 'CNPJ'
+        and documento.nrdocumento = :nrCNPJ
+        and pessoa.idpessoa = pessoadocumento.idpessoa
+        and documento.idtipodocumento = tipodocumento.idtipodocumento
+        and documento.IDDOCUMENTO = pessoadocumento.IDDOCUMENTO
+        and documento.nrdocumento 
+        not in
+        (
+            select nrdocumento from contatoadm.funcionalidadefrmempresa 
+        )
+        and rownum <= :nrLinhas
+        order by upper(pessoa.nmpessoa);
+
+
+        EXEC SQL OPEN curEmpresa;
+
+        saida->createTag( "ClienteFormularioVO");
+        saida->addProp("xmlns", "admsistemas.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:ns1", "commons.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+
+        saida->addItem("tpOperacao","pesquisarEmpresaVO");
+        saida->createTag("Lista");
+        saida->addItem("nmSelect","ClienteVO");
+        saida->createTag("Disponivel");
+
+        for(;;)
+        {
+            memset( &StatOraResult,-1, sizeof(StatOraResult) );
+
+            EXEC SQL FETCH curEmpresa INTO :DadoOraResult:StatOraResult;
+
+            CONVIND( DadoOraResult.nrDocumento,StatOraResult.nrDocumento );
+            CONVIND( DadoOraResult.nrDocumentoFmt,StatOraResult.nrDocumentoFmt );
+            CONVIND( DadoOraResult.nmEmpresa,StatOraResult.nmEmpresa );
+
+            saida->createTag("ns1:IDValorClienteVO");
+                saida->addItem("ns1:id",(char*)DadoOraResult.nrDocumento.arr);
+                saida->addItem("ns1:valor",(char*)DadoOraResult.nmEmpresa.arr);
+                saida->addItem("ns1:nrDocumentoFmt",(char*)DadoOraResult.nrDocumentoFmt.arr);
+            saida->closeTag();
+
+            iCont++;
+        }
+
+        EXEC SQL CLOSE curEmpresa;
+
+        saida->closeTag();
+        saida->closeTag();
+        saida->closeTag();
+
+        
+        ULOG_END("CTabConsRelac::PesquisaEmpresaSemFrm()");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    return iCont;
+
+GotoPesquisaEmpresaSemFrm:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+int CTabConsRelac::PesquisaEmpresaCNPJ( char * nrDoc, XMLGen * saida )
+{
+    ULOG_START("CTabConsRelac::PesquisaEmpresaCNPJ()");
+
+    int iCont = 0;
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        
+        char * nrCNPJ = nrDoc;
+        char * nrLinhas;
+        
+        struct
+        {
+            VARCHAR nrDocumento[255+1];
+            VARCHAR nrDocumentoFmt[255+1];
+            VARCHAR nmEmpresa[255+1];
+        } DadoOraResult;
+
+        struct
+        {
+            short nrDocumento;
+            short nrDocumentoFmt;
+            short nmEmpresa;
+        } StatOraResult;
+
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+
+        char nrRegistros[39];
+        memset( nrRegistros, 0x0, sizeof(nrRegistros) );
+        PrmConsultas( nrRegistros );
+        nrLinhas = nrRegistros;
+
+        EXEC SQL WHENEVER SQLERROR GOTO GotoPesquisaEmpresaCNPJ;
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+        EXEC SQL 
+        DECLARE 
+            curEmpresaCNPJ CURSOR FOR 
+        select distinct
+           documento.nrdocumento ,
+           substr(documento.nrdocumento,1,2) || '.' || substr(documento.nrdocumento,3,3) || '.' || substr(documento.nrdocumento,6,3) || '/' || substr(documento.nrdocumento,9,4) || '-' || substr(documento.nrdocumento,13,2) as cnpjFromatado ,  
+           pessoa.nmpessoa 
+        from
+           customer.pessoadocumento              pessoadocumento ,
+           customer.documento                    documento ,        
+           customer.pessoa                       pessoa ,
+           apoio.tipodocumento                   tipodocumento
+        where
+           tipodocumento.SGTIPODOCUMENTO = 'CNPJ'
+        and
+           pessoa.idpessoa = pessoadocumento.idpessoa
+        and
+           documento.idtipodocumento = tipodocumento.idtipodocumento
+        and
+           documento.IDDOCUMENTO = pessoadocumento.IDDOCUMENTO
+        and
+           documento.nrdocumento = :nrCNPJ
+        and
+           rownum <= :nrLinhas
+        order by upper(pessoa.nmpessoa);
+
+
+        EXEC SQL OPEN curEmpresaCNPJ;
+
+        saida->createTag( "ClienteFormularioVO");
+        saida->addProp("xmlns", "admsistemas.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:ns1", "commons.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+
+        saida->addItem("tpOperacao","pesquisarEmpresaVO");
+        saida->createTag("Lista");
+        saida->addItem("nmSelect","ClienteVO");
+        saida->createTag("Disponivel");
+
+        for(;;)
+        {
+            memset( &StatOraResult,-1, sizeof(StatOraResult) );
+
+            EXEC SQL FETCH curEmpresaCNPJ INTO :DadoOraResult:StatOraResult;
+
+            CONVIND( DadoOraResult.nrDocumento,StatOraResult.nrDocumento );
+            CONVIND( DadoOraResult.nrDocumentoFmt,StatOraResult.nrDocumentoFmt );
+            CONVIND( DadoOraResult.nmEmpresa,StatOraResult.nmEmpresa );
+
+            saida->createTag("ns1:IDValorClienteVO");
+                saida->addItem("ns1:id",(char*)DadoOraResult.nrDocumento.arr);
+                saida->addItem("ns1:valor",(char*)DadoOraResult.nmEmpresa.arr);
+                saida->addItem("ns1:nrDocumentoFmt",(char*)DadoOraResult.nrDocumentoFmt.arr);
+            saida->closeTag();
+
+            iCont++;
+        }
+
+        EXEC SQL CLOSE curEmpresaCNPJ;
+
+        saida->closeTag();
+        saida->closeTag();
+        saida->closeTag();
+
+        
+        ULOG_END("CTabConsRelac::PesquisaEmpresaCNPJ()");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    return iCont;
+
+GotoPesquisaEmpresaCNPJ:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+int CTabConsRelac::PesquisaEmpresaFrm( char * idFormulario, char * idFuncionalidade, XMLGen * saida )
+{
+    ULOG_START("CTabConsRelac::PesquisaEmpresaFrm()");
+
+    int iCont = 0;
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+        
+        char * idForm = idFormulario;
+        char * idFunc = idFuncionalidade;
+        char * nrLinhas;
+        struct
+        {
+            VARCHAR nrDocumento[255+1];
+            VARCHAR nrDocumentoFmt[255+1];
+            VARCHAR nmEmpresa[255+1];
+			VARCHAR intipoassociacao[255+1];
+        } DadoOraResult;
+
+        struct
+        {
+            short nrDocumento;
+            short nrDocumentoFmt;
+            short nmEmpresa;
+			short intipoassociacao;
+        } StatOraResult;
+
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+        ULOG( ">>> idFormulario [%s], idFuncionalidade [%s]",idFormulario, idFuncionalidade );
+
+        char nrRegistros[39];
+        memset( nrRegistros, 0x0, sizeof(nrRegistros) );
+        PrmConsultas( nrRegistros );
+        nrLinhas = nrRegistros;
+
+        EXEC SQL WHENEVER SQLERROR GOTO GotoPesquisaEmpresaFrm;
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+        EXEC SQL 
+        DECLARE curEmpresaFrm CURSOR FOR 
+        select
+            inf.nrdocumento
+           ,inf.cnpjFromatado
+           ,inf.nmpessoa
+		   ,inf.intipoassociacao
+        from
+        (
+                select distinct
+                   documento.nrdocumento as nrdocumento,
+                   substr(documento.nrdocumento,1,2) || '.' || substr(documento.nrdocumento,3,3) || '.' || substr(documento.nrdocumento,6,3) || '/' || substr(documento.nrdocumento,9,4) || '-' || substr(documento.nrdocumento,13,2) as cnpjFromatado ,  
+                   pessoa.nmpessoa as nmpessoa,
+				   funcionalidadefrmempresa.intipoassociacao
+                from
+                   customer.pessoadocumento              pessoadocumento ,
+                   customer.documento                    documento ,        
+                   customer.pessoa                       pessoa ,
+                   contatoadm.funcionalidadefrmempresa   funcionalidadefrmempresa , 
+                   apoio.tipodocumento                   tipodocumento
+                where
+                   tipodocumento.SGTIPODOCUMENTO = 'CNPJ'
+                and pessoa.idpessoa = pessoadocumento.idpessoa
+                and documento.idtipodocumento = tipodocumento.idtipodocumento
+                and documento.IDDOCUMENTO = pessoadocumento.IDDOCUMENTO
+                and documento.nrdocumento = funcionalidadefrmempresa.nrdocumento
+                and funcionalidadefrmempresa.idformulario = :idForm
+                and funcionalidadefrmempresa.idfuncionalidade = :idFunc
+                order by upper(pessoa.nmpessoa)
+        ) inf
+        where
+           rownum <= 50000 ;
+           /*rownum <= :nrLinhas ;*/
+
+        /*
+        select distinct
+           documento.nrdocumento ,
+           substr(documento.nrdocumento,1,2) || '.' || substr(documento.nrdocumento,3,3) || '.' || substr(documento.nrdocumento,6,3) || '/' || substr(documento.nrdocumento,9,4) || '-' || substr(documento.nrdocumento,13,2) as cnpjFromatado ,  
+           pessoa.nmpessoa 
+        from
+           customer.pessoadocumento              pessoadocumento ,
+           customer.documento                    documento ,        
+           customer.pessoa                       pessoa ,
+		   contatoadm.funcionalidadefrmempresa   funcionalidadefrmempresa , 
+           apoio.tipodocumento                   tipodocumento
+        where
+           tipodocumento.SGTIPODOCUMENTO = 'CNPJ'
+        and pessoa.idpessoa = pessoadocumento.idpessoa
+        and documento.idtipodocumento = tipodocumento.idtipodocumento
+        and documento.IDDOCUMENTO = pessoadocumento.IDDOCUMENTO
+        and documento.nrdocumento = funcionalidadefrmempresa.nrdocumento
+		and funcionalidadefrmempresa.idformulario = :idForm
+		and funcionalidadefrmempresa.idfuncionalidade = :idFunc
+        and rownum <= :nrLinhas
+        order by upper(pessoa.nmpessoa);
+        */
+
+        string buffer;
+
+        ListaEmpresa lista_Empresa;
+        list<Empresa>::iterator itEmpresa;
+        lista_Empresa.clear();
+        Empresa pEmpresa;
+        
+        ListaEmpresaEnvio lista_EmpresaEnvio;
+        list<EmpresaEnvio>::iterator itEmpresaEnvio;
+        lista_EmpresaEnvio.clear();
+        EmpresaEnvio pEmpresaEnvio;
+        int i;
+
+        EXEC SQL OPEN curEmpresaFrm;
+
+        saida->createTag( "ClienteFormularioVO");
+        saida->addProp("xmlns", "admsistemas.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:ns1", "commons.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+
+        saida->addItem("tpOperacao","pesquisarClienteVOFuncionalidade");
+        saida->createTag("Lista");
+        saida->addItem("nmSelect","ClienteVO");
+        saida->createTag("Selecionado");
+
+        for(;;)
+        {
+            memset( &StatOraResult,-1, sizeof(StatOraResult) );
+
+            EXEC SQL FETCH curEmpresaFrm INTO :DadoOraResult:StatOraResult;
+
+            CONVIND( DadoOraResult.nrDocumento,StatOraResult.nrDocumento );
+            CONVIND( DadoOraResult.nrDocumentoFmt,StatOraResult.nrDocumentoFmt );
+            CONVIND( DadoOraResult.nmEmpresa,StatOraResult.nmEmpresa );
+            CONVIND( DadoOraResult.intipoassociacao,StatOraResult.intipoassociacao );
+            
+            strcpy( pEmpresa.nrDocumento   , (char*)DadoOraResult.nrDocumento.arr );
+            strcpy( pEmpresa.nrDocumentoFmt, (char*)DadoOraResult.nrDocumentoFmt.arr );
+            strcpy( pEmpresa.nmEmpresa     , (char*)DadoOraResult.nmEmpresa.arr );
+			strcpy( pEmpresa.intipoassociacao     , (char*)DadoOraResult.intipoassociacao.arr );
+            lista_Empresa.push_back( pEmpresa );
+
+        }
+
+        EXEC SQL CLOSE curEmpresaFrm;
+
+        i = 0;
+        lista_EmpresaEnvio.clear();
+        bool temIgual;
+        for( itEmpresa=lista_Empresa.begin();itEmpresa!=lista_Empresa.end();itEmpresa++ )
+        {
+            if ( i == 0 )
+            {
+                strcpy( pEmpresaEnvio.nrDocumento   , (char*)(*itEmpresa).nrDocumento );
+                strcpy( pEmpresaEnvio.nrDocumentoFmt, (char*)(*itEmpresa).nrDocumentoFmt );
+                strcpy( pEmpresaEnvio.nmEmpresa     , (char*)(*itEmpresa).nmEmpresa );
+                strcpy( pEmpresaEnvio.intipoassociacao     , (char*)(*itEmpresa).intipoassociacao );
+                lista_EmpresaEnvio.push_back( pEmpresaEnvio );
+                i++;
+            }
+            else
+            {
+                if ( i <= atoi(nrLinhas))
+                {
+                    temIgual = false;
+                    for( itEmpresaEnvio=lista_EmpresaEnvio.begin();itEmpresaEnvio!=lista_EmpresaEnvio.end();itEmpresaEnvio++ )
+                    {
+                        //ULOG(" nrDocumento [%s] - Envio nrDocumento", (char*)(*itEmpresa).nrDocumento, (char*)(*itEmpresaEnvio).nrDocumento );
+
+                        if ( !strcmp((char*)(*itEmpresa).nrDocumento,(char*)(*itEmpresaEnvio).nrDocumento) )
+                        {
+                            //ULOG( " Eh igual, desprezando..." );
+                            temIgual = true;
+                        }
+                    }
+                    if ( temIgual == false )
+                    {
+                        //ULOG( " Diferente, adicionando..." );
+                        strcpy( pEmpresaEnvio.nrDocumento   , (char*)(*itEmpresa).nrDocumento );
+                        strcpy( pEmpresaEnvio.nrDocumentoFmt, (char*)(*itEmpresa).nrDocumentoFmt );
+                        strcpy( pEmpresaEnvio.nmEmpresa     , (char*)(*itEmpresa).nmEmpresa );
+                        strcpy( pEmpresaEnvio.intipoassociacao     , (char*)(*itEmpresa).intipoassociacao );
+                        lista_EmpresaEnvio.push_back( pEmpresaEnvio );
+                        i++;
+                    }
+                    
+                }
+                else
+                {
+                    break;
+                }
+            }
+        }
+
+        for( itEmpresaEnvio=lista_EmpresaEnvio.begin();itEmpresaEnvio!=lista_EmpresaEnvio.end();itEmpresaEnvio++ )
+        {
+
+            saida->createTag("ns1:IDValorClienteVO");
+                saida->addItem( "ns1:id",(char*)(*itEmpresaEnvio).nrDocumento );
+                saida->addItem( "ns1:valor",(char*)(*itEmpresaEnvio).nmEmpresa );
+                saida->addItem( "ns1:nrDocumentoFmt",(char*)(*itEmpresaEnvio).nrDocumentoFmt );
+                saida->addItem( "ns1:intipoassociacao",(char*)(*itEmpresaEnvio).intipoassociacao );
+            saida->closeTag();
+
+            iCont++;
+        }
+
+        saida->closeTag();
+        saida->closeTag();
+        saida->closeTag();
+
+        
+        ULOG_END("CTabConsRelac::PesquisaEmpresaFrm()");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    return iCont;
+
+GotoPesquisaEmpresaFrm:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+int CTabConsRelac::PesquisarConsultor(XMLGen*saida,const char *dsLogin,const char *nmConsultor,const char *nrDocumento)
+{
+    ULOG_START("CTabConsRelac::PesquisarConsultor()");
+
+    int iCont = 0;
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char  buffer[256];
+        
+        const char *pParamOraNmLoginUsuario = dsLogin;
+        const char *pParamOraNmPessoa = nmConsultor;
+        const char *pParamOraNrDocumento = nrDocumento;
+        
+        char * nrLinhas;
+
+        short pStOraNmLoginUsuario;
+        short pStOraNmPessoa;
+        short pStOraNrDocumento;
+
+        struct
+        {
+            int idPessoaDePara;
+            VARCHAR nmConsultor[255+255+3+1];
+        } DadoOraResult;
+
+        struct
+        {
+            short idPessoaDePara;
+            short nmConsultor;
+        } StatOraResult;
+
+    EXEC SQL END DECLARE SECTION;
+
+    pStOraNmLoginUsuario = (pParamOraNmLoginUsuario && *pParamOraNmLoginUsuario) ? 1:-1;
+    pStOraNmPessoa = (pParamOraNmPessoa && *pParamOraNmPessoa) ? 1:-1;
+    pStOraNrDocumento = (pParamOraNrDocumento && *pParamOraNrDocumento) ? 1:-1;
+
+    ULOG("pParamOraNmLoginUsuario=%s",pParamOraNmLoginUsuario?pParamOraNmLoginUsuario:"");
+    ULOG("      pParamOraNmPessoa=%s",pParamOraNmPessoa?pParamOraNmPessoa:"");
+    ULOG("   pParamOraNrDocumento=%s",pParamOraNrDocumento?pParamOraNrDocumento:"");
+
+    ULOG("pStOraNmLoginUsuario=%d",pStOraNmLoginUsuario);
+    ULOG("      pStOraNmPessoa=%d",pStOraNmPessoa);
+    ULOG("   pStOraNrDocumento=%d",pStOraNrDocumento);
+
+    try
+    {
+        char nrRegistros[39];
+        memset( nrRegistros, 0x0, sizeof(nrRegistros) );
+        PrmConsultas( nrRegistros );
+        nrLinhas = nrRegistros;
+
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+        EXEC SQL WHENEVER SQLERROR GOTO GotoPesquisarConsultor;
+
+        ULOG("Declaracao de pesquisa de consultor(es)...");
+
+        if ( nmConsultor[0] != 0x0 )
+        {
+            buffer[0] = 0x0;
+            strcpy( buffer,"%" );
+            strcat( buffer,nmConsultor );
+            strcat( buffer,"%" );
+            
+            ULOG( "buffer [%s]", buffer );
+            
+            EXEC SQL 
+                DECLARE 
+                    curConsRelac CURSOR FOR 
+                SELECT DISTINCT
+                    PESSOA.IDPESSOA,
+                    PESSOA.NMPESSOA||' ('||USUARIO.NMLOGINUSUARIO||')' AS NMCONSULTOR 
+                FROM
+                    ACESSO.USUARIO USUARIO,
+                    CUSTOMER.PESSOA PESSOA,
+                    /* CUSTOMER.PESSOADEPARA PESSOADEPARA, */
+                    CUSTOMER.PESSOADOCUMENTO PESSOADOCUMENTO,
+                    CUSTOMER.DOCUMENTO DOCUMENTO,
+                    APOIO.TIPODOCUMENTO TIPODOCUMENTO
+                WHERE
+                    USUARIO.IDPERFILCONSULTORATD = 'CR'
+                AND PESSOA.IDPESSOA = USUARIO.IDPESSOAUSUARIO
+                /* AND PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA */
+                AND PESSOA.IDPESSOA = PESSOADOCUMENTO.IDPESSOA
+                AND PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO
+                AND DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO (+)
+                AND TIPODOCUMENTO.SGCLASSIFICACAO (+)= 'CPF'
+                AND UPPER(USUARIO.NMLOGINUSUARIO) = DECODE(:pStOraNmLoginUsuario,-1,UPPER(USUARIO.NMLOGINUSUARIO),UPPER(:pParamOraNmLoginUsuario))
+                AND UPPER(PESSOA.NMPESSOA) LIKE UPPER(:buffer)
+                AND DOCUMENTO.NRDOCUMENTO = DECODE(:pStOraNrDocumento,-1,DOCUMENTO.NRDOCUMENTO,:pParamOraNrDocumento)
+                and rownum <= :nrLinhas
+                order by NMCONSULTOR;
+
+            EXEC SQL OPEN curConsRelac;
+        }
+        else if ( nmConsultor[0] == 0x0 )
+        {
+            EXEC SQL 
+                DECLARE 
+                    curConsRelac2 CURSOR FOR 
+                SELECT DISTINCT
+                    PESSOA.IDPESSOA,
+                    PESSOA.NMPESSOA||' ('||USUARIO.NMLOGINUSUARIO||')' AS NMCONSULTOR 
+                FROM
+                    ACESSO.USUARIO USUARIO,
+                    CUSTOMER.PESSOA PESSOA,
+                    /* CUSTOMER.PESSOADEPARA PESSOADEPARA, */
+                    CUSTOMER.PESSOADOCUMENTO PESSOADOCUMENTO,
+                    CUSTOMER.DOCUMENTO DOCUMENTO,
+                    APOIO.TIPODOCUMENTO TIPODOCUMENTO
+                WHERE
+                    USUARIO.IDPERFILCONSULTORATD = 'CR'
+                AND PESSOA.IDPESSOA = USUARIO.IDPESSOAUSUARIO
+                /* AND PESSOA.IDPESSOA = PESSOADEPARA.IDPESSOA */
+                AND PESSOA.IDPESSOA = PESSOADOCUMENTO.IDPESSOA
+                AND PESSOADOCUMENTO.IDDOCUMENTO = DOCUMENTO.IDDOCUMENTO
+                AND DOCUMENTO.IDTIPODOCUMENTO = TIPODOCUMENTO.IDTIPODOCUMENTO (+)
+                AND TIPODOCUMENTO.SGCLASSIFICACAO (+)= 'CPF'
+                AND UPPER(USUARIO.NMLOGINUSUARIO) = DECODE(:pStOraNmLoginUsuario,-1,UPPER(USUARIO.NMLOGINUSUARIO),UPPER(:pParamOraNmLoginUsuario))
+                AND UPPER(PESSOA.NMPESSOA) = DECODE(:pStOraNmPessoa,-1,UPPER(PESSOA.NMPESSOA),UPPER(:pParamOraNmPessoa))
+                AND DOCUMENTO.NRDOCUMENTO = DECODE(:pStOraNrDocumento,-1,DOCUMENTO.NRDOCUMENTO,:pParamOraNrDocumento)
+                and rownum <= :nrLinhas
+                order by NMCONSULTOR;
+
+            EXEC SQL OPEN curConsRelac2;
+        }
+
+        saida->createTag( "ConsultorRelacionamentoVO");
+        saida->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:ns1", "commons.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+
+        saida->addItem("tpOperacao","pesquisarConsultorVO");
+        saida->createTag("Lista");
+        saida->addItem("nmSelect","ConsultorVO");
+        saida->createTag("Disponivel");
+
+        ULOG("Carga do resultado da pesquisa de consultor(es)...");
+
+        for(;;)
+        {
+            memset( &StatOraResult,-1, sizeof(StatOraResult) );
+
+            if ( nmConsultor[0] != 0x0 )
+            {
+                EXEC SQL FETCH curConsRelac INTO :DadoOraResult:StatOraResult;
+            }
+            if ( nmConsultor[0] == 0x0 )
+            {
+                EXEC SQL FETCH curConsRelac2 INTO :DadoOraResult:StatOraResult;
+            }
+
+            CONVIND(DadoOraResult.nmConsultor,StatOraResult.nmConsultor);
+
+            saida->createTag("ns1:IDValorRelacionamentoVO");
+                saida->addItem("ns1:id",DadoOraResult.idPessoaDePara);
+                saida->addItem("ns1:valor",(char*)DadoOraResult.nmConsultor.arr);
+            saida->closeTag();
+
+            iCont++;
+        }
+
+        ULOG("Carga do resultado da pesquisa de consultor(es) encontrou %d consultor(es)",iCont);
+
+        saida->closeTag();
+        saida->closeTag();
+        saida->closeTag();
+
+        if ( nmConsultor[0] != 0x0 )
+        {
+            EXEC SQL CLOSE curConsRelac;
+        }
+        
+        if ( nmConsultor[0] == 0x0 )
+        {
+            EXEC SQL CLOSE curConsRelac2;
+        }
+        
+        ULOG_END("CTabConsRelac::PesquisarConsultor()");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    return iCont;
+
+GotoPesquisarConsultor:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+int CTabConsRelac::PesquisarCliente(XMLGen*saida,const char *nrConta,const char *nrDocumentoPrm,const char *nmRazaoSocial,const char *inAssociado)
+{
+    ULOG_START("CTabConsRelac::PesquisarCliente()");
+
+    bool EConsultorRelac = false;
+    int iCont = 0;
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        const char *pParamOraCdConta = nrConta;
+        const char *pParamOraNrDocumento = nrDocumentoPrm;
+        const char *pParamOraNmRazaoSocial = nmRazaoSocial;
+
+        short pStOraCdConta;
+        short pStOraNrDocumento;
+        short pStOraNmRazaoSocial;
+
+        VARCHAR varOraIdTipoRelacionamentoCR[39];
+        short statOraIdTipoRelacionamentoCR = -1;
+
+        VARCHAR varOraIdTipoRelacionamentoCLI[39];
+        short statOraIdTipoRelacionamentoCLI = -1;
+
+        struct
+        {
+            VARCHAR   nrDocumento[256];
+            VARCHAR   nrDocumentoFmt[256];
+            VARCHAR   nmPessoa[256];
+            int       idTipoRelacionamento;
+        } DadoOraResult;
+
+        struct
+        {
+            short     i_nrDocumento;
+            short     i_nrDocumentoFmt;
+            short     i_nmPessoa;
+            short     i_idTipoRelacionamento;
+        } StatOraResult;
+        
+        char OraBuffer[256];
+        char * nrLinhas;
+
+    EXEC SQL END DECLARE SECTION;
+    
+    pStOraNrDocumento = (pParamOraNrDocumento && *pParamOraNrDocumento) ? 1:-1;
+    pStOraNmRazaoSocial = (pParamOraNmRazaoSocial && *pParamOraNmRazaoSocial) ? 1:-1;
+
+    ULOG("nrDocumento='%s'",pParamOraNrDocumento);
+    ULOG("nmRazaoSocial = [%s]",pParamOraNmRazaoSocial);
+
+    ULOG("status nrDocumento=%d",pStOraNrDocumento);
+    ULOG("status nmRazaoSocial=%d",pStOraNmRazaoSocial);
+
+    try
+    {
+        char nrRegistros[39];
+        memset( nrRegistros, 0x0, sizeof(nrRegistros) );
+        PrmConsultas( nrRegistros );
+        nrLinhas = nrRegistros;
+
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL WHENEVER SQLERROR GOTO GotoPesquisarCliente;
+
+        if ( !strcmp(inAssociado,"1") )
+        {
+            if ( nrDocumentoPrm[0] != 0x0 && nmRazaoSocial[0] != 0x0 )  // Busca por cnpj e razao social
+            {
+                //if ( ExisteConsultorRelacionamento(nrDocumentoPrm) == true )
+                //{
+                //    EConsultorRelac = true;
+                //}
+                //else
+                //{
+                    EConsultorRelac = false;
+                    OraBuffer[0] = 0x0;
+                    strcpy( OraBuffer, "%" );
+                    strcat( OraBuffer, pParamOraNmRazaoSocial );
+                    strcat( OraBuffer, "%" );
+                    
+                    ULOG( "curGetClientes3 OraBuffer [%s]",OraBuffer );
+                    
+                    EXEC SQL DECLARE curGetClientes3 CURSOR FOR
+                    select distinct
+                       documento.nrdocumento ,
+                       substr(documento.nrdocumento,1,2) || '.' || substr(documento.nrdocumento,3,3) || '.' || substr(documento.nrdocumento,6,3) || '/' || substr(documento.nrdocumento,9,4) || '-' || substr(documento.nrdocumento,13,2) as cnpjFromatado ,  
+                       pessoa.nmpessoa ,
+                       null as idtiporelacionamento
+                    from
+                       customer.pessoadocumento pessoadocumento ,
+                       customer.documento       documento ,        
+                       customer.pessoa          pessoa ,
+                       apoio.tipodocumento      tipodocumento
+                    where
+                       tipodocumento.SGTIPODOCUMENTO = 'CNPJ'
+                    and
+                       pessoa.idpessoa = pessoadocumento.idpessoa
+                    and
+                       documento.idtipodocumento = tipodocumento.idtipodocumento
+                    and
+                       documento.IDDOCUMENTO = pessoadocumento.IDDOCUMENTO
+                    and
+                       documento.nrdocumento = :pParamOraNrDocumento
+                    and
+                       upper(pessoa.nmpessoa) like upper( :OraBuffer )
+                    and
+                       rownum <= :nrLinhas
+                    order by pessoa.nmpessoa;
+                       
+                   EXEC SQL OPEN curGetClientes3;
+                //}
+            }
+            else
+            {
+                if ( nrDocumentoPrm[0] != 0x0 )
+                { // se usuário esta filtrando por numero de documento...
+
+                    /*
+                    if ( ExisteConsultorRelacionamento(nrDocumentoPrm) == true )
+                    {
+                        EConsultorRelac = true;
+                    }
+                    else
+                    {
+                    */
+                        EConsultorRelac = false;
+                        
+                        ULOG( "curGetClientes1" );
+                        
+                        EXEC SQL DECLARE curGetClientes1 CURSOR FOR
+                        select distinct
+                           documento.nrdocumento ,
+                           substr(documento.nrdocumento,1,2) || '.' || substr(documento.nrdocumento,3,3) || '.' || substr(documento.nrdocumento,6,3) || '/' || substr(documento.nrdocumento,9,4) || '-' || substr(documento.nrdocumento,13,2) as cnpjFromatado ,  
+                           pessoa.nmpessoa ,
+                           null as idtiporelacionamento
+                        from
+                           customer.pessoadocumento pessoadocumento ,
+                           customer.documento       documento ,        
+                           customer.pessoa          pessoa ,
+                           apoio.tipodocumento      tipodocumento
+                        where
+                           tipodocumento.SGTIPODOCUMENTO = 'CNPJ'
+                        and
+                           pessoa.idpessoa = pessoadocumento.idpessoa
+                        and
+                           documento.idtipodocumento = tipodocumento.idtipodocumento
+                        and
+                           documento.IDDOCUMENTO = pessoadocumento.IDDOCUMENTO
+                        and
+                           documento.nrdocumento = :pParamOraNrDocumento
+                        and
+                           rownum <= :nrLinhas
+                        order by pessoa.nmpessoa;
+                       
+                        EXEC SQL OPEN curGetClientes1;
+                    //}
+                } // if ( nrDocumento[0] != 0x0 )
+                else
+                { // busca pela razao social
+                    
+                    OraBuffer[0] = 0x0;
+                    strcpy( OraBuffer, "%" );
+                    strcat( OraBuffer, pParamOraNmRazaoSocial );
+                    strcat( OraBuffer, "%" );
+                    
+                    ULOG( "OraBuffer [%s]",OraBuffer );
+                    
+                    ULOG( "curGetClientes2" );
+                    EXEC SQL DECLARE curGetClientes2 CURSOR FOR
+                    select distinct
+                       documento.nrdocumento ,
+                       substr(documento.nrdocumento,1,2) || '.' || substr(documento.nrdocumento,3,3) || '.' || substr(documento.nrdocumento,6,3) || '/' || substr(documento.nrdocumento,9,4) || '-' || substr(documento.nrdocumento,13,2) as cnpjFromatado ,  
+                       pessoa.nmpessoa ,
+                       null as idtiporelacionamento
+                    from
+                       customer.pessoadocumento pessoadocumento ,
+                       customer.documento       documento ,        
+                       customer.pessoa          pessoa ,
+                       apoio.tipodocumento      tipodocumento
+                    where
+                       tipodocumento.SGTIPODOCUMENTO = 'CNPJ'
+                    and
+                       pessoa.idpessoa = pessoadocumento.idpessoa
+                    and
+                       documento.idtipodocumento = tipodocumento.idtipodocumento
+                    and
+                       documento.IDDOCUMENTO = pessoadocumento.IDDOCUMENTO
+                    and
+                       upper(pessoa.nmpessoa) like upper( :OraBuffer )
+                    and
+                       rownum <= :nrLinhas
+                    order by pessoa.nmpessoa;                    
+
+                    EXEC SQL OPEN curGetClientes2;
+                } 
+            }  // if ( nrDocumento[0] != 0x0 && nmRazaoSocial[0] != 0x0 )
+        }  // if ( !strcmp(inAssociado,"1") )
+        else
+        {
+            if ( nrDocumentoPrm[0] != 0x0 && nmRazaoSocial[0] != 0x0 )  // Busca por cnpj e razao social
+            {
+                    OraBuffer[0] = 0x0;
+                    strcpy( OraBuffer, "%" );
+                    strcat( OraBuffer, pParamOraNmRazaoSocial );
+                    strcat( OraBuffer, "%" );
+
+                    ULOG( "OraBuffer [%s]",OraBuffer );
+
+                    ULOG( "curGetClientes4" );
+                    
+                    EXEC SQL DECLARE curGetClientes4 CURSOR FOR
+                    select distinct
+                       documento.nrdocumento ,
+                       substr(documento.nrdocumento,1,2) || '.' || substr(documento.nrdocumento,3,3) || '.' || substr(documento.nrdocumento,6,3) || '/' || substr(documento.nrdocumento,9,4) || '-' || substr(documento.nrdocumento,13,2) as cnpjFromatado ,  
+                       pessoa.nmpessoa ,
+                       NULL  as idTipoRelacionamento
+                    from
+                       apoio.tipodocumento      tipodocumento ,
+                       customer.pessoa          pessoa ,
+                       customer.pessoadocumento pessoadocumento ,
+                       customer.documento       documento
+                    where
+                       tipodocumento.idtipodocumento = documento.idtipodocumento
+                    and
+                       tipodocumento.sgtipodocumento = 'CNPJ'
+                    and
+                       documento.iddocumento = pessoadocumento.iddocumento
+                    and
+                       pessoadocumento.idpessoa = pessoa.idpessoa
+                    and
+                       documento.nrdocumento not in
+                    (
+                       select pessoaconsultor.nrdocumento from customer.pessoaconsultor pessoaconsultor 
+                    )
+                    and
+                       upper(pessoa.nmpessoa) like upper( :OraBuffer )
+                    and
+                       documento.nrdocumento = :pParamOraNrDocumento
+                    and
+                       rownum <= :nrLinhas
+                    order by pessoa.nmpessoa;
+
+                    EXEC SQL OPEN curGetClientes4;
+            }
+            else if ( nrDocumentoPrm[0] != 0x0 )
+            {
+                    ULOG( "curGetClientes5" );
+
+                    EXEC SQL DECLARE curGetClientes5 CURSOR FOR
+                    select distinct
+                       documento.nrdocumento ,
+                       substr(documento.nrdocumento,1,2) || '.' || substr(documento.nrdocumento,3,3) || '.' || substr(documento.nrdocumento,6,3) || '/' || substr(documento.nrdocumento,9,4) || '-' || substr(documento.nrdocumento,13,2) as cnpjFromatado ,  
+                       pessoa.nmpessoa ,
+                       NULL  as idTipoRelacionamento
+                    from
+                       apoio.tipodocumento      tipodocumento ,
+                       customer.pessoa          pessoa ,
+                       customer.pessoadocumento pessoadocumento ,
+                       customer.documento       documento
+                    where
+                       tipodocumento.idtipodocumento = documento.idtipodocumento
+                    and
+                       tipodocumento.sgtipodocumento = 'CNPJ'
+                    and
+                       documento.iddocumento = pessoadocumento.iddocumento
+                    and
+                       pessoadocumento.idpessoa = pessoa.idpessoa
+                    and
+                       documento.nrdocumento not in
+                    (
+                       select pessoaconsultor.nrdocumento from customer.pessoaconsultor pessoaconsultor 
+                    )
+                    and
+                       documento.nrdocumento = :pParamOraNrDocumento
+                    and
+                       rownum <= :nrLinhas
+                    order by pessoa.nmpessoa;
+
+                    EXEC SQL OPEN curGetClientes5;
+            }
+            else
+            {
+                    OraBuffer[0] = 0x0;
+                    strcpy( OraBuffer, "%" );
+                    strcat( OraBuffer, pParamOraNmRazaoSocial );
+                    strcat( OraBuffer, "%" );
+
+                    ULOG( "OraBuffer [%s]",OraBuffer );
+
+                    ULOG( "curGetClientes6" );
+
+                    EXEC SQL DECLARE curGetClientes6 CURSOR FOR
+                    select distinct
+                       documento.nrdocumento ,
+                       substr(documento.nrdocumento,1,2) || '.' || substr(documento.nrdocumento,3,3) || '.' || substr(documento.nrdocumento,6,3) || '/' || substr(documento.nrdocumento,9,4) || '-' || substr(documento.nrdocumento,13,2) as cnpjFromatado ,  
+                       pessoa.nmpessoa ,
+                       NULL  as idTipoRelacionamento
+                    from
+                       apoio.tipodocumento      tipodocumento ,
+                       customer.pessoa          pessoa ,
+                       customer.pessoadocumento pessoadocumento ,
+                       customer.documento       documento
+                    where
+                       tipodocumento.idtipodocumento = documento.idtipodocumento
+                    and
+                       tipodocumento.sgtipodocumento = 'CNPJ'
+                    and
+                       documento.IDDOCUMENTO = pessoadocumento.iddocumento
+                    and
+                       pessoadocumento.IDPESSOA = pessoa.idpessoa
+                    and
+                       documento.nrdocumento not in
+                    (
+                       select pessoaconsultor.nrdocumento from customer.pessoaconsultor pessoaconsultor 
+                    )
+                    and
+                       upper(pessoa.nmpessoa) like upper( :OraBuffer )
+                    and
+                       rownum <= :nrLinhas
+                    order by pessoa.nmpessoa;
+
+                    EXEC SQL OPEN curGetClientes6;
+            }
+        }
+
+        saida->createTag( "ConsultorRelacionamentoVO");
+        saida->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:ns1", "commons.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+
+        saida->addItem("tpOperacao","PesquisarClienteVO");
+        saida->createTag("Lista");
+        saida->addItem("nmSelect","ClienteVO");
+        saida->createTag("Disponivel");
+
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+
+        ULOG("Vai gravar o resultado da pesquisa ...");
+
+        //if ( EConsultorRelac == false )
+        //{
+            for( ;; )
+            {
+                memset( &StatOraResult,-1, sizeof(StatOraResult) );
+
+                if ( !strcmp(inAssociado,"1") )
+                {
+                    if (  nrDocumentoPrm[0] != 0x0 && nmRazaoSocial[0] != 0x0 )
+                    {
+                        ULOG( "Fetch curGetClientes3" );
+
+                        EXEC SQL FETCH curGetClientes3 INTO :DadoOraResult:StatOraResult;
+                    }
+                    else
+                    {
+                        if ( nrDocumentoPrm[0] != 0x0 )
+                        { 
+                            ULOG( "Fetch curGetClientes1" );
+                            EXEC SQL FETCH curGetClientes1 INTO :DadoOraResult:StatOraResult;
+                        }
+                        else
+                        {  // busca pela razao social
+                            ULOG( "Fetch curGetClientes2" );
+
+                            EXEC SQL FETCH curGetClientes2 INTO :DadoOraResult:StatOraResult;
+                        }
+                    }
+                }
+                else
+                {
+                    if (  nrDocumentoPrm[0] != 0x0 && nmRazaoSocial[0] != 0x0 )
+                    {
+                        ULOG( "Fetch curGetClientes4" );
+
+                        EXEC SQL FETCH curGetClientes4 INTO :DadoOraResult:StatOraResult;
+                    }
+                    else
+                    {
+                        if ( nrDocumentoPrm[0] != 0x0 )
+                        { 
+                            ULOG( "Fetch curGetClientes5" );
+
+                            EXEC SQL FETCH curGetClientes5 INTO :DadoOraResult:StatOraResult;
+                        }
+                        else
+                        {  // busca pela razao social
+                            ULOG( "Fetch curGetClientes6" );
+
+                            EXEC SQL FETCH curGetClientes6 INTO :DadoOraResult:StatOraResult;
+                        }
+                    }
+                }
+
+                CONVIND( DadoOraResult.nrDocumento, StatOraResult.i_nrDocumento );
+                CONVIND( DadoOraResult.nrDocumentoFmt, StatOraResult.i_nrDocumentoFmt );
+                CONVIND( DadoOraResult.nmPessoa   , StatOraResult.i_nmPessoa );
+
+                saida->createTag( "ns1:IDValorRelacionamentoVO" );
+                    saida->addItem( "ns1:id", (char*)DadoOraResult.nrDocumento.arr );
+                    saida->addItem( "ns1:nrDocumentoFmt", (char*)DadoOraResult.nrDocumentoFmt.arr );
+                    saida->addItem( "ns1:valor",(char*)DadoOraResult.nmPessoa.arr );
+                    saida->addItem( "ns1:idRelacionamento",DadoOraResult.idTipoRelacionamento );
+                saida->closeTag();
+
+                iCont++;
+            }
+        //}
+
+        saida->closeTag();
+        saida->closeTag();
+        saida->closeTag();
+
+        ULOG("Pesquisa completada com sucesso");
+
+        //if ( EConsultorRelac == false )
+        //{
+            if ( !strcmp(inAssociado,"1") )
+            {
+                if (  nrDocumentoPrm[0] != 0x0 && nmRazaoSocial[0] != 0x0 )
+                {
+                    EXEC SQL CLOSE curGetClientes3;
+                }
+                else
+                {
+                    if ( nrDocumentoPrm[0] != 0x0  )
+                    { // se usuário esta filtrando por numero de documento...
+                        EXEC SQL CLOSE curGetClientes1;
+                    }
+                    else
+                    { // se usuário esta filtrando por numero de documento...
+                        EXEC SQL CLOSE curGetClientes2;
+                    }
+                }
+            }
+            else
+            {
+                if (  nrDocumentoPrm[0] != 0x0 && nmRazaoSocial[0] != 0x0 )
+                {
+                    EXEC SQL CLOSE curGetClientes4;
+                }
+                else
+                {
+                    if ( nrDocumentoPrm[0] != 0x0  )
+                    { // se usuário esta filtrando por numero de documento...
+                        EXEC SQL CLOSE curGetClientes5;
+                    }
+                    else
+                    { // se usuário esta filtrando por numero de documento...
+                        EXEC SQL CLOSE curGetClientes6;
+                    }
+                }
+            }
+        //}
+
+        ULOG_END("CTabConsRelac::PesquisarCliente()");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    return iCont;
+
+GotoPesquisarCliente:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CTabConsRelac::PesquisarClientePorIDConsultor(XMLGen*saida,const char *idPessoaUsuario)
+{
+    ULOG_START("CTabConsRelac::PesquisarClientePorIDConsultor()");
+
+    int iCont = 0;
+    struct sqlca sqlca;
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        const char *pParamOraIdPessoaUsuario = idPessoaUsuario;
+        char * nrLinhas;
+
+        struct
+        {
+            VARCHAR nrDocumento[256];
+            VARCHAR nrDocumentoFmt[256];
+            VARCHAR nmPessoa[256];
+            VARCHAR idTipoRelacionamento[40];
+        } DadoOraResult;
+
+        struct
+        {
+            short nrDocumento;
+            short nrDocumentoFmt;
+            short nmPessoa;
+            short idTipoRelacionamento;
+        } StatOraResult;
+
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+        ULOG("Vai buscar clientes associados ao consultor='%s'",pParamOraIdPessoaUsuario);
+
+        char nrRegistros[39];
+        memset( nrRegistros, 0x0, sizeof(nrRegistros) );
+        PrmConsultas( nrRegistros );
+        nrLinhas = nrRegistros;
+
+        EXEC SQL WHENEVER NOT FOUND DO BREAK;
+        EXEC SQL WHENEVER SQLERROR GOTO GotoPesquisarClientePorIDConsultor;
+
+        EXEC SQL 
+            DECLARE 
+                curGetClientesByID CURSOR FOR 
+            select distinct
+               pessoaconsultor.NRDOCUMENTO ,
+               substr(documento.nrdocumento,1,2) || '.' || substr(documento.nrdocumento,3,3) || '.' || substr(documento.nrdocumento,6,3) || '/' || substr(documento.nrdocumento,9,4) || '-' || substr(documento.nrdocumento,13,2) as cnpjFromatado ,  
+               pessoa.nmpessoa ,
+               tiporelacionamento.sgtiporelacionamento
+            from
+               customer.pessoadocumento    pessoadocumento ,
+               customer.documento          documento ,
+               customer.pessoaconsultor    pessoaconsultor ,
+               customer.tiporelacionamento tiporelacionamento ,
+               customer.pessoa             pessoa
+            where
+               tiporelacionamento.idtiporelacionamento = pessoaconsultor.idtiporelacionamento
+            and
+               pessoaconsultor.NRDOCUMENTO = documento.NRDOCUMENTO
+            and
+               pessoadocumento.IDDOCUMENTO = documento.IDDOCUMENTO
+            and
+               pessoa.IDPESSOA = pessoadocumento.IDPESSOA
+            and
+               pessoaconsultor.idpessoa = :pParamOraIdPessoaUsuario
+            and
+               rownum <= :nrLinhas;
+
+        EXEC SQL OPEN curGetClientesByID;
+
+        saida->createTag( "ConsultorRelacionamentoVO");
+        saida->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:ns1", "commons.fo.vivo.com.br/vo");
+        saida->addProp("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+
+        saida->addItem("tpOperacao","PesquisarClientePorIDConsultorVO");
+        saida->createTag("Lista");
+        saida->addItem("nmSelect","ClienteVO");
+        saida->createTag("Selecionado");
+
+        for(;;)
+        {
+            memset( &StatOraResult,-1, sizeof(StatOraResult) );
+
+            EXEC SQL FETCH curGetClientesByID INTO :DadoOraResult:StatOraResult;
+
+            CONVIND(DadoOraResult.nrDocumento,StatOraResult.nrDocumento);
+            CONVIND(DadoOraResult.nrDocumentoFmt,StatOraResult.nrDocumentoFmt);
+            CONVIND(DadoOraResult.nmPessoa,StatOraResult.nmPessoa);
+            CONVIND(DadoOraResult.idTipoRelacionamento,StatOraResult.idTipoRelacionamento);
+
+            saida->createTag("ns1:IDValorRelacionamentoVO");
+                saida->addItem("ns1:id",(char*)DadoOraResult.nrDocumento.arr);
+                saida->addItem("ns1:nrDocumentoFmt",(char*)DadoOraResult.nrDocumentoFmt.arr);
+                saida->addItem("ns1:valor",(char*)DadoOraResult.nmPessoa.arr);
+                saida->addItem("ns1:idRelacionamento",(char*)DadoOraResult.idTipoRelacionamento.arr);
+            saida->closeTag();
+
+            iCont++;
+        }
+
+        saida->closeTag();
+        saida->closeTag();
+        saida->closeTag();
+
+        EXEC SQL CLOSE curGetClientesByID;
+        
+        ULOG_END("CTabConsRelac::PesquisarClientePorIDConsultor()");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    return iCont;
+
+GotoPesquisarClientePorIDConsultor:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+int CTabConsRelac::GravarAssociacaoDeClientesConsultor(XMLGen*saida,const char *idUser,const char *idPessoa,CTabConsRelacItr &cTabConsRelacItr)
+{
+    ULOG_START("CTabConsRelac::GravarAssociacaoDeClientesConsultor()");
+
+    int iCont = 0;
+    struct sqlca sqlca;
+    char MsgRetorno[512];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        const char *pParamOraIdPessoa = idPessoa;
+        const char *pParamOraNrDocumento;
+        int varOraCount;
+        int idTpRelac;
+        short i_idTpRelac = -1;
+        
+        VARCHAR sgTpRelac[16];
+        short   i_sgTpRelac = -1;
+        
+        char  aux[256];
+        VARCHAR idTipoRel[40];
+        short i_idTipoRel;
+
+        char strDadoOraListaInsertIdPessoa[TAM_MAX_BLC_ORA][39];
+        char strDadoOraListaInsertNrDocumento[TAM_MAX_BLC_ORA][39];
+        char strDadoOraListaInsertIdTipoRelacionamento[TAM_MAX_BLC_ORA][101];
+        char strDadoOraListaInsertIdUsuarioAlteracao[TAM_MAX_BLC_ORA][39];
+        
+        char * nrLinhas;
+
+        int rows_to_insert;
+        int OraExiste;
+        VARCHAR OraBuffer[256];
+        short i_OraBuffer = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL WHENEVER SQLERROR GOTO GotoGravarAssociacaoDeClientesConsultor;
+
+
+        int quantidade = cTabConsRelacItr.Quantidade();
+        int i=0;
+
+
+        while ( i < quantidade )
+        {
+            memset( &strDadoOraListaInsertIdPessoa, 0, sizeof(strDadoOraListaInsertIdPessoa));
+            memset( &strDadoOraListaInsertNrDocumento, 0, sizeof(strDadoOraListaInsertNrDocumento));
+            memset( &strDadoOraListaInsertIdTipoRelacionamento, 0, sizeof(strDadoOraListaInsertIdTipoRelacionamento));
+            memset( &strDadoOraListaInsertIdUsuarioAlteracao, 0, sizeof(strDadoOraListaInsertIdUsuarioAlteracao));
+
+            rows_to_insert = 0;
+
+            for (int j=0; j<TAM_MAX_BLC_ORA;j++)
+            {
+                if ( i >= quantidade ) 
+                { 
+                   break; 
+                }
+                
+                sprintf( aux, "%s", (char*)cTabConsRelacItr.Registro(i)->idTipoRelacionamento );
+                
+                EXEC SQL
+                SELECT
+                   idtiporelacionamento
+                INTO
+                   :idTipoRel:i_idTipoRel
+                FROM
+                   customer.tiporelacionamento
+                WHERE
+                   SGTIPORELACIONAMENTO = :aux
+                and
+                   rownum < 2;
+                   
+                CONVIND( idTipoRel,i_idTipoRel );
+
+                SAFE_STRNCPY(strDadoOraListaInsertIdPessoa[rows_to_insert],pParamOraIdPessoa);
+                SAFE_STRNCPY(strDadoOraListaInsertNrDocumento[rows_to_insert],(char*)cTabConsRelacItr.Registro(i)->nrDocumento);
+                SAFE_STRNCPY(strDadoOraListaInsertIdTipoRelacionamento[rows_to_insert],(char*)idTipoRel.arr);
+                SAFE_STRNCPY(strDadoOraListaInsertIdUsuarioAlteracao[rows_to_insert],"1");
+                
+                ULOG( "pParamOraIdPessoa    [%s]",pParamOraIdPessoa );
+                ULOG( "nrDocumento          [%s]",(char*)cTabConsRelacItr.Registro(i)->nrDocumento );
+                ULOG( "idTipoRelacionamento [%s]",(char*)idTipoRel.arr );
+
+                EXEC SQL
+                SELECT
+                   COUNT(1)
+                INTO
+                   :OraExiste
+                FROM
+                   customer.pessoaconsultor
+                WHERE
+                   IDTIPORELACIONAMENTO = :idTipoRel
+                AND
+                   NRDOCUMENTO = :strDadoOraListaInsertNrDocumento[rows_to_insert];
+                ULOG( "OraExiste [%d]", OraExiste);
+                   
+                if ( OraExiste == 0 )  // Nao encontrou o nivel selecionado
+                {
+                    ULOG( "Nao encontrou consultor para o nivel selecionado..." );
+                    
+                    EXEC SQL
+                    SELECT
+                       COUNT(1)
+                    INTO
+                       :OraExiste
+                    FROM
+                       customer.pessoaconsultor
+                    WHERE
+                       IDPESSOA = :pParamOraIdPessoa
+                    AND
+                       NRDOCUMENTO = :strDadoOraListaInsertNrDocumento[rows_to_insert];
+                    
+                    ULOG( "Buscando consultor [%s] e documento [%s]", pParamOraIdPessoa, (char*)cTabConsRelacItr.Registro(i)->nrDocumento);
+
+                    if ( OraExiste > 0) // Encontrou este mesmo consultor com outro nivel relacionado
+                    {
+                        ULOG( "Existe o mesmo consultor em nivel diferente..." );
+                        
+                        EXEC SQL
+                        select
+                           pessoa.nmpessoa ,
+                           pessoaconsultor.idtiporelacionamento 
+                        into
+                           :OraBuffer:i_OraBuffer ,
+                           :idTpRelac:i_idTpRelac
+                        from
+                           customer.pessoa            pessoa ,
+                           customer.pessoadocumento   pessoadocumento ,
+                           customer.pessoaconsultor   pessoaconsultor ,
+                           customer.documento         documento
+                        where
+                           pessoadocumento.iddocumento = documento.iddocumento
+                        and
+                           pessoa.idpessoa = pessoadocumento.idpessoa
+                        and
+                           pessoaconsultor.nrdocumento = documento.nrdocumento
+                        and
+                           documento.nrdocumento = :strDadoOraListaInsertNrDocumento[rows_to_insert]
+                        and
+                           rownum < 2;
+
+                        CONVIND( OraBuffer,i_OraBuffer );
+                        
+                        ULOG( "OraBuffer [%s]",(char*)OraBuffer.arr );
+                        ULOG( "idTpRelac [%d]",idTpRelac );
+                        
+                        EXEC SQL
+                        SELECT
+                           SGTIPORELACIONAMENTO
+                        INTO
+                           :sgTpRelac:i_sgTpRelac
+                        FROM
+                           CUSTOMER.TIPORELACIONAMENTO
+                        WHERE
+                           IDTIPORELACIONAMENTO = :idTpRelac;
+                        CONVIND( sgTpRelac,i_sgTpRelac );
+                        
+                        if ( !strcmp((char*)sgTpRelac.arr,"R") )
+                        {
+                            sprintf( MsgRetorno, "O consultor relacionado já está associado ao cliente %s com o nível 1.", (char*)OraBuffer.arr );
+                        }
+                        else
+                        {
+                            sprintf( MsgRetorno, "O consultor relacionado já está associado ao cliente %s com o nível 2.", (char*)OraBuffer.arr );
+                        }
+                        
+                        iCont = -1;
+                        rows_to_insert = 0;
+                        saida->createTag( "ConsultorRelacionamentoVO");
+                            saida->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+                            saida->addProp("xmlns:ns1", "commons.fo.vivo.com.br/vo");
+                            saida->addProp("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+
+                            saida->addItem( "tpOperacao","gravar" );
+                            saida->addItem( "msgRetorno", MsgRetorno );
+                            saida->createTag("Lista");
+                            saida->closeTag();
+                        saida->closeTag();
+                        rows_to_insert = 0;
+                        break;
+                    }
+                       
+                }
+                else if ( OraExiste > 0 )
+                {
+                    ULOG( "Consultando idPessoa e nrDocumento..." );
+                    
+                    EXEC SQL
+                    SELECT
+                       pessoa.NMPESSOA
+                    INTO
+                       :OraBuffer:i_OraBuffer
+                    FROM
+                       CUSTOMER.PESSOA          PESSOA ,
+					   customer.pessoadocumento pessoadocumento ,
+					   customer.documento       documento
+                    WHERE
+					   pessoadocumento.IDDOCUMENTO = documento.IDDOCUMENTO
+					and
+					   pessoa.IDPESSOA = pessoadocumento.IDPESSOA
+					and
+                       documento.NRDOCUMENTO = :strDadoOraListaInsertNrDocumento[rows_to_insert]
+                    and
+                       rownum < 2;
+ 
+                    CONVIND( OraBuffer,i_OraBuffer );
+                    sprintf( MsgRetorno, "O cliente %s já possui consultor de relacionamento no nível solicitado. Favor retirá-lo da lista de clientes selecionados para concluir a associação.", (char*)OraBuffer.arr );
+                    iCont = -1;
+                    rows_to_insert = 0;
+                    saida->createTag( "ConsultorRelacionamentoVO");
+                        saida->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+                        saida->addProp("xmlns:ns1", "commons.fo.vivo.com.br/vo");
+                        saida->addProp("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+
+                        saida->addItem( "tpOperacao","gravar" );
+                        saida->addItem( "msgRetorno", MsgRetorno );
+                        saida->createTag("Lista");
+                        saida->closeTag();
+                    saida->closeTag();
+                    rows_to_insert = 0;
+                    break;
+                }
+
+                rows_to_insert++;
+
+                i++;
+            } // for (j=0; j<TAM_MAX_BLC_ORA;j++)
+
+            // Se a lista de inserts contiver algo então persiste
+            if ( rows_to_insert )
+            {
+                ULOG("vai inserir %d linhas em CUSTOMER.PESSOACONSULTOR",rows_to_insert);
+
+                EXEC SQL FOR :rows_to_insert
+                INSERT INTO customer.pessoaconsultor
+                (
+                    IDPESSOA ,
+                    NRDOCUMENTO ,
+                    IDTIPORELACIONAMENTO ,
+                    IDUSUARIOALTERACAO ,
+                    DTULTIMAALTERACAO 
+                )
+                VALUES
+                (
+                    :strDadoOraListaInsertIdPessoa ,
+                    :strDadoOraListaInsertNrDocumento ,
+                    :strDadoOraListaInsertIdTipoRelacionamento ,
+                    :strDadoOraListaInsertIdUsuarioAlteracao ,
+                    SYSDATE
+                );
+            }
+            if ( iCont < 0 )
+               break;
+
+
+        } // while ( i < quantidade )
+
+        ULOG_END("CTabConsRelac::GravarAssociacaoDeClientesConsultor()");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    return iCont;
+
+GotoGravarAssociacaoDeClientesConsultor:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+int CTabEmpresaRelac::GravarAssociacaoEmpresaFrm( XMLGen     * saida,
+                                                  const char * idUser,
+                                                  const char * idContato,
+                                                  const char * idFuncionalidade,
+                                                  CTabEmpresaRelacItr &cTabEmpresaRelacItr )
+{
+    ULOG_START("CTabEmpresaRelac::GravarAssociacaoEmpresaFrm()");
+
+    int iCont = 0;
+    struct sqlca sqlca;
+    char MsgRetorno[512];
+
+    char idFormularioPrm[64];
+    char nrDocumentoPrm[64];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        char  aux[256];
+        
+        const char * idFuncionalidadeUnk = idFuncionalidade;
+        char * idFormularioUnk;
+        char * inAtivoUnk;
+        const char * idContatoUnk = idContato;
+        const char * inUsuarioAlteracaoUnk = idUser;
+        const char * vlPesoUnk = idUser;
+
+        char strDadoOraListaInsertIdFuncionalidade[TAM_MAX_BLC_ORA][64];
+        char strDadoOraListaInsertIdContato[TAM_MAX_BLC_ORA][64];
+        char strDadoOraListaInsertIdFormulario[TAM_MAX_BLC_ORA][64];
+        char strDadoOraListaInsertNrDocumento[TAM_MAX_BLC_ORA][64];
+        char strDadoOraListaInsertIdUsuarioAlteracao[TAM_MAX_BLC_ORA][64];
+        char strDadoOraListaInsertValorPeso[TAM_MAX_BLC_ORA][64];
+        char strDadoOraListaInsertValorInativo[TAM_MAX_BLC_ORA][64];
+        char strDadoOraListaInsertTipoAssociacao[TAM_MAX_BLC_ORA][64];
+
+
+        int rows_to_insert;
+        int OraExiste;
+        VARCHAR OraBuffer[256];
+        short i_OraBuffer = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL WHENEVER SQLERROR GOTO GotoGravarAssociacaoEmpresaFrm;
+
+
+        int quantidade = cTabEmpresaRelacItr.Quantidade();
+        int i=0;
+
+
+        while ( i < quantidade )
+        {
+            memset( &strDadoOraListaInsertIdFuncionalidade   , 0, sizeof(strDadoOraListaInsertIdFuncionalidade) );
+            memset( &strDadoOraListaInsertIdContato          , 0, sizeof(strDadoOraListaInsertIdContato) );
+            memset( &strDadoOraListaInsertIdFormulario       , 0, sizeof(strDadoOraListaInsertIdFormulario) );
+            memset( &strDadoOraListaInsertNrDocumento        , 0, sizeof(strDadoOraListaInsertNrDocumento) );
+            memset( &strDadoOraListaInsertIdUsuarioAlteracao , 0, sizeof(strDadoOraListaInsertIdUsuarioAlteracao) );
+            memset( &strDadoOraListaInsertValorPeso          , 0, sizeof(strDadoOraListaInsertValorPeso) );
+            memset( &strDadoOraListaInsertValorInativo       , 0, sizeof(strDadoOraListaInsertValorInativo) );
+
+            rows_to_insert = 0;
+
+            for (int j=0; j<TAM_MAX_BLC_ORA;j++)
+            {
+                if ( i >= quantidade ) 
+                { 
+                   break; 
+                }
+                
+                ULOG( "idFuncionalidade [%s]",idFuncionalidade );
+                ULOG( "idContato        [%s]",idContato );
+                ULOG( "idFormulario     [%s]",(char*)cTabEmpresaRelacItr.Registro(i)->idFormulario );
+                ULOG( "nrDocumento      [%s]",(char*)cTabEmpresaRelacItr.Registro(i)->nrDocumento );
+                ULOG( "idUser           [%s]",idUser );
+                ULOG( "vlPeso           [%s]",(char*)cTabEmpresaRelacItr.Registro(i)->vlPeso );
+                ULOG( "inAtivo          [%s]",(char*)cTabEmpresaRelacItr.Registro(i)->inAtivo );
+                ULOG( "intipoassociacao [%s]",(char*)cTabEmpresaRelacItr.Registro(i)->intipoassociacao );
+                
+                SAFE_STRNCPY( strDadoOraListaInsertIdFuncionalidade[rows_to_insert],idFuncionalidade );
+                SAFE_STRNCPY( strDadoOraListaInsertIdContato[rows_to_insert],idContato );
+                SAFE_STRNCPY( strDadoOraListaInsertIdFormulario[rows_to_insert],(char*)cTabEmpresaRelacItr.Registro(i)->idFormulario );
+                SAFE_STRNCPY( strDadoOraListaInsertNrDocumento[rows_to_insert],(char*)cTabEmpresaRelacItr.Registro(i)->nrDocumento );
+                SAFE_STRNCPY( strDadoOraListaInsertIdUsuarioAlteracao[rows_to_insert],idUser );
+                SAFE_STRNCPY( strDadoOraListaInsertValorPeso[rows_to_insert],(char*)cTabEmpresaRelacItr.Registro(i)->vlPeso );
+                SAFE_STRNCPY( strDadoOraListaInsertValorInativo[rows_to_insert],(char*)cTabEmpresaRelacItr.Registro(i)->inAtivo );
+                SAFE_STRNCPY( strDadoOraListaInsertTipoAssociacao[rows_to_insert],(char*)cTabEmpresaRelacItr.Registro(i)->intipoassociacao );
+
+                rows_to_insert++;
+
+                i++;
+            } 
+
+            if ( rows_to_insert )
+            {
+                ULOG("vai inserir %d linhas",rows_to_insert);
+
+                EXEC SQL FOR :rows_to_insert
+                DELETE FROM contatoadm.funcionalidadefrmempresa
+                      WHERE idfuncionalidade = :strDadoOraListaInsertIdFuncionalidade;
+            
+                EXEC SQL FOR :rows_to_insert
+                DELETE FROM contatoadm.funcionalidadefrm
+                      WHERE idfuncionalidade = :strDadoOraListaInsertIdFuncionalidade;
+                            //AND IDFORMULARIO = :strDadoOraListaInsertIdFormulario;
+                
+                ULOG( "Removido das tabelas contatoadm.funcionalidadefrmempresa e contatoadm.funcionalidadefrm" );
+                            
+                if ( strcmp((char*)cTabEmpresaRelacItr.Registro(i)->idFormulario,"-11" ) && 
+                     strcmp((char*)cTabEmpresaRelacItr.Registro(i)->vlPeso,"-11") )
+                {
+                    for (int a = 0; a < rows_to_insert; a++ )
+                    {
+
+                        idFormularioUnk = (char*)cTabEmpresaRelacItr.Registro(a)->idFormulario;
+                        inAtivoUnk = (char*)cTabEmpresaRelacItr.Registro(a)->inAtivo;
+                        vlPesoUnk = (char*)cTabEmpresaRelacItr.Registro(a)->vlPeso;
+                        
+                        ULOG( ">>> Atualizando idFormularioUnk [%s], inAtivoUnk [%s], vlPesoUnk [%s]", idFormularioUnk, inAtivoUnk, vlPesoUnk );
+                        
+                        EXEC SQL
+                        UPDATE contatoadm.funcionalidadefrm
+                             SET idcontato = :idContatoUnk ,
+                                 idusuarioalteracao = :inUsuarioAlteracaoUnk ,
+                                 dtultimaalteracao = SYSDATE ,
+                                 idslafuncionalidadefrm = :vlPesoUnk
+                            WHERE
+                                 idfuncionalidade = :idFuncionalidadeUnk
+                            AND  idformulario = :idFormularioUnk
+                            AND  INATIVO = :inAtivoUnk ;
+                            
+                        if ( sqlca.sqlerrd[2] == 0 )
+                        {
+                            ULOG( "Inserindo em contatoadm.funcionalidadefrm ..." );
+                            
+                            EXEC SQL
+                            INSERT INTO contatoadm.funcionalidadefrm
+                                        (
+                                           idfuncionalidade, 
+                                           idformulario, 
+                                           inativo, 
+                                           idcontato,
+                                           idusuarioalteracao, 
+                                           dtultimaalteracao, 
+                                           idslafuncionalidadefrm
+                                        )
+                                 VALUES (
+                                           :idFuncionalidadeUnk, 
+                                           :idFormularioUnk, 
+                                           :inAtivoUnk, 
+                                           :idContatoUnk,
+                                           :inUsuarioAlteracaoUnk, 
+                                           SYSDATE, 
+                                           :vlPesoUnk
+                                        );                            
+                        }
+                    }
+
+                    if ( rows_to_insert == 1 && strlen(strDadoOraListaInsertNrDocumento[0]) == 0 )
+                    {
+                        continue;
+                    }
+                    
+                    ULOG( "Associa funcionalidade a empresa..." );
+
+                    for (int b = 0; b < rows_to_insert; b++ )
+                    {
+                        if ( 	strlen(strDadoOraListaInsertNrDocumento[b]) > 0 &&
+								strcmp(strDadoOraListaInsertTipoAssociacao[b]," ")
+							)
+                        {
+                            EXEC SQL 
+                            insert into contatoadm.funcionalidadefrmempresa
+                            (
+                                NRDOCUMENTO ,
+                                IDFORMULARIO ,
+                                IDFUNCIONALIDADE ,
+                                IDUSUARIOALTERACAO ,
+                                INTIPOASSOCIACAO ,
+                                DTULTIMAALTERACAO 
+                            )
+                            values
+                            (
+                                :strDadoOraListaInsertNrDocumento[b] ,
+                                :strDadoOraListaInsertIdFormulario[b] ,
+                                :strDadoOraListaInsertIdFuncionalidade[b] ,
+                                :strDadoOraListaInsertIdUsuarioAlteracao[b] ,
+                                :strDadoOraListaInsertTipoAssociacao[b] ,
+                                SYSDATE
+                            );
+                        }
+                    }
+
+                }
+                else   // Qdo idFormulario, nrDocumento e idValor == NULL
+                {
+                    EXEC SQL
+                    DELETE FROM contatoadm.funcionalidadefrmempresa
+                          WHERE idfuncionalidade = :idFuncionalidadeUnk;
+                
+                    EXEC SQL   
+                    DELETE FROM contatoadm.funcionalidadefrm
+                          WHERE idfuncionalidade = :idFuncionalidadeUnk
+                                AND IDCONTATO = :idContatoUnk;
+                }
+
+
+            }
+            if ( iCont < 0 )
+               break;
+
+
+        } // while ( i < quantidade )
+
+        ULOG_END("CTabEmpresaRelac::GravarAssociacaoEmpresaFrm()");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    return iCont;
+
+GotoGravarAssociacaoEmpresaFrm:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+int CTabConsRelac::RemoverAssociacaoDeConsultor( const char *idUser,const char *idPessoa,CTabConsRelacItr &cTabConsRelacItr )
+{
+    ULOG_START("CTabConsRelac::RemoverAssociacaoDeConsultor()");
+
+    int iCont = 0;
+    struct sqlca sqlca;
+    char MsgRetorno[512];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        const char *pParamOraIdPessoa = idPessoa;
+        const char *pParamOraNrDocumento;
+        int varOraCount;
+
+        char  aux[256];
+        VARCHAR idTipoRel[40];
+        short i_idTipoRel;
+
+        char strDadoOraListaInsertIdPessoa[39];
+        char strDadoOraListaInsertNrDocumento[39];
+        char strDadoOraListaInsertIdTipoRelacionamento[101];
+        char strDadoOraListaInsertIdUsuarioAlteracao[39];
+
+        int rows_to_insert;
+        int OraExiste;
+        char OraBuffer[256];
+        short i_OraBuffer = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL WHENEVER SQLERROR GOTO GotoRemoverAssociacaoDeConsultor;
+
+        int quantidade = cTabConsRelacItr.Quantidade();
+        int i=0;
+
+        while ( i < quantidade )
+        {
+            if ( i >= quantidade ) 
+            { 
+               break; 
+            }
+
+            ULOG( "quantidade [%d]", quantidade );
+            ULOG( "i ........ [%d]", i );
+            
+            sprintf( aux, "%s", (char*)cTabConsRelacItr.Registro(i)->idTipoRelacionamento );
+            
+            ULOG( "aux [%s]", aux);
+            
+            EXEC SQL
+            SELECT
+               idtiporelacionamento
+            INTO
+               :idTipoRel:i_idTipoRel
+            FROM
+               customer.tiporelacionamento
+            WHERE
+               SGTIPORELACIONAMENTO = :aux;
+               
+            CONVIND( idTipoRel,i_idTipoRel );
+
+            ULOG( "idTipoRel [%s]", (char*)idTipoRel.arr );
+
+            memset( &strDadoOraListaInsertIdPessoa, 0, sizeof(strDadoOraListaInsertIdPessoa));
+            memset( &strDadoOraListaInsertNrDocumento, 0, sizeof(strDadoOraListaInsertNrDocumento));
+            memset( &strDadoOraListaInsertIdTipoRelacionamento, 0, sizeof(strDadoOraListaInsertIdTipoRelacionamento));
+            memset( &strDadoOraListaInsertIdUsuarioAlteracao, 0, sizeof(strDadoOraListaInsertIdUsuarioAlteracao));
+
+            rows_to_insert = 0;
+
+            SAFE_STRNCPY(strDadoOraListaInsertIdPessoa,pParamOraIdPessoa);
+            SAFE_STRNCPY(strDadoOraListaInsertNrDocumento,(char*)cTabConsRelacItr.Registro(i)->nrDocumento);
+            SAFE_STRNCPY(strDadoOraListaInsertIdTipoRelacionamento,(char*)idTipoRel.arr);
+            SAFE_STRNCPY(strDadoOraListaInsertIdUsuarioAlteracao,"1");
+
+            EXEC SQL
+            DELETE FROM 
+               customer.pessoaconsultor
+            WHERE
+               IDPESSOA  = :strDadoOraListaInsertIdPessoa
+            AND
+               NRDOCUMENTO = :strDadoOraListaInsertNrDocumento;
+
+            i++;
+
+        } // while ( i < quantidade )
+
+        ULOG_END("CTabConsRelac::RemoverAssociacaoDeConsultor()");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    return iCont;
+
+GotoRemoverAssociacaoDeConsultor:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+int CTabConsRelac::AlterarAssociacaoDeConsultor( XMLGen*saida,const char *idUser,const char *idPessoa,CTabConsRelacItr &cTabConsRelacItr )
+{
+    ULOG_START("CTabConsRelac::AlterarAssociacaoDeConsultor()");
+
+    int iCont = 0;
+    struct sqlca sqlca;
+    char MsgRetorno[512];
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        const char *pParamOraIdPessoa = idPessoa;
+        const char *pParamOraNrDocumento;
+        int varOraCount;
+
+        char  aux[256];
+        VARCHAR idTipoRel[40];
+        short i_idTipoRel;
+
+        char strDadoOraListaInsertIdPessoa[TAM_MAX_BLC_ORA][39];
+        char strDadoOraListaInsertNrDocumento[TAM_MAX_BLC_ORA][39];
+        char strDadoOraListaInsertIdTipoRelacionamento[TAM_MAX_BLC_ORA][101];
+        char strDadoOraListaInsertIdUsuarioAlteracao[TAM_MAX_BLC_ORA][39];
+
+        int rows_to_insert;
+        int OraExiste;
+        VARCHAR OraBuffer[256];
+        short i_OraBuffer = -1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL WHENEVER SQLERROR GOTO GotoAlterarAssociacaoDeConsultor;
+
+        int quantidade = cTabConsRelacItr.Quantidade();
+        int i=0;
+
+        while ( i < quantidade )
+        {
+            memset( &strDadoOraListaInsertIdPessoa, 0, sizeof(strDadoOraListaInsertIdPessoa));
+            memset( &strDadoOraListaInsertNrDocumento, 0, sizeof(strDadoOraListaInsertNrDocumento));
+            memset( &strDadoOraListaInsertIdTipoRelacionamento, 0, sizeof(strDadoOraListaInsertIdTipoRelacionamento));
+            memset( &strDadoOraListaInsertIdUsuarioAlteracao, 0, sizeof(strDadoOraListaInsertIdUsuarioAlteracao));
+
+            rows_to_insert = 0;
+
+            for (int j=0; j<TAM_MAX_BLC_ORA;j++)
+            {
+                if ( i >= quantidade ) 
+                { 
+                   break; 
+                }
+
+                sprintf( aux, "%s", (char*)cTabConsRelacItr.Registro(i)->idTipoRelacionamento );
+                
+                EXEC SQL
+                SELECT
+                   idtiporelacionamento
+                INTO
+                   :idTipoRel:i_idTipoRel
+                FROM
+                   customer.tiporelacionamento
+                WHERE
+                   SGTIPORELACIONAMENTO = :aux
+                AND
+                   ROWNUM < 2;
+                   
+                CONVIND( idTipoRel,i_idTipoRel );
+
+                SAFE_STRNCPY(strDadoOraListaInsertIdPessoa[rows_to_insert],pParamOraIdPessoa);
+                SAFE_STRNCPY(strDadoOraListaInsertNrDocumento[rows_to_insert],(char*)cTabConsRelacItr.Registro(i)->nrDocumento);
+                SAFE_STRNCPY(strDadoOraListaInsertIdTipoRelacionamento[rows_to_insert],(char*)idTipoRel.arr );
+                SAFE_STRNCPY(strDadoOraListaInsertIdUsuarioAlteracao[rows_to_insert],"1");
+
+                EXEC SQL
+                SELECT
+                   COUNT(1)
+                INTO
+                   :OraExiste
+                FROM
+                   customer.pessoaconsultor
+                WHERE
+                   IDTIPORELACIONAMENTO = :idTipoRel
+                AND
+                   NRDOCUMENTO = :strDadoOraListaInsertNrDocumento[rows_to_insert];
+                   
+                if ( OraExiste > 0 )
+                {
+                    EXEC SQL
+                    SELECT
+                       pessoa.NMPESSOA
+                    INTO
+                       :OraBuffer:i_OraBuffer
+                    FROM
+                       CUSTOMER.PESSOA          PESSOA ,
+                       customer.pessoadocumento pessoadocumento ,
+                       customer.documento       documento
+                    WHERE
+                       pessoadocumento.IDDOCUMENTO = documento.IDDOCUMENTO
+                    and
+                       pessoa.IDPESSOA = pessoadocumento.IDPESSOA
+                    and
+                       documento.NRDOCUMENTO = :strDadoOraListaInsertNrDocumento[rows_to_insert]
+                    AND
+                       ROWNUM < 2;
+ 
+                    CONVIND( OraBuffer,i_OraBuffer );
+                    sprintf( MsgRetorno, "O cliente %s já possui consultor de relacionamento no nível solicitado. Favor retirá-lo da lista de clientes selecionados para concluir a associação.", (char*)OraBuffer.arr );
+                    iCont = -1;
+                    rows_to_insert = 0;
+                    saida->createTag( "ConsultorRelacionamentoVO");
+                        saida->addProp("xmlns", "cliente.fo.vivo.com.br/vo");
+                        saida->addProp("xmlns:ns1", "commons.fo.vivo.com.br/vo");
+                        saida->addProp("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance");
+
+                        saida->addItem( "tpOperacao","gravar" );
+                        saida->addItem( "msgRetorno", MsgRetorno );
+                        saida->createTag("Lista");
+                        saida->closeTag();
+                    saida->closeTag();
+                    rows_to_insert = 0;
+                    break;
+                }
+
+                rows_to_insert++;
+                i++;
+            } // for (j=0; j<TAM_MAX_BLC_ORA;j++)
+
+            // Se a lista de inserts contiver algo então persiste
+            if ( rows_to_insert )
+            {
+                ULOG("vai alterar %d linhas em CUSTOMER.PESSOACONSULTOR",rows_to_insert);
+
+                EXEC SQL FOR :rows_to_insert
+                UPDATE 
+                   customer.PESSOACONSULTOR
+                SET
+                   IDTIPORELACIONAMENTO  = :strDadoOraListaInsertIdTipoRelacionamento
+                WHERE
+                   IDPESSOA  = :strDadoOraListaInsertIdPessoa
+                AND
+                   NRDOCUMENTO = :strDadoOraListaInsertNrDocumento;
+            }
+            if ( iCont < 0 )
+               break;
+
+
+        } // while ( i < quantidade )
+
+        ULOG_END("CTabConsRelac::AlterarAssociacaoDeConsultor()");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    return iCont;
+
+GotoAlterarAssociacaoDeConsultor:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+bool ExisteConsultorRelacionamento( const char * nrDocumento )
+{
+    ULOG_START("ExisteConsultorRelacionamento( const char * nrDocumento)");
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+
+        const char *pParamOraNrDocumento = nrDocumento;
+        int         iExiste = 1;
+
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL WHENEVER SQLERROR GOTO GotoExisteConsultorRelacionamento;
+
+        EXEC SQL 
+        select
+           count(1) as existe
+        into
+           :iExiste
+        from
+           customer.pessoaconsultor pessoaconsultor ,
+           customer.pessoa          pessoa
+        where
+           pessoa.idpessoa = pessoaconsultor.idpessoa
+        and
+           pessoaconsultor.nrdocumento = :pParamOraNrDocumento;
+
+        ULOG_END("ExisteConsultorRelacionamento(const char * nrDocumento)");
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+    if ( iExiste > 0 )
+       return true;
+    else
+       return false;
+
+GotoExisteConsultorRelacionamento:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+
+void PrmConsultas( char * nrRegistros )
+{
+    ULOG_START( "PrmConsultas()" );
+
+    struct sqlca sqlca;
+
+    EXEC SQL BEGIN DECLARE SECTION;
+        VARCHAR nrLinhas[39];
+        short   i_nrLinhas = -1;
+    EXEC SQL END DECLARE SECTION;
+
+    try
+    {
+
+        EXEC SQL WHENEVER NOT FOUND CONTINUE;
+        EXEC SQL WHENEVER SQLERROR GOTO GotoPrmConsultas;
+
+        EXEC SQL 
+        SELECT
+           DSVALORPARAMETRO 
+        INTO
+           :nrLinhas:i_nrLinhas
+        FROM 
+           APOIO.PARAMETRO
+        WHERE 
+           CDPARAMETRO = 'CNS_CR';
+
+        CONVIND( nrLinhas, i_nrLinhas );
+        
+        sprintf( nrRegistros, "%.*s",nrLinhas.len,(char*)nrLinhas.arr );
+
+        ULOG_END( "PrmConsultas()" );
+        
+        return;
+        
+    }
+    catch(...)
+    {
+        throw;
+    }
+
+
+
+GotoPrmConsultas:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+    throw TuxBasicOraException(sqlca.sqlcode);
+}

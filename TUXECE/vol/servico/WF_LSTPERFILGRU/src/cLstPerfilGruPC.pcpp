@@ -1,0 +1,125 @@
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/cLstPerfilGru.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/SmallString.h"
+#include "../../../commons/msgPadrao.h"
+
+// Prototipos
+void SqlError( sqlca * sqlca );
+
+
+/*------------------------------------------------------*/
+
+void proCListaPerfilGru( unsigned long idContatoPrm,XMLGen * Saida )
+{
+    ULOG_START("proCListaPerfilGru()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idGrupo;
+        unsigned long idGrupoPerfil;
+        unsigned long idPerfil;
+        unsigned long idContato = idContatoPrm;
+
+        VARCHAR       nmGrupo[256];
+        VARCHAR       nmPerfil[256];
+
+        short         i_nmGrupo;
+        short         i_nmPerfil;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE Consulta CURSOR FOR 
+    SELECT
+		GRUPO.IDGRUPO,
+		GRUPO.NMGRUPO,
+		GRUPOPERFIL.IDPERFIL,
+		PERFIL.NMPERFIL,
+		GRUPOPERFIL.IDGRUPOPERFIL
+    FROM
+        ACESSO.GRUPO             GRUPO,
+		CONTATOADM.GRUPOPERFIL   GRUPOPERFIL,
+        CONTATOADM.PERFIL        PERFIL,
+		CONTATOADM.CONTATOPERFIL CONTATOPERFIL
+    WHERE
+        GRUPO.IDGRUPO = GRUPOPERFIL.IDGRUPO
+    AND
+        GRUPOPERFIL.IDPERFIL = PERFIL.IDPERFIL
+    AND
+	    GRUPOPERFIL.IDGRUPOPERFIL = CONTATOPERFIL.IDGRUPOPERFIL 
+    AND
+        GRUPO.DTEXCLUSAO IS NULL
+	AND
+	    PERFIL.DTEXCLUSAO IS NULL
+	AND
+	    GRUPOPERFIL.DTEXPIRACAO IS NULL
+	AND
+	    PERFIL.INATIVO = 1
+	AND
+		CONTATOPERFIL.DTEXCLUSAO IS NULL
+	AND
+        CONTATOPERFIL.IDCONTATO = :idContato
+    ORDER BY
+        CONTATOPERFIL.SQORDEM;
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+   
+
+    EXEC SQL OPEN Consulta;
+    for( ;; )
+    {
+        EXEC SQL 
+        FETCH 
+        	Consulta 
+        INTO 
+			:idGrupo,
+			:nmGrupo:i_nmGrupo,
+			:idPerfil,
+			:nmPerfil:i_nmPerfil,
+			:idGrupoPerfil;
+
+
+		CONVIND( nmGrupo,i_nmGrupo );
+		CONVIND( nmPerfil,i_nmPerfil );
+
+        Saida->createTag( "PerfilGrupoVO" );
+            Saida->addItem( "idGrupoPerfil",idGrupoPerfil );
+            Saida->createTag( "Perfil" );
+               Saida->addItem( "idPerfil",idPerfil );
+               Saida->addItem( "nmPerfil",(char*)nmPerfil.arr );
+            Saida->closeTag();
+
+            Saida->createTag( "GrupoVO" );
+               Saida->addItem( "codigo",idGrupo );
+               Saida->addItem( "descricao",(char*)nmGrupo.arr );
+            Saida->closeTag();
+        Saida->closeTag();
+    }
+    EXEC SQL CLOSE Consulta;
+
+    ULOG_END("proCListaPerfilGru()");
+
+}
+
+
+
+
+void SqlError( sqlca * sqlca )
+{
+    ULOGE("SqlError -> sqlcode=%d,sqlerrmc=%.70s",sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc);
+	throw new 
+        TuxBasicOraException(
+            sqlca->sqlcode,
+            sqlca->sqlerrm.sqlerrmc,
+            sqlca->sqlerrm.sqlerrml
+            );
+}

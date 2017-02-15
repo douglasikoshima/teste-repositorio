@@ -1,0 +1,157 @@
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/cLstGrupoAssoc.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/SmallString.h"
+#include "../../../commons/msgPadrao.h"
+
+// Prototipos
+void SqlError( sqlca * sqlca );
+
+
+/*------------------------------------------------------*/
+
+void proCListaGrupoAssoc(unsigned long idContatoPrm,unsigned long idPessoaUsuarioPrm,XMLGen * Saida)
+{
+    ULOG_START("proCListaGrupoAssoc()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idContato = idContatoPrm;
+        unsigned long idPessoaUsuario = idPessoaUsuarioPrm;
+
+        unsigned long idGrupo;
+        VARCHAR       nmGrupo[256];
+
+        short         i_nmGrupo;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL 
+    DECLARE 
+    	ConsultaGrupo CURSOR FOR 
+        SELECT
+		    GRUPO.IDGRUPO,
+		    GRUPO.NMGRUPO
+        FROM
+            ACESSO.GRUPO GRUPO,
+            ACESSO.USUARIOGRUPO USUARIOGRUPO,
+            APOIO.TIPOGRUPO TIPOGRUPO
+        WHERE
+            USUARIOGRUPO.IDPESSOAUSUARIO = :idPessoaUsuario
+        AND
+            GRUPO.IDGRUPO = USUARIOGRUPO.IDGRUPO
+        AND
+            GRUPO.IDGRUPO > 0
+        AND
+            GRUPO.DTEXCLUSAO IS NULL
+        AND
+            GRUPO.IDTIPOGRUPO = TIPOGRUPO.IDTIPOGRUPO
+        AND
+            TIPOGRUPO.CDTIPOGRUPO = 'CRI'
+        ORDER BY
+            UPPER(GRUPO.NMGRUPO);
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    
+    EXEC SQL OPEN ConsultaGrupo;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaGrupo INTO :idGrupo,
+                                          :nmGrupo:i_nmGrupo;
+
+		CONVIND( nmGrupo,i_nmGrupo );
+
+        Saida->createTag( "GrupoVO " );
+        Saida->addProp( "xmlns","admsistemas.fo.vivo.com.br/vo" );
+           Saida->addItem( "codigo",idGrupo );
+           Saida->addItem( "descricao",(char*)nmGrupo.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ConsultaGrupo;
+
+    ULOG_END("proCListaGrupoAssoc()");
+
+}
+
+
+
+void proCListaGrupoAssocTodos( unsigned long idContatoPrm, XMLGen * Saida )
+{
+    ULOG_START("proCListaGrupoAssocTodos()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idContato = idContatoPrm;
+
+        unsigned long idGrupo;
+        VARCHAR       nmGrupo[256];
+
+        short         i_nmGrupo;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL 
+    DECLARE 
+    	CursorproCListaGrupoAssocTodos CURSOR FOR 
+	SELECT
+		IDGRUPO,
+		NMGRUPO
+	FROM
+		ACESSO.GRUPO
+	WHERE
+		IDGRUPO > 0
+	AND
+		IDTIPOGRUPO = ( SELECT IDTIPOGRUPO FROM APOIO.TIPOGRUPO WHERE CDTIPOGRUPO = 'CRI' )
+	AND
+		DTEXCLUSAO IS NULL
+	ORDER BY
+		UPPER(NMGRUPO);
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    
+    EXEC SQL OPEN CursorproCListaGrupoAssocTodos;
+    for( ;; )
+    {
+        EXEC SQL FETCH CursorproCListaGrupoAssocTodos 
+        INTO 
+        	:idGrupo,
+			:nmGrupo:i_nmGrupo;
+
+		CONVIND( nmGrupo,i_nmGrupo );
+
+        Saida->createTag( "GrupoVO " );
+        Saida->addProp( "xmlns","admsistemas.fo.vivo.com.br/vo" );
+           Saida->addItem( "codigo",idGrupo );
+           Saida->addItem( "descricao",(char*)nmGrupo.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE CursorproCListaGrupoAssocTodos;
+
+    ULOG_END("proCListaGrupoAssocTodos()");
+}
+
+void SqlError( sqlca * sqlca )
+{
+    ULOGE("SqlError -> sqlcode=%d,sqlerrmc=%.70s",sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc);
+	throw new 
+        TuxBasicOraException(
+            sqlca->sqlcode,
+            sqlca->sqlerrm.sqlerrmc,
+            sqlca->sqlerrm.sqlerrml
+            );
+}

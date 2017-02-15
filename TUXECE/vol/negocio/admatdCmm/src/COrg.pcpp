@@ -1,0 +1,1696 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/COrg.h"
+
+COrganizacao::COrganizacao()
+{
+}
+
+COrganizacao::~COrganizacao()
+{
+}
+
+int COrganizacao::Insert( char* cidTipoOrganizacao,
+						  char* cidOrganizacaoPai,
+			              char* cidUsuarioAlteracao )
+{
+    ULOG_START("COrganizacao::Insert()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidOrganizacao[255+1];
+		char* cAuxidOrganizacaoPai = cidOrganizacaoPai;
+		char* cAuxidTipoOrganizacao = cidTipoOrganizacao;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+		int iCont = 0;
+		int iIdOrganizacao = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraOrganizacao();
+
+		memset( &cAuxidOrganizacao, 0, sizeof( cAuxidOrganizacao ) );
+
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+
+		//Verifica se existe no mesmo nivel
+		EXEC SQL
+		SELECT COUNT(1)
+		INTO :iCont
+		FROM organograma.Organizacao O,
+			 organograma.OrganizacaoHierarquia H
+		WHERE
+			 H.IDORGANIZACAOPAI = :cAuxidOrganizacaoPai
+			 AND H.IDORGANIZACAO = O.IDORGANIZACAO
+			 AND O.IDTIPOORGANIZACAO = :cAuxidTipoOrganizacao;
+
+
+/*		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iCont
+		FROM
+			ORGANOGRAMA.ORGANIZACAO ORGANIZACAO
+		WHERE
+			ORGANIZACAO.IDTIPOORGANIZACAO =  :cAuxidTipoOrganizacao;
+*/
+		//Suspensa esta verificacao
+		if (iCont>0)
+			return -1; //Registro duplicado no mesmo nivel da arvore com mesmo pai
+
+		//Pega um id unico e sequencia para a insercao
+		EXEC SQL
+			SELECT
+				ORGANOGRAMA.ORGANIZACAOSQ.NEXTVAL
+			INTO
+				:cAuxidOrganizacao
+			FROM
+				DUAL;
+
+		//Realiza o insert
+		EXEC SQL INSERT INTO ORGANOGRAMA.ORGANIZACAO
+		(	IDORGANIZACAO,
+			IDTIPOORGANIZACAO,
+			IDUSUARIOALTERACAO,
+			DTULTIMAALTERACAO
+		)
+		VALUES
+		(	:cAuxidOrganizacao,
+			:cAuxidTipoOrganizacao,
+			:cAuxidUsuarioAlteracao,
+			SYSDATE
+		);
+
+		//Atualiza o DSPATH
+		atualizaPath((char*)cAuxidOrganizacao.arr);
+
+		Add( (char*)cAuxidOrganizacao.arr ,"" ,"" ,"" ,getPath(),0 );
+
+        ULOG_END("COrganizacao::Insert()");
+		//Verifica se houve ou nao erro ORACLE
+
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+			return 1;//Sucesso
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int COrganizacao::RelacaoOU( char* cid, char* cNomeIdTag, char* cNomeTag, char* cNomeTagAssociadasExterna, char* cNomeTagAssociadas, char* cNomeTagExistentesExterna, char* cNomeTagExistentes, XMLGen*xml )
+{
+    ULOG_START("COrganizacao::RelacaoOU()");
+	//Reader
+	xml->createTag( cNomeTag );
+	xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+	xml->addComment( "Exibem itens associados e existentes não relacionados" );
+
+	//Consistencia
+	if( strlennull( cid ) <= 0 )
+		return 0; //Retorno com erro
+
+	//Registros
+	xml->addItem( cNomeIdTag, cid );
+
+	//Outros itens
+
+	//Associados
+	RelacaoOU( cid );
+	GetXml( cNomeTagAssociadasExterna, cNomeTagAssociadas, xml );
+
+	//Existentes
+	ExistemOU( cid );
+	GetXml( cNomeTagExistentesExterna, cNomeTagExistentes, xml );
+
+	//Reader
+	xml->closeTag();
+
+    ULOG_END("COrganizacao::RelacaoOU()");
+	//Retorno com sucesso
+	return 1;
+}
+int COrganizacao::RelacaoOU( char* cidDepartamento )
+{
+    ULOG_START("COrganizacao::RelacaoOU()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidDepartamento = cidDepartamento;
+		struct
+		{
+			VARCHAR stidOrganizacao[21+1];
+			VARCHAR stidTipoOrganizacao[21+1];
+		} stOrganizacaoRegistro;
+		struct
+		{
+			short iidOrganizacao;
+			short iidTipoOrganizacao;
+		} stOrganizacaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraOrganizacao();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+		//Declara um cursor para listar os Registros
+		/*
+        EXEC SQL DECLARE CursorOrganizacaoRelacao_00 CURSOR FOR
+	   		SELECT organograma.Organizacao.idOrganizacao, organograma.Organizacao.idTipoOrganizacao
+				FROM organograma.Organizacao, organograma.OrganizacaoDepartamentoB01
+				WHERE organograma.Organizacao.idOrganizacao =
+					  organograma.OrganizacaoDepartamentoB01.idOrganizacao AND
+					  organograma.OrganizacaoDepartamentoB01.idDepartamento = :cAuxidDepartamento;
+        */
+
+        EXEC SQL DECLARE CursorOrganizacaoRelacao_00 CURSOR FOR
+        SELECT 
+            Organizacao.idOrganizacao, 
+            Organizacao.idTipoOrganizacao
+        FROM 
+            ORGANOGRAMA.DEPARTAMENTO DEPARTAMENTO ,
+            ORGANOGRAMA.ORGANIZACAODEPARTAMENTO ORGANIZACAODEPARTAMENTO ,
+            ORGANOGRAMA.TIPOORGANIZACAO TIPOORGANIZACAO,
+            ORGANOGRAMA.ORGANIZACAO ORGANIZACAO
+        WHERE
+            ORGANIZACAO.IDTIPOORGANIZACAO = TIPOORGANIZACAO.IDTIPOORGANIZACAO
+        AND 
+            ORGANIZACAODEPARTAMENTO.IDDEPARTAMENTO = DEPARTAMENTO.IDDEPARTAMENTO
+        AND 
+            ORGANIZACAODEPARTAMENTO.IDORGANIZACAO = ORGANIZACAO.IDORGANIZACAO
+        AND
+            Organizacao.idOrganizacao = OrganizacaoDepartamento.idOrganizacao 
+        AND
+            DEPARTAMENTO.idDepartamento = :cAuxidDepartamento;
+        
+        
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacao;
+
+		EXEC SQL OPEN CursorOrganizacaoRelacao_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stOrganizacaoRegistro, 0, sizeof(stOrganizacaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorOrganizacaoRelacao_00 INTO :stOrganizacaoRegistro:stOrganizacaoIndicator;
+				//Adiciona a classe
+				//Add( 	(char*)stOrganizacaoRegistro.stidOrganizacao.arr,
+				//		(char*)stOrganizacaoRegistro.stidTipoOrganizacao.arr );
+				//Adiciona a classe
+				Add( (char*)stOrganizacaoRegistro.stidOrganizacao.arr
+				    ,""
+				    ,(char*)stOrganizacaoRegistro.stidTipoOrganizacao.arr
+				    ,""
+		            ,""
+				    ,0 );
+
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorOrganizacaoRelacao_00;
+		}
+		ULOG_END("COrganizacao::RelacaoOU()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoRelacao:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int COrganizacao::ExistemOU( char* cidDepartamento )
+{
+    ULOG_START("COrganizacao::ExistemOU()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidDepartamento = cidDepartamento;
+		struct
+		{
+			VARCHAR stidOrganizacao[21+1];
+			VARCHAR stidTipoOrganizacao[21+1];
+		} stOrganizacaoRegistro;
+		struct
+		{
+			short iidOrganizacao;
+			short iidTipoOrganizacao;
+		} stOrganizacaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraOrganizacao();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+		//Declara um cursor para listar os Registros
+   		/*
+        EXEC SQL DECLARE CursorOrganizacaoExistem_00 CURSOR FOR
+	   		SELECT organograma.Organizacao.idOrganizacao, organograma.Organizacao.idTipoOrganizacao
+				FROM organograma.Organizacao
+				WHERE organograma.Organizacao.idOrganizacao
+						NOT IN ( SELECT organograma.Organizacao.idOrganizacao
+								 FROM organograma.Organizacao, organograma.OrganizacaoDepartamentoB01
+								 WHERE organograma.Organizacao.idOrganizacao =
+									   organograma.OrganizacaoDepartamentoB01.idOrganizacao
+								 AND organograma.OrganizacaoDepartamentoB01.idDepartamento = :cAuxidDepartamento  );
+        */
+
+        EXEC SQL DECLARE CursorOrganizacaoExistem_00 CURSOR FOR
+        SELECT 
+           Organizacao.idOrganizacao, 
+           Organizacao.idTipoOrganizacao
+        FROM 
+           organograma.Organizacao Organizacao
+        WHERE 
+           Organizacao.idOrganizacao
+        NOT IN 
+        ( 
+           SELECT 
+              Organizacao.idOrganizacao
+           FROM 
+              ORGANOGRAMA.DEPARTAMENTO DEPARTAMENTO ,
+              ORGANOGRAMA.TIPOORGANIZACAO TIPOORGANIZACAO ,
+              ORGANOGRAMA.ORGANIZACAO ORGANIZACAO ,
+              ORGANOGRAMA.ORGANIZACAODEPARTAMENTO ORGANIZACAODEPARTAMENTO
+           WHERE
+              ORGANIZACAO.IDTIPOORGANIZACAO = TIPOORGANIZACAO.IDTIPOORGANIZACAO
+           AND
+              ORGANIZACAODEPARTAMENTO.IDDEPARTAMENTO = DEPARTAMENTO.IDDEPARTAMENTO
+           AND
+              ORGANIZACAODEPARTAMENTO.IDORGANIZACAO = ORGANIZACAO.IDORGANIZACAO
+           AND 
+              Organizacao.idOrganizacao = OrganizacaoDepartamento.idOrganizacao
+           AND 
+              OrganizacaoDepartamento.idDepartamento = :cAuxidDepartamento  
+        );
+
+        
+		EXEC SQL WHENEVER SQLERROR GOTO GotoExistem;
+
+		EXEC SQL OPEN CursorOrganizacaoExistem_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stOrganizacaoRegistro, 0, sizeof(stOrganizacaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorOrganizacaoExistem_00 INTO :stOrganizacaoRegistro:stOrganizacaoIndicator;
+				//Adiciona a classe
+				//Add( 	(char*)stOrganizacaoRegistro.stidOrganizacao.arr,
+				//		(char*)stOrganizacaoRegistro.stidTipoOrganizacao.arr );
+				//Adiciona a classe
+				Add( (char*)stOrganizacaoRegistro.stidOrganizacao.arr
+				    ,""
+				    ,(char*)stOrganizacaoRegistro.stidTipoOrganizacao.arr
+				    ,""
+		            ,""
+				    ,0 );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorOrganizacaoExistem_00;
+		}
+		ULOG_END("COrganizacao::ExistemOU()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoExistem:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int COrganizacao::Update(
+							char* cidOrganizacao,
+							char* cidTipoOrganizacao,
+							char* cidUsuarioAlteracao )
+{
+    ULOG_START("COrganizacao::Update()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidOrganizacao = cidOrganizacao;
+		char* cAuxidTipoOrganizacao = cidTipoOrganizacao;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+		int   iCont = 0;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraOrganizacao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+
+
+		EXEC SQL
+		SELECT
+			COUNT(1)
+		INTO
+			:iCont
+		FROM
+			ORGANOGRAMA.ORGANIZACAO ORGANIZACAO
+		WHERE
+			ORGANIZACAO.IDTIPOORGANIZACAO =  :cAuxidTipoOrganizacao;
+
+		//Suspensa esta verificacao
+		if( iCont > 0 )
+		{
+		    ULOG_END("COrganizacao::Update() ERRO return -1");
+			return -1; //Registro duplicado no mesmo nivel da arvore com mesmo pai
+        }
+		//Executa a instrucao de update
+		EXEC SQL
+		UPDATE ORGANOGRAMA.ORGANIZACAO
+		SET
+			IDTIPOORGANIZACAO = :cAuxidTipoOrganizacao,
+			IDUSUARIOALTERACAO = :cAuxidUsuarioAlteracao,
+			DTULTIMAALTERACAO = SYSDATE
+		WHERE
+			IDORGANIZACAO = :cAuxidOrganizacao;
+
+		//Atualiza o DSPATH
+		atualizaPath((char*)cAuxidOrganizacao);
+		ULOG_END("COrganizacao::Update()");
+		return 1;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoUpdate:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int COrganizacao::Delete( char* cidOrganizacao )
+{
+    ULOG_START("COrganizacao::Delete()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidOrganizacao = cidOrganizacao;
+		int   iCont = 0;
+		VARCHAR vAuxidTipoOrganizacao[21+1];
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraOrganizacao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+		sqlca.sqlcode=0;
+
+		EXEC SQL SELECT COUNT( idOrganizacao )
+		INTO :iCont
+		FROM organograma.OrganizacaoDepartamento
+		WHERE idOrganizacao = :cAuxidOrganizacao;
+
+		//Caso existe esta relacao, deve-se remover os relacionamentos antes
+		if( iCont > 0 )
+		{
+			SetErro( "Organização relacionada com departamento, primeiro apague a relação para depois apagar este item" );
+			ULOG_END("COrganizacao::Delete()");
+			return -1;
+		}
+		//recupero el tipo de organizacao antes de apagar el item
+
+		EXEC SQL SELECT	idTipoOrganizacao
+		INTO :vAuxidTipoOrganizacao
+		FROM organograma.Organizacao
+		WHERE (idOrganizacao = :cAuxidOrganizacao);
+
+		vAuxidTipoOrganizacao.arr[vAuxidTipoOrganizacao.len] = 0;
+
+		if( strlennull( (char *)vAuxidTipoOrganizacao.arr) <= 0 )
+			return -1;//No exite Tipo Organizacao
+
+		//Executa a instrucao de delecao
+		EXEC SQL DELETE FROM organograma.Organizacao
+		WHERE (idOrganizacao = :cAuxidOrganizacao);
+
+		ULOG_END("COrganizacao::Delete()");
+		//Verifica se houve ou nao erro ORACLE
+
+		if(sqlca.sqlcode)
+			return 0;//Erro
+		else
+		{
+			//return sqlca.sqlerrd[2];//Quantidade de linhas afetadas
+			return atoi((char*)vAuxidTipoOrganizacao.arr);//Sucesso
+		}
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if(sqlca.sqlcode == -2292)
+		return sqlca.sqlcode;
+	else
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int COrganizacao::ListarTodosOrganizacaoHierarquia( void )
+{
+    ULOG_START("COrganizacao::ListarTodosOrganizacaoHierarquia()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidOrganizacaoPai[21+1];
+			VARCHAR stidOrganizacao[21+1];
+			VARCHAR stidTipoOrganizacao[21+1];
+			VARCHAR stdsTipoOrganizacao[255+1];
+		} stOrganizacaoRegistro;
+		struct
+		{
+			short iidOrganizacao;
+			short iidOrganizacaoPai;
+			short iidTipoOrganizacao;
+			short idsTipoOrganizacao;
+		} stOrganizacaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraOrganizacao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND DO break;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListarTodosOrganizacaoHierarquia;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL DECLARE cListarTodos CURSOR FOR
+             SELECT TO_CHAR( organizacaohierarquia.idorganizacaopai )
+                  , TO_CHAR( organizacao.idorganizacao      )
+                  , TO_CHAR( organizacao.idtipoorganizacao  )
+                  , TO_CHAR( tipo.dstipoorganizacao         )
+               FROM organograma.organizacao      organizacao
+                  , organograma.tipoorganizacao  tipo
+                  , organograma.organizacaohierarquia organizacaohierarquia
+              WHERE organizacao.idtipoorganizacao = tipo.idtipoorganizacao
+                AND organizacaohierarquia.idorganizacao = organizacao.idorganizacao
+			  ORDER BY upper(trim(tipo.dstipoorganizacao));
+
+		//Abre o cursor
+		EXEC SQL OPEN cListarTodos;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("COrganizacao::ListarTodosOrganizacaoHierarquia()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stOrganizacaoRegistro, 0, sizeof(stOrganizacaoRegistro) );
+
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH cListarTodos INTO :stOrganizacaoRegistro:stOrganizacaoIndicator;
+
+				//Adiciona a classe
+				//Add( 	(char*)stOrganizacaoRegistro.stidOrganizacaoPai.arr,
+                //        (char*)stOrganizacaoRegistro.stidOrganizacao.arr,
+				//        (char*)stOrganizacaoRegistro.stidTipoOrganizacao.arr,
+				//        (char*)stOrganizacaoRegistro.stdsTipoOrganizacao.arr );
+				//Adiciona a classe
+				Add( (char*)stOrganizacaoRegistro.stidOrganizacao.arr
+				    ,(char*)stOrganizacaoRegistro.stidOrganizacaoPai.arr
+				    ,(char*)stOrganizacaoRegistro.stidTipoOrganizacao.arr
+				    ,(char*)stOrganizacaoRegistro.stdsTipoOrganizacao.arr
+		            ,""
+				    ,0 );
+
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE cListarTodos;
+		}
+		ULOG_END("COrganizacao::ListarTodosOrganizacaoHierarquia()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListarTodosOrganizacaoHierarquia:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int COrganizacao::ListId( char* cidOrganizacao )
+{
+    ULOG_START("COrganizacao::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidOrganizacao = cidOrganizacao;
+		struct
+		{
+			VARCHAR stidOrganizacao[21+1];
+			VARCHAR stidOrganizacaoPai[21+1];
+			VARCHAR stidTipoOrganizacao[21+1];
+			VARCHAR stdsTipoOrganizacao[255+1];
+			int     iLevel;
+		} stOrganizacaoRegistro;
+		struct
+		{
+			short iidOrganizacao;
+			short iidOrganizacaoPai;
+			short iidTipoOrganizacao;
+			short idsTipoOrganizacao;
+			short iLevel;
+		} stOrganizacaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraOrganizacao();
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+		sqlca.sqlcode=0;
+
+		//Declara um cursor para listar os IDs
+   		
+        /*
+        EXEC SQL
+   			DECLARE CursorOrganizacaoId CURSOR FOR
+		   		SELECT 	idOrganizacao,
+		   		        0 idOrganizacaoPAI,
+			            idTipoOrganizacao,
+			            dsTipoOrganizacao,
+			            0 ILEVEL
+				FROM organograma.OrganizacaoB01
+				WHERE idOrganizacao = :cAuxidOrganizacao;
+        */
+        
+        EXEC SQL
+        DECLARE CursorOrganizacaoId CURSOR FOR
+        SELECT 
+           Organizacao.idOrganizacao,
+           0 idOrganizacaoPAI,
+           TIPOORGANIZACAO.idTipoOrganizacao,
+           TIPOORGANIZACAO.dsTipoOrganizacao,
+           0 ILEVEL
+        FROM
+           ORGANOGRAMA.TIPOORGANIZACAO TIPOORGANIZACAO,
+           ORGANOGRAMA.ORGANIZACAO ORGANIZACAO
+        WHERE
+           ORGANIZACAO.IDTIPOORGANIZACAO = TIPOORGANIZACAO.IDTIPOORGANIZACAO
+        AND 
+           Organizacao.idOrganizacao = :cAuxidOrganizacao;
+
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorOrganizacaoId;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_START("COrganizacao::ListId()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stOrganizacaoRegistro, 0, sizeof(stOrganizacaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorOrganizacaoId INTO :stOrganizacaoRegistro:stOrganizacaoIndicator;
+				//Adiciona a classe
+				Add( (char*)stOrganizacaoRegistro.stidOrganizacao.arr
+				    ,(char*)stOrganizacaoRegistro.stidOrganizacaoPai.arr
+				    ,(char*)stOrganizacaoRegistro.stidTipoOrganizacao.arr
+				    ,(char*)stOrganizacaoRegistro.stdsTipoOrganizacao.arr
+				    ,""
+				    ,stOrganizacaoRegistro.iLevel );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o CURSOR
+			EXEC SQL CLOSE CursorOrganizacaoId;
+		}
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int COrganizacao::ListAll( void )
+{
+    ULOG_START("COrganizacao::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cidOrganizacao;
+		struct
+		{
+			VARCHAR stidOrganizacao[21+1];
+			VARCHAR stidOrganizacaoPai[21+1];
+			VARCHAR stidTipoOrganizacao[21+1];
+			VARCHAR stdsTipoOrganizacao[255+1];
+			int     iLevel;
+			VARCHAR stdsPath[1024+1];
+		} stOrganizacaoRegistro;
+		struct
+		{
+			short iidOrganizacao;
+			short iidOrganizacaoPai;
+			short iidTipoOrganizacao;
+			short idsTipoOrganizacao;
+			short iLevel;
+			short idsPath;
+		} stOrganizacaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		//Zera a estrutura da classe
+		ZeraOrganizacao();
+		memset( &stOrganizacaoRegistro, 0, sizeof(stOrganizacaoRegistro) );
+
+		//Ativa as acoes decorrentes de erros ORACLE
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+		sqlca.sqlcode=0;
+
+		//Retorna a raiz da arvore de Organizacao
+   		EXEC SQL 
+        SELECT 
+		   Organizacao.idOrganizacao,
+   		   0 idOrganizacaoPAI,
+		   TIPOORGANIZACAO.idTipoOrganizacao,
+		   TIPOORGANIZACAO.dsTipoOrganizacao,
+		   0 ILEVEL,
+		   '' PATH
+		INTO 
+           :stOrganizacaoRegistro:stOrganizacaoIndicator
+		FROM 
+		   ORGANOGRAMA.TIPOORGANIZACAO TIPOORGANIZACAO,
+           ORGANOGRAMA.ORGANIZACAO ORGANIZACAO
+		WHERE
+		   ORGANIZACAO.IDTIPOORGANIZACAO = TIPOORGANIZACAO.IDTIPOORGANIZACAO
+		AND 
+		   Organizacao.idOrganizacao
+		NOT IN 
+		( 
+		   SELECT 
+		      Hierarquia.idOrganizacao
+		   FROM 
+		      organograma.OrganizacaoHierarquia Hierarquia
+		   WHERE 
+		      Hierarquia.idOrganizacao > 0 
+	    )
+        AND ROWNUM <= 1;
+
+
+		if(sqlca.sqlcode)
+		{
+			SetErro( "Não existe uma raiz para árvore de Organização" );
+			ULOG_END("COrganizacao::ListAll()");
+			return 0;//Erro
+		}
+		else
+			Add( (char*)stOrganizacaoRegistro.stidOrganizacao.arr
+			    ,(char*)stOrganizacaoRegistro.stidOrganizacaoPai.arr
+			    ,(char*)stOrganizacaoRegistro.stidTipoOrganizacao.arr
+			    ,(char*)stOrganizacaoRegistro.stdsTipoOrganizacao.arr
+			    ,""
+			    ,stOrganizacaoRegistro.iLevel );
+
+		cidOrganizacao = Registro(0)->cidOrganizacao;
+
+		//Declara um cursor para listar todos os registros
+   		EXEC SQL
+   			DECLARE CursorListAll CURSOR FOR
+			    SELECT Hierarquia.idOrganizacao
+			    	  ,Hierarquia.idOrganizacaoPai
+			          ,Hierarquia.idTipoOrganizacao
+			    	  ,Hierarquia.dsTipoOrganizacao dsTipoOrganizacao
+			    	  ,LEVEL
+		              ,SYS_CONNECT_BY_PATH(REPLACE(Hierarquia.idTipoOrganizacao,'/', '\'), '/') PATH
+			      FROM organograma.OrganizacaoHierarquiaV01 Hierarquia
+			START WITH Hierarquia.idOrganizacaoPai = :cidOrganizacao
+			CONNECT BY Hierarquia.idOrganizacaoPai = PRIOR Hierarquia.idOrganizacao;
+
+		//Abre o cursor
+		EXEC SQL OPEN CursorListAll;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("COrganizacao::ListAll()");
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stOrganizacaoRegistro, 0, sizeof(stOrganizacaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorListAll INTO :stOrganizacaoRegistro:stOrganizacaoIndicator;
+				//Adiciona a classe
+				Add( (char*)stOrganizacaoRegistro.stidOrganizacao.arr
+				    ,(char*)stOrganizacaoRegistro.stidOrganizacaoPai.arr
+				    ,(char*)stOrganizacaoRegistro.stidTipoOrganizacao.arr
+				    ,(char*)stOrganizacaoRegistro.stdsTipoOrganizacao.arr
+		            ,(char*)stOrganizacaoRegistro.stdsPath.arr
+				    ,stOrganizacaoRegistro.iLevel );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorListAll;
+		}
+		ULOG_END("COrganizacao::ListAll()");
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int COrganizacao::RelacaoOrgUnd( char* cidDepartamento )
+{
+    ULOG_START("COrganizacao::RelacaoOrgUnd()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidDepartamento = cidDepartamento;
+		struct
+		{
+			VARCHAR stidOrganizacao[21+1];
+			VARCHAR stidOrganizacaoPai[21+1];
+			VARCHAR stidTipoOrganizacao[21+1];
+			VARCHAR stdsTipoOrganizacao[255+1];
+			int     iLevel;
+		} stOrganizacaoRegistro;
+		struct
+		{
+			short iidOrganizacao;
+			short iidOrganizacaoPai;
+			short iidTipoOrganizacao;
+			short idsTipoOrganizacao;
+			short iLevel;
+		} stOrganizacaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraOrganizacao();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+
+		//Declara um cursor para listar os Registros
+		/*
+        EXEC SQL DECLARE CursorRelacaoOrgCtt CURSOR FOR
+		SELECT idOrganizacao
+		      ,0 idOrganizacaoPai
+		      ,idTipoOrganizacao
+		      ,idTipoOrganizacao
+		      ,0 ILEVEL
+		FROM organograma.OrganizacaoDepartamentoB01
+		WHERE organograma.OrganizacaoDepartamentoB01.idDepartamento = :cAuxidDepartamento;
+        */
+
+        EXEC SQL DECLARE CursorRelacaoOrgCtt CURSOR FOR
+		SELECT 
+		    ORGANIZACAO.idOrganizacao
+		   ,0 idOrganizacaoPai
+		   ,TIPOORGANIZACAO.idTipoOrganizacao
+		   ,TIPOORGANIZACAO.idTipoOrganizacao
+		   ,0 ILEVEL
+		FROM 
+			ORGANOGRAMA.DEPARTAMENTO DEPARTAMENTO,
+            ORGANOGRAMA.TIPOORGANIZACAO TIPOORGANIZACAO,
+            ORGANOGRAMA.ORGANIZACAO ORGANIZACAO ,
+		    ORGANOGRAMA.ORGANIZACAODEPARTAMENTO ORGANIZACAODEPARTAMENTO
+		WHERE
+		   ORGANIZACAO.IDTIPOORGANIZACAO = TIPOORGANIZACAO.IDTIPOORGANIZACAO
+		AND
+		   ORGANIZACAODEPARTAMENTO.IDDEPARTAMENTO = DEPARTAMENTO.IDDEPARTAMENTO
+        AND 
+		   ORGANIZACAODEPARTAMENTO.IDORGANIZACAO = ORGANIZACAO.IDORGANIZACAO
+	    AND 
+		   ORGANIZACAODEPARTAMENTO.idDepartamento = :cAuxidDepartamento;
+           
+           
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacaoOrgCtt;
+
+		EXEC SQL OPEN CursorRelacaoOrgCtt;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		   ULOG_START("COrganizacao::RelacaoOrgUnd()");
+		   return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stOrganizacaoRegistro, 0, sizeof(stOrganizacaoRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorRelacaoOrgCtt INTO :stOrganizacaoRegistro:stOrganizacaoIndicator;
+				//Adiciona a classe
+				Add( (char*)stOrganizacaoRegistro.stidOrganizacao.arr
+				    ,(char*)stOrganizacaoRegistro.stidOrganizacaoPai.arr
+				    ,(char*)stOrganizacaoRegistro.stidTipoOrganizacao.arr
+				    ,(char*)stOrganizacaoRegistro.stdsTipoOrganizacao.arr
+		            	    ,""
+				    ,stOrganizacaoRegistro.iLevel );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorRelacaoOrgCtt;
+		}
+		ULOG_END("COrganizacao::RelacaoOrgUnd()");
+	}
+	catch(...)
+	{
+		throw;
+	}
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotoRelacaoOrgCtt:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void COrganizacao::GetXml( char* cNomeTag, XMLGen*xml )
+{
+    //Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+			{
+				xml->createTag(cNomeTag);
+				//Adiciona a proprieda necessaria para o Weblogic
+				xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			}
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{
+				//Adiciona as tags necessarias
+				xml->addItem("idOrganizacao", Registro(x)->cidOrganizacao );
+				xml->addItem("idTipoOrganizacao", Registro(x)->cidTipoOrganizacao );
+				xml->addItem("dsPath", Registro(x)->cdsPath );
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+
+void COrganizacao::GetXml( char* cNomeTagArray, char* cNomeTag, XMLGen*xml )
+{
+	//Caso nao tenha recebido uma tag padrao, deixa sem
+	if( strlennull( cNomeTagArray ) > 0 ) {
+		xml->createTag(cNomeTagArray);
+		//Adiciona a propriedade necessaria para o xml
+		xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+	}
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 ) {
+				xml->createTag(cNomeTag);
+				//Adiciona a propriedade necessaria para o xml
+				xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			}
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{
+				//Adiciona as tags necessarias
+				xml->addItem("idOrganizacao", Registro(x)->cidOrganizacao );
+				xml->addItem("idTipoOrganizacao", Registro(x)->cidTipoOrganizacao );
+				xml->addItem("dsTipoOrganizacao", Registro(x)->cdsTipoOrganizacao );
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+	//So fecha um tag se abriu anteriormente
+	if( strlennull( cNomeTagArray ) > 0 )
+		xml->closeTag();
+}
+
+
+void COrganizacao::GetXml( char* cNomeTagArray, char* cNomeTag, char* cNomeNo, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Caso nao tenha recebido uma tag padrao, deixa sem
+		if( strlennull( cNomeTagArray ) > 0 ) {
+			xml->createTag(cNomeTagArray);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+		}
+
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{
+				//Adiciona as tags necessarias
+				xml->addItem("idOrganizacao", Registro(x)->cidOrganizacao );
+				xml->addItem("idOrganizacao", Registro(x)->cidOrganizacaoPai );
+		                if (Registro(x)->cidTipoOrganizacao != NULL){
+				    xml->createTag(cNomeNo);
+    				    xml->addItem("idTipoOrganizacao", Registro(x)->cidTipoOrganizacao );
+    				    xml->addItem("idTipoOrganizacao", Registro(x)->cdsTipoOrganizacao );
+				    xml->closeTag();
+		                }
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+
+	//So fecha um tag se abriu anteriormente
+	if( strlennull( cNomeTagArray ) > 0 )
+		xml->closeTag();
+}
+
+int COrganizacao::Insert( char* cidOrganizacaoPai,
+			        char* cidTipoOrganizacao,
+			        char* cdsTipoOrganizacao,
+			        char* cidUsuarioAlteracao )
+{
+    ULOG_START("COrganizacao::Insert()");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stidOrganizacao[21+1];
+		VARCHAR stidTipoOrganizacao[21+1];
+		char* cAuxidTipoOrganizacao = cidTipoOrganizacao;
+		char* cAuxidOrganizacaoPai = cidOrganizacaoPai;
+		char* cAuxidUser = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraOrganizacao();
+
+	memset( &stidOrganizacao, 0, sizeof( stidOrganizacao ) );
+	memset( &stidTipoOrganizacao, 0, sizeof( stidTipoOrganizacao ) );
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+	sqlca.sqlcode = 0;
+
+	//Verifica se um nome ja existe, caso nao exista, insere
+	if( ( strlennull( cidTipoOrganizacao ) <= 0 ) && ( strlennull( cidTipoOrganizacao ) > 0 ) )
+	{
+
+		EXEC SQL
+		SELECT
+			idTipoOrganizacao
+		INTO
+			:stidTipoOrganizacao
+		FROM
+			organograma.TipoOrganizacao
+		WHERE
+			UPPER(idTipoOrganizacao) = UPPER(:cAuxidTipoOrganizacao)
+		AND
+			ROWNUM <= 1;
+
+		if( stidTipoOrganizacao.len <= 0 )
+		{
+			//Recupera um ID unica e sequencial
+			EXEC SQL
+				SELECT organograma.TipoOrganizacaoSQ.NEXTVAL
+				  INTO :stidTipoOrganizacao
+				  FROM DUAL;
+		}
+
+		if(sqlca.sqlcode)
+		{
+			SetErro( "Erro ao tentar recuperar a sequência organograma.TipoOrganizacaoSQ.NEXTVAL" );
+			return 0;//Erro
+		}
+
+		//Insere um nome de contato
+		EXEC SQL INSERT INTO organograma.TipoOrganizacao
+		( idTipoOrganizacao
+		 ,idTipoOrganizacao
+		 ,idUsuarioAlteracao
+		 ,dtUltimaAlteracao )
+		VALUES
+		( :stidTipoOrganizacao
+		 ,:cAuxidTipoOrganizacao
+		 ,:cAuxidUser
+		 ,SYSDATE );
+
+		if(sqlca.sqlcode)
+		{
+			SetErro( "Erro na inserção em organograma.TipoOrganizacao" );
+			ULOG_END("COrganizacao::Insert()");
+			return 0;
+		}
+	}//if( ( strlennull( cidTipoOrganizacao ) <= 0 ) && ( strlennull( cidTipoOrganizacao ) > 0 )
+	else
+	{
+		if( strlennull( cidTipoOrganizacao ) <= 0 )
+		{
+			SetErro( "Um ID de contato é necessário!" );
+			ULOG_END("COrganizacao::Insert()");
+			return 0;
+		}
+		else
+		{
+			strcpy( (char*)stidTipoOrganizacao.arr, cidTipoOrganizacao );
+			stidTipoOrganizacao.len = strlen( cidTipoOrganizacao );
+		}
+	}
+
+	//Recupera um ID unica e sequencial
+	EXEC SQL
+		SELECT organograma.OrganizacaoSQ.NEXTVAL
+		  INTO :stidOrganizacao
+		  FROM DUAL;
+
+	if(sqlca.sqlcode)
+	{
+		SetErro( "Erro ao tentar recuperar a sequência organograma.OrganizacaoSQ.NEXTVAL" );
+		ULOG_END("COrganizacao::Insert()");
+		return 0;
+	}
+	//Insere uma folha
+	EXEC SQL INSERT INTO organograma.Organizacao
+	( idOrganizacao
+	 ,idTipoOrganizacao
+	 ,idUsuarioAlteracao
+	 ,dtUltimaAlteracao )
+	VALUES
+	( :stidOrganizacao
+	 ,:stidTipoOrganizacao
+	 ,:cAuxidUser
+	 ,SYSDATE );
+
+	if(sqlca.sqlcode)
+	{
+		SetErro( "Falha na inserção em organograma.Organizacao" );
+		ULOG_END("COrganizacao::Insert()");
+		return 0;
+	}
+
+	if( strlennull( cidOrganizacaoPai ) > 0 )
+	{
+		//Insere a Hierarquia
+		EXEC SQL
+			INSERT INTO organograma.OrganizacaoHierarquia
+				( idOrganizacao
+				 ,idOrganizacaoPai
+				 ,idUsuarioAlteracao
+				 ,dtUltimaAlteracao )
+			VALUES
+				( :stidOrganizacao
+				 ,:cAuxidOrganizacaoPai
+				 ,:cAuxidUser
+				 ,SYSDATE );
+
+
+		//Insere primeiro, depois atualiza o path
+		atualizaPath( (char*)stidOrganizacao.arr );
+
+		if(sqlca.sqlcode)
+		{
+			SetErro( "Falha na inserção em organograma.OrganizacaoHierarquia" );
+			ULOG_END("COrganizacao::Insert()");
+			return 0;
+		}
+		else
+		{
+			Add( (char*)stidOrganizacao.arr
+				,cAuxidOrganizacaoPai
+				,""
+				,""
+				,getPath()
+				,0 );
+			ULOG_END("COrganizacao::Insert()");
+			return 1;//Sucesso
+		}
+	}
+	else
+	{
+
+		SetErro( "idOrganizacao Pai está nulo" );
+        ULOG_END("COrganizacao::Insert()");
+		return 0;
+	}
+
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int COrganizacao::Update( char* cidOrganizacao,
+			        char* cidTipoOrganizacao,
+			        char* cdsTipoOrganizacao,
+			        char* cidUsuarioAlteracao )
+{
+    ULOG_START("COrganizacao::Update()");
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR stidTipoOrganizacao[21+1];
+		char* cAuxidTipoOrganizacao = cidTipoOrganizacao;
+		char* cAuxidOrganizacao = cidOrganizacao;
+		char* cAuxdsTipoOrganizacao = cdsTipoOrganizacao;
+		char* cAuxidUser = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraOrganizacao();
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+	sqlca.sqlcode = 0;
+
+	//Verifica se um nome ja existe, caso nao exista, insere
+	if( ( strlennull( cidTipoOrganizacao ) <= 0 ) && ( strlennull( cidTipoOrganizacao ) > 0 ) )
+	{
+		//Recupera um ID unica e sequencial
+		EXEC SQL
+			SELECT organograma.TipoOrganizacaoSQ.NEXTVAL
+			  INTO :stidTipoOrganizacao
+			  FROM DUAL;
+
+		if(sqlca.sqlcode)
+		{
+			SetErro( "Erro ao tentar recuperar a sequência organograma.TipoOrganizacaoSQ.NEXTVAL" );
+			ULOG_END("COrganizacao::Update()");
+			return 0;//Erro
+		}
+
+		//Insere um nome de contato
+		EXEC SQL INSERT INTO organograma.TipoOrganizacao
+		( idTipoOrganizacao
+		 ,dsTipoOrganizacao
+		 ,idUsuarioAlteracao
+		 ,dtUltimaAlteracao )
+		VALUES
+		( :stidTipoOrganizacao
+		 ,:cAuxdsTipoOrganizacao
+		 ,:cAuxidUser
+		 ,SYSDATE );
+
+		if(sqlca.sqlcode)
+		{
+			SetErro( "Erro na inserção em organograma.TipoOrganizacao" );
+			ULOG_END("COrganizacao::Update()");
+			return 0;
+		}
+	}//if( ( strlennull( cidTipoOrganizacao ) <= 0 ) && ( strlennull( cidTipoOrganizacao ) > 0 )
+	else
+	{
+		if( strlennull( cdsTipoOrganizacao ) <= 0 )
+		{
+			SetErro( "Um nome de contato é necessário!" );
+			ULOG_END("COrganizacao::Update()");
+			return 0;
+		}
+		else
+		{
+			if( strlennull( cidTipoOrganizacao ) <= 0 )
+			{
+				SetErro( "Um ID de contato é necessário!" );
+				ULOG_END("COrganizacao::Update()");
+				return 0;
+			}
+			else
+			{
+				strcpy( (char*)stidTipoOrganizacao.arr, cidTipoOrganizacao );
+				stidTipoOrganizacao.len = strlen( cidTipoOrganizacao );
+			}
+		}
+	}
+
+	//Altera uma folha
+	EXEC SQL UPDATE organograma.Organizacao
+	SET idTipoOrganizacao = :stidTipoOrganizacao
+	,idUsuarioAlteracao = :cAuxidUser
+	,dtUltimaAlteracao = SYSDATE
+	WHERE idOrganizacao = :cAuxidOrganizacao;
+
+	//atualiza o path
+	atualizaPath( (char*)cAuxidOrganizacao );
+
+	if(sqlca.sqlcode)
+	{
+		SetErro( "Falha na alteração de organograma.Organizacao" );
+		ULOG_END("COrganizacao::Update()");
+		return 0;
+	}
+	else
+	{
+	    ULOG_END("COrganizacao::Update()");
+		return 1;//Sucesso
+	}
+
+GotoUpdate:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+char* COrganizacao::getPath( char* cidOrganizacao, char* cidOrganizacaoPai )
+{
+    ULOG_START("COrganizacao::getPath()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidOrganizacao = cidOrganizacao;
+		char* cAuxidOrganizacaoPai = cidOrganizacaoPai;
+		VARCHAR stPath[1999+1];
+		VARCHAR stRaiz[255+1];
+		short iPath;
+		short iRaiz;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotogetPath;
+	sqlca.sqlcode=0;
+
+	memset( &stRaiz, 0, sizeof(stRaiz) );
+	EXEC SQL
+		SELECT
+			DSTipoOrganizacao
+		INTO
+			:stRaiz:iRaiz
+		FROM
+			organograma.OrganizacaoB01
+		WHERE
+			IDOrganizacao = :cAuxidOrganizacaoPai
+		AND
+			ROWNUM <= 1;
+	memset( &stPath, 0, sizeof(stPath) );
+	//Recupera a raiz em questao, nao necessariamente a raiz do sistema
+   	EXEC SQL
+		SELECT
+		    PATH
+		INTO
+			:stPath:iPath
+		FROM (
+		         SELECT
+		              IDOrganizacao
+		             ,SYS_CONNECT_BY_PATH(REPLACE(DSTipoOrganizacao, '/', '\' ), '/') PATH
+		         FROM
+		         (
+		              SELECT DISTINCT
+		                  IDOrganizacao,
+		                  IDOrganizacaoPAI,
+		                  DSTipoOrganizacao
+		              FROM
+		              (
+		                SELECT
+		                  IDOrganizacao,
+		                  IDOrganizacaoPAI,
+		                  DSTipoOrganizacao
+		               FROM
+		                  (
+							SELECT
+									ORGANIZACAOPAI.IDORGANIZACAO IDORGANIZACAOPAI,
+									ORGANIZACAOFILHO.IDORGANIZACAO,
+									ORGANIZACAOFILHO.IDTIPOORGANIZACAO,
+									TIPOORGANIZACAO.DSTIPOORGANIZACAO,
+									ORGANIZACAOFILHO.DSPATH
+							FROM
+									ORGANOGRAMA.ORGANIZACAO ORGANIZACAOPAI,
+									ORGANOGRAMA.ORGANIZACAO ORGANIZACAOFILHO,
+									ORGANOGRAMA.ORGANIZACAOHIERARQUIA ORGANIZACAOHIERARQUIA,
+									ORGANOGRAMA.TIPOORGANIZACAO TIPOORGANIZACAO
+							WHERE
+									ORGANIZACAOFILHO.IDORGANIZACAO = ORGANIZACAOHIERARQUIA.IDORGANIZACAO
+							        AND ORGANIZACAOHIERARQUIA.IDORGANIZACAOPAI = ORGANIZACAOPAI.IDORGANIZACAO
+							        AND ORGANIZACAOFILHO.IDTIPOORGANIZACAO = TIPOORGANIZACAO.IDTIPOORGANIZACAO ) HIERARQUIA
+		               START WITH
+		                  HIERARQUIA.IDOrganizacao = :cAuxidOrganizacao
+		               CONNECT BY PRIOR
+		                  HIERARQUIA.IDOrganizacaoPAI = HIERARQUIA.IDOrganizacao
+		              )
+		         )
+		         START WITH
+		             IDOrganizacaoPAI = :cAuxidOrganizacaoPai
+		         CONNECT BY
+		             IDOrganizacaoPAI = PRIOR IDOrganizacao
+		)
+		WHERE
+		    IDOrganizacao = :cAuxidOrganizacao
+		AND
+			ROWNUM <= 1;
+
+	memset( pzcPath, 0, sizeof( pzcPath ) );
+	if( stRaiz.len > 0 ) {
+		strcpy( pzcPath, (const char*)stRaiz.arr);
+	}
+	if( stPath.len > 0 ) {
+		strcat( pzcPath, (const char*)stPath.arr);
+	}
+
+	ULOG_END("COrganizacao::getPath()");
+
+GotogetPath:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+char* COrganizacao::getPath( char* cidOrganizacao )
+{
+    ULOG_START("COrganizacao::getPath()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidOrganizacao = cidOrganizacao;
+		VARCHAR stidOrganizacaoPai[21+1];
+		VARCHAR stPath[1999+1];
+		VARCHAR stRaiz[255+1];
+		short iPath;
+		short iRaiz;
+		short iidOrganizacaoPai;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotogetPath2;
+	sqlca.sqlcode=0;
+
+	memset( &stRaiz, 0, sizeof(stRaiz) );
+	memset( &stidOrganizacaoPai, 0, sizeof(stidOrganizacaoPai) );
+
+    ULOG("COrganizacao::getPath( char* cidOrganizacao )");
+
+	EXEC SQL
+		SELECT
+			Organizacao.IDOrganizacao,
+			TipoOrganizacao.DSTipoOrganizacao
+		INTO
+			:stidOrganizacaoPai:iidOrganizacaoPai,
+			:stRaiz:iRaiz
+		FROM
+			Organograma.Organizacao Organizacao,
+			Organograma.OrganizacaoHIERARQUIA OrganizacaoHIERARQUIA,
+			Organograma.TipoOrganizacao TipoOrganizacao
+		WHERE
+			Organizacao.IDOrganizacao = OrganizacaoHIERARQUIA.IDOrganizacao (+)
+		AND
+			Organizacao.IDTipoOrganizacao = TipoOrganizacao.IDTipoOrganizacao
+		AND
+			OrganizacaoHIERARQUIA.IDOrganizacao IS NULL
+		AND
+			ROWNUM <= 1;
+
+	memset( &stPath, 0, sizeof(stPath) );
+	//Recupera a raiz em questao, nao necessariamente a raiz do sistema
+   	EXEC SQL
+		SELECT
+		    PATH
+		INTO
+			:stPath:iPath
+		FROM (
+		         SELECT
+		              IDOrganizacao
+		             ,SYS_CONNECT_BY_PATH(REPLACE(DSTipoOrganizacao, '/', '\' ), '/') PATH
+		         FROM
+		         (
+		              SELECT DISTINCT
+		                  IDOrganizacao,
+		                  IDOrganizacaoPAI,
+		                  DSTipoOrganizacao
+		              FROM
+		              (
+		                SELECT
+		                  IDOrganizacao,
+		                  IDOrganizacaoPAI,
+		                  DSTipoOrganizacao
+		               FROM (
+							SELECT
+									ORGANIZACAOPAI.IDORGANIZACAO IDORGANIZACAOPAI,
+									ORGANIZACAOFILHO.IDORGANIZACAO,
+									ORGANIZACAOFILHO.IDTIPOORGANIZACAO,
+									TIPOORGANIZACAO.DSTIPOORGANIZACAO,
+									ORGANIZACAOFILHO.DSPATH
+							FROM
+									ORGANOGRAMA.ORGANIZACAO ORGANIZACAOPAI,
+									ORGANOGRAMA.ORGANIZACAO ORGANIZACAOFILHO,
+									ORGANOGRAMA.ORGANIZACAOHIERARQUIA ORGANIZACAOHIERARQUIA,
+									ORGANOGRAMA.TIPOORGANIZACAO TIPOORGANIZACAO
+							WHERE
+									ORGANIZACAOFILHO.IDORGANIZACAO = ORGANIZACAOHIERARQUIA.IDORGANIZACAO
+							        AND ORGANIZACAOHIERARQUIA.IDORGANIZACAOPAI = ORGANIZACAOPAI.IDORGANIZACAO
+							        AND ORGANIZACAOFILHO.IDTIPOORGANIZACAO = TIPOORGANIZACAO.IDTIPOORGANIZACAO ) HIERARQUIA
+		               START WITH
+		                  HIERARQUIA.IDOrganizacao = :cAuxidOrganizacao
+		               CONNECT BY PRIOR
+		                  HIERARQUIA.IDOrganizacaoPAI = HIERARQUIA.IDOrganizacao
+		              )
+		         )
+		         START WITH
+		             IDOrganizacaoPAI = :stidOrganizacaoPai
+		         CONNECT BY
+		             IDOrganizacaoPAI = PRIOR IDOrganizacao
+		)
+		WHERE
+		    IDOrganizacao = :cAuxidOrganizacao
+		AND
+			ROWNUM <= 1;
+
+    ULOG("COrganizacao::getPath( char* cidOrganizacao ): stRaiz=[%s] stPath=[%s]", stRaiz.arr, stPath.arr);
+
+
+	memset( pzcPath, 0, sizeof( pzcPath ) );
+	if( stRaiz.len > 0 ) {
+		strcpy( pzcPath, (const char*)stRaiz.arr);
+	}
+	if( stPath.len > 0 ) {
+		strcat( pzcPath, (const char*)stPath.arr);
+	}
+
+    ULOG_END("COrganizacao::getPath()");
+	return pzcPath;
+
+GotogetPath2:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+
+void COrganizacao::atualizaPath( char* cidOrganizacao )
+{
+    ULOG_START("COrganizacao::atualizaPath()");
+	int    iCont = 0;
+	struct sqlca sqlca;
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidOrganizacao = cidOrganizacao;
+		char* cnmPath;
+		VARCHAR stnmPathOld[2000];
+		short   inmPathOld;
+	EXEC SQL END DECLARE SECTION;
+
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoatualizaPath;
+	sqlca.sqlcode=0;
+
+	memset( &stnmPathOld, 0, sizeof( stnmPathOld ) );
+
+    ULOG("COrganizacao::atualizaPath()");
+
+	//Recupera o path atual, antes de atualizar
+	EXEC SQL
+	SELECT
+		DSPATH
+	INTO
+		:stnmPathOld:inmPathOld
+	FROM
+		organograma.Organizacao
+	WHERE
+		IDOrganizacao = :cAuxidOrganizacao;
+
+	//Monta o novo path
+	cnmPath = getPath( cAuxidOrganizacao );
+
+    ULOG("COrganizacao::atualizaPath(): cidOrganizacao=[%s] cnmPath=[%s]", cidOrganizacao, cnmPath);
+
+	//Atualiza o path, nao da pra inserir direto, porque soh da pra fazer o path depois
+	//que o campo for inserido
+	EXEC SQL
+	UPDATE
+		organograma.Organizacao
+	SET
+		DSPATH = :cnmPath
+	WHERE
+		IDOrganizacao = :cAuxidOrganizacao;
+
+	//Atualiza o path de todos os filhos
+	EXEC SQL
+	UPDATE
+		organograma.Organizacao
+	SET
+		DSPATH = :cnmPath || SUBSTR( DSPATH, LENGTH( :stnmPathOld )+1, LENGTH( DSPATH ) )
+	WHERE
+		IDOrganizacao IN
+		(
+			SELECT
+				OrganizacaoOLD.IDOrganizacao
+			FROM
+				organograma.Organizacao OrganizacaoOLD,
+				organograma.OrganizacaoHIERARQUIA OrganizacaoHIERARQUIA
+			WHERE
+				OrganizacaoOLD.IDOrganizacao = OrganizacaoHIERARQUIA.IDOrganizacao
+			START WITH
+ 				OrganizacaoHIERARQUIA.IDOrganizacaoPAI = :cAuxidOrganizacao
+			CONNECT BY
+				OrganizacaoHIERARQUIA.IDOrganizacaoPAI = PRIOR OrganizacaoOLD.IDOrganizacao
+		);
+
+	ULOG_END("COrganizacao::atualizaPath()");
+
+	return;
+
+GotoatualizaPath:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+

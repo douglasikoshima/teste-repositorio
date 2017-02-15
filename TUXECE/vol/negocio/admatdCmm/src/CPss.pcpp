@@ -1,0 +1,541 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CPss.h"
+
+CPessoa::CPessoa()
+{
+}
+
+CPessoa::CPessoa(char *pIdPessoa)
+{
+    ULOG_START("CPessoa::CPessoa()");       
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+        char* pszIdPessoa = pIdPessoa;
+
+	    VARCHAR cIdUnidade[21+1];
+	    VARCHAR cIdOrganizacao[21+1];
+	    VARCHAR cIdCargo[21+1];
+	    VARCHAR cIdNivel[21+1];
+
+	    short iIdUnidade_ora;
+	    short iIdOrganizacao_ora;
+	    short iIdCargo_ora;
+	    short iIdNivel_ora;
+
+	EXEC SQL END DECLARE SECTION;
+
+    iNotFound = 1;
+
+    memset(cidUnidade,     0, sizeof(cidUnidade));
+    memset(cidOrganizacao, 0, sizeof(cidOrganizacao));
+    memset(cidCargo,       0, sizeof(cidCargo));
+    memset(cidNivel,       0, sizeof(cidNivel));
+
+	if( strlennull( pIdPessoa ) > 0 ) 
+	{
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Recuperando os IDs
+		EXEC SQL SELECT organizacaodepartamento.idorganizacao
+					  , organizacaodepartamento.iddepartamento
+					  , nivelcargo.idnivel
+					  , nivelcargo.idcargo
+				   INTO :cIdOrganizacao:iIdOrganizacao_ora,
+						:cIdUnidade:iIdUnidade_ora,
+						:cIdNivel:iIdNivel_ora,
+						:cIdCargo:iIdCargo_ora
+				   FROM organograma.hierarquiadeptopessoa    hierarquiadeptopessoa
+					  , organograma.organizacaodepartamento  organizacaodepartamento
+					  , organograma.nivelcargo               nivelcargo
+				  WHERE hierarquiadeptopessoa.idnivelcargo = nivelcargo.idnivelcargo
+					AND hierarquiadeptopessoa.idorganizacaodepartamento = organizacaodepartamento.idorganizacaodepartamento
+					AND hierarquiadeptopessoa.idpessoa = :pszIdPessoa;
+
+		/* Nao encontrou nenhum registro */
+		if (sqlca.sqlerrd[2] <= 0 )
+		   iNotFound = 0;
+		else{
+			strncpy( cidUnidade,     (char*)cIdUnidade.arr,     cIdUnidade.len);
+			strncpy( cidOrganizacao, (char*)cIdOrganizacao.arr, cIdOrganizacao.len);
+			strncpy( cidCargo,       (char*)cIdCargo.arr,       cIdCargo.len);
+			strncpy( cidNivel,       (char*)cIdNivel.arr,       cIdNivel.len);
+		}
+	}
+	ULOG_END("CPessoa::CPessoa()");       
+
+}
+
+CPessoa::~CPessoa()
+{
+}
+
+
+//Getters
+char * CPessoa::getUnidade(){
+    return (char*)cidUnidade;
+}
+
+char * CPessoa::getOrganizacao(){
+    return (char*)cidOrganizacao;
+}
+
+char * CPessoa::getCargo(){
+    return (char*)cidCargo;
+}
+
+char * CPessoa::getNivel(){
+    return (char*)cidNivel;
+}
+
+
+int CPessoa::RelacaoHUP( char* cid, char* cNomeIdTag, char* cNomeTag, char* cNomeTagAssociadasExterna, char* cNomeTagAssociadas, char* cNomeTagExistentesExterna, char* cNomeTagExistentes, XMLGen*xml )
+{
+    ULOG_START("CPessoa::RelacaoHUP()");       
+	//Reader
+	xml->createTag( cNomeTag );
+	xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+
+	//Consistencia	
+	if( strlennull( cid ) <= 0 )
+	{
+	    ULOG_END("CPessoa::RelacaoHUP()");       
+		return 0; //Retorno com erro
+	}
+
+	//Registros
+	xml->addItem( cNomeIdTag, cid );
+	
+	//Outros itens
+	
+	//Associados
+	RelacaoHUP( cid );
+	GetXml( cNomeTagAssociadasExterna, cNomeTagAssociadas, xml );
+	
+	//Existentes
+	ExistemHUP( cid );
+	GetXml( cNomeTagExistentesExterna, cNomeTagExistentes, xml );
+	
+	//Reader
+	xml->closeTag();
+	
+    ULOG_END("CPessoa::RelacaoHUP()");       
+	//Retorno com sucesso
+	return 1;
+}
+int CPessoa::RelacaoHUP( char* cidNivelCargo )
+{
+    ULOG_START("CPessoa::RelacaoHUP()");       
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidNivelCargo = cidNivelCargo; 
+		struct
+		{
+			VARCHAR stidPessoaUsuario[21+1];
+			VARCHAR stnmLoginUsuario[255+1];
+			VARCHAR stidStatusUsuario[21+1];
+			VARCHAR stinDisponivelWF[21+1];
+		} stPessoaRegistro;
+		struct
+		{
+			short iidPessoaUsuario;
+			short inmLoginUsuario;
+			short iidStatusUsuario;
+			short iinDisponivelWF;
+		} stPessoaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraPessoa();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Declara um cursor para listar os Registros
+
+/*   			SELECT customer.Pessoa.idPessoaUsuario, customer.Pessoa.nmLoginUsuario, 
+				   customer.Pessoa.idStatusUsuario, customer.Pessoa.inDisponivelWF 
+				FROM customer.Pessoa, organograma.HierarquiaDeptoPessoaBZEROUM
+				WHERE customer.Pessoa.idPessoaUsuario = organograma.HierarquiaDeptoPessoaBZEROUM.idPessoaUsuario AND 
+					  organograma.HierarquiaDeptoPessoaBZEROUM.idNivelCargo = :cAuxidNivelCargo
+			ORDER BY upper(trim(customer.Pessoa.nmLoginUsuario));*/
+
+		/*REMOVENDO BZEROUM
+		 TCOSTA 18/06/2007 MPOG
+		*/
+		EXEC SQL DECLARE CursorPessoaRelacao_00 CURSOR FOR
+		SELECT   pessoa.idpessoa,
+				 usuario.nmloginusuario,
+				 usuario.idstatususuario,
+				 usuario.indisponivelwf
+			FROM customer.pessoa pessoa,
+				 acesso.usuario usuario, 
+				 organograma.hierarquiadeptopessoa hierarquiadeptopessoa
+		   WHERE pessoa.idpessoa =hierarquiadeptopessoa.IDPESSOA
+		   AND	 pessoa.IDPESSOA=usuario.idpessoausuario
+			 AND organograma.hierarquiadeptopessoa.idnivelcargo = :cAuxidNivelCargo
+		ORDER BY UPPER (TRIM (usuario.nmloginusuario));
+
+		EXEC SQL WHENEVER SQLERROR GOTO GotoRelacao;
+		EXEC SQL OPEN CursorPessoaRelacao_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CPessoa::RelacaoHUP()");       
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stPessoaRegistro, 0, sizeof(stPessoaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorPessoaRelacao_00 INTO :stPessoaRegistro:stPessoaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stPessoaRegistro.stidPessoaUsuario.arr,
+				(char*)stPessoaRegistro.stnmLoginUsuario.arr,
+				(char*)stPessoaRegistro.stidStatusUsuario.arr,
+				(char*)stPessoaRegistro.stinDisponivelWF.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorPessoaRelacao_00;
+		}
+		ULOG_END("CPessoa::RelacaoHUP()");       
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoRelacao:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CPessoa::ExistemHUP( char* cidNivelCargo )
+{
+    ULOG_START("CPessoa::ExistemHUP()");       
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidNivelCargo = cidNivelCargo; 
+		struct
+		{
+			VARCHAR stidPessoaUsuario[21+1];
+			VARCHAR stnmLoginUsuario[255+1];
+			VARCHAR stidStatusUsuario[21+1];
+			VARCHAR stinDisponivelWF[21+1];
+		} stPessoaRegistro;
+		struct
+		{
+			short iidPessoaUsuario;
+			short inmLoginUsuario;
+			short iidStatusUsuario;
+			short iinDisponivelWF;
+		} stPessoaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraPessoa();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Declara um cursor para listar os Registros
+   		
+   		/*SELECT customer.Pessoa.idPessoaUsuario, customer.Pessoa.nmLoginUsuario, 
+			   customer.Pessoa.idStatusUsuario, customer.Pessoa.inDisponivelWF 
+			FROM customer.Pessoa 
+			WHERE customer.Pessoa.idPessoaUsuario 
+				NOT IN ( SELECT customer.Pessoa.idPessoaUsuario FROM customer.Pessoa, 
+					organograma.HierarquiaDeptoPessoaBZEROUM WHERE customer.Pessoa.idPessoaUsuario = 
+					organograma.HierarquiaDeptoPessoaBZEROUM.idPessoaUsuario AND 
+					organograma.HierarquiaDeptoPessoaBZEROUM.idNivelCargo = :cAuxidNivelCargo)
+			ORDER BY upper(trim(customer.Pessoa.nmLoginUsuario));*/
+
+		/*REMOVENDO BZEROUM
+		 TCOSTA 18/06/2007 MPOG
+		*/
+		EXEC SQL DECLARE CursorPessoaExistem_00 CURSOR FOR 
+		SELECT   pessoa.idpessoa,
+				 usuario.nmloginusuario,
+				 usuario.idstatususuario,
+				 usuario.indisponivelwf
+		FROM	 customer.pessoa pessoa,
+				 acesso.usuario usuario	
+		WHERE	 PESSOA.IDPESSOA=USUARIO.IDPESSOAUSUARIO
+		AND NOT EXISTS (SELECT IDPESSOA
+					   FROM organograma.hierarquiadeptopessoa
+					   WHERE idnivelcargo = :cAuxidNivelCargo
+					   AND IDPESSOA=USUARIO.IDPESSOAUSUARIO)
+		ORDER BY UPPER (TRIM (usuario.nmloginusuario));
+
+		EXEC SQL WHENEVER SQLERROR GOTO GotoExistem;
+		EXEC SQL OPEN CursorPessoaExistem_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CPessoa::ExistemHUP()");       
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stPessoaRegistro, 0, sizeof(stPessoaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorPessoaExistem_00 INTO :stPessoaRegistro:stPessoaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stPessoaRegistro.stidPessoaUsuario.arr,
+				(char*)stPessoaRegistro.stnmLoginUsuario.arr,
+				(char*)stPessoaRegistro.stidStatusUsuario.arr,
+				(char*)stPessoaRegistro.stinDisponivelWF.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorPessoaExistem_00;
+		}
+		ULOG_END("CPessoa::ExistemHUP()");       
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoExistem:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+void CPessoa::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idPessoaUsuario", Registro(x)->cidPessoaUsuario );
+				xml->addItem("nmLoginUsuario", Registro(x)->cnmLoginUsuario );
+				xml->addItem("idStatusUsuario", Registro(x)->cidStatusUsuario );
+				xml->addItem("inDisponivelWF", Registro(x)->cinDisponivelWF ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+
+void CPessoa::GetXml( char* cNomeTagArray, char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Caso nao tenha recebido uma tag padrao, deixa sem
+		if( strlennull( cNomeTagArray ) > 0 ) {
+			xml->createTag(cNomeTagArray);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+		}
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 ) {
+				xml->createTag(cNomeTag);
+				//Adiciona a propriedade necessaria para o xml
+				xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			}
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idPessoaUsuario", Registro(x)->cidPessoaUsuario );
+				xml->addItem("nmLoginUsuario", Registro(x)->cnmLoginUsuario );
+				xml->addItem("idStatusUsuario", Registro(x)->cidStatusUsuario );
+				xml->addItem("inDisponivelWF", Registro(x)->cinDisponivelWF ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+		//So fecha um tag se abriu anteriormente
+		if( strlennull( cNomeTagArray ) > 0 )
+			xml->closeTag();
+	}
+}
+
+
+
+void CPessoa::GetXmlId( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( iNotFound )
+	{
+        xml->createTag(cNomeTag);
+		//Adiciona a propriedade necessaria para o xml
+		xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+
+		    //Adiciona as tags necessarias
+		    xml->addItem("idUnidade",     cidUnidade);
+		    xml->addItem("idOrganizacao", cidOrganizacao );
+		    xml->addItem("idCargo",       cidCargo);
+		    xml->addItem("idNivel",       cidNivel); 
+
+        xml->closeTag();
+	}
+}
+
+int CPessoa::ExistemORG( char* cidOrganizacaoDepartamento )
+{
+    ULOG_START("CPessoa::ExistemORG()");       
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidOrganizacaoDepartamento = cidOrganizacaoDepartamento; 
+		struct
+		{
+			VARCHAR stidPessoaUsuario[21+1];
+			VARCHAR stnmLoginUsuario[255+1];
+			VARCHAR stidStatusUsuario[21+1];
+			VARCHAR stinDisponivelWF[21+1];
+		} stPessoaRegistro;
+		struct
+		{
+			short iidPessoaUsuario;
+			short inmLoginUsuario;
+			short iidStatusUsuario;
+			short iinDisponivelWF;
+		} stPessoaIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Processamento Principal
+	try
+	{
+		ZeraPessoa();
+
+		sqlca.sqlcode=0;
+		EXEC SQL WHENEVER NOT FOUND CONTINUE;
+		
+		//Declara um cursor para listar os Registros
+  
+/*	   		SELECT customer.Pessoa.idPessoaUsuario, 
+				   customer.Pessoa.nmLoginUsuario, 
+				   customer.Pessoa.idStatusUsuario, 
+				   customer.Pessoa.inDisponivelWF 
+			FROM customer.Pessoa 
+			WHERE customer.Pessoa.idPessoaUsuario 
+				NOT IN ( SELECT customer.Pessoa.idPessoaUsuario 
+						 FROM customer.Pessoa, 
+							  organograma.HierarquiaDeptoPessoaBZEROUM 
+						 WHERE customer.Pessoa.idPessoaUsuario = organograma.HierarquiaDeptoPessoaBZEROUM.idPessoaUsuario 
+						 AND organograma.HierarquiaDeptoPessoaBZEROUM.idOrganizacaoDepartamento = :cAuxidOrganizacaoDepartamento)
+			ORDER BY upper(trim(customer.Pessoa.nmLoginUsuario));*/
+
+		/*REMOVENDO BZEROUM
+		 TCOSTA 18/06/2007 MPOG
+		*/
+
+ 		EXEC SQL DECLARE CursorPessoaExistemORG_00 CURSOR FOR 
+		SELECT   pessoa.idpessoa,
+				 usuario.nmloginusuario,
+				 usuario.idstatususuario,
+				 usuario.indisponivelwf
+		FROM	 customer.pessoa pessoa,
+				 acesso.usuario usuario	
+		WHERE PESSOA.IDPESSOA=USUARIO.IDPESSOAUSUARIO
+		AND NOT EXISTS (SELECT IDPESSOA
+					   FROM organograma.hierarquiadeptopessoa
+					   WHERE idOrganizacaoDepartamento = :cAuxidOrganizacaoDepartamento
+					   AND IDPESSOA=USUARIO.IDPESSOAUSUARIO)
+		ORDER BY UPPER (TRIM (usuario.nmloginusuario));		
+		
+		
+		EXEC SQL WHENEVER SQLERROR GOTO GotoExistem;
+		EXEC SQL OPEN CursorPessoaExistemORG_00;
+
+		//Verifica se nao house erro ORACLE
+		if(sqlca.sqlcode)
+		{
+		    ULOG_END("CPessoa::ExistemORG()");       
+			return 0;//Erro
+		}
+		else
+		{
+			//Caso inexista registros sair do loop
+			EXEC SQL WHENEVER NOT FOUND DO break;
+			for(;;)
+			{
+				//Zera a estrutura de restorno
+				memset( &stPessoaRegistro, 0, sizeof(stPessoaRegistro) );
+				//Pega um registro no CURSOR
+				EXEC SQL FETCH CursorPessoaExistemORG_00 INTO :stPessoaRegistro:stPessoaIndicator;
+				//Adiciona a classe
+				Add( 	(char*)stPessoaRegistro.stidPessoaUsuario.arr,
+				(char*)stPessoaRegistro.stnmLoginUsuario.arr,
+				(char*)stPessoaRegistro.stidStatusUsuario.arr,
+				(char*)stPessoaRegistro.stinDisponivelWF.arr );
+				//conta quantos existem
+				iCont++;
+			}
+			//Fecha o cursor
+			EXEC SQL CLOSE CursorPessoaExistemORG_00;
+		}
+		ULOG_END("CPessoa::ExistemORG()");       
+		//Retorna a quantidade de registros
+		return iCont;
+	}
+	catch(...)
+	{
+		throw;
+	}
+
+GotoExistem:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+

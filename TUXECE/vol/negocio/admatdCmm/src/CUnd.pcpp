@@ -1,0 +1,791 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CUnd.h"
+
+CDepartamento::CDepartamento()
+{
+}
+
+CDepartamento::~CDepartamento()
+{
+}
+
+int CDepartamento::Insert( 
+			char* cnmDepartamento,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CDepartamento::Insert()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidDepartamento[255+1];
+		char* cAuxnmDepartamento = cnmDepartamento;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+		int iCont;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Zera a estrutura da classe
+	ZeraDepartamento();
+	
+	memset( &cAuxidDepartamento, 0, sizeof(cAuxidDepartamento) ); 
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+	
+	EXEC SQL SELECT	COUNT(nmDepartamento) 
+	INTO :iCont 
+	FROM organograma.Departamento
+	WHERE TRIM(UPPER(nmDepartamento)) = TRIM(UPPER(:cAuxnmDepartamento));
+
+	if( iCont > 0 )
+	{
+	    ULOG_END("CDepartamento::Insert()");
+		return -1;//Nome duplicado			
+	}
+
+	//Pega um id unico e sequencia para a insercao
+	EXEC SQL SELECT organograma.DepartamentoSQ.NEXTVAL INTO :cAuxidDepartamento FROM DUAL;
+
+	//Realiza o insert
+	EXEC SQL INSERT INTO organograma.Departamento 
+	(	idDepartamento,
+		nmDepartamento,
+		idUsuarioAlteracao,
+		dtUltimaAlteracao) 
+	VALUES 
+	(	:cAuxidDepartamento,
+		:cAuxnmDepartamento,
+		:cAuxidUsuarioAlteracao,
+		SYSDATE);
+
+    ULOG_END("CDepartamento::Insert()");
+	return 1;//Sucesso
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+
+
+int CDepartamento::InsertList( 
+			char* cnmDepartamento,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CDepartamento::InsertList()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		VARCHAR cAuxidDepartamento[255+1];
+		char* cAuxnmDepartamento = cnmDepartamento;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+		int iCont;
+	EXEC SQL END DECLARE SECTION;
+	
+	//Zera a estrutura da classe
+	ZeraDepartamento();
+	
+	memset( &cAuxidDepartamento, 0, sizeof(cAuxidDepartamento) ); 
+	
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoInsert;
+	
+	EXEC SQL SELECT	COUNT(nmDepartamento) 
+	INTO :iCont 
+	FROM organograma.Departamento
+	WHERE TRIM(UPPER(nmDepartamento)) = TRIM(UPPER(:cAuxnmDepartamento));
+
+	if( iCont > 0 )
+	{
+	    ULOG_END("CDepartamento::InsertList()");
+		return -1;//Nome duplicado		
+	}	
+
+	//Pega um id unico e sequencia para a insercao
+	EXEC SQL SELECT organograma.DepartamentoSQ.NEXTVAL INTO :cAuxidDepartamento FROM DUAL;
+
+	//Realiza o insert
+	EXEC SQL INSERT INTO organograma.Departamento 
+	(	idDepartamento,
+		nmDepartamento,
+		idUsuarioAlteracao,
+		dtUltimaAlteracao) 
+	VALUES 
+	(	:cAuxidDepartamento,
+		:cAuxnmDepartamento,
+		:cAuxidUsuarioAlteracao,
+		SYSDATE);
+
+	//Adiciona a classe
+	Add( (char*)cAuxidDepartamento.arr, cnmDepartamento );
+
+    ULOG_END("CDepartamento::InsertList()");
+	return 1;//Sucesso
+	
+GotoInsert:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+
+
+int CDepartamento::RelacaoOU( char* cid, char* cNomeIdTag, char* cNomeTag, char* cNomeTagAssociadasExterna, char* cNomeTagAssociadas, char* cNomeTagExistentesExterna, char* cNomeTagExistentes, XMLGen*xml )
+{
+    ULOG_START("CDepartamento::RelacaoOU()");
+	//Reader
+	xml->createTag( cNomeTag );
+	xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+
+	//Consistencia	
+	if( strlennull( cid ) <= 0 )
+		return -1; //Retorno com erro
+
+	//Registros
+	xml->addItem( cNomeIdTag, cid );
+	
+	//Outros itens
+	
+	//Associados
+	RelacaoOU( cid );
+	GetXml( cNomeTagAssociadasExterna, cNomeTagAssociadas, xml );
+	
+	//Existentes
+	ExistemOU( cid );
+	GetXml( cNomeTagExistentesExterna, cNomeTagExistentes, xml );
+	
+	//Reader
+	xml->closeTag();
+
+    ULOG_END("CDepartamento::RelacaoOU()");
+	//Retorno com sucesso
+	return 1;
+}
+int CDepartamento::RelacaoOU( char* cidOrganizacao )
+{
+    ULOG_START("CDepartamento::RelacaoOU()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidOrganizacao = cidOrganizacao; 
+		struct
+		{
+			VARCHAR stidDepartamento[21+1];
+			VARCHAR stnmDepartamento[255+1];
+		} stDepartamentoRegistro;
+		struct
+		{
+			short iidDepartamento;
+			short inmDepartamento;
+		} stDepartamentoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraDepartamento();
+
+	sqlca.sqlcode=0;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+	//Declara um cursor para listar os Registros
+
+/*   		SELECT organograma.Departamento.idDepartamento, organograma.Departamento.nmDepartamento 
+			FROM organograma.Departamento, organograma.OrganizacaoDepartamentoBZEROUM
+			WHERE organograma.Departamento.idDepartamento = organograma.OrganizacaoDepartamentoBZEROUM.idDepartamento 
+			AND 
+				organograma.OrganizacaoDepartamentoBZEROUM.idOrganizacao = :cAuxidOrganizacao 
+	ORDER BY upper(trim(organograma.Departamento.nmDepartamento));*/
+
+	
+	/*REMOVENDO BZEROUM
+	TCOSTA 20/06/2007 MPOG
+	*/
+
+	EXEC SQL DECLARE CursorDepartamentoRelacao_00 CURSOR FOR
+	SELECT   departamento.iddepartamento,
+			 departamento.nmdepartamento
+	FROM	 organograma.departamento departamento, 
+			 organograma.organizacaodepartamento organizacaodepartamento
+	WHERE	 departamento.iddepartamento =organizacaodepartamento.iddepartamento
+	AND		 organizacaodepartamento.idorganizacao = :cAuxidOrganizacao
+	ORDER BY UPPER (TRIM (organograma.departamento.nmdepartamento));
+
+	EXEC SQL WHENEVER SQLERROR GOTO GotoRelacao;
+
+	EXEC SQL OPEN CursorDepartamentoRelacao_00;
+
+	//Caso inexista registros sair do loop
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for(;;)
+	{
+		//Zera a estrutura de restorno
+		memset( &stDepartamentoRegistro, 0, sizeof(stDepartamentoRegistro) );
+		//Pega um registro no CURSOR
+		EXEC SQL FETCH CursorDepartamentoRelacao_00 INTO :stDepartamentoRegistro:stDepartamentoIndicator;
+		//Adiciona a classe
+		Add( 	(char*)stDepartamentoRegistro.stidDepartamento.arr,
+		(char*)stDepartamentoRegistro.stnmDepartamento.arr );
+		//conta quantos existem
+		iCont++;
+	}
+	//Fecha o cursor
+	EXEC SQL CLOSE CursorDepartamentoRelacao_00;
+
+    ULOG_END("CDepartamento::RelacaoOU()");
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotoRelacao:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CDepartamento::ExistemOU( char* cidOrganizacao )
+{
+    ULOG_START("CDepartamento::ExistemOU()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidOrganizacao = cidOrganizacao; 
+		struct
+		{
+			VARCHAR stidDepartamento[21+1];
+			VARCHAR stnmDepartamento[255+1];
+		} stDepartamentoRegistro;
+		struct
+		{
+			short iidDepartamento;
+			short inmDepartamento;
+		} stDepartamentoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	ZeraDepartamento();
+
+	sqlca.sqlcode=0;
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	
+	//Declara um cursor para listar os Registros
+
+   		/*SELECT organograma.Departamento.idDepartamento, organograma.Departamento.nmDepartamento 
+			FROM organograma.Departamento
+			WHERE organograma.Departamento.idDepartamento 
+			NOT IN 
+				( SELECT organograma.Departamento.idDepartamento 
+				  FROM organograma.Departamento, organograma.OrganizacaoDepartamentoBZEROUM 
+				  WHERE organograma.Departamento.idDepartamento = organograma.OrganizacaoDepartamentoBZEROUM.idDepartamento 
+				  AND organograma.OrganizacaoDepartamentoBZEROUM.idOrganizacao = :cAuxidOrganizacao  )
+	ORDER BY upper(trim(organograma.Departamento.nmDepartamento)); */
+	
+	/*REMOVENDO BZEROUM
+	 TCOSTA 18/06/2007 MPOG
+	*/
+	EXEC SQL DECLARE CursorDepartamentoExistem_00 CURSOR FOR 
+	SELECT   organograma.departamento.iddepartamento,
+			 organograma.departamento.nmdepartamento
+	FROM organograma.departamento
+	WHERE organograma.departamento.iddepartamento NOT IN (SELECT iddepartamento
+															 FROM organograma.organizacaodepartamento
+															 WHERE organograma.organizacaodepartamento.idorganizacao =:cAuxidOrganizacao)
+	ORDER BY UPPER (TRIM (organograma.departamento.nmdepartamento));
+		
+
+	EXEC SQL WHENEVER SQLERROR GOTO GotoExistem;
+
+	EXEC SQL OPEN CursorDepartamentoExistem_00;
+
+	//Caso inexista registros sair do loop
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for(;;)
+	{
+		//Zera a estrutura de restorno
+		memset( &stDepartamentoRegistro, 0, sizeof(stDepartamentoRegistro) );
+		//Pega um registro no CURSOR
+		EXEC SQL FETCH CursorDepartamentoExistem_00 INTO :stDepartamentoRegistro:stDepartamentoIndicator;
+		//Adiciona a classe
+		Add( 	(char*)stDepartamentoRegistro.stidDepartamento.arr,
+		(char*)stDepartamentoRegistro.stnmDepartamento.arr );
+		//conta quantos existem
+		iCont++;
+	}
+	//Fecha o cursor
+	EXEC SQL CLOSE CursorDepartamentoExistem_00;
+	
+	ULOG_END("CDepartamento::ExistemOU()");
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotoExistem:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CDepartamento::Update( 
+			char* cidDepartamento,
+			char* cnmDepartamento,
+			char* cidUsuarioAlteracao )
+{
+    ULOG_START("CDepartamento::Update()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		int iCont;
+		char* cAuxidDepartamento = cidDepartamento;
+		char* cAuxnmDepartamento = cnmDepartamento;
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao;
+	EXEC SQL END DECLARE SECTION;
+
+	//Zera a estrutura da classe
+	ZeraDepartamento();
+	
+	//Ativa as acoes decorrentes de erros ORACLE
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoUpdate;
+	
+	EXEC SQL SELECT	COUNT(nmDepartamento) 
+	INTO :iCont 
+	FROM organograma.Departamento
+	WHERE UPPER(TRIM(nmDepartamento)) = UPPER(TRIM(:cAuxnmDepartamento))
+	AND	idDepartamento  != :cAuxidDepartamento;
+
+	if( iCont > 0 )
+	{
+	    ULOG_END("CDepartamento::Update()");
+		return -1;//Nome duplicado			
+	}
+
+	//Executa a instrucao de update
+	EXEC SQL 
+	UPDATE organograma.Departamento 
+	SET 	nmDepartamento = :cAuxnmDepartamento,
+	idUsuarioAlteracao = :cAuxidUsuarioAlteracao,
+	dtUltimaAlteracao = SYSDATE
+	WHERE 	idDepartamento = :cAuxidDepartamento;   
+	
+	ULOG_END("CDepartamento::Update()");	
+	return 1;//Sucesso
+
+GotoUpdate:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+	
+}
+
+int CDepartamento::Delete( char* cidDepartamento )
+{
+    ULOG_START("CDepartamento::Delete()");
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;	
+		char* cAuxidDepartamento = cidDepartamento; 
+	EXEC SQL END DECLARE SECTION;
+	
+	//Zera a estrutura da classe
+	ZeraDepartamento();
+	
+	//Ativa as acoes decorrentes de erros ORACLE
+	EXEC SQL WHENEVER NOT FOUND CONTINUE;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoDelete;
+	sqlca.sqlcode=0;
+	
+	//Executa a instrucao de delecao
+	EXEC SQL DELETE FROM organograma.Departamento 		
+	WHERE (idDepartamento = :cAuxidDepartamento);
+	
+	ULOG_END("CDepartamento::Delete()");
+	//Verifica se houve ou nao erro ORACLE
+	return 1;//Sucesso
+
+GotoDelete:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	if(sqlca.sqlcode == -2292)
+		return sqlca.sqlcode;
+	else
+	throw TuxBasicOraException(sqlca.sqlcode);
+}
+
+int CDepartamento::List( char* cidDepartamento,
+						 char* cnmDepartamento,
+						 char* cidUsuarioAlteracao )
+{
+    ULOG_START("CDepartamento::List()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char cAuxidDepartamento[21+1];
+		char cAuxnmDepartamento[265+1];
+		char* cAuxidUsuarioAlteracao = cidUsuarioAlteracao; 
+		struct
+		{
+			VARCHAR stidDepartamento[21+1];
+			VARCHAR stnmDepartamento[255+1];
+		} stDepartamentoRegistro;
+		struct
+		{
+			short iidDepartamento;
+			short inmDepartamento;
+		} stDepartamentoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Zera a estrutura da classe
+	ZeraDepartamento();
+	memset( cAuxidDepartamento, 0, sizeof(cAuxidDepartamento) );
+	memset( cAuxnmDepartamento, 0, sizeof(cAuxnmDepartamento) );
+
+	if ( strlennull( cidDepartamento ) == 0 )
+		strcpy(cAuxidDepartamento , "-1" );
+	else
+		strcpy(cAuxidDepartamento , cidDepartamento );
+	
+	if ( strlennull( cnmDepartamento ) == 0 )
+		strcpy(cAuxnmDepartamento , "-1" );
+	else
+		sprintf(cAuxnmDepartamento,"%.*s%%",255,cnmDepartamento);
+
+	//Ativa as acoes decorrentes de erros ORACLE
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoList;
+	sqlca.sqlcode=0;
+
+	//Declara um cursor para listar os Registros
+	EXEC SQL 
+	DECLARE 
+		CursorDepartamento CURSOR FOR 
+	SELECT
+		IDDEPARTAMENTO, 
+		NMDEPARTAMENTO
+	FROM
+		ORGANOGRAMA.DEPARTAMENTO
+	WHERE
+	(
+		IDDEPARTAMENTO = :cAuxidDepartamento OR '-1' = :cAuxidDepartamento
+	)
+	AND 
+	(
+		UPPER(NMDEPARTAMENTO) LIKE UPPER(:cAuxnmDepartamento) OR '-1' = :cAuxnmDepartamento
+	)
+	ORDER BY UPPER(NMDEPARTAMENTO);
+
+	// Abre o cursor
+	EXEC SQL OPEN CursorDepartamento;
+
+	//Caso inexista registros sair do loop
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for(;;)
+	{
+		//Zera a estrutura de restorno
+		memset( &stDepartamentoRegistro, 0, sizeof(stDepartamentoRegistro) );
+		//Pega um registro no CURSOR
+		EXEC SQL FETCH CursorDepartamento INTO :stDepartamentoRegistro:stDepartamentoIndicator;
+		//Adiciona a classe
+		Add( 
+			(char*)stDepartamentoRegistro.stidDepartamento.arr,
+			(char*)stDepartamentoRegistro.stnmDepartamento.arr 
+		);
+		//conta quantos existem
+		iCont++;
+	}
+	//Fecha o CURSOR
+	EXEC SQL CLOSE CursorDepartamento;
+
+    ULOG_END("CDepartamento::List()");
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotoList:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CDepartamento::ListId( char* cidDepartamento ) 
+{
+    ULOG_START("CDepartamento::ListId()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidDepartamento = cidDepartamento;
+		struct
+		{
+			VARCHAR stidDepartamento[21+1];
+			VARCHAR stnmDepartamento[255+1];
+		} stDepartamentoRegistro;
+		struct
+		{
+			short iidDepartamento;
+			short inmDepartamento;
+		} stDepartamentoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Zera a estrutura da classe
+	ZeraDepartamento();
+
+	//Ativa as acoes decorrentes de erros ORACLE
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+	sqlca.sqlcode=0;
+
+	//Declara um cursor para listar os IDs
+	EXEC SQL 
+	DECLARE 
+		CursorDepartamentoId CURSOR FOR 
+	SELECT
+		IDDEPARTAMENTO,
+		NMDEPARTAMENTO
+	FROM
+		ORGANOGRAMA.DEPARTAMENTO
+	WHERE
+		IDDEPARTAMENTO = :cAuxidDepartamento
+	ORDER BY 
+		UPPER(NMDEPARTAMENTO);
+
+	//Abre o cursor
+	EXEC SQL OPEN CursorDepartamentoId;
+
+	//Caso inexista registros sair do loop
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for(;;)
+	{
+		//Zera a estrutura de restorno
+		memset( &stDepartamentoRegistro, 0, sizeof(stDepartamentoRegistro) );
+		//Pega um registro no CURSOR
+		EXEC SQL FETCH CursorDepartamentoId INTO :stDepartamentoRegistro:stDepartamentoIndicator;
+		//Adiciona a classe
+		Add( 	(char*)stDepartamentoRegistro.stidDepartamento.arr,
+		(char*)stDepartamentoRegistro.stnmDepartamento.arr );
+		//conta quantos existem
+		iCont++;
+	}
+	//Fecha o CURSOR
+	EXEC SQL CLOSE CursorDepartamentoId;
+
+    ULOG_END("CDepartamento::ListId()");
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+int CDepartamento::ListDeptoPorIdOrganizacao( char* cidOrganizacao ) 
+{
+    ULOG_START("CDepartamento::ListDeptoPorIdOrganizacao()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		char* cAuxidOrganizacao = cidOrganizacao; 
+		struct
+		{
+			VARCHAR stidDepartamento[21+1];
+			VARCHAR stnmDepartamento[255+1];
+		} stDepartamentoRegistro;
+		struct
+		{
+			short iidDepartamento;
+			short inmDepartamento;
+		} stDepartamentoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Zera a estrutura da classe
+	ZeraDepartamento();
+
+	//Ativa as acoes decorrentes de erros ORACLE
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListId;
+	sqlca.sqlcode=0;
+
+	//Declara um cursor para listar os IDs
+	EXEC SQL DECLARE cDeptoPorIdOrganizacao CURSOR FOR 
+        SELECT departamento.iddepartamento
+             , departamento.nmdepartamento
+          FROM organograma.departamento departamento
+             , organograma.organizacaodepartamento organizacaodepartamento
+         WHERE departamento.iddepartamento = organizacaodepartamento.iddepartamento
+           AND organizacaodepartamento.idorganizacao = :cAuxidOrganizacao
+        ORDER BY UPPER(trim(departamento.nmdepartamento));
+
+	//Abre o cursor
+	EXEC SQL OPEN cDeptoPorIdOrganizacao;
+
+	//Caso inexista registros sair do loop
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for(;;)
+	{
+		//Zera a estrutura de restorno
+		memset( &stDepartamentoRegistro, 0, sizeof(stDepartamentoRegistro) );
+
+		//Pega um registro no CURSOR
+		EXEC SQL FETCH cDeptoPorIdOrganizacao INTO :stDepartamentoRegistro:stDepartamentoIndicator;
+
+		//Adiciona a classe
+		Add( (char*)stDepartamentoRegistro.stidDepartamento.arr,
+		     (char*)stDepartamentoRegistro.stnmDepartamento.arr );
+
+		//conta quantos existem
+		iCont++;
+	}
+	//Fecha o CURSOR
+	EXEC SQL CLOSE cDeptoPorIdOrganizacao;
+
+    ULOG_END("CDepartamento::ListDeptoPorIdOrganizacao()");
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotoListId:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+int CDepartamento::ListAll( void )
+{
+    ULOG_START("CDepartamento::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidDepartamento[21+1];
+			VARCHAR stnmDepartamento[255+1];
+		} stDepartamentoRegistro;
+		struct
+		{
+			short iidDepartamento;
+			short inmDepartamento;
+		} stDepartamentoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Zera a estrutura da classe
+	ZeraDepartamento();
+
+	//Ativa as acoes decorrentes de erros ORACLE
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+	sqlca.sqlcode=0;
+
+	//Declara um cursor para listar todos os registros
+	EXEC SQL DECLARE CursorDepartamentoAll CURSOR FOR
+	SELECT 	idDepartamento,
+			nmDepartamento
+	FROM organograma.Departamento
+	ORDER BY upper(trim(nmDepartamento)); 
+
+	//Abre o cursor
+	EXEC SQL OPEN CursorDepartamentoAll;
+
+	//Caso inexista registros sair do loop
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for(;;)
+	{
+		//Zera a estrutura de restorno
+		memset( &stDepartamentoRegistro, 0, sizeof(stDepartamentoRegistro) );
+		//Pega um registro no CURSOR
+		EXEC SQL FETCH CursorDepartamentoAll INTO :stDepartamentoRegistro:stDepartamentoIndicator;
+		//Adiciona a classe
+		Add( 	(char*)stDepartamentoRegistro.stidDepartamento.arr,
+		(char*)stDepartamentoRegistro.stnmDepartamento.arr );
+		//conta quantos existem
+		iCont++;
+	}
+	//Fecha o cursor
+	EXEC SQL CLOSE CursorDepartamentoAll;
+
+    ULOG_END("CDepartamento::ListAll()");
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+void CDepartamento::GetXml( char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 )
+				xml->createTag(cNomeTag);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idUnidade", Registro(x)->cidDepartamento );
+				xml->addItem("nmUnidade", Registro(x)->cnmDepartamento ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+	}
+}
+
+void CDepartamento::GetXml( char* cNomeTagArray, char* cNomeTag, XMLGen*xml )
+{
+	//Soh monta o XML padrao se existir algum registro para isto
+	if( Quantidade() >= 0 )
+	{
+		//Caso nao tenha recebido uma tag padrao, deixa sem
+		if( strlennull( cNomeTagArray ) > 0 ) {
+			xml->createTag(cNomeTagArray);
+			//Adiciona a propriedade necessaria para o xml
+			xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+		}
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			//Caso nao tenha recebido uma tag padrao, deixa sem
+			if( strlennull( cNomeTag ) > 0 ) {
+				xml->createTag(cNomeTag);
+				//Adiciona a propriedade necessaria para o xml
+				xml->addProp( "xmlns", "usuario.fo.vivo.com.br/vo" );
+			}
+			//Para garantir que existe um registro
+			if( Registro( x ) != NULL )
+			{ 
+				//Adiciona as tags necessarias
+				xml->addItem("idUnidade", Registro(x)->cidDepartamento );
+				xml->addItem("nmUnidade", Registro(x)->cnmDepartamento ); 
+			}
+			//So fecha um tag se abriu anteriormente
+			if( strlennull( cNomeTag ) > 0 )
+				xml->closeTag();
+		}
+		//So fecha um tag se abriu anteriormente
+		if( strlennull( cNomeTagArray ) > 0 )
+			xml->closeTag();
+	}
+}

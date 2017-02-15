@@ -1,0 +1,106 @@
+
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/cLstPerfilAssoc.h"
+#include "../../../commons/queryMacro.h"
+#include "../../../commons/SmallString.h"
+#include "../../../commons/msgPadrao.h"
+
+// Prototipos
+void SqlError( sqlca * sqlca );
+
+
+/*------------------------------------------------------*/
+
+void proCListaPerfilAssoc( unsigned long idContatoPrm, XMLGen * Saida )
+{
+    ULOG_START("proCListaPerfilAssoc()");
+	struct sqlca sqlca;
+	
+	EXEC SQL BEGIN DECLARE SECTION;
+
+        unsigned long idContato = idContatoPrm;
+
+        unsigned long idPerfil;
+        VARCHAR       nmPerfil[256];
+
+        short         i_nmPerfil;
+
+	EXEC SQL END DECLARE SECTION;
+
+
+    EXEC SQL DECLARE ConsultaPerfil CURSOR FOR 
+        SELECT 
+           A.IDPERFIL,
+           A.NMPERFIL
+        FROM
+           CONTATOADM.PERFIL        A
+		WHERE
+		   A.IDPERFIL NOT IN
+		(
+		   SELECT 
+		      D.IDPERFIL
+		   FROM
+	           CONTATOADM.GRUPOPERFIL   B,
+	           CONTATOADM.CONTATOPERFIL C,
+               CONTATOADM.PERFIL        D
+		   WHERE
+		       C.IDCONTATO = :idContato
+		   AND
+		       C.IDGRUPOPERFIL = B.IDGRUPOPERFIL
+		   AND
+		       B.IDPERFIL = D.IDPERFIL
+           AND
+               C.DTEXCLUSAO IS NULL
+           AND
+               B.DTEXPIRACAO IS NULL
+           AND
+               D.DTEXCLUSAO IS NULL 
+		)		   
+		AND
+		    A.DTEXCLUSAO IS NULL
+       AND
+       	    A.INATIVO = 1
+        ORDER BY
+            A.NMPERFIL;
+
+    EXEC SQL WHENEVER SQLERROR DO SqlError( &sqlca );
+    EXEC SQL WHENEVER NOT FOUND DO break;
+
+    
+
+    EXEC SQL OPEN ConsultaPerfil;
+    for( ;; )
+    {
+        EXEC SQL FETCH ConsultaPerfil INTO :idPerfil,
+                                           :nmPerfil:i_nmPerfil;
+
+		CONVIND( nmPerfil,i_nmPerfil );
+
+        Saida->createTag( "Perfil" );
+           Saida->addItem( "idPerfil",idPerfil );
+           Saida->addItem( "nmPerfil",(char*)nmPerfil.arr );
+        Saida->closeTag();
+
+    }
+    EXEC SQL CLOSE ConsultaPerfil;
+
+    ULOG_END("proCListaPerfilAssoc()");
+}
+
+
+
+
+void SqlError( sqlca * sqlca )
+{
+    ULOGE("SqlError -> sqlcode=%d,sqlerrmc=%.70s",sqlca->sqlcode,sqlca->sqlerrm.sqlerrmc);
+	throw new 
+        TuxBasicOraException(
+            sqlca->sqlcode,
+            sqlca->sqlerrm.sqlerrmc,
+            sqlca->sqlerrm.sqlerrml
+            );
+}

@@ -1,0 +1,181 @@
+#undef SQLCA
+#define SQLCA_NONE
+#include<sqlca.h>
+#include<sqlda.h>
+
+#include "../include/CSms.h"
+
+CSms::CSms()
+{
+}
+
+CSms::~CSms()
+{
+}
+
+
+int CSms::ListAll()
+{
+    ULOG_START("CSms::ListAll()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+		struct
+		{
+			VARCHAR stidClassificacaoSms[21+1];
+			VARCHAR stdsClassificacaoSms[255+1];
+		} stAtribuicaoRegistro;
+		struct
+		{
+			short i_idClassificacaoSms;
+			short i_dsClassificacaoSms;
+		} stAtribuicaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Zera a estrutura da classe
+	ZeraAtribuicao();
+
+	//Ativa as acoes decorrentes de erros ORACLE
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoListAll;
+	sqlca.sqlcode=0;
+
+	//Declara um cursor para listar os Registros
+	EXEC SQL
+	DECLARE
+		CursorClassifSMSAll CURSOR FOR
+	SELECT idclassificacaosms, dsclassificacaosms
+	  FROM apoio.classificacaosms
+    ORDER BY UPPER(dsclassificacaosms);
+
+	// Abre o cursor
+	EXEC SQL OPEN CursorClassifSMSAll;
+
+	//Caso inexista registros sair do loop
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for(;;)
+	{
+		//Zera a estrutura de restorno
+		memset( &stAtribuicaoRegistro, 0, sizeof(stAtribuicaoRegistro) );
+		//Pega um registro no CURSOR
+		EXEC SQL FETCH CursorClassifSMSAll INTO :stAtribuicaoRegistro:stAtribuicaoIndicator;
+		//Adiciona a classe
+		Add( (char*)stAtribuicaoRegistro.stidClassificacaoSms.arr,
+		     (char*)stAtribuicaoRegistro.stdsClassificacaoSms.arr );
+		//conta quantos existem
+		iCont++;
+	}
+	//Fecha o CURSOR
+	EXEC SQL CLOSE CursorClassifSMSAll;
+
+	ULOG_END("CSms::ListAll()");
+
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotoListAll:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+int CSms::List( char * cidContato )
+{
+    ULOG_START("CSms::List()");
+	//Variavel de controle para a quantidade de registros retornada
+	int    iCont = 0;
+	//Variavel de status do oracle para PROC
+	struct sqlca sqlca;
+	//Declaracao das variaveis para o PROC
+	EXEC SQL BEGIN DECLARE SECTION;
+	    char * idContato = cidContato;
+		struct
+		{
+			VARCHAR stidClassificacaoSms[21+1];
+			VARCHAR stdsClassificacaoSms[255+1];
+		} stAtribuicaoRegistro;
+		struct
+		{
+			short i_idClassificacaoSms;
+			short i_dsClassificacaoSms;
+		} stAtribuicaoIndicator;
+	EXEC SQL END DECLARE SECTION;
+
+	//Zera a estrutura da classe
+	ZeraAtribuicao();
+
+	//Ativa as acoes decorrentes de erros ORACLE
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	EXEC SQL WHENEVER SQLERROR GOTO GotoList;
+	sqlca.sqlcode=0;
+
+	//Declara um cursor para listar os Registros
+	EXEC SQL
+	DECLARE
+		CursorClassifSMS CURSOR FOR
+	SELECT idclassificacaosms, dsclassificacaosms
+	  FROM apoio.classificacaosms
+	 WHERE idclassificacaosms IN (SELECT idclassificacaosms
+	                                FROM contatoadm.contatofolha
+	                               WHERE idcontato = :idContato)
+    ORDER BY UPPER(dsclassificacaosms);
+
+	// Abre o cursor
+	EXEC SQL OPEN CursorClassifSMS;
+
+	//Caso inexista registros sair do loop
+	EXEC SQL WHENEVER NOT FOUND DO break;
+	for(;;)
+	{
+		//Zera a estrutura de restorno
+		memset( &stAtribuicaoRegistro, 0, sizeof(stAtribuicaoRegistro) );
+		//Pega um registro no CURSOR
+		EXEC SQL FETCH CursorClassifSMS INTO :stAtribuicaoRegistro:stAtribuicaoIndicator;
+		//Adiciona a classe
+		Add( (char*)stAtribuicaoRegistro.stidClassificacaoSms.arr,
+		     (char*)stAtribuicaoRegistro.stdsClassificacaoSms.arr );
+		//conta quantos existem
+		iCont++;
+	}
+	//Fecha o CURSOR
+	EXEC SQL CLOSE CursorClassifSMS;
+
+	ULOG_END("CSms::List()");
+
+	//Retorna a quantidade de registros
+	return iCont;
+
+GotoList:
+    ULOGE( "ERRO ORACLE:sqlcode = [%d],sqlerrmc = [%.70s]",sqlca.sqlcode,sqlca.sqlerrm.sqlerrmc);
+	throw TuxBasicOraException(sqlca.sqlcode);
+
+}
+
+
+
+void CSms::GetXml( XMLGen*xml )
+{
+
+	//Soh monta o XML padrao se existir algum registro
+	if( Quantidade() > 0 )
+	{
+		//Corre todos os registros do iterator
+		for( int x = 0; x < Quantidade(); x++ )
+		{
+			xml->createTag("AdmClassificacaoSMSVO");
+			if( Registro( x ) != NULL )
+			{
+				//Adiciona as tags necessarias
+				xml->addItem("idClassificacao", Registro(x)->cidClassificacaoSMS );
+				xml->addItem("dsClassificacao", Registro(x)->cdsClassificacaoSMS );
+			}
+			xml->closeTag();
+		}
+	}
+
+}
