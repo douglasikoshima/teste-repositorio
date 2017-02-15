@@ -1,0 +1,22 @@
+/**
+ * OfertaServicoPortType.java
+ *
+ * This file was auto-generated from WSDL
+ * by the Apache Axis 1.4 Apr 22, 2006 (06:55:48 PDT) WSDL2Java emitter.
+ */
+
+package br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn;
+
+public interface OfertaServicoPortType extends java.rmi.Remote {
+    public br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.VerificarItemMatrizOfertaServicoResponse verificarItemMatrizOfertaServico(br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.VerificarItemMatrizOfertaServicoRequest verificarItemMatrizOfertaServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.AlterarOfertaServicoResponse alterarOfertaServico(br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.AlterarOfertaServicoRequest alterarOfertaServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.BuscarListaServicoComOfertaResponse buscarListaServicoComOferta(br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.BuscarListaServicoComOfertaRequest buscarListaServicoComOfertaRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.BuscarListaOfertaServicoResponse buscarListaOfertaServico(br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.BuscarListaOfertaServicoRequest buscarListaOfertaServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.CriarOfertaServicoResponse criarOfertaServico(br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.CriarOfertaServicoRequest criarOfertaServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.ExcluirServicoOfertaServicoResponse excluirServicoOfertaServico(br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.ExcluirServicoOfertaServicoRequest excluirServicoOfertaServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.BuscarDadosServicoOfertaServicoResponse buscarDadosServicoOfertaServico(br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.BuscarDadosServicoOfertaServicoRequest buscarDadosServicoOfertaServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.ExcluirOfertaServicoResponse excluirOfertaServico(br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.ExcluirOfertaServicoRequest excluirOfertaServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.AssociarServicoOfertaServicoResponse associarServicoOfertaServico(br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.AssociarServicoOfertaServicoRequest associarServicoOfertaServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.BuscarListaNomeOfertaServicoResponse buscarListaNomeOfertaServico(br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.BuscarListaNomeOfertaServicoRequest buscarListaNomeOfertaServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.ValidarServicoOfertaServicoResponse validarServicoOfertaServico(br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.sn.ValidarServicoOfertaServicoRequest validarServicoOfertaServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoOfertaServico.mc.geral.ErroInfo;
+}

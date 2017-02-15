@@ -1,0 +1,46 @@
+package com.indracompany.catalogo.ejb.servicosolicitacaocomercial;
+
+import java.util.List;
+
+import com.indracompany.catalogo.to.ServicoSolicitacaoComercialTO;
+
+import br.com.indrasistemas.framework.service.BusinessException;
+
+public interface ServicoSolicitacaoComercialBeanLocal {
+	
+	public static final String JNDI_NAME = "java:comp/env/ServicoSolicitacaoComercialBean";
+	
+	public ServicoSolicitacaoComercialTO findSistemaByIdServico(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public ServicoSolicitacaoComercialTO getCombos() throws BusinessException;
+	
+	public List<ServicoSolicitacaoComercialTO> searchSolicitacaoComercial(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public void switchDisponibilidadeSlctCmrl(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+
+	public ServicoSolicitacaoComercialTO switchDisponibilidadeCanalVendaSlctCmrl(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public ServicoSolicitacaoComercialTO findCanalVendaBySolicitacaoComercial(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+
+	public void createUpdateCanalVendaSlctCmrlList(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public ServicoSolicitacaoComercialTO searchEncargoBySolicitacaoComercial(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public ServicoSolicitacaoComercialTO findDispArConcPlMinByIdCnVendaSlct(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+
+	public ServicoSolicitacaoComercialTO createUpdateDispArConcPlMinByIdCnVendaSlct(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public ServicoSolicitacaoComercialTO searchCndcPgtoEncargo(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public ServicoSolicitacaoComercialTO findCanalVendaCndcPgtoByIdEncargo(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public ServicoSolicitacaoComercialTO findDispArConcPlMinByIdCndcPgtoEnc(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public void createUpdateDispArConcPlMinByIdCndcPgtoEnc(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public ServicoSolicitacaoComercialTO switchDisponibilidadeCndcPgtoEncargo(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public void createUpdateCndcPgtoEncargo(ServicoSolicitacaoComercialTO servicoSolicitacaoComercialTO) throws BusinessException;
+	
+	public void saveSolicitacaoOfertaClienteInadimplente(List<ServicoSolicitacaoComercialTO> servicoSolicitacaoComercialTOList) throws BusinessException;
+}

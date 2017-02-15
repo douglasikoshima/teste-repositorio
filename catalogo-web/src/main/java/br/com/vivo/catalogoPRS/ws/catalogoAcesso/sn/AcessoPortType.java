@@ -1,0 +1,25 @@
+/**
+ * AcessoPortType.java
+ *
+ * This file was auto-generated from WSDL
+ * by the Apache Axis 1.4 Apr 22, 2006 (06:55:48 PDT) WSDL2Java emitter.
+ */
+
+package br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn;
+
+public interface AcessoPortType extends java.rmi.Remote {
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.BuscarListaAcessoPlanoPorIdResponse buscarListaAcessoPlanoPorId(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.BuscarListaAcessoPlanoPorIdRequest buscarListaAcessoPlanoPorIdRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.BuscarListaAcessoServicoPorIdResponse buscarListaAcessoServicoPorId(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.BuscarListaAcessoServicoPorIdRequest buscarListaAcessoServicoPorIdRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.BuscarQtdeRestricaoPerfilResponse buscarQtdeRestricaoPerfil(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.BuscarQtdeRestricaoPerfilRequest buscarQtdeRestricaoPerfilRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.ExcluirAcessoServicoResponse excluirAcessoServico(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.ExcluirAcessoServicoRequest excluirAcessoServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.ExcluirAcessoPlanoResponse excluirAcessoPlano(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.ExcluirAcessoPlanoRequest excluirAcessoPlanoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.AlterarListaAcessoServicoResponse alterarListaAcessoServico(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.AlterarListaAcessoServicoRequest alterarListaAcessoServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.CopiarPerfilResponse copiarPerfil(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.CopiarPerfilRequest copiarPerfilRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.BuscarListaAcessoServicoResponse buscarListaAcessoServico(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.BuscarListaAcessoServicoRequest buscarListaAcessoServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.BuscarListaAcessoPlanoResponse buscarListaAcessoPlano(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.BuscarListaAcessoPlanoRequest buscarListaAcessoPlanoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.IncluirAcessoServicoResponse incluirAcessoServico(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.IncluirAcessoServicoRequest incluirAcessoServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.IncluirAcessoPlanoResponse incluirAcessoPlano(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.IncluirAcessoPlanoRequest incluirAcessoPlanoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.AlterarAcessoServicoResponse alterarAcessoServico(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.AlterarAcessoServicoRequest alterarAcessoServicoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.AlterarAcessoPlanoResponse alterarAcessoPlano(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.AlterarAcessoPlanoRequest alterarAcessoPlanoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+    public br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.AlterarListaAcessoPlanoResponse alterarListaAcessoPlano(br.com.vivo.catalogoPRS.ws.catalogoAcesso.sn.AlterarListaAcessoPlanoRequest alterarListaAcessoPlanoRequest, String username, String password) throws java.rmi.RemoteException, br.com.vivo.catalogoPRS.ws.catalogoAcesso.mc.geral.ErroInfo;
+}
